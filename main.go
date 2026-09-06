@@ -11,6 +11,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -246,9 +247,14 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 		links["nintendoAccount"] = map[string]any{"id": id.NaID, "createdAt": u.CreatedAt, "updatedAt": u.UpdatedAt}
 		links["friendCode"] = map[string]any{"id": friendCodeID(id.FriendCode), "createdAt": u.CreatedAt, "updatedAt": u.UpdatedAt, "regenerableAt": u.CreatedAt + 86400, "regenerable": false}
 		if id.PlayLog != nil {
+			// openpak-account already hands the play log as a JSON-encoded string.
+			pl, ok := id.PlayLog.(string)
+			if !ok {
+				b, _ := json.Marshal(id.PlayLog)
+				pl = string(b)
+			}
 			for _, k := range []string{"friends", "everyone"} {
-				pl, _ := json.Marshal(id.PlayLog)
-				ex[k] = map[string]any{"playLog": string(pl)}
+				ex[k] = map[string]any{"playLog": pl}
 			}
 		}
 	}
@@ -850,10 +856,34 @@ func (s *server) authorizePage(w http.ResponseWriter, q url.Values, msg string) 
 
 // ---------- plumbing ----------
 
+type recorder struct {
+	http.ResponseWriter
+	status int
+	buf    bytes.Buffer
+}
+
+func (rec *recorder) WriteHeader(c int) { rec.status = c; rec.ResponseWriter.WriteHeader(c) }
+func (rec *recorder) Write(b []byte) (int, error) {
+	if rec.buf.Len() < 8192 {
+		rec.buf.Write(b)
+	}
+	return rec.ResponseWriter.Write(b)
+}
+
+var debug = os.Getenv("NX_DEBUG") != ""
+
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	host := hostOf(r)
 	log.Printf("[nx-baas] %s %s%s ua=%q", r.Method, host, r.URL.RequestURI(), r.UserAgent())
+	if debug && !strings.HasPrefix(r.URL.Path, "/avatar/") {
+		dump(r, passwordRe.ReplaceAll(body, []byte("password=***")), "DBG >>>")
+		rec := &recorder{ResponseWriter: w, status: 200}
+		w = rec
+		defer func() {
+			log.Printf("[nx-baas] DBG <<< %d %s %s%s body(%d)=%s", rec.status, r.Method, host, r.URL.Path, rec.buf.Len(), rec.buf.Bytes())
+		}()
+	}
 	switch {
 	case strings.Contains(host, "accounts.nintendo.com"):
 		s.na(w, r, body)
