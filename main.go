@@ -56,6 +56,7 @@ type server struct {
 	key    *rsa.PrivateKey
 	idKid  string // kid of id_tokens (openpak-baas-key-1: what Photon/NPLN/S2 already trust)
 	accKid string // kid of BAAS access tokens (/1.0.0/internal_certificates)
+	naKid  string // kid of Nintendo-Account tokens: the console binds kid<->issuer and rejects a kid shared with BAAS (2124-3121)
 	jwks   []byte
 	mu     sync.Mutex
 	codes  map[string]naCode // NA authorization codes / session tokens -> who logged in
@@ -157,7 +158,7 @@ func (s *server) idToken(u *User, id *Identity, username, di, sn string) string 
 }
 
 func (s *server) naHeader() map[string]any {
-	return map[string]any{"alg": "RS256", "jku": naIssuer + "/1.0.0/certificates", "kid": s.idKid, "typ": "JWT"}
+	return map[string]any{"alg": "RS256", "jku": naIssuer + "/1.0.0/certificates", "kid": s.naKid, "typ": "JWT"}
 }
 
 func (s *server) naRefreshToken(c naCode) string {
@@ -859,6 +860,7 @@ func main() {
 		key:    key,
 		idKid:  getenv("BAAS_KID", "openpak-baas-key-1"),
 		accKid: getenv("BAAS_ACCESS_KID", "00000000-0000-0000-0000-000000000003"),
+		naKid:  getenv("BAAS_NA_KID", "00000000-0000-0000-0000-000000000001"),
 		codes:  map[string]naCode{},
 		device: map[string]string{},
 		acct: &accountClient{
@@ -866,7 +868,7 @@ func main() {
 			secret: []byte(os.Getenv("OPENPAK_SECRET")), http: &http.Client{Timeout: 10 * time.Second},
 		},
 	}
-	s.jwks = jwksFor(&key.PublicKey, s.idKid, getenv("BAAS_ID_KID", "00000000-0000-0000-0000-000000000002"), s.accKid)
+	s.jwks = jwksFor(&key.PublicKey, s.idKid, getenv("BAAS_ID_KID", "00000000-0000-0000-0000-000000000002"), s.accKid, s.naKid)
 	cert := selfSigned([]string{baasHost, "m-lp1.baas.nintendo.com", "cdn-image-e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com",
 		"accounts.nintendo.com", "api.accounts.nintendo.com", "cdn.accounts.nintendo.com"}, getenv("NX_CA_DIR", "/data/ca"))
 	var handler http.Handler = s
