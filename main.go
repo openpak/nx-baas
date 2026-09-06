@@ -729,7 +729,6 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		writeJSON(w, 200, map[string]any{
 			"token_type": "Bearer", "expires_in": 900,
-			"scope":        strings.TrimSpace(form.Get("scope")),
 			"access_token": s.naIDToken(c), "id_token": s.naIDToken(c),
 			"refresh_token": s.naRefreshToken(c),
 		})
@@ -761,12 +760,8 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		for len(nick) > 32 {
 			nick = nick[:len(nick)-1]
 		}
-		me := map[string]any{
-			"id": strings.ToLower(id.NaID), "nickname": nick, "screenName": nick, "loginId": nick,
-			"country": "GB", "language": "en-GB", "birthday": "2000-01-01", "gender": "unknown",
-			"emailVerified": true, "isChild": false, "createdAt": int64(1717200000), "updatedAt": time.Now().Unix(),
-			"links": map[string]any{"nintendoAccount": map[string]any{"membership": map[string]any{"active": true}}},
-		}
+		// Exactly the object a real console accepted (Fix_Experimental A/B log): nothing more.
+		me := map[string]any{"id": strings.ToLower(id.NaID), "nickname": nick, "loginId": nick, "links": map[string]any{}}
 		log.Printf("[nx-baas] users/me -> id=%s nickname=%q", me["id"], nick)
 		writeJSON(w, 200, me)
 		return
