@@ -33,8 +33,12 @@ import (
 )
 
 const (
-	baasHost     = "e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com"
-	baasIssuer   = "https://" + baasHost
+	baasHost   = "e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com"
+	baasIssuer = "https://" + baasHost
+	// jku host for BAAS tokens: the console caches key sets per URL and had the VPS's set cached
+	// for the e0d67c... URLs (different RSA key) -> 2124-3121. m-lp1 is the host firmware 21+
+	// talks to anyway, and a URL it has not cached, so it fetches ours.
+	baasJku      = "https://m-lp1.baas.nintendo.com"
 	baasAudience = "ed9e2f05d286f7b8" // what citron's id_token carries; the game servers accept it
 	naIssuer     = "https://accounts.nintendo.com"
 )
@@ -124,7 +128,7 @@ func (s *server) bearer(r *http.Request) map[string]any {
 func (s *server) accessToken(sub string, grant int, bsDid, di, sn string) string {
 	now := time.Now().Unix()
 	return signJWT(
-		map[string]any{"jku": baasIssuer + "/1.0.0/internal_certificates", "alg": "RS256", "kid": s.accKid},
+		map[string]any{"jku": baasJku + "/1.0.0/internal_certificates", "alg": "RS256", "kid": s.accKid},
 		map[string]any{
 			"sub": sub, "aud": sub, "bs:sts": []int{385}, "bs:grt": grant, "bs:did": bsDid,
 			"nintendo": map[string]any{"dt": "NX Prod 1", "pc": "HAC", "di": di, "sn": sn, "ist": false},
@@ -139,7 +143,7 @@ func (s *server) idToken(u *User, id *Identity, username, di, sn string) string 
 	now := time.Now().Unix()
 	claims := map[string]any{
 		"sub": u.ID, "aud": baasAudience, "iss": baasIssuer, "typ": "id_token",
-		"iat": now, "exp": now + 3*60*60, "jku": baasIssuer + "/1.0.0/certificates", "jti": uuid4(),
+		"iat": now, "exp": now + 3*60*60, "jku": baasJku + "/1.0.0/certificates", "jti": uuid4(),
 		"di": di, "sn": sn, "bs:did": randHex(8), "hm": true,
 		"nintendo": map[string]any{"dt": "NX Prod 1", "pc": "HAC", "di": di, "sn": sn, "ist": false},
 	}
@@ -149,7 +153,7 @@ func (s *server) idToken(u *User, id *Identity, username, di, sn string) string 
 			claims["openpak"] = t
 		}
 	}
-	return signJWT(map[string]any{"alg": "RS256", "kid": s.idKid, "typ": "id_token", "jku": baasIssuer + "/1.0.0/certificates"}, claims, s.key)
+	return signJWT(map[string]any{"alg": "RS256", "kid": s.idKid, "typ": "id_token", "jku": baasJku + "/1.0.0/certificates"}, claims, s.key)
 }
 
 func (s *server) naHeader() map[string]any {
