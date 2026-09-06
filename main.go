@@ -17,6 +17,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -27,6 +28,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -193,6 +195,20 @@ func (s *server) identity(u *User) *Identity {
 	return id
 }
 
+const cdnHost = "https://cdn-image-e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com"
+
+// avatarURL: the console wants an https URL, never inline data. openpak-account hands us the
+// raw base64 JPEG; we serve it at /avatar/<pid>.jpg on the cdn-image host (in our cert + route).
+func avatarURL(pid uint64, b64 string, updatedAt int64) string {
+	if b64 == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/avatar/%d.jpg?v=%d", cdnHost, pid, updatedAt)
+}
+
+// friendCodeID: BAAS friend codes are "1234-5678-9012"; OpenPak displays them as "SW-...".
+func friendCodeID(fc string) string { return strings.TrimPrefix(fc, "SW-") }
+
 func extras() map[string]any {
 	return map[string]any{"self": map[string]any{}, "favoriteFriends": map[string]any{}, "friends": map[string]any{}, "foaf": map[string]any{}, "everyone": map[string]any{}}
 }
@@ -223,12 +239,12 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 	thumbAt := u.CreatedAt
 	if id != nil {
 		nickname = id.Nickname
-		if id.Avatar != "" {
-			thumb = id.Avatar
-		}
 		thumbAt = id.ImageUpdatedAt
+		if id.Avatar != "" {
+			thumb = avatarURL(id.PID, id.Avatar, thumbAt)
+		}
 		links["nintendoAccount"] = map[string]any{"id": id.NaID, "createdAt": u.CreatedAt, "updatedAt": u.UpdatedAt}
-		links["friendCode"] = map[string]any{"id": id.FriendCode, "createdAt": u.CreatedAt, "updatedAt": u.UpdatedAt, "regenerableAt": u.CreatedAt + 86400, "regenerable": false}
+		links["friendCode"] = map[string]any{"id": friendCodeID(id.FriendCode), "createdAt": u.CreatedAt, "updatedAt": u.UpdatedAt, "regenerableAt": u.CreatedAt + 86400, "regenerable": false}
 		if id.PlayLog != nil {
 			for _, k := range []string{"friends", "everyone"} {
 				pl, _ := json.Marshal(id.PlayLog)
@@ -263,8 +279,8 @@ func (s *server) friendObj(f Friend, now int64) map[string]any {
 		}
 	}
 	return map[string]any{
-		"id": f.BaasUserID, "nickname": f.Nickname, "country": "", "thumbnailUrl": f.Avatar, "thumbnail2Url": f.Avatar,
-		"links":  map[string]any{"friendCode": map[string]any{"id": f.FriendCode, "createdAt": f.CreatedAt, "updatedAt": f.CreatedAt}},
+		"id": f.BaasUserID, "nickname": f.Nickname, "country": "", "thumbnailUrl": avatarURL(f.PID, f.Avatar, f.CreatedAt), "thumbnail2Url": avatarURL(f.PID, f.Avatar, f.CreatedAt),
+		"links":  map[string]any{"friendCode": map[string]any{"id": friendCodeID(f.FriendCode), "createdAt": f.CreatedAt, "updatedAt": f.CreatedAt}},
 		"extras": extras(), "presence": presenceObj(p), "isFavoriteFriend": false, "isNewFriend": false,
 		"createdAt": f.CreatedAt, "updatedAt": now,
 	}
@@ -278,6 +294,23 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 	seg := strings.Split(strings.Trim(p, "/"), "/")
 
 	switch {
+	case strings.HasPrefix(p, "/avatar/") && strings.HasSuffix(p, ".jpg"):
+		pid, _ := strconv.ParseUint(strings.TrimSuffix(strings.TrimPrefix(p, "/avatar/"), ".jpg"), 10, 64)
+		id, err := s.acct.Identity(pid)
+		if err != nil || id.Avatar == "" {
+			w.WriteHeader(404)
+			return
+		}
+		img, err := base64.StdEncoding.DecodeString(id.Avatar)
+		if err != nil {
+			w.WriteHeader(404)
+			return
+		}
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		w.Write(img)
+		return
+
 	case p == "/1.0.0/certificates" || p == "/1.0.0/internal_certificates":
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(s.jwks)
@@ -792,7 +825,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			"country": "GB", "createdAt": int64(1524557701),
 			"eachEmailOptedIn": map[string]any{"deals": map[string]any{"optedIn": false, "updatedAt": int64(1524557701)}, "survey": map[string]any{"optedIn": false, "updatedAt": int64(1524557701)}},
 			"email":            "legacy@example.com", "emailOptedIn": false, "emailOptedInUpdatedAt": int64(1524557701), "emailVerified": true,
-			"gender": "unknown", "iconUri": id.Avatar, "id": strings.ToLower(id.NaID), "isChild": false, "language": "en-GB",
+			"gender": "unknown", "iconUri": avatarURL(id.PID, id.Avatar, id.ImageUpdatedAt), "id": strings.ToLower(id.NaID), "isChild": false, "language": "en-GB",
 			"links": map[string]any{}, "loginId": nil, "nickname": nick, "phoneNumberEnabled": false, "region": nil,
 			"screenName": "ne•••@e••••", "termsAgreementRequired": false,
 			"timezone":  map[string]any{"id": "Europe/London", "name": "Europe/London", "utcOffset": "+01:00", "utcOffsetSeconds": 3600},
