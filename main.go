@@ -129,27 +129,31 @@ func (s *server) bearer(r *http.Request) map[string]any {
 
 // ---------- tokens ----------
 
+// accessToken/idToken: claim for claim what a real console accepted from the VPS
+// (capture 2026-09-06, /1.0.0/login). Anonymous (grant 1) tokens carry the device block;
+// user tokens (grant 2) do not.
 func (s *server) accessToken(sub string, grant int, bsDid, di, sn string) string {
 	now := time.Now().Unix()
-	return signJWT(
-		map[string]any{"jku": baasJku + "/1.0.0/internal_certificates", "alg": "RS256", "kid": s.accKid},
-		map[string]any{
-			"sub": sub, "aud": sub, "bs:sts": []int{385}, "bs:grt": grant,
-			"nintendo": map[string]any{"dt": "NX Prod 1", "pc": "HAC", "di": di, "sn": sn, "ist": false},
-			"iss":      baasJku, "typ": "token", "exp": now + 10800, "iat": now, "jti": uuid4(),
-		}, s.key)
+	claims := map[string]any{
+		"aud": baasAudience, "bs:did": bsDid, "bs:grt": grant, "exp": now + 10800, "iat": now,
+		"iss": baasIssuer, "jti": uuid4(), "sub": sub, "typ": "token",
+	}
+	if grant == 1 {
+		claims["bs:pid"] = "pz" + randHex(15)
+		claims["bs:sts"] = []int64{1188950301625811329}
+		claims["nintendo"] = map[string]any{"di": di, "dt": "NX Prod 1", "ist": false, "pc": "HAC", "sn": sn, "x5t#S256": "lkYHqHf2uXjNZ2UeDnW83GT_wa3-dH1KtPLVgxao3Rs"}
+	} else {
+		claims["bs:sts"] = []int64{10415858080830506, 272640, 9, 0, 0, 19316357715722240, 16}
+	}
+	return signJWT(map[string]any{"alg": "RS256", "jku": baasJku + "/1.0.0/internal_certificates", "kid": s.accKid, "typ": "JWT"}, claims, s.key)
 }
 
-// idToken mirrors citron's BuildIdToken claim for claim (acc.cpp), plus a stable sub: this is what
-// the game hands to Photon / NPLN / NEX, and those servers resolve the player from "openpak" first
-// and "bs:did" second.
 func (s *server) idToken(u *User, id *Identity, username, di, sn string) string {
 	now := time.Now().Unix()
 	claims := map[string]any{
-		"sub": u.ID, "aud": baasAudience, "iss": baasJku, "typ": "id_token",
-		"iat": now, "exp": now + 3*60*60, "jku": baasJku + "/1.0.0/certificates", "jti": uuid4(),
-		"di": di, "sn": sn, "bs:did": randHex(8), "hm": true,
-		"nintendo": map[string]any{"dt": "NX Prod 1", "pc": "HAC", "di": di, "sn": sn, "ist": false},
+		"aud": baasAudience, "bs:did": randHex(8), "exp": now + 10800, "iat": now, "iss": baasIssuer, "jti": uuid4(),
+		"nintendo": map[string]any{"di": di, "dt": "NX Prod 1", "ist": false, "pc": "HAC", "sn": sn},
+		"sub":      u.ID, "typ": "id_token",
 	}
 	if id != nil {
 		claims["bs:did"] = id.BsDid
@@ -157,7 +161,7 @@ func (s *server) idToken(u *User, id *Identity, username, di, sn string) string 
 			claims["openpak"] = t
 		}
 	}
-	return signJWT(map[string]any{"alg": "RS256", "kid": s.idKid, "typ": "id_token", "jku": baasJku + "/1.0.0/certificates"}, claims, s.key)
+	return signJWT(map[string]any{"alg": "RS256", "jku": baasJku + "/1.0.0/certificates", "kid": s.idKid, "typ": "JWT"}, claims, s.key)
 }
 
 func (s *server) naHeader() map[string]any {
@@ -231,46 +235,40 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 		}
 		devs = append(devs, m)
 	}
+	nickname, country := u.Nickname, u.Country
 	links := map[string]any{}
-	nickname, thumb := u.Nickname, u.ThumbnailURL
-	ex := extras()
+	self := map[string]any{"playLog": ""}
 	if u.NxAccount != "" {
-		ex["self"] = map[string]any{"nxAccount": u.NxAccount}
+		self["isMediaUploaded"] = true
+		self["nxAccount"] = u.NxAccount
 	}
-	thumbAt := u.CreatedAt
+	friendsEx := map[string]any{"isChatActivated": true, "isChatInvitable": true, "playLog": ""}
+	everyone := map[string]any{"playLog": ""}
+	thumb1, thumb2, thumbAt := "", "", int64(0)
 	if id != nil {
 		nickname = id.Nickname
-		links["nintendoAccount"] = map[string]any{"id": id.NaID, "createdAt": u.CreatedAt, "updatedAt": u.UpdatedAt}
-	}
-	if id != nil && !minimal {
-		thumbAt = id.ImageUpdatedAt
-		if id.Avatar != "" {
-			thumb = avatarURL(id.PID, id.Avatar, thumbAt)
-		}
-		links["friendCode"] = map[string]any{"id": friendCodeID(id.FriendCode), "createdAt": u.CreatedAt, "updatedAt": u.UpdatedAt, "regenerableAt": u.CreatedAt + 86400, "regenerable": false}
-		if id.PlayLog != nil {
-			// openpak-account already hands the play log as a JSON-encoded string.
-			pl, ok := id.PlayLog.(string)
-			if !ok {
-				b, _ := json.Marshal(id.PlayLog)
-				pl = string(b)
+		links["nintendoAccount"] = map[string]any{"id": id.NaID, "createdAt": u.CreatedAt, "updatedAt": u.CreatedAt}
+		if !minimal {
+			links["friendCode"] = map[string]any{"id": friendCodeID(id.FriendCode), "createdAt": u.CreatedAt, "updatedAt": u.CreatedAt, "regenerableAt": u.CreatedAt + 30*86400, "regenerable": true}
+			if pl, ok := id.PlayLog.(string); ok && pl != "" && pl != "null" {
+				friendsEx["playLog"], everyone["playLog"] = pl, pl
 			}
-			for _, k := range []string{"friends", "everyone"} {
-				ex[k] = map[string]any{"playLog": pl}
+			if id.Avatar != "" {
+				thumbAt = id.ImageUpdatedAt
+				thumb1, thumb2 = cdnHost+"/1/"+u.ID, cdnHost+"/2/"+u.ID
 			}
 		}
 	}
 	return map[string]any{
-		"id": u.ID, "etag": fmt.Sprintf("\"%016x\"", u.UpdatedAt), "nickname": nickname, "country": u.Country,
-		"birthday": u.Birthday, "thumbnailUrl": thumb, "thumbnail2Url": thumb, "deviceAccounts": devs, "links": links,
+		"birthday": u.Birthday, "blocksUpdatedAt": u.CreatedAt, "country": country, "createdAt": u.CreatedAt, "deleted": false,
+		"deviceAccounts": devs, "etag": fmt.Sprintf("\"%s\"", randHex(8)),
+		"extras":           map[string]any{"everyone": everyone, "favoriteFriends": map[string]any{"playLog": ""}, "foaf": map[string]any{"playLog": ""}, "friends": friendsEx, "self": self},
+		"friendsUpdatedAt": u.UpdatedAt, "id": u.ID, "links": links, "nickname": nickname, "nicknameUpdatedAt": u.UpdatedAt,
 		"permissions": map[string]any{
-			"personalAnalytics": false, "personalNotification": true, "friendRequestReception": true,
-			"friends": "EVERYONE", "presence": "FRIENDS", "presenceUpdatedAt": u.CreatedAt,
-			"personalAnalyticsUpdatedAt": u.CreatedAt, "personalNotificationUpdatedAt": u.CreatedAt,
+			"friendRequestReception": true, "friends": "EVERYONE", "personalAnalytics": true, "personalAnalyticsUpdatedAt": u.CreatedAt,
+			"personalNotification": true, "personalNotificationUpdatedAt": u.CreatedAt, "presence": "FRIENDS", "presenceUpdatedAt": u.CreatedAt,
 		},
-		"extras": ex, "presence": presenceObj(u.Presence), "deleted": false,
-		"blocksUpdatedAt": u.CreatedAt, "friendsUpdatedAt": u.UpdatedAt, "thumbnailUploadedAt": thumbAt,
-		"createdAt": u.CreatedAt, "updatedAt": u.UpdatedAt,
+		"thumbnail2Url": thumb2, "thumbnailUploadedAt": thumbAt, "thumbnailUrl": thumb1, "updatedAt": u.UpdatedAt,
 	}
 }
 
@@ -302,8 +300,13 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 	seg := strings.Split(strings.Trim(p, "/"), "/")
 
 	switch {
-	case strings.HasPrefix(p, "/avatar/") && strings.HasSuffix(p, ".jpg"):
-		pid, _ := strconv.ParseUint(strings.TrimSuffix(strings.TrimPrefix(p, "/avatar/"), ".jpg"), 10, 64)
+	case strings.HasPrefix(p, "/1/") || strings.HasPrefix(p, "/2/") || strings.HasPrefix(p, "/avatar/"):
+		var pid uint64
+		if strings.HasPrefix(p, "/avatar/") {
+			pid, _ = strconv.ParseUint(strings.TrimSuffix(strings.TrimPrefix(p, "/avatar/"), ".jpg"), 10, 64)
+		} else if u := s.store.User(p[3:]); u != nil {
+			pid = u.PID
+		}
 		id, err := s.acct.Identity(pid)
 		if err != nil || id.Avatar == "" {
 			w.WriteHeader(404)
@@ -525,7 +528,23 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		writeJSON(w, 200, map[string]any{"count": 1, "users": []any{s.friendObj(*f, time.Now().Unix())}})
 		return
 
-	case strings.HasPrefix(p, "/1.0.0/push_channels/") || p == "/1.0.0/devices/snapshot" || p == "/1.0.0/devices/me/delete":
+	case p == "/1.0.0/devices/snapshot":
+		var in struct {
+			UserIDs []string `json:"userIds"`
+		}
+		json.Unmarshal(body, &in)
+		persistent, deleted := []string{}, []string{}
+		for _, uid := range in.UserIDs {
+			if s.store.User(uid) != nil {
+				persistent = append(persistent, uid)
+			} else {
+				deleted = append(deleted, uid)
+			}
+		}
+		writeJSON(w, 200, map[string]any{"deletedUserIds": deleted, "persistentUserIds": persistent})
+		return
+
+	case strings.HasPrefix(p, "/1.0.0/push_channels/") || p == "/1.0.0/devices/me/delete":
 		writeJSON(w, 200, map[string]any{})
 		return
 	}
@@ -692,6 +711,36 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 	case p == "/1.0.0/certificates":
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(s.jwks)
+		return
+
+	case p == "/connect/1.0.0/authorize" && r.Method == "POST" && form.Get("prompt") == "none":
+		// SSO for system applets (e-license etc.): identified by our NA access token, no UI.
+		cl, err := parseJWT(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), &s.key.PublicKey)
+		pid := uint64(0)
+		if err == nil {
+			pid = s.store.PIDForNA(str(cl, "sub"))
+		}
+		if pid == 0 {
+			writeJSON(w, 401, map[string]any{"error": "login_required"})
+			return
+		}
+		id, err := s.acct.Identity(pid)
+		if err != nil {
+			writeJSON(w, 401, map[string]any{"error": "login_required"})
+			return
+		}
+		c := naCode{PID: pid, Username: id.Nickname, ClientID: form.Get("client_id"), NaID: id.NaID}
+		code := randHex(16)
+		s.mu.Lock()
+		s.codes[code] = c
+		s.mu.Unlock()
+		frag := url.Values{"state": {form.Get("state")}, "session_state": {randHex(11)}, "code": {code}}
+		if strings.Contains(form.Get("response_type"), "id_token") {
+			frag.Set("id_token", s.naIDToken(c, ""))
+		}
+		dest := form.Get("redirect_uri") + "#" + frag.Encode()
+		log.Printf("[nx-baas] NA silent authorize pid=%d client=%s -> %s", pid, c.ClientID, form.Get("redirect_uri"))
+		http.Redirect(w, r, dest, http.StatusFound)
 		return
 
 	case p == "/connect/1.0.0/authorize":
