@@ -133,7 +133,7 @@ func (s *server) accessToken(sub string, grant int, bsDid, di, sn string) string
 		map[string]any{
 			"sub": sub, "aud": sub, "bs:sts": []int{385}, "bs:grt": grant, "bs:did": bsDid,
 			"nintendo": map[string]any{"dt": "NX Prod 1", "pc": "HAC", "di": di, "sn": sn, "ist": false},
-			"iss":      baasIssuer, "typ": "token", "exp": now + 10800, "iat": now, "jti": uuid4(),
+			"iss":      baasJku, "typ": "token", "exp": now + 10800, "iat": now, "jti": uuid4(),
 		}, s.key)
 }
 
