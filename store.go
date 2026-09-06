@@ -115,23 +115,38 @@ func (s *Store) UserByPID(pid uint64) *User {
 	return nil
 }
 
-// Link binds user `from` (the one the console just created or logged in with) to OpenPak PID
-// `pid`. The BAAS user id the console holds must never change (2124-0292 otherwise), so `from`
-// keeps its id; any other user previously linked to the same PID (an earlier attempt, or the
-// other console) is simply unlinked.
-func (s *Store) Link(from *User, pid uint64, naID string) *User {
+// Link = Restore User: the console just created a throwaway user + device account (POST /users)
+// and federates it with the Nintendo Account; the response must be the account's canonical BAAS
+// user (stable id = openpak-account's baasUserID, so every console and game server agree),
+// with this console's device account added to it. Any previous throwaway is discarded.
+func (s *Store) Link(from *User, pid uint64, baasUserID, naID string) *User {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, u := range s.Users {
-		if u != from && u.PID == pid {
-			u.PID, u.NaID = 0, ""
+	target := s.Users[baasUserID]
+	if target == nil {
+		target = from
+		delete(s.Users, from.ID)
+		from.ID = baasUserID
+		s.Users[from.ID] = from
+	} else if target != from {
+		target.DeviceAccounts = append(target.DeviceAccounts, from.DeviceAccounts...)
+		delete(s.Users, from.ID)
+	}
+	target.PID, target.NaID = pid, naID
+	for _, d := range s.Devices {
+		if d.UserID == from.ID || d.UserID == baasUserID {
+			d.UserID = target.ID
 		}
 	}
-	from.PID, from.NaID = pid, naID
-	from.UpdatedAt = time.Now().Unix()
+	for id, u := range s.Users { // stale throwaways from failed attempts
+		if u != target && u.PID == pid {
+			delete(s.Users, id)
+		}
+	}
+	target.UpdatedAt = time.Now().Unix()
 	s.NaToPID[naID] = pid
 	s.save()
-	return from
+	return target
 }
 
 func (s *Store) Update(u *User, f func(*User)) {
