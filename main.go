@@ -238,9 +238,13 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 	nickname, country := u.Nickname, u.Country
 	links := map[string]any{}
 	self := map[string]any{"playLog": ""}
-	if u.NxAccount != "" {
+	nx := u.NxAccount
+	if nx == "" && id != nil && os.Getenv("NX_TEST_NXACCOUNT") != "" {
+		nx = os.Getenv("NX_TEST_NXACCOUNT") // ponytail: probe -- a captured console profile blob, to confirm Restore User needs it
+	}
+	if nx != "" {
 		self["isMediaUploaded"] = true
-		self["nxAccount"] = u.NxAccount
+		self["nxAccount"] = nx
 	}
 	friendsEx := map[string]any{"isChatActivated": true, "isChatInvitable": true, "playLog": ""}
 	everyone := map[string]any{"playLog": ""}
