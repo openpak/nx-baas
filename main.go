@@ -240,7 +240,15 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 	self := map[string]any{"playLog": ""}
 	nx := u.NxAccount
 	if nx == "" && id != nil && os.Getenv("NX_TEST_NXACCOUNT") != "" {
-		nx = os.Getenv("NX_TEST_NXACCOUNT") // ponytail: probe -- a captured console profile blob, to confirm Restore User needs it
+		// ponytail: profile blob for Restore User. Layout only partly known (uid[16] + settings);
+		// we reuse a captured blob's settings with a fresh uid so it cannot collide with a
+		// profile already on the console. Proper generation from the account's Mii is TODO.
+		if raw, err := base64.StdEncoding.DecodeString(os.Getenv("NX_TEST_NXACCOUNT")); err == nil && len(raw) > 16 {
+			uid := make([]byte, 16)
+			copy(uid, []byte(u.ID+u.ID))
+			copy(raw, uid)
+			nx = base64.StdEncoding.EncodeToString(raw)
+		}
 	}
 	if nx != "" {
 		self["isMediaUploaded"] = true
@@ -943,6 +951,8 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case strings.Contains(host, "accounts.nintendo.com"):
 		s.na(w, r, body)
+	case strings.Contains(host, "penne.") || strings.Contains(host, "vermillion.") || strings.HasPrefix(host, "beach."):
+		s.penne(w, r, body)
 	default:
 		s.baas(w, r, body)
 	}
@@ -989,7 +999,9 @@ func main() {
 	}
 	s.jwks = jwksFor(&key.PublicKey, s.idKid, getenv("BAAS_ID_KID", "00000000-0000-0000-0000-000000000002"), s.accKid, s.naKid)
 	cert := selfSigned([]string{baasHost, "m-lp1.baas.nintendo.com", "cdn-image-e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com",
-		"accounts.nintendo.com", "api.accounts.nintendo.com", "cdn.accounts.nintendo.com"}, getenv("NX_CA_DIR", "/data/ca"))
+		"accounts.nintendo.com", "api.accounts.nintendo.com", "cdn.accounts.nintendo.com",
+		"god.hac.lp1.penne.srv.nintendo.net", "val.hac.penne.srv.nintendo.net", "val.hac.lp1.penne.srv.nintendo.net",
+		"fro-3.hac.lp1.penne.srv.nintendo.net", "gw.hac.lp1.vermillion.srv.nintendo.net", "beach.hac.lp1.eshop.nintendo.net"}, getenv("NX_CA_DIR", "/data/ca"))
 	var handler http.Handler = s
 	if up := os.Getenv("NX_UPSTREAM"); up != "" {
 		log.Printf("[nx-baas] CAPTURE MODE: forwarding everything to %s and logging bodies", up)
