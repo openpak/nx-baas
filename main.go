@@ -134,7 +134,7 @@ func (s *server) accessToken(sub string, grant int, bsDid, di, sn string) string
 	return signJWT(
 		map[string]any{"jku": baasJku + "/1.0.0/internal_certificates", "alg": "RS256", "kid": s.accKid},
 		map[string]any{
-			"sub": sub, "aud": sub, "bs:sts": []int{385}, "bs:grt": grant, "bs:did": bsDid,
+			"sub": sub, "aud": sub, "bs:sts": []int{385}, "bs:grt": grant,
 			"nintendo": map[string]any{"dt": "NX Prod 1", "pc": "HAC", "di": di, "sn": sn, "ist": false},
 			"iss":      baasJku, "typ": "token", "exp": now + 10800, "iat": now, "jti": uuid4(),
 		}, s.key)
@@ -240,11 +240,13 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 	thumbAt := u.CreatedAt
 	if id != nil {
 		nickname = id.Nickname
+		links["nintendoAccount"] = map[string]any{"id": id.NaID, "createdAt": u.CreatedAt, "updatedAt": u.UpdatedAt}
+	}
+	if id != nil && !minimal {
 		thumbAt = id.ImageUpdatedAt
 		if id.Avatar != "" {
 			thumb = avatarURL(id.PID, id.Avatar, thumbAt)
 		}
-		links["nintendoAccount"] = map[string]any{"id": id.NaID, "createdAt": u.CreatedAt, "updatedAt": u.UpdatedAt}
 		links["friendCode"] = map[string]any{"id": friendCodeID(id.FriendCode), "createdAt": u.CreatedAt, "updatedAt": u.UpdatedAt, "regenerableAt": u.CreatedAt + 86400, "regenerable": false}
 		if id.PlayLog != nil {
 			// openpak-account already hands the play log as a JSON-encoded string.
@@ -871,6 +873,7 @@ func (rec *recorder) Write(b []byte) (int, error) {
 }
 
 var debug = os.Getenv("NX_DEBUG") != ""
+var minimal = os.Getenv("NX_MINIMAL") != "" // bisecting 2124-0292: only the NA link on top of the POST /users shape
 
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
