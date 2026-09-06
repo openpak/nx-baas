@@ -9,8 +9,11 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"regexp"
 	"strings"
 )
+
+var passwordRe = regexp.MustCompile(`password=[^&]*`)
 
 // Capture mode (NX_UPSTREAM=<ip>): forward every request to the real OpenPak deployment, same
 // Host/SNI, and log request + response bodies. Used once to record what a console accepts;
@@ -42,7 +45,7 @@ func newCaptureProxy(upstream string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		r.Body = io.NopCloser(bytes.NewReader(body))
-		dump(r, body, ">>> capture")
+		dump(r, passwordRe.ReplaceAll(body, []byte("password=***")), ">>> capture")
 		rp.ServeHTTP(w, r)
 	})
 }
