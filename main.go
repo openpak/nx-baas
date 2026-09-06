@@ -755,13 +755,20 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			writeJSON(w, 404, map[string]any{"error": "not_found"})
 			return
 		}
-		writeJSON(w, 200, map[string]any{
-			"id": id.NaID, "nickname": id.Nickname, "screenName": id.Nickname, "country": "US", "language": "en-US",
-			"birthday": "2000-01-01", "gender": "unknown", "timezone": map[string]any{"id": "Europe/London", "name": "Europe/London", "utcOffset": "+00:00", "utcOffsetSeconds": 0},
-			"mii": nil, "candidateMiis": []any{}, "isChild": false, "eachEmailOptedIn": map[string]any{}, "clientFriendsOptedIn": true, "analyticsOptedIn": false,
-			"analyticsPermissions": map[string]any{}, "region": nil, "emailOptedIn": false, "emailVerified": true, "createdAt": int64(1717200000), "updatedAt": time.Now().Unix(),
-			"thumbnailUrl": id.Avatar, "iconUrl": id.Avatar,
-		})
+		// Console rules (Fix_Experimental relay, A/B on hardware): id == access token sub, 16 lowercase
+		// hex; nickname non-empty, <= 32 bytes. No null-valued fields: keep the object minimal.
+		nick := id.Nickname
+		for len(nick) > 32 {
+			nick = nick[:len(nick)-1]
+		}
+		me := map[string]any{
+			"id": strings.ToLower(id.NaID), "nickname": nick, "screenName": nick, "loginId": nick,
+			"country": "GB", "language": "en-GB", "birthday": "2000-01-01", "gender": "unknown",
+			"emailVerified": true, "isChild": false, "createdAt": int64(1717200000), "updatedAt": time.Now().Unix(),
+			"links": map[string]any{"nintendoAccount": map[string]any{"membership": map[string]any{"active": true}}},
+		}
+		log.Printf("[nx-baas] users/me -> id=%s nickname=%q", me["id"], nick)
+		writeJSON(w, 200, me)
 		return
 	}
 	dump(r, body, "!! UNHANDLED NA")
