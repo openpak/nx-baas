@@ -729,8 +729,8 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		writeJSON(w, 200, map[string]any{
 			"token_type": "Bearer", "expires_in": 900,
-			"scope":         strings.TrimSpace(form.Get("scope")),
-			"access_token":  s.naIDToken(c), "id_token": s.naIDToken(c),
+			"scope":        strings.TrimSpace(form.Get("scope")),
+			"access_token": s.naIDToken(c), "id_token": s.naIDToken(c),
 			"refresh_token": s.naRefreshToken(c),
 		})
 		return

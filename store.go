@@ -81,6 +81,17 @@ func (s *Store) Login(id, password string) *User {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	d := s.Devices[id]
+	if d == nil && len(id) == 16 && len(password) >= 20 {
+		// ponytail: trust-on-first-use. A console that already holds a device account from
+		// another OpenPak deployment (the VPS) presents credentials we never issued; on a
+		// private LAN we adopt them instead of forcing a console reset.
+		now := time.Now().Unix()
+		u := &User{ID: randHex(8), Birthday: "0000-00-00", CreatedAt: now, UpdatedAt: now, Presence: Presence{State: "OFFLINE", UpdatedAt: now}, DeviceAccounts: []string{id}}
+		d = &DeviceAccount{ID: id, Password: password, UserID: u.ID}
+		s.Users[u.ID] = u
+		s.Devices[id] = d
+		s.save()
+	}
 	if d == nil || d.Password != password {
 		return nil
 	}
