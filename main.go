@@ -151,6 +151,14 @@ func (s *server) idToken(u *User, id *Identity, username, di, sn string) string 
 	return signJWT(map[string]any{"alg": "RS256", "kid": s.idKid, "typ": "id_token", "jku": baasIssuer + "/1.0.0/certificates"}, claims, s.key)
 }
 
+func (s *server) naRefreshToken(c naCode) string {
+	now := time.Now().Unix()
+	return signJWT(
+		map[string]any{"alg": "RS256", "kid": s.idKid, "typ": "JWT", "jku": naIssuer + "/1.0.0/certificates"},
+		map[string]any{"iss": naIssuer, "sub": c.NaID, "aud": c.ClientID, "exp": now + 365*86400, "iat": now, "jti": uuid4(), "typ": "refresh"},
+		s.key)
+}
+
 func (s *server) naIDToken(c naCode) string {
 	now := time.Now().Unix()
 	return signJWT(
@@ -700,6 +708,17 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		s.mu.Lock()
 		c, ok := s.codes[code]
 		s.mu.Unlock()
+		if !ok && form.Get("refresh_token") != "" {
+			// Later boots: the console refreshes with the token we issued (a signed JWT whose sub
+			// is the NA id); the NA id -> PID map is persisted, so this survives restarts.
+			if cl, err := parseJWT(form.Get("refresh_token"), &s.key.PublicKey); err == nil && str(cl, "typ") == "refresh" {
+				if pid := s.store.PIDForNA(str(cl, "sub")); pid != 0 {
+					if id, err := s.acct.Identity(pid); err == nil {
+						c, ok = naCode{PID: pid, Username: id.Nickname, ClientID: form.Get("client_id"), NaID: id.NaID}, true
+					}
+				}
+			}
+		}
 		if !ok {
 			writeJSON(w, 400, map[string]any{"error": "invalid_grant", "error_description": "unknown code"})
 			return
@@ -709,8 +728,10 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			return
 		}
 		writeJSON(w, 200, map[string]any{
-			"token_type": "Bearer", "expires_in": 900, "scope": []string{"openid", "user", "user.birthday", "user.email", "user.links[].id", "user.loginId", "user.screenName", "user.terms", "napps", "offline"},
-			"access_token": s.naIDToken(c), "id_token": s.naIDToken(c), "refresh_token": code, "session_token": code,
+			"token_type": "Bearer", "expires_in": 900,
+			"scope":         strings.TrimSpace(form.Get("scope")),
+			"access_token":  s.naIDToken(c), "id_token": s.naIDToken(c),
+			"refresh_token": s.naRefreshToken(c),
 		})
 		return
 
@@ -738,7 +759,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			"id": id.NaID, "nickname": id.Nickname, "screenName": id.Nickname, "country": "US", "language": "en-US",
 			"birthday": "2000-01-01", "gender": "unknown", "timezone": map[string]any{"id": "Europe/London", "name": "Europe/London", "utcOffset": "+00:00", "utcOffsetSeconds": 0},
 			"mii": nil, "candidateMiis": []any{}, "isChild": false, "eachEmailOptedIn": map[string]any{}, "clientFriendsOptedIn": true, "analyticsOptedIn": false,
-			"analyticsPermissions": map[string]any{}, "region": nil, "emailOptedIn": false, "emailVerified": true, "createdAt": id.PlayLog == nil, "updatedAt": time.Now().Unix(),
+			"analyticsPermissions": map[string]any{}, "region": nil, "emailOptedIn": false, "emailVerified": true, "createdAt": int64(1717200000), "updatedAt": time.Now().Unix(),
 			"thumbnailUrl": id.Avatar, "iconUrl": id.Avatar,
 		})
 		return
