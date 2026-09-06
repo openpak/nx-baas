@@ -774,7 +774,7 @@ func selfSigned(hosts []string, caDir string) tls.Certificate {
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
 	tmpl := x509.Certificate{
 		SerialNumber: big.NewInt(time.Now().Unix()), Subject: pkix.Name{CommonName: hosts[0], Organization: []string{"OpenPak"}},
-		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().AddDate(10, 0, 0),
+		NotBefore: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), NotAfter: time.Date(2036, 1, 1, 0, 0, 0, 0, time.UTC),
 		KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, DNSNames: hosts,
 	}
 	if caPEM, err := os.ReadFile(caDir + "/ca.pem"); err == nil {
