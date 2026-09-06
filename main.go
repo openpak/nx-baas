@@ -143,7 +143,7 @@ func (s *server) accessToken(sub string, grant int, bsDid, di, sn string) string
 func (s *server) idToken(u *User, id *Identity, username, di, sn string) string {
 	now := time.Now().Unix()
 	claims := map[string]any{
-		"sub": u.ID, "aud": baasAudience, "iss": baasIssuer, "typ": "id_token",
+		"sub": u.ID, "aud": baasAudience, "iss": baasJku, "typ": "id_token",
 		"iat": now, "exp": now + 3*60*60, "jku": baasJku + "/1.0.0/certificates", "jti": uuid4(),
 		"di": di, "sn": sn, "bs:did": randHex(8), "hm": true,
 		"nintendo": map[string]any{"dt": "NX Prod 1", "pc": "HAC", "di": di, "sn": sn, "ist": false},
