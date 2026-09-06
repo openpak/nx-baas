@@ -13,6 +13,7 @@ package main
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -151,20 +152,29 @@ func (s *server) idToken(u *User, id *Identity, username, di, sn string) string 
 	return signJWT(map[string]any{"alg": "RS256", "kid": s.idKid, "typ": "id_token", "jku": baasIssuer + "/1.0.0/certificates"}, claims, s.key)
 }
 
-func (s *server) naRefreshToken(c naCode) string {
-	now := time.Now().Unix()
-	return signJWT(
-		map[string]any{"alg": "RS256", "kid": s.idKid, "typ": "JWT", "jku": naIssuer + "/1.0.0/certificates"},
-		map[string]any{"iss": naIssuer, "sub": c.NaID, "aud": c.ClientID, "exp": now + 365*86400, "iat": now, "jti": uuid4(), "typ": "refresh"},
-		s.key)
+func (s *server) naHeader() map[string]any {
+	return map[string]any{"alg": "RS256", "jku": naIssuer + "/1.0.0/certificates", "kid": s.idKid, "typ": "JWT"}
 }
 
-func (s *server) naIDToken(c naCode) string {
+func (s *server) naRefreshToken(c naCode) string {
 	now := time.Now().Unix()
-	return signJWT(
-		map[string]any{"alg": "RS256", "kid": s.idKid, "typ": "JWT", "jku": naIssuer + "/1.0.0/certificates"},
-		map[string]any{"iss": naIssuer, "sub": c.NaID, "aud": c.ClientID, "exp": now + 900, "iat": now, "jti": uuid4(), "typ": "id_token"},
-		s.key)
+	return signJWT(s.naHeader(), map[string]any{"aud": c.ClientID, "exp": now + 365*86400, "iat": now, "iss": naIssuer, "jti": uuid4(), "sub": c.NaID, "typ": "refresh"}, s.key)
+}
+
+func (s *server) naAccessToken(c naCode) string {
+	now := time.Now().Unix()
+	return signJWT(s.naHeader(), map[string]any{
+		"ac:grt": 4, "ac:scp": []int{0, 1, 4, 5, 8, 9, 10, 11, 12, 13, 23, 28},
+		"aud": c.ClientID, "exp": now + 900, "iat": now, "iss": naIssuer, "jti": uuid4(), "sub": c.NaID, "typ": "token",
+	}, s.key)
+}
+
+func (s *server) naIDToken(c naCode, accessToken string) string {
+	now := time.Now().Unix()
+	sum := sha256.Sum256([]byte(accessToken))
+	return signJWT(s.naHeader(), map[string]any{
+		"at_hash": b64url(sum[:16]), "aud": c.ClientID, "exp": now + 900, "iat": now, "iss": naIssuer, "jti": uuid4(), "sub": c.NaID,
+	}, s.key)
 }
 
 // ---------- user objects ----------
@@ -679,7 +689,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 				params.Set("session_token_code", code)
 				dest += sep + params.Encode()
 			case strings.Contains(rt, "id_token"):
-				params.Set("id_token", s.naIDToken(s.codes[code]))
+				params.Set("id_token", s.naIDToken(s.codes[code], ""))
 				if strings.Contains(rt, "code") {
 					params.Set("code", code)
 				}
@@ -727,10 +737,11 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			writeJSON(w, 200, map[string]any{"session_token": code, "code": code})
 			return
 		}
+		at := s.naAccessToken(c)
 		writeJSON(w, 200, map[string]any{
-			"token_type": "Bearer", "expires_in": 900,
-			"access_token": s.naIDToken(c), "id_token": s.naIDToken(c),
-			"refresh_token": s.naRefreshToken(c),
+			"access_token": at, "expires_in": 900, "id_token": s.naIDToken(c, at), "refresh_token": s.naRefreshToken(c),
+			"scope":         strings.Fields(strings.ReplaceAll(form.Get("scope"), "+", " ")),
+			"session_token": randHex(24), "token_type": "Bearer",
 		})
 		return
 
@@ -760,8 +771,28 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		for len(nick) > 32 {
 			nick = nick[:len(nick)-1]
 		}
-		// Exactly the object a real console accepted (Fix_Experimental A/B log): nothing more.
-		me := map[string]any{"id": strings.ToLower(id.NaID), "nickname": nick, "loginId": nick, "links": map[string]any{}}
+		// The object the VPS serves (captured 2026-09-06), with our identity substituted.
+		now := time.Now().Unix()
+		perm := func(ok bool) map[string]any {
+			return map[string]any{"editable": map[string]any{"admin": false, "self": true}, "permitted": ok, "updatedAt": int64(1524557701), "userConfirmed": true}
+		}
+		me := map[string]any{
+			"agreedTerms": map[string]any{
+				"EULA":          map[string]any{"agreedAt": int64(1524557701), "country": "GB", "version": 2},
+				"privacyPolicy": map[string]any{"agreedAt": int64(1524557701), "country": "GB", "version": 2},
+			},
+			"analyticsOptedIn": false, "analyticsOptedInUpdatedAt": int64(1524557701),
+			"analyticsPermissions": map[string]any{"dataCollection": perm(false), "internalAnalysis": perm(true), "targetMarketing": perm(false)},
+			"birthday":             "2000-01-01", "clientFriendsOptedIn": true, "clientFriendsOptedInUpdatedAt": int64(1524557701),
+			"country": "GB", "createdAt": int64(1524557701),
+			"eachEmailOptedIn": map[string]any{"deals": map[string]any{"optedIn": false, "updatedAt": int64(1524557701)}, "survey": map[string]any{"optedIn": false, "updatedAt": int64(1524557701)}},
+			"email":            "legacy@example.com", "emailOptedIn": false, "emailOptedInUpdatedAt": int64(1524557701), "emailVerified": true,
+			"gender": "unknown", "iconUri": id.Avatar, "id": strings.ToLower(id.NaID), "isChild": false, "language": "en-GB",
+			"links": map[string]any{}, "loginId": nil, "nickname": nick, "phoneNumberEnabled": false, "region": nil,
+			"screenName": "ne•••@e••••", "termsAgreementRequired": false,
+			"timezone":  map[string]any{"id": "Europe/London", "name": "Europe/London", "utcOffset": "+01:00", "utcOffsetSeconds": 3600},
+			"updatedAt": now,
+		}
 		log.Printf("[nx-baas] users/me -> id=%s nickname=%q", me["id"], nick)
 		writeJSON(w, 200, me)
 		return
