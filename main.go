@@ -834,8 +834,13 @@ func main() {
 	s.jwks = jwksFor(&key.PublicKey, s.idKid, getenv("BAAS_ID_KID", "00000000-0000-0000-0000-000000000002"), s.accKid)
 	cert := selfSigned([]string{baasHost, "m-lp1.baas.nintendo.com", "cdn-image-e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com",
 		"accounts.nintendo.com", "api.accounts.nintendo.com", "cdn.accounts.nintendo.com"}, getenv("NX_CA_DIR", "/data/ca"))
+	var handler http.Handler = s
+	if up := os.Getenv("NX_UPSTREAM"); up != "" {
+		log.Printf("[nx-baas] CAPTURE MODE: forwarding everything to %s and logging bodies", up)
+		handler = newCaptureProxy(up)
+	}
 	srv := &http.Server{
-		Addr: getenv("NX_ADDR", ":443"), Handler: s,
+		Addr: getenv("NX_ADDR", ":443"), Handler: handler,
 		TLSConfig: &tls.Config{Certificates: []tls.Certificate{cert}, ClientAuth: tls.NoClientCert, MinVersion: tls.VersionTLS12},
 	}
 	log.Printf("[nx-baas] listening %s (BAAS + Nintendo Account); account api %s; users=%d devices=%d", srv.Addr, s.acct.base, len(s.store.Users), len(s.store.Devices))
