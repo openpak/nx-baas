@@ -115,38 +115,23 @@ func (s *Store) UserByPID(pid uint64) *User {
 	return nil
 }
 
-// Link binds the device account behind user `from` to OpenPak PID `pid`. If that PID already
-// owns a BAAS user (the other console, or an earlier link) the device account moves over to it,
-// like real federation merging a fresh device account into the Nintendo Account's existing user.
-func (s *Store) Link(from *User, pid uint64, baasUserID, naID string) *User {
+// Link binds user `from` (the one the console just created or logged in with) to OpenPak PID
+// `pid`. The BAAS user id the console holds must never change (2124-0292 otherwise), so `from`
+// keeps its id; any other user previously linked to the same PID (an earlier attempt, or the
+// other console) is simply unlinked.
+func (s *Store) Link(from *User, pid uint64, naID string) *User {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var target *User
 	for _, u := range s.Users {
-		if u.PID == pid {
-			target = u
-			break
+		if u != from && u.PID == pid {
+			u.PID, u.NaID = 0, ""
 		}
 	}
-	if target == nil {
-		target = from
-		delete(s.Users, from.ID)
-		from.ID = baasUserID
-		s.Users[from.ID] = from
-	} else if target != from {
-		target.DeviceAccounts = append(target.DeviceAccounts, from.DeviceAccounts...)
-		delete(s.Users, from.ID)
-	}
-	target.PID, target.NaID = pid, naID
-	for _, did := range target.DeviceAccounts {
-		if d := s.Devices[did]; d != nil {
-			d.UserID = target.ID
-		}
-	}
-	target.UpdatedAt = time.Now().Unix()
+	from.PID, from.NaID = pid, naID
+	from.UpdatedAt = time.Now().Unix()
 	s.NaToPID[naID] = pid
 	s.save()
-	return target
+	return from
 }
 
 func (s *Store) Update(u *User, f func(*User)) {

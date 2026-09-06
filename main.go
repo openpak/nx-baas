@@ -541,7 +541,7 @@ func (s *server) link(u *User, idTok string) (*User, error) {
 	if err != nil {
 		return nil, err
 	}
-	nu := s.store.Link(u, pid, id.BaasUserID, id.NaID)
+	nu := s.store.Link(u, pid, id.NaID)
 	log.Printf("[nx-baas] linked user %s -> pid %d (%s)", nu.ID, pid, id.Nickname)
 	return nu, nil
 }
