@@ -250,7 +250,12 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 	nickname, country := u.Nickname, u.Country
 	links := map[string]any{}
 	self := map[string]any{"playLog": ""}
-	nx := u.NxAccount // the console uploads its own profile blob (PATCH /extras/self/nxAccount) after linking; a foreign blob makes it drop the profile to local-only
+	nx := u.NxAccount
+	if nx == "" && id != nil {
+		// Restore User needs a profile blob to import; the console accepts this constant
+		// (proven 2026-09-07, identical across every VPS account) and then PATCHes its own.
+		nx = os.Getenv("NX_DEFAULT_NXACCOUNT")
+	}
 	if nx != "" {
 		self["isMediaUploaded"] = true
 		self["nxAccount"] = nx
