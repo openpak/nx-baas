@@ -1108,6 +1108,20 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// clientCertFor asks for a client certificate on the device-auth hosts only, where consoles do
+// present one and it is the sole way to tell them apart. Everything else — the browser above
+// all — is served without a CertificateRequest.
+func clientCertFor(h *tls.ClientHelloInfo, base *tls.Config) (*tls.Config, error) {
+	if !strings.HasPrefix(h.ServerName, "dauth") && !strings.HasPrefix(h.ServerName, "dcert") &&
+		!strings.HasPrefix(h.ServerName, "aauth") {
+		return nil, nil
+	}
+	c := base.Clone()
+	c.ClientAuth = tls.RequestClientCert
+	c.GetConfigForClient = nil
+	return c, nil
+}
+
 func selfSigned(hosts []string, caDir string) tls.Certificate {
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
 	tmpl := x509.Certificate{
@@ -1214,8 +1228,12 @@ func main() {
 	}
 	tlsConf := &tls.Config{
 		GetCertificate: getCert,
-		ClientAuth:     tls.RequestClientCert,
-		MinVersion:     tls.VersionTLS10,
+		// Never ask the general listener for a client certificate. dauth wants one to tell
+		// consoles apart, but the console's browser has none, and its TLS stack simply stops
+		// when handed a CertificateRequest it cannot answer — the link page then hangs with no
+		// error anywhere. The dauth hosts opt in below instead.
+		ClientAuth: tls.NoClientCert,
+		MinVersion: tls.VersionTLS10,
 		CipherSuites:   suites,
 		CurvePreferences: []tls.CurveID{
 			tls.X25519, tls.CurveP256, tls.CurveP384, tls.CurveP521,
@@ -1226,7 +1244,7 @@ func main() {
 		// persistent frontline) is still visible in the log.
 		tlsConf.GetConfigForClient = func(h *tls.ClientHelloInfo) (*tls.Config, error) {
 			log.Printf("[nx-baas] TLS hello sni=%s from=%s alpn=%v", h.ServerName, h.Conn.RemoteAddr(), h.SupportedProtos)
-			return nil, nil
+			return clientCertFor(h, tlsConf)
 		}
 	}
 	if os.Getenv("NX_UPSTREAM") != "" {
@@ -1262,6 +1280,12 @@ func main() {
 				log.Printf("[nx-baas] plain HTTP listener stopped: %v", err)
 			}
 		}()
+	}
+
+	if tlsConf.GetConfigForClient == nil {
+		tlsConf.GetConfigForClient = func(h *tls.ClientHelloInfo) (*tls.Config, error) {
+			return clientCertFor(h, tlsConf)
+		}
 	}
 
 	log.Fatal(srv.ListenAndServeTLS("", ""))
