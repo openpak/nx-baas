@@ -203,6 +203,12 @@ func TestOpenpakLoginMintsStableProjection(t *testing.T) {
 	if !strings.HasPrefix(pr.FriendCode, "SW-") {
 		t.Fatalf("friend code shape: %q", pr.FriendCode)
 	}
+	if len(pr.NaID) != 16 || len(pr.BsDid) != 16 {
+		t.Fatalf("na_id/bs_did must be 16 hex: %q %q", pr.NaID, pr.BsDid)
+	}
+	if id, err := b.Identity(pid); err != nil || id.NaID != pr.NaID {
+		t.Fatalf("identity NaID: %+v %v", id, err)
+	}
 }
 
 func TestOpenpakIdentityRendersFriends(t *testing.T) {

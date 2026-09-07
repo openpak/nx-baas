@@ -92,6 +92,8 @@ type projection struct {
 	AccountID  string `json:"account_id"`
 	PID        uint64 `json:"pid"`
 	BaasUserID string `json:"baas_user_id"`
+	NaID       string `json:"na_id"`  // Nintendo Account id: NA token subject == users/me id (console checks coherence, 2124-3122)
+	BsDid      string `json:"bs_did"` // bs:did claim of the BAAS tokens
 	FriendCode string `json:"friend_code"`
 	Nickname   string `json:"nickname"`
 	CreatedAt  int64  `json:"created_at"`
@@ -116,6 +118,22 @@ func loadProjections(path string) *projectionStore {
 	}
 	if b, err := os.ReadFile(path); err == nil {
 		_ = json.Unmarshal(b, p)
+	}
+	dirty := false
+	for _, pr := range p.ByAccount { // projections minted before na_id/bs_did existed
+		if pr.NaID != "" && pr.BsDid != "" {
+			continue
+		}
+		if pr.NaID == "" {
+			pr.NaID = randHex(8)
+		}
+		if pr.BsDid == "" {
+			pr.BsDid = randHex(8)
+		}
+		dirty = true
+	}
+	if dirty {
+		p.saveLocked() // no concurrency at load
 	}
 	return p
 }
@@ -177,6 +195,8 @@ func (b *openpakBackend) ensure(ctx context.Context, accountID string) (*project
 		AccountID:  accountID,
 		PID:        pid,
 		BaasUserID: subject,
+		NaID:       randHex(8),
+		BsDid:      randHex(8),
 		FriendCode: code,
 		CreatedAt:  time.Now().Unix(),
 	}
@@ -264,7 +284,7 @@ func (b *openpakBackend) Identity(pid uint64) (*Identity, error) {
 	if err != nil {
 		return nil, err
 	}
-	id := &Identity{PID: pid, BaasUserID: pr.BaasUserID, Nickname: pr.Nickname, FriendCode: pr.FriendCode}
+	id := &Identity{PID: pid, BaasUserID: pr.BaasUserID, NaID: pr.NaID, BsDid: pr.BsDid, Nickname: pr.Nickname, FriendCode: pr.FriendCode}
 	if acc, err := b.identity.GetAccount(ctx, &accountv1.GetAccountRequest{AccountId: accountID}); err == nil {
 		id.Nickname = acc.GetDisplayName()
 	} else {
@@ -314,7 +334,7 @@ func (b *openpakBackend) friendView(accountID, displayName string) *Friend {
 	if displayName != "" {
 		nick = displayName
 	}
-	return &Friend{PID: pr.PID, BaasUserID: pr.BaasUserID, FriendCode: pr.FriendCode, Nickname: nick}
+	return &Friend{PID: pr.PID, BaasUserID: pr.BaasUserID, NaID: pr.NaID, FriendCode: pr.FriendCode, Nickname: nick}
 }
 
 func (b *openpakBackend) Resolve(q url.Values) (*Friend, error) {
@@ -331,7 +351,7 @@ func (b *openpakBackend) Resolve(q url.Values) (*Friend, error) {
 		return nil, errors.New("not found")
 	}
 	pr := b.proj.ByAccount[accountID]
-	return &Friend{PID: pr.PID, BaasUserID: pr.BaasUserID, FriendCode: pr.FriendCode, Nickname: pr.Nickname}, nil
+	return &Friend{PID: pr.PID, BaasUserID: pr.BaasUserID, NaID: pr.NaID, FriendCode: pr.FriendCode, Nickname: pr.Nickname}, nil
 }
 
 func (b *openpakBackend) FriendRequest(from, to uint64) error {
