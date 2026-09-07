@@ -65,6 +65,7 @@ type server struct {
 	mu     sync.Mutex
 	codes  map[string]naCode // NA authorization codes / session tokens -> who logged in
 	device map[string]string // device id -> serial, from the dauth assertion
+	links  *linkStore        // pending QR console links, by code
 }
 
 type naCode struct {
@@ -748,13 +749,6 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 
 // ---------- Nintendo Account (accounts.nintendo.com) ----------
 
-const loginPage = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>OpenPak Network</title><style>body{font-family:sans-serif;background:#111;color:#eee;display:flex;justify-content:center;padding:40px}
-form{background:#222;padding:32px;border-radius:12px;width:360px}input{width:100%%;padding:12px;margin:8px 0 16px;font-size:18px;box-sizing:border-box}
-button{width:100%%;padding:14px;font-size:18px;background:#e60012;color:#fff;border:0;border-radius:8px}.err{color:#f66}</style></head>
-<body><form method="post"><h2>Link your OpenPak account</h2>%s<label>E-mail</label><input name="email" type="email" autofocus>
-<label>Password</label><input name="password" type="password">%s<button>Sign in</button></form></body></html>`
-
 func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 	p := r.URL.Path
 	form, _ := url.ParseQuery(string(body))
@@ -814,12 +808,12 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			pid, username, err := s.acct.LoginPID(form.Get("email"), form.Get("password"))
 			if err != nil {
 				log.Printf("[nx-baas] NA login failed for %q: %v", form.Get("email"), err)
-				s.authorizePage(w, q, "<p class=err>Wrong e-mail or password.</p>")
+				s.authorizePage(w, r, q, `<p class="err">Wrong e-mail or password.</p>`)
 				return
 			}
 			id, err := s.acct.Identity(pid)
 			if err != nil {
-				s.authorizePage(w, q, "<p class=err>Account lookup failed.</p>")
+				s.authorizePage(w, r, q, `<p class="err">Account lookup failed.</p>`)
 				return
 			}
 			code := randHex(16)
@@ -829,36 +823,13 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			s.store.RememberNA(id.NaID, pid)
 			// ponytail: the redirect shape is inferred from the response_type the console sends;
 			// both the query (code) and fragment (session_token_code / id_token) forms are covered.
-			rt := q.Get("response_type")
-			dest := q.Get("redirect_uri")
-			params := url.Values{"state": {q.Get("state")}}
-			sep := "?"
-			if strings.Contains(dest, "?") {
-				sep = "&"
-			}
-			switch {
-			case strings.Contains(rt, "session_token_code"):
-				// What the console sends (Settings > Users > Link Nintendo Account); it wants the
-				// code back as query parameters on its nintendo:// redirect, then trades it at
-				// /connect/1.0.0/api/session_token (with the PKCE verifier) and /api/token.
-				params.Set("session_token_code", code)
-				dest += sep + params.Encode()
-			case strings.Contains(rt, "id_token"):
-				params.Set("id_token", s.naIDToken(s.codes[code], ""))
-				if strings.Contains(rt, "code") {
-					params.Set("code", code)
-				}
-				dest += "#" + params.Encode()
-			default:
-				params.Set("code", code)
-				dest += sep + params.Encode()
-			}
-			log.Printf("[nx-baas] NA authorize ok pid=%d response_type=%q -> %s", pid, rt, dest)
+			dest := s.authorizeRedirect(q, code)
+			log.Printf("[nx-baas] NA authorize ok pid=%d response_type=%q -> %s", pid, q.Get("response_type"), dest)
 			http.Redirect(w, r, dest, http.StatusFound)
 			return
 		}
 		dump(r, body, "NA authorize")
-		s.authorizePage(w, q, "")
+		s.authorizePage(w, r, q, "")
 		return
 
 	case p == "/connect/1.0.0/api/session_token" || p == "/connect/1.0.0/api/token":
@@ -956,13 +927,127 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 	w.WriteHeader(404)
 }
 
-func (s *server) authorizePage(w http.ResponseWriter, q url.Values, msg string) {
+// authorizeRedirect builds the destination the console expects for the response_type it asked
+// for. Shared by the password form and the QR flow so both finish identically.
+// ponytail: the redirect shape is inferred from the response_type the console sends; both the
+// query (code) and fragment (session_token_code / id_token) forms are covered.
+func (s *server) authorizeRedirect(q url.Values, code string) string {
+	rt := q.Get("response_type")
+	dest := q.Get("redirect_uri")
+	params := url.Values{"state": {q.Get("state")}}
+	sep := "?"
+	if strings.Contains(dest, "?") {
+		sep = "&"
+	}
+	switch {
+	case strings.Contains(rt, "session_token_code"):
+		// What the console sends (Settings > Users > Link Nintendo Account); it wants the code
+		// back as query parameters on its nintendo:// redirect, then trades it at
+		// /connect/1.0.0/api/session_token (with the PKCE verifier) and /api/token.
+		params.Set("session_token_code", code)
+		return dest + sep + params.Encode()
+	case strings.Contains(rt, "id_token"):
+		s.mu.Lock()
+		c := s.codes[code]
+		s.mu.Unlock()
+		params.Set("id_token", s.naIDToken(c, ""))
+		if strings.Contains(rt, "code") {
+			params.Set("code", code)
+		}
+		return dest + "#" + params.Encode()
+	default:
+		params.Set("code", code)
+		return dest + sep + params.Encode()
+	}
+}
+
+// authorizePage is what the console browser shows. Typing an e-mail and password with a
+// controller is miserable, so the QR path leads: a code and an image to scan, the page polls
+// for a phone to claim it, and the person at the console approves. The password form is still
+// there, one fold down, for anyone without a phone to hand.
+func (s *server) authorizePage(w http.ResponseWriter, r *http.Request, q url.Values, msg string) {
 	var hidden strings.Builder
 	for k, v := range q {
 		fmt.Fprintf(&hidden, `<input type="hidden" name="%s" value="%s">`, html.EscapeString(k), html.EscapeString(v[0]))
 	}
+	code := s.links.new(q)
+	linkURL := s.linkBaseURL(r) + "/link?c=" + code
+	var e string
+	if msg != "" {
+		e = msg
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, loginPage, msg, hidden.String())
+	fmt.Fprint(w, pageHead("Link this console")+`
+<h1>Link this console</h1>
+<p>Scan the code with your phone, sign in there, then approve it here.</p>
+<div class="card"><div class="split">
+  <div class="qr"><img src="`+qrDataURI(linkURL)+`" alt="QR code"></div>
+  <div>
+    <ol class="steps">
+      <li>Scan the square with your phone&rsquo;s camera.</li>
+      <li>Sign in to OpenPak on the phone.</li>
+      <li>Check this code matches, then approve below.</li>
+    </ol>
+    <p style="margin:16px 0 0"><span class="code">`+code+`</span></p>
+    <p id="status" style="margin:14px 0 0">Waiting for your phone&hellip;</p>
+    <div id="confirm" hidden>
+      <button id="approve" type="button">Approve</button>
+      <button id="deny" class="ghost" type="button">Not me</button>
+    </div>
+  </div>
+</div></div>
+
+<details><summary>No phone? Sign in here instead</summary>
+<div class="card" style="margin-top:14px">`+e+`<form method="post">
+<label for="email">E-mail</label><input id="email" name="email" type="email" autocomplete="username">
+<label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password">
+`+hidden.String()+`<button type="submit">Sign in</button></form></div></details>
+<script>
+(function () {
+  var code = ` + "\"" + code + "\"" + `, status = document.getElementById("status"),
+      confirm = document.getElementById("confirm"), done = false;
+  function poll() {
+    if (done) return;
+    var x = new XMLHttpRequest();
+    x.open("GET", "/connect/1.0.0/qr/state?c=" + code, true);
+    x.onreadystatechange = function () {
+      if (x.readyState !== 4) return;
+      var d = {};
+      try { d = JSON.parse(x.responseText); } catch (e) { return; }
+      if (d.state === "claimed") {
+        status.innerHTML = "Signed in on your phone as <strong>" + d.account + "</strong>. Approve to finish.";
+        confirm.hidden = false;
+      } else if (d.state === "expired") {
+        status.textContent = "This code expired. Reload the page for a new one.";
+        done = true;
+      }
+    };
+    x.send();
+  }
+  setInterval(poll, ` + pollEvery + `);
+  poll();
+  document.getElementById("approve").onclick = function () {
+    done = true;
+    status.textContent = "Linking\u2026";
+    var x = new XMLHttpRequest();
+    x.open("POST", "/connect/1.0.0/qr/approve?c=" + code, true);
+    x.onreadystatechange = function () {
+      if (x.readyState !== 4) return;
+      var d = {};
+      try { d = JSON.parse(x.responseText); } catch (e) {}
+      if (d.redirect) { window.location = d.redirect; }
+      else { status.textContent = "That did not work. Reload and try again."; }
+    };
+    x.send();
+  };
+  document.getElementById("deny").onclick = function () {
+    var x = new XMLHttpRequest();
+    x.open("POST", "/connect/1.0.0/qr/deny?c=" + code, true);
+    x.send();
+    window.location.reload();
+  };
+})();
+</script></main></body></html>`)
 }
 
 // ---------- plumbing ----------
@@ -997,6 +1082,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 	switch {
+	case strings.HasPrefix(r.URL.Path, "/connect/1.0.0/qr/") || r.URL.Path == "/link":
+		if !s.qrRoutes(w, r, body) {
+			http.NotFound(w, r)
+		}
 	case strings.Contains(host, "accounts.nintendo.com"):
 		s.na(w, r, body)
 	case strings.HasPrefix(host, "dauth") || strings.HasPrefix(host, "dcert"):
@@ -1071,6 +1160,7 @@ func main() {
 		naKid:  getenv("BAAS_NA_KID", "00000000-0000-0000-0000-000000000001"),
 		codes:  map[string]naCode{},
 		device: map[string]string{},
+		links:  newLinkStore(),
 		acct:   newBackend(),
 	}
 	s.jwks = jwksFor(&key.PublicKey, s.idKid, getenv("BAAS_ID_KID", "00000000-0000-0000-0000-000000000002"), s.accKid, s.naKid)

@@ -3,6 +3,7 @@ module nx-baas
 go 1.24
 
 require (
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	google.golang.org/grpc v1.75.1
 	google.golang.org/protobuf v1.36.9
 )
