@@ -1079,6 +1079,14 @@ func main() {
 		return &c, nil
 	}
 	tlsConf := &tls.Config{GetCertificate: getCert, ClientAuth: tls.NoClientCert, MinVersion: tls.VersionTLS12}
+	if os.Getenv("NX_DEBUG") != "" {
+		// Diagnostic: every TLS handshake by SNI, so a connection that never speaks HTTP (the Penne
+		// persistent frontline) is still visible in the log.
+		tlsConf.GetConfigForClient = func(h *tls.ClientHelloInfo) (*tls.Config, error) {
+			log.Printf("[nx-baas] TLS hello sni=%s from=%s alpn=%v", h.ServerName, h.Conn.RemoteAddr(), h.SupportedProtos)
+			return nil, nil
+		}
+	}
 	if os.Getenv("NX_UPSTREAM") != "" {
 		// ponytail: capture mode replicates the original capture, which used the fixed multi-SAN
 		// cert. On-demand per-SNI certs disturbed the console's silent NA session and forced a
