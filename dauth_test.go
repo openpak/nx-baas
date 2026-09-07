@@ -66,11 +66,13 @@ func TestDeviceTokensFromRealConsoleBody(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
 	}
+	// The console reads the list from "results"; a different envelope key failed the link
+	// with 2124-4798 even though every token in it was valid.
 	var out struct {
 		Tokens []struct {
 			ClientID string `json:"client_id"`
 			Token    string `json:"device_auth_token"`
-		} `json:"device_auth_tokens"`
+		} `json:"results"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)

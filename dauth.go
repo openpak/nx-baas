@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
@@ -15,6 +16,13 @@ import (
 // 22.2.0.0): JSON, with one entry per client id it wants a token for. There is no device
 // identifier anywhere in it — the real service knows the console from its TLS client
 // certificate, which is why deviceID falls back to the connection below.
+type edgeTokenRequest struct {
+	TokenRequests []struct {
+		ClientID string `json:"client_id"`
+		VendorID string `json:"vendor_id"`
+	} `json:"token_requests"`
+}
+
 type deviceTokenRequest struct {
 	SystemVersion string `json:"system_version"`
 	FWRevision    string `json:"fw_revision"`
@@ -43,6 +51,7 @@ type deviceTokenRequest struct {
 func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 	host, p := hostOf(r), r.URL.Path
 
+	// aauth shares this handler: it is the next step of the same chain.
 	// dcert: the verification keys for everything signed below.
 	if strings.HasPrefix(host, "dcert") {
 		if p == "/keys" {
@@ -83,24 +92,71 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 			})
 		}
 		log.Printf("[dauth] device %s (fw %s) -> %d token(s)", device, req.SystemVersion, len(out))
-		writeJSON(w, 200, map[string]any{"device_auth_tokens": out})
+		// The console reads "results"; anything else and it fails the link with 2124-4798
+		// after retrying the whole chain.
+		writeJSON(w, 200, map[string]any{"results": out})
 
 	case p == "/v8/edge_tokens" && r.Method == "POST":
-		var req deviceTokenRequest
+		// Edge tokens gate the CDN, not our services: the console wants an Akamai-style
+		// signed string rather than a JWT, one per requested client/vendor pair.
+		var req edgeTokenRequest
 		_ = json.Unmarshal(body, &req)
-		client := form.Get("client_id")
-		if len(req.TokenRequests) > 0 {
-			client = req.TokenRequests[0].ClientID
+		device := deviceID(r, deviceTokenRequest{})
+		exp := time.Now().Unix() + 86400
+		out := make([]any, 0, len(req.TokenRequests))
+		for _, tr := range req.TokenRequests {
+			out = append(out, map[string]any{
+				"client_id":  tr.ClientID,
+				"vendor_id":  tr.VendorID,
+				"dtoken":     edgeDToken(exp, device),
+				"expires_in": 86400,
+			})
 		}
+		writeJSON(w, 200, map[string]any{"results": out})
+
+	case p == "/v5/application_auth_token" && r.Method == "POST":
+		// aauth: the console asks for a per-title token once dauth has vouched for the device.
+		appID, appVer := form.Get("application_id"), form.Get("application_version")
+		log.Printf("[aauth] application %s version %s", appID, appVer)
 		writeJSON(w, 200, map[string]any{
-			"edge_token": s.deviceToken(deviceID(r, req), client),
-			"expires_in": 86400,
+			"application_auth_token": s.applicationToken(appID, appVer),
+			"expires_in":             86400,
+			"settings":               []any{},
+			// Every account on this network has a membership; nothing here sells one.
+			"online_play_policy": "MEMBERSHIP_REQUIRED",
+			"policy_handler":     "SYSTEM",
 		})
 
 	default:
 		log.Printf("[dauth] !! UNHANDLED %s %s%s", r.Method, host, p)
 		http.NotFound(w, r)
 	}
+}
+
+// edgeDToken builds the CDN's token format: fields joined by ~, with an HMAC the CDN would
+// check. Nothing of ours verifies it, so the digest is random rather than pretend-signed.
+func edgeDToken(exp int64, device string) string {
+	return fmt.Sprintf("exp=%d~acl=%%2F%%2A~data=sub=%s.pc=HAC.id=%s~hmac=%s",
+		exp, device, randHex(16), randHex(32))
+}
+
+// applicationToken is what aauth hands back for a title.
+func (s *server) applicationToken(appID, appVersion string) string {
+	now := time.Now().Unix()
+	return signJWT(
+		map[string]any{"alg": "RS256", "jku": "https://dcert-lp1.ndas.srv.nintendo.net/keys", "kid": s.idKid, "typ": "JWT"},
+		map[string]any{
+			"iss": "https://aauth-lp1.ndas.srv.nintendo.net",
+			"jti": randHex(16),
+			"iat": now,
+			"exp": now + 86400,
+			"sub": appID,
+			"aud": appID,
+			"nintendo": map[string]any{
+				"ai": appID,
+				"av": appVersion,
+			},
+		}, s.key)
 }
 
 // deviceID identifies the console. Nothing in the request body says which console it is, so the

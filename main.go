@@ -1088,7 +1088,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	case strings.Contains(host, "accounts.nintendo.com"):
 		s.na(w, r, body)
-	case strings.HasPrefix(host, "dauth") || strings.HasPrefix(host, "dcert"):
+	case strings.HasPrefix(host, "dauth") || strings.HasPrefix(host, "dcert") || strings.HasPrefix(host, "aauth"):
 		s.dauth(w, r, body)
 	case strings.Contains(host, "penne.") || strings.Contains(host, "vermillion.") || strings.HasPrefix(host, "beach."):
 		s.penne(w, r, body)
