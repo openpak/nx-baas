@@ -127,6 +127,18 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 			"policy_handler":     "SYSTEM",
 		})
 
+	// dragons: the licence service the console talks to during account setup. A 404 here stops
+	// the setup with 2124-3121, so both endpoints answer plausibly; nothing on this network
+	// sells or revokes licences, so there is nothing to check.
+	case strings.HasPrefix(host, "dragons") && strings.HasSuffix(p, "/elicense_archives/publish"):
+		log.Printf("[dragons] elicense archive published")
+		writeJSON(w, 200, map[string]any{"id": randHex(16), "published_at": time.Now().Unix()})
+
+	case strings.HasPrefix(host, "dragons") && strings.Contains(p, "contents_authorization_token"):
+		appID := r.Header.Get("Nintendo-Application-Id")
+		log.Printf("[dragons] contents authorization token for %q", appID)
+		writeJSON(w, 200, map[string]any{"contents_authorization_token": s.applicationToken(appID, "")})
+
 	default:
 		log.Printf("[dauth] !! UNHANDLED %s %s%s", r.Method, host, p)
 		http.NotFound(w, r)
