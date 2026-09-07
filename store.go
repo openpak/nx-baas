@@ -92,6 +92,12 @@ func (s *Store) Login(id, password string) *User {
 		s.Devices[id] = d
 		s.save()
 	}
+	if d != nil && d.Password == "" && len(password) >= 20 {
+		// ponytail: pre-seeded device (mirror of a console's VPS device account) adopts the
+		// password it presents on first login, so it binds to the seeded user, not a throwaway.
+		d.Password = password
+		s.save()
+	}
 	if d == nil || d.Password != password {
 		return nil
 	}
