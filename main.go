@@ -381,6 +381,12 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		writeJSON(w, 200, map[string]any{"accessToken": s.accessToken(di, 1, randHex(8), di, sn), "tokenType": "Bearer", "expiresIn": 10800})
 		return
 
+	case p == "/1.0.0/image_upload" && r.Method == "POST":
+		// Profile image upload during account setup. Nothing here stores images yet; accepting
+		// it keeps the console's setup flow moving instead of 404ing mid-way.
+		writeJSON(w, 200, map[string]any{})
+		return
+
 	case p == "/1.0.0/users" && r.Method == "POST":
 		u, d := s.store.NewUser()
 		log.Printf("[nx-baas] new device account %s for user %s", d.ID, u.ID)
@@ -1005,7 +1011,7 @@ func (s *server) authorizePage(w http.ResponseWriter, r *http.Request, q url.Val
 `+hidden.String()+`<button type="submit">Sign in</button></form></div></details>
 <script>
 (function () {
-  var code = ` + "\"" + code + "\"" + `, status = document.getElementById("status"),
+  var code = `+"\""+code+"\""+`, status = document.getElementById("status"),
       confirm = document.getElementById("confirm"), done = false;
   function poll() {
     if (done) return;
@@ -1025,7 +1031,7 @@ func (s *server) authorizePage(w http.ResponseWriter, r *http.Request, q url.Val
     };
     x.send();
   }
-  setInterval(poll, ` + pollEvery + `);
+  setInterval(poll, `+pollEvery+`);
   poll();
   document.getElementById("approve").onclick = function () {
     done = true;
@@ -1233,9 +1239,9 @@ func main() {
 		// consoles apart, but the console's browser has none, and its TLS stack simply stops
 		// when handed a CertificateRequest it cannot answer — the link page then hangs with no
 		// error anywhere. The dauth hosts opt in below instead.
-		ClientAuth: tls.NoClientCert,
-		MinVersion: tls.VersionTLS10,
-		CipherSuites:   suites,
+		ClientAuth:   tls.NoClientCert,
+		MinVersion:   tls.VersionTLS10,
+		CipherSuites: suites,
 		CurvePreferences: []tls.CurveID{
 			tls.X25519, tls.CurveP256, tls.CurveP384, tls.CurveP521,
 		},

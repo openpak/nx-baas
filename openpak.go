@@ -26,6 +26,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
@@ -55,6 +56,12 @@ func newOpenpakBackend(ctx context.Context, dataDir string) (*openpakBackend, er
 	}
 	conn, err := grpc.NewClient(getenv("ACCOUNT_GRPC_ADDR", "127.0.0.1:7000"),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		// Console logins are rare and bursty: without keepalive the connection goes idle, the
+		// first call after a quiet spell dies with RST_STREAM CANCEL, and the person at the
+		// console sees the sign-in fail for no reason they can act on.
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time: 30 * time.Second, Timeout: 10 * time.Second, PermitWithoutStream: true,
+		}),
 		grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any,
 			cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 			return invoker(metadata.AppendToOutgoingContext(ctx, "x-internal-key", coreKey),
@@ -247,8 +254,14 @@ func newFriendCode(p *projectionStore) (string, error) {
 func (b *openpakBackend) LoginPID(email, password string) (uint64, string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	res, err := b.identity.VerifyPassword(ctx, &accountv1.VerifyPasswordRequest{
-		CallerNamespace: b.namespace, Purpose: "console_login", Email: email, Password: password})
+	req := &accountv1.VerifyPasswordRequest{
+		CallerNamespace: b.namespace, Purpose: "console_login", Email: email, Password: password}
+	res, err := b.identity.VerifyPassword(ctx, req)
+	if isTransient(err) {
+		// One retry: a dead connection must not read as a wrong password on a television.
+		log.Printf("[openpak] retrying login after transient error: %v", err)
+		res, err = b.identity.VerifyPassword(ctx, req)
+	}
 	if err != nil {
 		return 0, "", err
 	}
@@ -441,4 +454,17 @@ func accName(acc *accountv1.GetAccountResponse) string {
 
 func base64RawURL(b []byte) string {
 	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+// isTransient reports whether a gRPC failure is worth one immediate retry: a reset or dropped
+// connection, never a rejected password.
+func isTransient(err error) bool {
+	if err == nil {
+		return false
+	}
+	switch status.Code(err) {
+	case codes.Unavailable, codes.DeadlineExceeded, codes.Canceled:
+		return true
+	}
+	return false
 }
