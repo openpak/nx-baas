@@ -300,6 +300,7 @@ func (b *openpakBackend) Identity(pid uint64) (*Identity, error) {
 	id := &Identity{PID: pid, BaasUserID: pr.BaasUserID, NaID: pr.NaID, BsDid: pr.BsDid, Nickname: pr.Nickname, FriendCode: pr.FriendCode}
 	if acc, err := b.identity.GetAccount(ctx, &accountv1.GetAccountRequest{AccountId: accountID}); err == nil {
 		id.Nickname = acc.GetDisplayName()
+		id.Country, id.Birthday = acc.GetCountry(), acc.GetBirthday()
 	} else {
 		logErr("identity get-account", err)
 	}

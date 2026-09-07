@@ -288,10 +288,18 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 	// The console parses these two strictly: an empty country or a "0000-00-00" birthday — what
 	// a fresh account carries, since the account core stores neither — reads as a malformed
 	// user object and the link ends with 2124-3121.
+	// Prefer what the account actually holds; the defaults exist only for accounts created
+	// before registration collected either, since the console rejects a malformed value.
+	if country == "" && id != nil {
+		country = id.Country
+	}
 	if country == "" {
 		country = getenv("NX_DEFAULT_COUNTRY", "GB")
 	}
 	birthday := u.Birthday
+	if (birthday == "" || birthday == "0000-00-00") && id != nil {
+		birthday = id.Birthday
+	}
 	if birthday == "" || birthday == "0000-00-00" {
 		birthday = getenv("NX_DEFAULT_BIRTHDAY", "1990-01-01")
 	}

@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.2
 // - protoc             v7.35.1
-// source: proto/openpak/account/v1/registration.proto
+// source: openpak/account/v1/registration.proto
 
 package accountv1
 
@@ -121,5 +121,5 @@ var Registration_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "proto/openpak/account/v1/registration.proto",
+	Metadata: "openpak/account/v1/registration.proto",
 }

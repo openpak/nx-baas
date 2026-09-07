@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.12
 // 	protoc        v7.35.1
-// source: proto/openpak/account/v1/sessions_invitations.proto
+// source: openpak/account/v1/sessions_invitations.proto
 
 package accountv1
 
@@ -34,7 +34,7 @@ type RegisterSessionRequest struct {
 
 func (x *RegisterSessionRequest) Reset() {
 	*x = RegisterSessionRequest{}
-	mi := &file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes[0]
+	mi := &file_openpak_account_v1_sessions_invitations_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -46,7 +46,7 @@ func (x *RegisterSessionRequest) String() string {
 func (*RegisterSessionRequest) ProtoMessage() {}
 
 func (x *RegisterSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes[0]
+	mi := &file_openpak_account_v1_sessions_invitations_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -59,7 +59,7 @@ func (x *RegisterSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterSessionRequest.ProtoReflect.Descriptor instead.
 func (*RegisterSessionRequest) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_sessions_invitations_proto_rawDescGZIP(), []int{0}
+	return file_openpak_account_v1_sessions_invitations_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *RegisterSessionRequest) GetAccountId() string {
@@ -107,7 +107,7 @@ type RegisterSessionResponse struct {
 
 func (x *RegisterSessionResponse) Reset() {
 	*x = RegisterSessionResponse{}
-	mi := &file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes[1]
+	mi := &file_openpak_account_v1_sessions_invitations_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -119,7 +119,7 @@ func (x *RegisterSessionResponse) String() string {
 func (*RegisterSessionResponse) ProtoMessage() {}
 
 func (x *RegisterSessionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes[1]
+	mi := &file_openpak_account_v1_sessions_invitations_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -132,7 +132,7 @@ func (x *RegisterSessionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterSessionResponse.ProtoReflect.Descriptor instead.
 func (*RegisterSessionResponse) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_sessions_invitations_proto_rawDescGZIP(), []int{1}
+	return file_openpak_account_v1_sessions_invitations_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *RegisterSessionResponse) GetSessionId() string {
@@ -158,7 +158,7 @@ type HeartbeatRequest struct {
 
 func (x *HeartbeatRequest) Reset() {
 	*x = HeartbeatRequest{}
-	mi := &file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes[2]
+	mi := &file_openpak_account_v1_sessions_invitations_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -170,7 +170,7 @@ func (x *HeartbeatRequest) String() string {
 func (*HeartbeatRequest) ProtoMessage() {}
 
 func (x *HeartbeatRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes[2]
+	mi := &file_openpak_account_v1_sessions_invitations_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -183,7 +183,7 @@ func (x *HeartbeatRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatRequest.ProtoReflect.Descriptor instead.
 func (*HeartbeatRequest) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_sessions_invitations_proto_rawDescGZIP(), []int{2}
+	return file_openpak_account_v1_sessions_invitations_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *HeartbeatRequest) GetSessionId() string {
@@ -202,7 +202,7 @@ type HeartbeatResponse struct {
 
 func (x *HeartbeatResponse) Reset() {
 	*x = HeartbeatResponse{}
-	mi := &file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes[3]
+	mi := &file_openpak_account_v1_sessions_invitations_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -214,7 +214,7 @@ func (x *HeartbeatResponse) String() string {
 func (*HeartbeatResponse) ProtoMessage() {}
 
 func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes[3]
+	mi := &file_openpak_account_v1_sessions_invitations_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -227,7 +227,7 @@ func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatResponse.ProtoReflect.Descriptor instead.
 func (*HeartbeatResponse) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_sessions_invitations_proto_rawDescGZIP(), []int{3}
+	return file_openpak_account_v1_sessions_invitations_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *HeartbeatResponse) GetLeaseSeconds() int32 {
@@ -246,7 +246,7 @@ type ExpireSessionRequest struct {
 
 func (x *ExpireSessionRequest) Reset() {
 	*x = ExpireSessionRequest{}
-	mi := &file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes[4]
+	mi := &file_openpak_account_v1_sessions_invitations_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -258,7 +258,7 @@ func (x *ExpireSessionRequest) String() string {
 func (*ExpireSessionRequest) ProtoMessage() {}
 
 func (x *ExpireSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes[4]
+	mi := &file_openpak_account_v1_sessions_invitations_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -271,7 +271,7 @@ func (x *ExpireSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExpireSessionRequest.ProtoReflect.Descriptor instead.
 func (*ExpireSessionRequest) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_sessions_invitations_proto_rawDescGZIP(), []int{4}
+	return file_openpak_account_v1_sessions_invitations_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ExpireSessionRequest) GetSessionId() string {
@@ -289,7 +289,7 @@ type ExpireSessionResponse struct {
 
 func (x *ExpireSessionResponse) Reset() {
 	*x = ExpireSessionResponse{}
-	mi := &file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes[5]
+	mi := &file_openpak_account_v1_sessions_invitations_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -301,7 +301,7 @@ func (x *ExpireSessionResponse) String() string {
 func (*ExpireSessionResponse) ProtoMessage() {}
 
 func (x *ExpireSessionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes[5]
+	mi := &file_openpak_account_v1_sessions_invitations_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -314,7 +314,7 @@ func (x *ExpireSessionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExpireSessionResponse.ProtoReflect.Descriptor instead.
 func (*ExpireSessionResponse) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_sessions_invitations_proto_rawDescGZIP(), []int{5}
+	return file_openpak_account_v1_sessions_invitations_proto_rawDescGZIP(), []int{5}
 }
 
 type ResolveSessionRequest struct {
@@ -327,7 +327,7 @@ type ResolveSessionRequest struct {
 
 func (x *ResolveSessionRequest) Reset() {
 	*x = ResolveSessionRequest{}
-	mi := &file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes[6]
+	mi := &file_openpak_account_v1_sessions_invitations_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -339,7 +339,7 @@ func (x *ResolveSessionRequest) String() string {
 func (*ResolveSessionRequest) ProtoMessage() {}
 
 func (x *ResolveSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes[6]
+	mi := &file_openpak_account_v1_sessions_invitations_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -352,7 +352,7 @@ func (x *ResolveSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResolveSessionRequest.ProtoReflect.Descriptor instead.
 func (*ResolveSessionRequest) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_sessions_invitations_proto_rawDescGZIP(), []int{6}
+	return file_openpak_account_v1_sessions_invitations_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ResolveSessionRequest) GetAccountId() string {
@@ -380,7 +380,7 @@ type ResolveSessionResponse struct {
 
 func (x *ResolveSessionResponse) Reset() {
 	*x = ResolveSessionResponse{}
-	mi := &file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes[7]
+	mi := &file_openpak_account_v1_sessions_invitations_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -392,7 +392,7 @@ func (x *ResolveSessionResponse) String() string {
 func (*ResolveSessionResponse) ProtoMessage() {}
 
 func (x *ResolveSessionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes[7]
+	mi := &file_openpak_account_v1_sessions_invitations_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -405,7 +405,7 @@ func (x *ResolveSessionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResolveSessionResponse.ProtoReflect.Descriptor instead.
 func (*ResolveSessionResponse) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_sessions_invitations_proto_rawDescGZIP(), []int{7}
+	return file_openpak_account_v1_sessions_invitations_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ResolveSessionResponse) GetSessionId() string {
@@ -442,7 +442,7 @@ type SendInvitationRequest struct {
 
 func (x *SendInvitationRequest) Reset() {
 	*x = SendInvitationRequest{}
-	mi := &file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes[8]
+	mi := &file_openpak_account_v1_sessions_invitations_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -454,7 +454,7 @@ func (x *SendInvitationRequest) String() string {
 func (*SendInvitationRequest) ProtoMessage() {}
 
 func (x *SendInvitationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes[8]
+	mi := &file_openpak_account_v1_sessions_invitations_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -467,7 +467,7 @@ func (x *SendInvitationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendInvitationRequest.ProtoReflect.Descriptor instead.
 func (*SendInvitationRequest) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_sessions_invitations_proto_rawDescGZIP(), []int{8}
+	return file_openpak_account_v1_sessions_invitations_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *SendInvitationRequest) GetFromAccountId() string {
@@ -515,7 +515,7 @@ type SendInvitationResponse struct {
 
 func (x *SendInvitationResponse) Reset() {
 	*x = SendInvitationResponse{}
-	mi := &file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes[9]
+	mi := &file_openpak_account_v1_sessions_invitations_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -527,7 +527,7 @@ func (x *SendInvitationResponse) String() string {
 func (*SendInvitationResponse) ProtoMessage() {}
 
 func (x *SendInvitationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes[9]
+	mi := &file_openpak_account_v1_sessions_invitations_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -540,7 +540,7 @@ func (x *SendInvitationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendInvitationResponse.ProtoReflect.Descriptor instead.
 func (*SendInvitationResponse) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_sessions_invitations_proto_rawDescGZIP(), []int{9}
+	return file_openpak_account_v1_sessions_invitations_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *SendInvitationResponse) GetInvitationId() string {
@@ -568,7 +568,7 @@ type PollInvitationsRequest struct {
 
 func (x *PollInvitationsRequest) Reset() {
 	*x = PollInvitationsRequest{}
-	mi := &file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes[10]
+	mi := &file_openpak_account_v1_sessions_invitations_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -580,7 +580,7 @@ func (x *PollInvitationsRequest) String() string {
 func (*PollInvitationsRequest) ProtoMessage() {}
 
 func (x *PollInvitationsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes[10]
+	mi := &file_openpak_account_v1_sessions_invitations_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -593,7 +593,7 @@ func (x *PollInvitationsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PollInvitationsRequest.ProtoReflect.Descriptor instead.
 func (*PollInvitationsRequest) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_sessions_invitations_proto_rawDescGZIP(), []int{10}
+	return file_openpak_account_v1_sessions_invitations_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *PollInvitationsRequest) GetNamespace() string {
@@ -626,7 +626,7 @@ type PollInvitationsResponse struct {
 
 func (x *PollInvitationsResponse) Reset() {
 	*x = PollInvitationsResponse{}
-	mi := &file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes[11]
+	mi := &file_openpak_account_v1_sessions_invitations_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -638,7 +638,7 @@ func (x *PollInvitationsResponse) String() string {
 func (*PollInvitationsResponse) ProtoMessage() {}
 
 func (x *PollInvitationsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes[11]
+	mi := &file_openpak_account_v1_sessions_invitations_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -651,7 +651,7 @@ func (x *PollInvitationsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PollInvitationsResponse.ProtoReflect.Descriptor instead.
 func (*PollInvitationsResponse) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_sessions_invitations_proto_rawDescGZIP(), []int{11}
+	return file_openpak_account_v1_sessions_invitations_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *PollInvitationsResponse) GetInvitations() []*Invitation {
@@ -673,7 +673,7 @@ type AckInvitationsRequest struct {
 
 func (x *AckInvitationsRequest) Reset() {
 	*x = AckInvitationsRequest{}
-	mi := &file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes[12]
+	mi := &file_openpak_account_v1_sessions_invitations_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -685,7 +685,7 @@ func (x *AckInvitationsRequest) String() string {
 func (*AckInvitationsRequest) ProtoMessage() {}
 
 func (x *AckInvitationsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes[12]
+	mi := &file_openpak_account_v1_sessions_invitations_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -698,7 +698,7 @@ func (x *AckInvitationsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AckInvitationsRequest.ProtoReflect.Descriptor instead.
 func (*AckInvitationsRequest) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_sessions_invitations_proto_rawDescGZIP(), []int{12}
+	return file_openpak_account_v1_sessions_invitations_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *AckInvitationsRequest) GetNamespace() string {
@@ -738,7 +738,7 @@ type AckInvitationsResponse struct {
 
 func (x *AckInvitationsResponse) Reset() {
 	*x = AckInvitationsResponse{}
-	mi := &file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes[13]
+	mi := &file_openpak_account_v1_sessions_invitations_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -750,7 +750,7 @@ func (x *AckInvitationsResponse) String() string {
 func (*AckInvitationsResponse) ProtoMessage() {}
 
 func (x *AckInvitationsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes[13]
+	mi := &file_openpak_account_v1_sessions_invitations_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -763,7 +763,7 @@ func (x *AckInvitationsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AckInvitationsResponse.ProtoReflect.Descriptor instead.
 func (*AckInvitationsResponse) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_sessions_invitations_proto_rawDescGZIP(), []int{13}
+	return file_openpak_account_v1_sessions_invitations_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *AckInvitationsResponse) GetAcked() int32 {
@@ -788,7 +788,7 @@ type Invitation struct {
 
 func (x *Invitation) Reset() {
 	*x = Invitation{}
-	mi := &file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes[14]
+	mi := &file_openpak_account_v1_sessions_invitations_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -800,7 +800,7 @@ func (x *Invitation) String() string {
 func (*Invitation) ProtoMessage() {}
 
 func (x *Invitation) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes[14]
+	mi := &file_openpak_account_v1_sessions_invitations_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -813,7 +813,7 @@ func (x *Invitation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Invitation.ProtoReflect.Descriptor instead.
 func (*Invitation) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_sessions_invitations_proto_rawDescGZIP(), []int{14}
+	return file_openpak_account_v1_sessions_invitations_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *Invitation) GetInvitationId() string {
@@ -865,11 +865,11 @@ func (x *Invitation) GetExpiresAtUnix() int64 {
 	return 0
 }
 
-var File_proto_openpak_account_v1_sessions_invitations_proto protoreflect.FileDescriptor
+var File_openpak_account_v1_sessions_invitations_proto protoreflect.FileDescriptor
 
-const file_proto_openpak_account_v1_sessions_invitations_proto_rawDesc = "" +
+const file_openpak_account_v1_sessions_invitations_proto_rawDesc = "" +
 	"\n" +
-	"3proto/openpak/account/v1/sessions_invitations.proto\x12\x12openpak.account.v1\"\xb8\x01\n" +
+	"-openpak/account/v1/sessions_invitations.proto\x12\x12openpak.account.v1\"\xb8\x01\n" +
 	"\x16RegisterSessionRequest\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x1c\n" +
@@ -944,19 +944,19 @@ const file_proto_openpak_account_v1_sessions_invitations_proto_rawDesc = "" +
 	"\x0eAckInvitations\x12).openpak.account.v1.AckInvitationsRequest\x1a*.openpak.account.v1.AckInvitationsResponseB4Z2openpak/account/proto/openpak/account/v1;accountv1b\x06proto3"
 
 var (
-	file_proto_openpak_account_v1_sessions_invitations_proto_rawDescOnce sync.Once
-	file_proto_openpak_account_v1_sessions_invitations_proto_rawDescData []byte
+	file_openpak_account_v1_sessions_invitations_proto_rawDescOnce sync.Once
+	file_openpak_account_v1_sessions_invitations_proto_rawDescData []byte
 )
 
-func file_proto_openpak_account_v1_sessions_invitations_proto_rawDescGZIP() []byte {
-	file_proto_openpak_account_v1_sessions_invitations_proto_rawDescOnce.Do(func() {
-		file_proto_openpak_account_v1_sessions_invitations_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_proto_openpak_account_v1_sessions_invitations_proto_rawDesc), len(file_proto_openpak_account_v1_sessions_invitations_proto_rawDesc)))
+func file_openpak_account_v1_sessions_invitations_proto_rawDescGZIP() []byte {
+	file_openpak_account_v1_sessions_invitations_proto_rawDescOnce.Do(func() {
+		file_openpak_account_v1_sessions_invitations_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_openpak_account_v1_sessions_invitations_proto_rawDesc), len(file_openpak_account_v1_sessions_invitations_proto_rawDesc)))
 	})
-	return file_proto_openpak_account_v1_sessions_invitations_proto_rawDescData
+	return file_openpak_account_v1_sessions_invitations_proto_rawDescData
 }
 
-var file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
-var file_proto_openpak_account_v1_sessions_invitations_proto_goTypes = []any{
+var file_openpak_account_v1_sessions_invitations_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_openpak_account_v1_sessions_invitations_proto_goTypes = []any{
 	(*RegisterSessionRequest)(nil),  // 0: openpak.account.v1.RegisterSessionRequest
 	(*RegisterSessionResponse)(nil), // 1: openpak.account.v1.RegisterSessionResponse
 	(*HeartbeatRequest)(nil),        // 2: openpak.account.v1.HeartbeatRequest
@@ -973,7 +973,7 @@ var file_proto_openpak_account_v1_sessions_invitations_proto_goTypes = []any{
 	(*AckInvitationsResponse)(nil),  // 13: openpak.account.v1.AckInvitationsResponse
 	(*Invitation)(nil),              // 14: openpak.account.v1.Invitation
 }
-var file_proto_openpak_account_v1_sessions_invitations_proto_depIdxs = []int32{
+var file_openpak_account_v1_sessions_invitations_proto_depIdxs = []int32{
 	14, // 0: openpak.account.v1.PollInvitationsResponse.invitations:type_name -> openpak.account.v1.Invitation
 	0,  // 1: openpak.account.v1.Sessions.RegisterSession:input_type -> openpak.account.v1.RegisterSessionRequest
 	2,  // 2: openpak.account.v1.Sessions.Heartbeat:input_type -> openpak.account.v1.HeartbeatRequest
@@ -996,26 +996,26 @@ var file_proto_openpak_account_v1_sessions_invitations_proto_depIdxs = []int32{
 	0,  // [0:1] is the sub-list for field type_name
 }
 
-func init() { file_proto_openpak_account_v1_sessions_invitations_proto_init() }
-func file_proto_openpak_account_v1_sessions_invitations_proto_init() {
-	if File_proto_openpak_account_v1_sessions_invitations_proto != nil {
+func init() { file_openpak_account_v1_sessions_invitations_proto_init() }
+func file_openpak_account_v1_sessions_invitations_proto_init() {
+	if File_openpak_account_v1_sessions_invitations_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_openpak_account_v1_sessions_invitations_proto_rawDesc), len(file_proto_openpak_account_v1_sessions_invitations_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_openpak_account_v1_sessions_invitations_proto_rawDesc), len(file_openpak_account_v1_sessions_invitations_proto_rawDesc)),
 			NumEnums:      0,
 			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   2,
 		},
-		GoTypes:           file_proto_openpak_account_v1_sessions_invitations_proto_goTypes,
-		DependencyIndexes: file_proto_openpak_account_v1_sessions_invitations_proto_depIdxs,
-		MessageInfos:      file_proto_openpak_account_v1_sessions_invitations_proto_msgTypes,
+		GoTypes:           file_openpak_account_v1_sessions_invitations_proto_goTypes,
+		DependencyIndexes: file_openpak_account_v1_sessions_invitations_proto_depIdxs,
+		MessageInfos:      file_openpak_account_v1_sessions_invitations_proto_msgTypes,
 	}.Build()
-	File_proto_openpak_account_v1_sessions_invitations_proto = out.File
-	file_proto_openpak_account_v1_sessions_invitations_proto_goTypes = nil
-	file_proto_openpak_account_v1_sessions_invitations_proto_depIdxs = nil
+	File_openpak_account_v1_sessions_invitations_proto = out.File
+	file_openpak_account_v1_sessions_invitations_proto_goTypes = nil
+	file_openpak_account_v1_sessions_invitations_proto_depIdxs = nil
 }

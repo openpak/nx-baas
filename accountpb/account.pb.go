@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.12
 // 	protoc        v7.35.1
-// source: proto/openpak/account/v1/account.proto
+// source: openpak/account/v1/account.proto
 
 package accountv1
 
@@ -60,11 +60,11 @@ func (x AccountStatus) String() string {
 }
 
 func (AccountStatus) Descriptor() protoreflect.EnumDescriptor {
-	return file_proto_openpak_account_v1_account_proto_enumTypes[0].Descriptor()
+	return file_openpak_account_v1_account_proto_enumTypes[0].Descriptor()
 }
 
 func (AccountStatus) Type() protoreflect.EnumType {
-	return &file_proto_openpak_account_v1_account_proto_enumTypes[0]
+	return &file_openpak_account_v1_account_proto_enumTypes[0]
 }
 
 func (x AccountStatus) Number() protoreflect.EnumNumber {
@@ -73,7 +73,7 @@ func (x AccountStatus) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use AccountStatus.Descriptor instead.
 func (AccountStatus) EnumDescriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_account_proto_rawDescGZIP(), []int{0}
+	return file_openpak_account_v1_account_proto_rawDescGZIP(), []int{0}
 }
 
 type LinkState int32
@@ -115,11 +115,11 @@ func (x LinkState) String() string {
 }
 
 func (LinkState) Descriptor() protoreflect.EnumDescriptor {
-	return file_proto_openpak_account_v1_account_proto_enumTypes[1].Descriptor()
+	return file_openpak_account_v1_account_proto_enumTypes[1].Descriptor()
 }
 
 func (LinkState) Type() protoreflect.EnumType {
-	return &file_proto_openpak_account_v1_account_proto_enumTypes[1]
+	return &file_openpak_account_v1_account_proto_enumTypes[1]
 }
 
 func (x LinkState) Number() protoreflect.EnumNumber {
@@ -128,7 +128,7 @@ func (x LinkState) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use LinkState.Descriptor instead.
 func (LinkState) EnumDescriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_account_proto_rawDescGZIP(), []int{1}
+	return file_openpak_account_v1_account_proto_rawDescGZIP(), []int{1}
 }
 
 type VerifyPasswordByIDRequest struct {
@@ -143,7 +143,7 @@ type VerifyPasswordByIDRequest struct {
 
 func (x *VerifyPasswordByIDRequest) Reset() {
 	*x = VerifyPasswordByIDRequest{}
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[0]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -155,7 +155,7 @@ func (x *VerifyPasswordByIDRequest) String() string {
 func (*VerifyPasswordByIDRequest) ProtoMessage() {}
 
 func (x *VerifyPasswordByIDRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[0]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -168,7 +168,7 @@ func (x *VerifyPasswordByIDRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VerifyPasswordByIDRequest.ProtoReflect.Descriptor instead.
 func (*VerifyPasswordByIDRequest) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_account_proto_rawDescGZIP(), []int{0}
+	return file_openpak_account_v1_account_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *VerifyPasswordByIDRequest) GetCallerNamespace() string {
@@ -211,7 +211,7 @@ type VerifyPasswordRequest struct {
 
 func (x *VerifyPasswordRequest) Reset() {
 	*x = VerifyPasswordRequest{}
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[1]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -223,7 +223,7 @@ func (x *VerifyPasswordRequest) String() string {
 func (*VerifyPasswordRequest) ProtoMessage() {}
 
 func (x *VerifyPasswordRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[1]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -236,7 +236,7 @@ func (x *VerifyPasswordRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VerifyPasswordRequest.ProtoReflect.Descriptor instead.
 func (*VerifyPasswordRequest) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_account_proto_rawDescGZIP(), []int{1}
+	return file_openpak_account_v1_account_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *VerifyPasswordRequest) GetCallerNamespace() string {
@@ -272,13 +272,16 @@ type VerifyPasswordResponse struct {
 	AccountId     string                 `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
 	Status        AccountStatus          `protobuf:"varint,2,opt,name=status,proto3,enum=openpak.account.v1.AccountStatus" json:"status,omitempty"`
 	EmailVerified bool                   `protobuf:"varint,3,opt,name=email_verified,json=emailVerified,proto3" json:"email_verified,omitempty"`
+	// Profile facts the console's user object requires; empty when never collected.
+	Country       string `protobuf:"bytes,4,opt,name=country,proto3" json:"country,omitempty"`
+	Birthday      string `protobuf:"bytes,5,opt,name=birthday,proto3" json:"birthday,omitempty"` // ISO 8601 date, e.g. "1990-01-01"
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *VerifyPasswordResponse) Reset() {
 	*x = VerifyPasswordResponse{}
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[2]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -290,7 +293,7 @@ func (x *VerifyPasswordResponse) String() string {
 func (*VerifyPasswordResponse) ProtoMessage() {}
 
 func (x *VerifyPasswordResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[2]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -303,7 +306,7 @@ func (x *VerifyPasswordResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VerifyPasswordResponse.ProtoReflect.Descriptor instead.
 func (*VerifyPasswordResponse) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_account_proto_rawDescGZIP(), []int{2}
+	return file_openpak_account_v1_account_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *VerifyPasswordResponse) GetAccountId() string {
@@ -327,6 +330,20 @@ func (x *VerifyPasswordResponse) GetEmailVerified() bool {
 	return false
 }
 
+func (x *VerifyPasswordResponse) GetCountry() string {
+	if x != nil {
+		return x.Country
+	}
+	return ""
+}
+
+func (x *VerifyPasswordResponse) GetBirthday() string {
+	if x != nil {
+		return x.Birthday
+	}
+	return ""
+}
+
 type GetAccountRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	AccountId     string                 `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
@@ -336,7 +353,7 @@ type GetAccountRequest struct {
 
 func (x *GetAccountRequest) Reset() {
 	*x = GetAccountRequest{}
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[3]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -348,7 +365,7 @@ func (x *GetAccountRequest) String() string {
 func (*GetAccountRequest) ProtoMessage() {}
 
 func (x *GetAccountRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[3]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -361,7 +378,7 @@ func (x *GetAccountRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAccountRequest.ProtoReflect.Descriptor instead.
 func (*GetAccountRequest) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_account_proto_rawDescGZIP(), []int{3}
+	return file_openpak_account_v1_account_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *GetAccountRequest) GetAccountId() string {
@@ -376,15 +393,16 @@ type GetAccountResponse struct {
 	AccountId     string                 `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
 	Status        AccountStatus          `protobuf:"varint,2,opt,name=status,proto3,enum=openpak.account.v1.AccountStatus" json:"status,omitempty"`
 	EmailVerified bool                   `protobuf:"varint,3,opt,name=email_verified,json=emailVerified,proto3" json:"email_verified,omitempty"`
-	// Display name is the only profile field exposed internally.
-	DisplayName   string `protobuf:"bytes,4,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
+	DisplayName   string                 `protobuf:"bytes,4,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
+	Country       string                 `protobuf:"bytes,5,opt,name=country,proto3" json:"country,omitempty"`
+	Birthday      string                 `protobuf:"bytes,6,opt,name=birthday,proto3" json:"birthday,omitempty"` // ISO 8601 date, e.g. "1990-01-01"
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *GetAccountResponse) Reset() {
 	*x = GetAccountResponse{}
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[4]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -396,7 +414,7 @@ func (x *GetAccountResponse) String() string {
 func (*GetAccountResponse) ProtoMessage() {}
 
 func (x *GetAccountResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[4]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -409,7 +427,7 @@ func (x *GetAccountResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAccountResponse.ProtoReflect.Descriptor instead.
 func (*GetAccountResponse) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_account_proto_rawDescGZIP(), []int{4}
+	return file_openpak_account_v1_account_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *GetAccountResponse) GetAccountId() string {
@@ -440,6 +458,20 @@ func (x *GetAccountResponse) GetDisplayName() string {
 	return ""
 }
 
+func (x *GetAccountResponse) GetCountry() string {
+	if x != nil {
+		return x.Country
+	}
+	return ""
+}
+
+func (x *GetAccountResponse) GetBirthday() string {
+	if x != nil {
+		return x.Birthday
+	}
+	return ""
+}
+
 type SetAdapterCredentialRequest struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	CallerNamespace string                 `protobuf:"bytes,1,opt,name=caller_namespace,json=callerNamespace,proto3" json:"caller_namespace,omitempty"`
@@ -452,7 +484,7 @@ type SetAdapterCredentialRequest struct {
 
 func (x *SetAdapterCredentialRequest) Reset() {
 	*x = SetAdapterCredentialRequest{}
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[5]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -464,7 +496,7 @@ func (x *SetAdapterCredentialRequest) String() string {
 func (*SetAdapterCredentialRequest) ProtoMessage() {}
 
 func (x *SetAdapterCredentialRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[5]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -477,7 +509,7 @@ func (x *SetAdapterCredentialRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetAdapterCredentialRequest.ProtoReflect.Descriptor instead.
 func (*SetAdapterCredentialRequest) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_account_proto_rawDescGZIP(), []int{5}
+	return file_openpak_account_v1_account_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *SetAdapterCredentialRequest) GetCallerNamespace() string {
@@ -516,7 +548,7 @@ type SetAdapterCredentialResponse struct {
 
 func (x *SetAdapterCredentialResponse) Reset() {
 	*x = SetAdapterCredentialResponse{}
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[6]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -528,7 +560,7 @@ func (x *SetAdapterCredentialResponse) String() string {
 func (*SetAdapterCredentialResponse) ProtoMessage() {}
 
 func (x *SetAdapterCredentialResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[6]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -541,7 +573,7 @@ func (x *SetAdapterCredentialResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetAdapterCredentialResponse.ProtoReflect.Descriptor instead.
 func (*SetAdapterCredentialResponse) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_account_proto_rawDescGZIP(), []int{6}
+	return file_openpak_account_v1_account_proto_rawDescGZIP(), []int{6}
 }
 
 type RequestAccountDeletionRequest struct {
@@ -555,7 +587,7 @@ type RequestAccountDeletionRequest struct {
 
 func (x *RequestAccountDeletionRequest) Reset() {
 	*x = RequestAccountDeletionRequest{}
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[7]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -567,7 +599,7 @@ func (x *RequestAccountDeletionRequest) String() string {
 func (*RequestAccountDeletionRequest) ProtoMessage() {}
 
 func (x *RequestAccountDeletionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[7]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -580,7 +612,7 @@ func (x *RequestAccountDeletionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RequestAccountDeletionRequest.ProtoReflect.Descriptor instead.
 func (*RequestAccountDeletionRequest) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_account_proto_rawDescGZIP(), []int{7}
+	return file_openpak_account_v1_account_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *RequestAccountDeletionRequest) GetCallerNamespace() string {
@@ -612,7 +644,7 @@ type RequestAccountDeletionResponse struct {
 
 func (x *RequestAccountDeletionResponse) Reset() {
 	*x = RequestAccountDeletionResponse{}
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[8]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -624,7 +656,7 @@ func (x *RequestAccountDeletionResponse) String() string {
 func (*RequestAccountDeletionResponse) ProtoMessage() {}
 
 func (x *RequestAccountDeletionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[8]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -637,7 +669,7 @@ func (x *RequestAccountDeletionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RequestAccountDeletionResponse.ProtoReflect.Descriptor instead.
 func (*RequestAccountDeletionResponse) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_account_proto_rawDescGZIP(), []int{8}
+	return file_openpak_account_v1_account_proto_rawDescGZIP(), []int{8}
 }
 
 type VerifyAdapterCredentialRequest struct {
@@ -652,7 +684,7 @@ type VerifyAdapterCredentialRequest struct {
 
 func (x *VerifyAdapterCredentialRequest) Reset() {
 	*x = VerifyAdapterCredentialRequest{}
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[9]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -664,7 +696,7 @@ func (x *VerifyAdapterCredentialRequest) String() string {
 func (*VerifyAdapterCredentialRequest) ProtoMessage() {}
 
 func (x *VerifyAdapterCredentialRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[9]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -677,7 +709,7 @@ func (x *VerifyAdapterCredentialRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VerifyAdapterCredentialRequest.ProtoReflect.Descriptor instead.
 func (*VerifyAdapterCredentialRequest) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_account_proto_rawDescGZIP(), []int{9}
+	return file_openpak_account_v1_account_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *VerifyAdapterCredentialRequest) GetCallerNamespace() string {
@@ -718,7 +750,7 @@ type VerifyAdapterCredentialResponse struct {
 
 func (x *VerifyAdapterCredentialResponse) Reset() {
 	*x = VerifyAdapterCredentialResponse{}
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[10]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -730,7 +762,7 @@ func (x *VerifyAdapterCredentialResponse) String() string {
 func (*VerifyAdapterCredentialResponse) ProtoMessage() {}
 
 func (x *VerifyAdapterCredentialResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[10]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -743,7 +775,7 @@ func (x *VerifyAdapterCredentialResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VerifyAdapterCredentialResponse.ProtoReflect.Descriptor instead.
 func (*VerifyAdapterCredentialResponse) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_account_proto_rawDescGZIP(), []int{10}
+	return file_openpak_account_v1_account_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *VerifyAdapterCredentialResponse) GetValid() bool {
@@ -772,7 +804,7 @@ type ReserveLinkRequest struct {
 
 func (x *ReserveLinkRequest) Reset() {
 	*x = ReserveLinkRequest{}
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[11]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -784,7 +816,7 @@ func (x *ReserveLinkRequest) String() string {
 func (*ReserveLinkRequest) ProtoMessage() {}
 
 func (x *ReserveLinkRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[11]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -797,7 +829,7 @@ func (x *ReserveLinkRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReserveLinkRequest.ProtoReflect.Descriptor instead.
 func (*ReserveLinkRequest) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_account_proto_rawDescGZIP(), []int{11}
+	return file_openpak_account_v1_account_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ReserveLinkRequest) GetAccountId() string {
@@ -838,7 +870,7 @@ type ReserveLinkResponse struct {
 
 func (x *ReserveLinkResponse) Reset() {
 	*x = ReserveLinkResponse{}
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[12]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -850,7 +882,7 @@ func (x *ReserveLinkResponse) String() string {
 func (*ReserveLinkResponse) ProtoMessage() {}
 
 func (x *ReserveLinkResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[12]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -863,7 +895,7 @@ func (x *ReserveLinkResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReserveLinkResponse.ProtoReflect.Descriptor instead.
 func (*ReserveLinkResponse) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_account_proto_rawDescGZIP(), []int{12}
+	return file_openpak_account_v1_account_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ReserveLinkResponse) GetLinkId() string {
@@ -890,7 +922,7 @@ type ActivateLinkRequest struct {
 
 func (x *ActivateLinkRequest) Reset() {
 	*x = ActivateLinkRequest{}
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[13]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -902,7 +934,7 @@ func (x *ActivateLinkRequest) String() string {
 func (*ActivateLinkRequest) ProtoMessage() {}
 
 func (x *ActivateLinkRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[13]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -915,7 +947,7 @@ func (x *ActivateLinkRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActivateLinkRequest.ProtoReflect.Descriptor instead.
 func (*ActivateLinkRequest) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_account_proto_rawDescGZIP(), []int{13}
+	return file_openpak_account_v1_account_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ActivateLinkRequest) GetLinkId() string {
@@ -941,7 +973,7 @@ type ActivateLinkResponse struct {
 
 func (x *ActivateLinkResponse) Reset() {
 	*x = ActivateLinkResponse{}
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[14]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -953,7 +985,7 @@ func (x *ActivateLinkResponse) String() string {
 func (*ActivateLinkResponse) ProtoMessage() {}
 
 func (x *ActivateLinkResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[14]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -966,7 +998,7 @@ func (x *ActivateLinkResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActivateLinkResponse.ProtoReflect.Descriptor instead.
 func (*ActivateLinkResponse) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_account_proto_rawDescGZIP(), []int{14}
+	return file_openpak_account_v1_account_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ActivateLinkResponse) GetState() LinkState {
@@ -986,7 +1018,7 @@ type UnlinkLinkRequest struct {
 
 func (x *UnlinkLinkRequest) Reset() {
 	*x = UnlinkLinkRequest{}
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[15]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -998,7 +1030,7 @@ func (x *UnlinkLinkRequest) String() string {
 func (*UnlinkLinkRequest) ProtoMessage() {}
 
 func (x *UnlinkLinkRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[15]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1011,7 +1043,7 @@ func (x *UnlinkLinkRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnlinkLinkRequest.ProtoReflect.Descriptor instead.
 func (*UnlinkLinkRequest) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_account_proto_rawDescGZIP(), []int{15}
+	return file_openpak_account_v1_account_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *UnlinkLinkRequest) GetLinkId() string {
@@ -1037,7 +1069,7 @@ type UnlinkLinkResponse struct {
 
 func (x *UnlinkLinkResponse) Reset() {
 	*x = UnlinkLinkResponse{}
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[16]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1049,7 +1081,7 @@ func (x *UnlinkLinkResponse) String() string {
 func (*UnlinkLinkResponse) ProtoMessage() {}
 
 func (x *UnlinkLinkResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[16]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1062,7 +1094,7 @@ func (x *UnlinkLinkResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnlinkLinkResponse.ProtoReflect.Descriptor instead.
 func (*UnlinkLinkResponse) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_account_proto_rawDescGZIP(), []int{16}
+	return file_openpak_account_v1_account_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *UnlinkLinkResponse) GetState() LinkState {
@@ -1082,7 +1114,7 @@ type GetLinkBySubjectRequest struct {
 
 func (x *GetLinkBySubjectRequest) Reset() {
 	*x = GetLinkBySubjectRequest{}
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[17]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1094,7 +1126,7 @@ func (x *GetLinkBySubjectRequest) String() string {
 func (*GetLinkBySubjectRequest) ProtoMessage() {}
 
 func (x *GetLinkBySubjectRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[17]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1107,7 +1139,7 @@ func (x *GetLinkBySubjectRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetLinkBySubjectRequest.ProtoReflect.Descriptor instead.
 func (*GetLinkBySubjectRequest) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_account_proto_rawDescGZIP(), []int{17}
+	return file_openpak_account_v1_account_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *GetLinkBySubjectRequest) GetNamespace() string {
@@ -1134,7 +1166,7 @@ type GetActiveLinkByAccountRequest struct {
 
 func (x *GetActiveLinkByAccountRequest) Reset() {
 	*x = GetActiveLinkByAccountRequest{}
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[18]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1146,7 +1178,7 @@ func (x *GetActiveLinkByAccountRequest) String() string {
 func (*GetActiveLinkByAccountRequest) ProtoMessage() {}
 
 func (x *GetActiveLinkByAccountRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[18]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1159,7 +1191,7 @@ func (x *GetActiveLinkByAccountRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetActiveLinkByAccountRequest.ProtoReflect.Descriptor instead.
 func (*GetActiveLinkByAccountRequest) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_account_proto_rawDescGZIP(), []int{18}
+	return file_openpak_account_v1_account_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *GetActiveLinkByAccountRequest) GetNamespace() string {
@@ -1190,7 +1222,7 @@ type GetLinkBySubjectResponse struct {
 
 func (x *GetLinkBySubjectResponse) Reset() {
 	*x = GetLinkBySubjectResponse{}
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[19]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1202,7 +1234,7 @@ func (x *GetLinkBySubjectResponse) String() string {
 func (*GetLinkBySubjectResponse) ProtoMessage() {}
 
 func (x *GetLinkBySubjectResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_account_proto_msgTypes[19]
+	mi := &file_openpak_account_v1_account_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1215,7 +1247,7 @@ func (x *GetLinkBySubjectResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetLinkBySubjectResponse.ProtoReflect.Descriptor instead.
 func (*GetLinkBySubjectResponse) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_account_proto_rawDescGZIP(), []int{19}
+	return file_openpak_account_v1_account_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *GetLinkBySubjectResponse) GetLinkId() string {
@@ -1246,11 +1278,11 @@ func (x *GetLinkBySubjectResponse) GetSubjectId() string {
 	return ""
 }
 
-var File_proto_openpak_account_v1_account_proto protoreflect.FileDescriptor
+var File_openpak_account_v1_account_proto protoreflect.FileDescriptor
 
-const file_proto_openpak_account_v1_account_proto_rawDesc = "" +
+const file_openpak_account_v1_account_proto_rawDesc = "" +
 	"\n" +
-	"&proto/openpak/account/v1/account.proto\x12\x12openpak.account.v1\"\x9b\x01\n" +
+	" openpak/account/v1/account.proto\x12\x12openpak.account.v1\"\x9b\x01\n" +
 	"\x19VerifyPasswordByIDRequest\x12)\n" +
 	"\x10caller_namespace\x18\x01 \x01(\tR\x0fcallerNamespace\x12\x18\n" +
 	"\apurpose\x18\x02 \x01(\tR\apurpose\x12\x1d\n" +
@@ -1261,21 +1293,25 @@ const file_proto_openpak_account_v1_account_proto_rawDesc = "" +
 	"\x10caller_namespace\x18\x01 \x01(\tR\x0fcallerNamespace\x12\x18\n" +
 	"\apurpose\x18\x02 \x01(\tR\apurpose\x12\x14\n" +
 	"\x05email\x18\x03 \x01(\tR\x05email\x12\x1a\n" +
-	"\bpassword\x18\x04 \x01(\tR\bpassword\"\x99\x01\n" +
+	"\bpassword\x18\x04 \x01(\tR\bpassword\"\xcf\x01\n" +
 	"\x16VerifyPasswordResponse\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x129\n" +
 	"\x06status\x18\x02 \x01(\x0e2!.openpak.account.v1.AccountStatusR\x06status\x12%\n" +
-	"\x0eemail_verified\x18\x03 \x01(\bR\remailVerified\"2\n" +
+	"\x0eemail_verified\x18\x03 \x01(\bR\remailVerified\x12\x18\n" +
+	"\acountry\x18\x04 \x01(\tR\acountry\x12\x1a\n" +
+	"\bbirthday\x18\x05 \x01(\tR\bbirthday\"2\n" +
 	"\x11GetAccountRequest\x12\x1d\n" +
 	"\n" +
-	"account_id\x18\x01 \x01(\tR\taccountId\"\xb8\x01\n" +
+	"account_id\x18\x01 \x01(\tR\taccountId\"\xee\x01\n" +
 	"\x12GetAccountResponse\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x129\n" +
 	"\x06status\x18\x02 \x01(\x0e2!.openpak.account.v1.AccountStatusR\x06status\x12%\n" +
 	"\x0eemail_verified\x18\x03 \x01(\bR\remailVerified\x12!\n" +
-	"\fdisplay_name\x18\x04 \x01(\tR\vdisplayName\"\x99\x01\n" +
+	"\fdisplay_name\x18\x04 \x01(\tR\vdisplayName\x12\x18\n" +
+	"\acountry\x18\x05 \x01(\tR\acountry\x12\x1a\n" +
+	"\bbirthday\x18\x06 \x01(\tR\bbirthday\"\x99\x01\n" +
 	"\x1bSetAdapterCredentialRequest\x12)\n" +
 	"\x10caller_namespace\x18\x01 \x01(\tR\x0fcallerNamespace\x12\x18\n" +
 	"\apurpose\x18\x02 \x01(\tR\apurpose\x12\x1d\n" +
@@ -1362,20 +1398,20 @@ const file_proto_openpak_account_v1_account_proto_rawDesc = "" +
 	"\x16GetActiveLinkByAccount\x121.openpak.account.v1.GetActiveLinkByAccountRequest\x1a,.openpak.account.v1.GetLinkBySubjectResponseB4Z2openpak/account/proto/openpak/account/v1;accountv1b\x06proto3"
 
 var (
-	file_proto_openpak_account_v1_account_proto_rawDescOnce sync.Once
-	file_proto_openpak_account_v1_account_proto_rawDescData []byte
+	file_openpak_account_v1_account_proto_rawDescOnce sync.Once
+	file_openpak_account_v1_account_proto_rawDescData []byte
 )
 
-func file_proto_openpak_account_v1_account_proto_rawDescGZIP() []byte {
-	file_proto_openpak_account_v1_account_proto_rawDescOnce.Do(func() {
-		file_proto_openpak_account_v1_account_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_proto_openpak_account_v1_account_proto_rawDesc), len(file_proto_openpak_account_v1_account_proto_rawDesc)))
+func file_openpak_account_v1_account_proto_rawDescGZIP() []byte {
+	file_openpak_account_v1_account_proto_rawDescOnce.Do(func() {
+		file_openpak_account_v1_account_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_openpak_account_v1_account_proto_rawDesc), len(file_openpak_account_v1_account_proto_rawDesc)))
 	})
-	return file_proto_openpak_account_v1_account_proto_rawDescData
+	return file_openpak_account_v1_account_proto_rawDescData
 }
 
-var file_proto_openpak_account_v1_account_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_proto_openpak_account_v1_account_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
-var file_proto_openpak_account_v1_account_proto_goTypes = []any{
+var file_openpak_account_v1_account_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_openpak_account_v1_account_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
+var file_openpak_account_v1_account_proto_goTypes = []any{
 	(AccountStatus)(0),                      // 0: openpak.account.v1.AccountStatus
 	(LinkState)(0),                          // 1: openpak.account.v1.LinkState
 	(*VerifyPasswordByIDRequest)(nil),       // 2: openpak.account.v1.VerifyPasswordByIDRequest
@@ -1399,7 +1435,7 @@ var file_proto_openpak_account_v1_account_proto_goTypes = []any{
 	(*GetActiveLinkByAccountRequest)(nil),   // 20: openpak.account.v1.GetActiveLinkByAccountRequest
 	(*GetLinkBySubjectResponse)(nil),        // 21: openpak.account.v1.GetLinkBySubjectResponse
 }
-var file_proto_openpak_account_v1_account_proto_depIdxs = []int32{
+var file_openpak_account_v1_account_proto_depIdxs = []int32{
 	0,  // 0: openpak.account.v1.VerifyPasswordResponse.status:type_name -> openpak.account.v1.AccountStatus
 	0,  // 1: openpak.account.v1.GetAccountResponse.status:type_name -> openpak.account.v1.AccountStatus
 	0,  // 2: openpak.account.v1.VerifyAdapterCredentialResponse.status:type_name -> openpak.account.v1.AccountStatus
@@ -1436,27 +1472,27 @@ var file_proto_openpak_account_v1_account_proto_depIdxs = []int32{
 	0,  // [0:7] is the sub-list for field type_name
 }
 
-func init() { file_proto_openpak_account_v1_account_proto_init() }
-func file_proto_openpak_account_v1_account_proto_init() {
-	if File_proto_openpak_account_v1_account_proto != nil {
+func init() { file_openpak_account_v1_account_proto_init() }
+func file_openpak_account_v1_account_proto_init() {
+	if File_openpak_account_v1_account_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_openpak_account_v1_account_proto_rawDesc), len(file_proto_openpak_account_v1_account_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_openpak_account_v1_account_proto_rawDesc), len(file_openpak_account_v1_account_proto_rawDesc)),
 			NumEnums:      2,
 			NumMessages:   20,
 			NumExtensions: 0,
 			NumServices:   2,
 		},
-		GoTypes:           file_proto_openpak_account_v1_account_proto_goTypes,
-		DependencyIndexes: file_proto_openpak_account_v1_account_proto_depIdxs,
-		EnumInfos:         file_proto_openpak_account_v1_account_proto_enumTypes,
-		MessageInfos:      file_proto_openpak_account_v1_account_proto_msgTypes,
+		GoTypes:           file_openpak_account_v1_account_proto_goTypes,
+		DependencyIndexes: file_openpak_account_v1_account_proto_depIdxs,
+		EnumInfos:         file_openpak_account_v1_account_proto_enumTypes,
+		MessageInfos:      file_openpak_account_v1_account_proto_msgTypes,
 	}.Build()
-	File_proto_openpak_account_v1_account_proto = out.File
-	file_proto_openpak_account_v1_account_proto_goTypes = nil
-	file_proto_openpak_account_v1_account_proto_depIdxs = nil
+	File_openpak_account_v1_account_proto = out.File
+	file_openpak_account_v1_account_proto_goTypes = nil
+	file_openpak_account_v1_account_proto_depIdxs = nil
 }

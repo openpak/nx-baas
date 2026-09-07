@@ -44,6 +44,9 @@ type Identity struct {
 	BsDid          string   `json:"bsDid"`
 	Nickname       string   `json:"nickname"`
 	FriendCode     string   `json:"friendCode"`
+	// The console's user object carries both and rejects it when either is malformed.
+	Country  string `json:"country"`
+	Birthday string `json:"birthday"`
 	Avatar         string   `json:"avatar"`
 	ImageUpdatedAt int64    `json:"imageUpdatedAt"`
 	PlayLog        any      `json:"playLog"`

@@ -44,6 +44,9 @@ message VerifyPasswordResponse {
   string account_id = 1;
   AccountStatus status = 2;
   bool email_verified = 3;
+  // Profile facts the console's user object requires; empty when never collected.
+  string country = 4;
+  string birthday = 5; // ISO 8601 date, e.g. "1990-01-01"
 }
 
 message GetAccountRequest { string account_id = 1; }
@@ -52,8 +55,9 @@ message GetAccountResponse {
   string account_id = 1;
   AccountStatus status = 2;
   bool email_verified = 3;
-  // Display name is the only profile field exposed internally.
   string display_name = 4;
+  string country = 5;
+  string birthday = 6; // ISO 8601 date, e.g. "1990-01-01"
 }
 
 message SetAdapterCredentialRequest {

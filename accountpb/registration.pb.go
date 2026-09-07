@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.12
 // 	protoc        v7.35.1
-// source: proto/openpak/account/v1/registration.proto
+// source: openpak/account/v1/registration.proto
 
 package accountv1
 
@@ -37,7 +37,7 @@ type RegisterAccountRequest struct {
 
 func (x *RegisterAccountRequest) Reset() {
 	*x = RegisterAccountRequest{}
-	mi := &file_proto_openpak_account_v1_registration_proto_msgTypes[0]
+	mi := &file_openpak_account_v1_registration_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -49,7 +49,7 @@ func (x *RegisterAccountRequest) String() string {
 func (*RegisterAccountRequest) ProtoMessage() {}
 
 func (x *RegisterAccountRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_registration_proto_msgTypes[0]
+	mi := &file_openpak_account_v1_registration_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -62,7 +62,7 @@ func (x *RegisterAccountRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterAccountRequest.ProtoReflect.Descriptor instead.
 func (*RegisterAccountRequest) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_registration_proto_rawDescGZIP(), []int{0}
+	return file_openpak_account_v1_registration_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *RegisterAccountRequest) GetCallerNamespace() string {
@@ -128,7 +128,7 @@ type RegisterAccountResponse struct {
 
 func (x *RegisterAccountResponse) Reset() {
 	*x = RegisterAccountResponse{}
-	mi := &file_proto_openpak_account_v1_registration_proto_msgTypes[1]
+	mi := &file_openpak_account_v1_registration_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -140,7 +140,7 @@ func (x *RegisterAccountResponse) String() string {
 func (*RegisterAccountResponse) ProtoMessage() {}
 
 func (x *RegisterAccountResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_openpak_account_v1_registration_proto_msgTypes[1]
+	mi := &file_openpak_account_v1_registration_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -153,7 +153,7 @@ func (x *RegisterAccountResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterAccountResponse.ProtoReflect.Descriptor instead.
 func (*RegisterAccountResponse) Descriptor() ([]byte, []int) {
-	return file_proto_openpak_account_v1_registration_proto_rawDescGZIP(), []int{1}
+	return file_openpak_account_v1_registration_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *RegisterAccountResponse) GetAccountId() string {
@@ -177,11 +177,11 @@ func (x *RegisterAccountResponse) GetEmailTaken() bool {
 	return false
 }
 
-var File_proto_openpak_account_v1_registration_proto protoreflect.FileDescriptor
+var File_openpak_account_v1_registration_proto protoreflect.FileDescriptor
 
-const file_proto_openpak_account_v1_registration_proto_rawDesc = "" +
+const file_openpak_account_v1_registration_proto_rawDesc = "" +
 	"\n" +
-	"+proto/openpak/account/v1/registration.proto\x12\x12openpak.account.v1\"\xe8\x01\n" +
+	"%openpak/account/v1/registration.proto\x12\x12openpak.account.v1\"\xe8\x01\n" +
 	"\x16RegisterAccountRequest\x12)\n" +
 	"\x10caller_namespace\x18\x01 \x01(\tR\x0fcallerNamespace\x12\x18\n" +
 	"\apurpose\x18\x02 \x01(\tR\apurpose\x12\x14\n" +
@@ -200,23 +200,23 @@ const file_proto_openpak_account_v1_registration_proto_rawDesc = "" +
 	"\x0fRegisterAccount\x12*.openpak.account.v1.RegisterAccountRequest\x1a+.openpak.account.v1.RegisterAccountResponseB4Z2openpak/account/proto/openpak/account/v1;accountv1b\x06proto3"
 
 var (
-	file_proto_openpak_account_v1_registration_proto_rawDescOnce sync.Once
-	file_proto_openpak_account_v1_registration_proto_rawDescData []byte
+	file_openpak_account_v1_registration_proto_rawDescOnce sync.Once
+	file_openpak_account_v1_registration_proto_rawDescData []byte
 )
 
-func file_proto_openpak_account_v1_registration_proto_rawDescGZIP() []byte {
-	file_proto_openpak_account_v1_registration_proto_rawDescOnce.Do(func() {
-		file_proto_openpak_account_v1_registration_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_proto_openpak_account_v1_registration_proto_rawDesc), len(file_proto_openpak_account_v1_registration_proto_rawDesc)))
+func file_openpak_account_v1_registration_proto_rawDescGZIP() []byte {
+	file_openpak_account_v1_registration_proto_rawDescOnce.Do(func() {
+		file_openpak_account_v1_registration_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_openpak_account_v1_registration_proto_rawDesc), len(file_openpak_account_v1_registration_proto_rawDesc)))
 	})
-	return file_proto_openpak_account_v1_registration_proto_rawDescData
+	return file_openpak_account_v1_registration_proto_rawDescData
 }
 
-var file_proto_openpak_account_v1_registration_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
-var file_proto_openpak_account_v1_registration_proto_goTypes = []any{
+var file_openpak_account_v1_registration_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_openpak_account_v1_registration_proto_goTypes = []any{
 	(*RegisterAccountRequest)(nil),  // 0: openpak.account.v1.RegisterAccountRequest
 	(*RegisterAccountResponse)(nil), // 1: openpak.account.v1.RegisterAccountResponse
 }
-var file_proto_openpak_account_v1_registration_proto_depIdxs = []int32{
+var file_openpak_account_v1_registration_proto_depIdxs = []int32{
 	0, // 0: openpak.account.v1.Registration.RegisterAccount:input_type -> openpak.account.v1.RegisterAccountRequest
 	1, // 1: openpak.account.v1.Registration.RegisterAccount:output_type -> openpak.account.v1.RegisterAccountResponse
 	1, // [1:2] is the sub-list for method output_type
@@ -226,26 +226,26 @@ var file_proto_openpak_account_v1_registration_proto_depIdxs = []int32{
 	0, // [0:0] is the sub-list for field type_name
 }
 
-func init() { file_proto_openpak_account_v1_registration_proto_init() }
-func file_proto_openpak_account_v1_registration_proto_init() {
-	if File_proto_openpak_account_v1_registration_proto != nil {
+func init() { file_openpak_account_v1_registration_proto_init() }
+func file_openpak_account_v1_registration_proto_init() {
+	if File_openpak_account_v1_registration_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_openpak_account_v1_registration_proto_rawDesc), len(file_proto_openpak_account_v1_registration_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_openpak_account_v1_registration_proto_rawDesc), len(file_openpak_account_v1_registration_proto_rawDesc)),
 			NumEnums:      0,
 			NumMessages:   2,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_proto_openpak_account_v1_registration_proto_goTypes,
-		DependencyIndexes: file_proto_openpak_account_v1_registration_proto_depIdxs,
-		MessageInfos:      file_proto_openpak_account_v1_registration_proto_msgTypes,
+		GoTypes:           file_openpak_account_v1_registration_proto_goTypes,
+		DependencyIndexes: file_openpak_account_v1_registration_proto_depIdxs,
+		MessageInfos:      file_openpak_account_v1_registration_proto_msgTypes,
 	}.Build()
-	File_proto_openpak_account_v1_registration_proto = out.File
-	file_proto_openpak_account_v1_registration_proto_goTypes = nil
-	file_proto_openpak_account_v1_registration_proto_depIdxs = nil
+	File_openpak_account_v1_registration_proto = out.File
+	file_openpak_account_v1_registration_proto_goTypes = nil
+	file_openpak_account_v1_registration_proto_depIdxs = nil
 }

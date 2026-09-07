@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.2
 // - protoc             v7.35.1
-// source: proto/openpak/account/v1/sessions_invitations.proto
+// source: openpak/account/v1/sessions_invitations.proto
 
 package accountv1
 
@@ -251,7 +251,7 @@ var Sessions_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "proto/openpak/account/v1/sessions_invitations.proto",
+	Metadata: "openpak/account/v1/sessions_invitations.proto",
 }
 
 const (
@@ -453,5 +453,5 @@ var Invitations_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "proto/openpak/account/v1/sessions_invitations.proto",
+	Metadata: "openpak/account/v1/sessions_invitations.proto",
 }

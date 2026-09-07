@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.2
 // - protoc             v7.35.1
-// source: proto/openpak/account/v1/social.proto
+// source: openpak/account/v1/social.proto
 
 package accountv1
 
@@ -495,5 +495,5 @@ var Social_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "proto/openpak/account/v1/social.proto",
+	Metadata: "openpak/account/v1/social.proto",
 }
