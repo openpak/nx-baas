@@ -989,6 +989,7 @@ func (s *server) authorizePage(w http.ResponseWriter, r *http.Request, q url.Val
       <li>Check this code matches, then approve below.</li>
     </ol>
     <p style="margin:16px 0 0"><span class="code">`+code+`</span></p>
+    <p style="margin:10px 0 0;font-size:0.9rem">or open <strong>`+html.EscapeString(strings.TrimPrefix(s.linkBaseURL(r), "http://"))+`/link</strong> on your phone</p>
     <p id="status" style="margin:14px 0 0">Waiting for your phone&hellip;</p>
     <div id="confirm" hidden>
       <button id="approve" type="button">Approve</button>
