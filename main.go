@@ -1231,5 +1231,18 @@ func main() {
 		log.Fatal(http.ListenAndServe(addr, s.gameAPI()))
 	}()
 	log.Printf("[nx-baas] listening %s (BAAS + Nintendo Account); account backend %s; users=%d devices=%d", srv.Addr, getenv("ACCOUNT_BACKEND", "legacy"), len(s.store.Users), len(s.store.Devices))
+	// The console's web applet enforces certificate checking unless Atmosphère patches it, so
+	// the link page is also served over plain HTTP. Nothing secret crosses it: the console
+	// shows a short-lived code, the password is typed on the phone against the public site,
+	// and the link is approved on the console itself.
+	if addr := getenv("NX_HTTP_ADDR", ""); addr != "" {
+		go func() {
+			log.Printf("[nx-baas] plain HTTP on %s (link page without TLS)", addr)
+			if err := http.ListenAndServe(addr, handler); err != nil {
+				log.Printf("[nx-baas] plain HTTP listener stopped: %v", err)
+			}
+		}()
+	}
+
 	log.Fatal(srv.ListenAndServeTLS("", ""))
 }
