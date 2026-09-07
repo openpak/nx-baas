@@ -58,6 +58,56 @@ type pendingLink struct {
 	Created  time.Time
 }
 
+// phoneSession is a signed-in phone, held only long enough to enter a code. Short by design:
+// this is a page someone opens for a minute, not a place to stay logged in.
+type phoneSession struct {
+	PID      uint64
+	Username string
+	Expires  time.Time
+}
+
+const (
+	phoneCookie     = "openpak_link"
+	phoneSessionTTL = 15 * time.Minute
+)
+
+type phoneStore struct {
+	mu sync.Mutex
+	by map[string]phoneSession
+}
+
+func newPhoneStore() *phoneStore { return &phoneStore{by: map[string]phoneSession{}} }
+
+func (p *phoneStore) new(pid uint64, username string) string {
+	token := randHex(32)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for t, s := range p.by {
+		if time.Now().After(s.Expires) {
+			delete(p.by, t)
+		}
+	}
+	p.by[token] = phoneSession{PID: pid, Username: username, Expires: time.Now().Add(phoneSessionTTL)}
+	return token
+}
+
+func (p *phoneStore) get(token string) (phoneSession, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	s, ok := p.by[token]
+	if !ok || time.Now().After(s.Expires) {
+		delete(p.by, token)
+		return phoneSession{}, false
+	}
+	return s, true
+}
+
+func (p *phoneStore) drop(token string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.by, token)
+}
+
 type linkStore struct {
 	mu sync.Mutex
 	by map[string]*pendingLink
@@ -172,30 +222,63 @@ func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) b
 		return true
 
 	case r.URL.Path == "/link" && r.Method == "GET":
-		s.phonePage(w, code, "")
+		if sess, ok := s.phoneSession(r); ok {
+			s.phoneConfirmPage(w, sess.Username, "")
+		} else {
+			s.phoneLoginPage(w, "")
+		}
 		return true
 
 	case r.URL.Path == "/link" && r.Method == "POST":
-		p := s.links.get(form.Get("code"))
-		if p == nil {
-			s.phonePage(w, form.Get("code"), "That code has expired. Start again on the console.")
-			return true
-		}
+		// Sign-in step: credentials only. No code is accepted here, so a stolen link cannot
+		// approve anything on its own.
 		pid, username, err := s.acct.LoginPID(form.Get("email"), form.Get("password"))
 		if err != nil {
-			s.phonePage(w, form.Get("code"), "Wrong e-mail or password.")
+			s.phoneLoginPage(w, "Wrong e-mail or password.")
 			return true
 		}
-		id, err := s.acct.Identity(pid)
+		if _, err := s.acct.Identity(pid); err != nil {
+			s.phoneLoginPage(w, "Account lookup failed.")
+			return true
+		}
+		s.setPhoneCookie(w, r, s.phones.new(pid, username))
+		s.phoneConfirmPage(w, username, "")
+		return true
+
+	case r.URL.Path == "/link/signout" && r.Method == "POST":
+		if c, err := r.Cookie(phoneCookie); err == nil {
+			s.phones.drop(c.Value)
+		}
+		s.clearPhoneCookie(w, r)
+		s.phoneLoginPage(w, "")
+		return true
+
+	case r.URL.Path == "/link/code" && r.Method == "POST":
+		sess, ok := s.phoneSession(r)
+		if !ok {
+			s.phoneLoginPage(w, "That took too long — sign in again.")
+			return true
+		}
+		entered := strings.ToUpper(strings.TrimSpace(form.Get("code")))
+		pending := s.links.get(entered)
+		if pending == nil {
+			s.phoneConfirmPage(w, sess.Username, "That code is wrong or has expired. Check the console.")
+			return true
+		}
+		if pending.State != linkWaiting {
+			s.phoneConfirmPage(w, sess.Username, "That code has already been used.")
+			return true
+		}
+		id, err := s.acct.Identity(sess.PID)
 		if err != nil {
-			s.phonePage(w, form.Get("code"), "Account lookup failed.")
+			s.phoneConfirmPage(w, sess.Username, "Account lookup failed.")
 			return true
 		}
-		s.links.update(form.Get("code"), func(p *pendingLink) {
-			p.State, p.PID, p.Username, p.NaID = linkClaimed, pid, username, id.NaID
+		s.links.update(entered, func(p *pendingLink) {
+			p.State, p.PID, p.Username, p.NaID = linkClaimed, sess.PID, sess.Username, id.NaID
 		})
-		log.Printf("[link] code %s claimed by %s (pid %d)", strings.ToUpper(form.Get("code")), username, pid)
-		s.phoneDonePage(w, username)
+		log.Printf("[link] code %s claimed by %s (pid %d)", entered, sess.Username, sess.PID)
+		s.phoneDonePage(w, sess.Username)
 		return true
 	}
 	return false
@@ -259,27 +342,6 @@ func pageHead(title string) string {
 		`<div class="brand"><img src="` + logoDataURI + `" alt=""> OpenPak</div>`
 }
 
-// phonePage is what the QR opens: sign in, confirm the code from the TV.
-func (s *server) phonePage(w http.ResponseWriter, code, errMsg string) {
-	var e string
-	if errMsg != "" {
-		e = `<p class="err">` + html.EscapeString(errMsg) + `</p>`
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, pageHead("Link a console")+`
-<h1>Link a console</h1>
-<p>Sign in, check the code matches the one on your console, and this device will be linked.</p>
-<div class="card">`+e+`<form method="post" action="/link">
-<label for="code">Code shown on the console</label>
-<input id="code" name="code" value="`+html.EscapeString(strings.ToUpper(code))+`" autocapitalize="characters" autocomplete="off" required>
-<label for="email">E-mail</label>
-<input id="email" name="email" type="email" autocomplete="username" required>
-<label for="password">Password</label>
-<input id="password" name="password" type="password" autocomplete="current-password" required>
-<button type="submit">Sign in</button>
-</form></div></main></body></html>`)
-}
-
 func (s *server) phoneDonePage(w http.ResponseWriter, username string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, pageHead("Almost there")+`
@@ -287,4 +349,77 @@ func (s *server) phoneDonePage(w http.ResponseWriter, username string) {
 <p>Signed in as <strong class="ok">`+html.EscapeString(username)+`</strong>.</p>
 <div class="card"><p style="margin:0">Your console is showing this account. Choose <strong>Approve</strong>
 there to finish linking. You can close this page.</p></div></main></body></html>`)
+}
+
+// ---------- phone session ----------
+
+func (s *server) phoneSession(r *http.Request) (phoneSession, bool) {
+	c, err := r.Cookie(phoneCookie)
+	if err != nil {
+		return phoneSession{}, false
+	}
+	return s.phones.get(c.Value)
+}
+
+// secure marks the cookie when the page was reached over TLS — through the tunnel it is
+// https, on a LAN it may not be, and a Secure cookie there would simply never come back.
+func secureRequest(r *http.Request) bool {
+	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}
+
+func (s *server) setPhoneCookie(w http.ResponseWriter, r *http.Request, token string) {
+	http.SetCookie(w, &http.Cookie{
+		Name: phoneCookie, Value: token, Path: "/link", HttpOnly: true,
+		Secure: secureRequest(r), SameSite: http.SameSiteLaxMode, MaxAge: int(phoneSessionTTL.Seconds()),
+	})
+}
+
+func (s *server) clearPhoneCookie(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name: phoneCookie, Value: "", Path: "/link", HttpOnly: true,
+		Secure: secureRequest(r), SameSite: http.SameSiteLaxMode, MaxAge: -1,
+	})
+}
+
+// ---------- phone pages ----------
+
+func errBlock(msg string) string {
+	if msg == "" {
+		return ""
+	}
+	return `<p class="err">` + html.EscapeString(msg) + `</p>`
+}
+
+// phoneLoginPage: credentials only. The code is asked for afterwards, so scanning the QR by
+// itself approves nothing.
+func (s *server) phoneLoginPage(w http.ResponseWriter, errMsg string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, pageHead("Link a console")+`
+<h1>Sign in</h1>
+<p>Then type the code shown on your console.</p>
+<div class="card">`+errBlock(errMsg)+`<form method="post" action="/link">
+<label for="email">E-mail</label>
+<input id="email" name="email" type="email" autocomplete="username" autofocus required>
+<label for="password">Password</label>
+<input id="password" name="password" type="password" autocomplete="current-password" required>
+<button type="submit">Sign in</button>
+</form></div></main></body></html>`)
+}
+
+// phoneConfirmPage: signed in already — check it is the right account before taking a code,
+// since a phone stays signed in and the console in front of you may not be yours.
+func (s *server) phoneConfirmPage(w http.ResponseWriter, username, errMsg string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, pageHead("Link a console")+`
+<h1>Link a console</h1>
+<p>Signed in as <strong class="ok">`+html.EscapeString(username)+`</strong>.</p>
+<div class="card">`+errBlock(errMsg)+`<form method="post" action="/link/code">
+<label for="code">Code shown on the console</label>
+<input id="code" name="code" autocapitalize="characters" autocomplete="off" spellcheck="false"
+       maxlength="8" pattern="[A-Za-z0-9]{6}" required autofocus>
+<button type="submit">Link this console</button>
+</form></div>
+<div class="card"><p style="margin:0 0 12px">Not your account?</p>
+<form method="post" action="/link/signout"><button class="ghost" type="submit">Sign out and use another</button></form>
+</div></main></body></html>`)
 }

@@ -66,6 +66,7 @@ type server struct {
 	codes  map[string]naCode // NA authorization codes / session tokens -> who logged in
 	device map[string]string // device id -> serial, from the dauth assertion
 	links  *linkStore        // pending QR console links, by code
+	phones *phoneStore       // signed-in phones entering a code
 }
 
 type naCode struct {
@@ -1107,7 +1108,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 	switch {
-	case strings.HasPrefix(r.URL.Path, "/connect/1.0.0/qr/") || r.URL.Path == "/link":
+	case strings.HasPrefix(r.URL.Path, "/connect/1.0.0/qr/") || strings.HasPrefix(r.URL.Path, "/link"):
 		if !s.qrRoutes(w, r, body) {
 			http.NotFound(w, r)
 		}
@@ -1201,6 +1202,7 @@ func main() {
 		codes:  map[string]naCode{},
 		device: map[string]string{},
 		links:  newLinkStore(),
+		phones: newPhoneStore(),
 		acct:   newBackend(),
 	}
 	s.jwks = jwksFor(&key.PublicKey, s.idKid, getenv("BAAS_ID_KID", "00000000-0000-0000-0000-000000000002"), s.accKid, s.naKid)

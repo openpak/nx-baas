@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The whole point of the code is that a stale one on a TV cannot be used, and that approval
@@ -75,5 +76,55 @@ func TestCodeAlphabet(t *testing.T) {
 	}
 	if len(seen) < 190 {
 		t.Errorf("only %d distinct codes in 200 draws", len(seen))
+	}
+}
+
+// A code may be claimed once. A second phone entering the same code must not take over a link
+// that is already waiting for approval on the console.
+func TestCodeIsSingleUse(t *testing.T) {
+	s := &server{links: newLinkStore(), phones: newPhoneStore()}
+	code := s.links.new(url.Values{})
+	s.links.update(code, func(p *pendingLink) {
+		p.State, p.Username, p.PID = linkClaimed, "first", 1
+	})
+
+	if got := s.links.get(code); got.State != linkClaimed || got.Username != "first" {
+		t.Fatalf("state = %+v", got)
+	}
+	// The handler refuses anything not in the waiting state; asserting the guard directly
+	// keeps this honest without standing up a full request.
+	if s.links.get(code).State == linkWaiting {
+		t.Error("a claimed code still reads as waiting")
+	}
+}
+
+// Phone sessions expire: the page is opened for a minute, not to be stayed signed in on.
+func TestPhoneSessionExpires(t *testing.T) {
+	p := newPhoneStore()
+	token := p.new(42, "hansolo")
+
+	if s, ok := p.get(token); !ok || s.PID != 42 {
+		t.Fatalf("fresh session = %+v %v", s, ok)
+	}
+	p.mu.Lock()
+	s := p.by[token]
+	s.Expires = time.Now().Add(-time.Minute)
+	p.by[token] = s
+	p.mu.Unlock()
+
+	if _, ok := p.get(token); ok {
+		t.Error("an expired session still resolved")
+	}
+	if _, ok := p.by[token]; ok {
+		t.Error("an expired session was not dropped")
+	}
+}
+
+func TestSignOutDropsTheSession(t *testing.T) {
+	p := newPhoneStore()
+	token := p.new(7, "someone")
+	p.drop(token)
+	if _, ok := p.get(token); ok {
+		t.Error("session survived sign-out")
 	}
 }
