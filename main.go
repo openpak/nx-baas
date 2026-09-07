@@ -238,13 +238,7 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 	nickname, country := u.Nickname, u.Country
 	links := map[string]any{}
 	self := map[string]any{"playLog": ""}
-	nx := u.NxAccount
-	if nx == "" && id != nil && os.Getenv("NX_TEST_NXACCOUNT") != "" {
-		// ponytail: probe -- a captured console profile blob served VERBATIM. Overwriting its
-		// uid[16] made the console answer 2124-0292 (nothing to restore), so the first 16 bytes
-		// are checked somehow; proper generation is TODO.
-		nx = os.Getenv("NX_TEST_NXACCOUNT")
-	}
+	nx := u.NxAccount // the console uploads its own profile blob (PATCH /extras/self/nxAccount) after linking; a foreign blob makes it drop the profile to local-only
 	if nx != "" {
 		self["isMediaUploaded"] = true
 		self["nxAccount"] = nx
