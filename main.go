@@ -1002,13 +1002,22 @@ func main() {
 	// ponytail: Traefik sends every unrouted *nintendo.* SNI here; sign a cert per name on
 	// demand so the console gets past TLS and its request lands in the log as !! UNHANDLED.
 	var onDemand sync.Map
+	fixedNames := map[string]bool{}
+	if leaf, err := x509.ParseCertificate(cert.Certificate[0]); err == nil {
+		for _, n := range leaf.DNSNames {
+			fixedNames[n] = true
+		}
+	}
 	getCert := func(h *tls.ClientHelloInfo) (*tls.Certificate, error) {
-		if h.ServerName == "" {
+		// The console rejects on-demand certs for the BAAS/NA names (2123-0013); those must
+		// keep the fixed multi-SAN cert. On-demand is only for unrouted *.nintendo.* probes.
+		if h.ServerName == "" || fixedNames[h.ServerName] {
 			return &cert, nil
 		}
 		if c, ok := onDemand.Load(h.ServerName); ok {
 			return c.(*tls.Certificate), nil
 		}
+		log.Printf("[nx-baas] on-demand cert for unrouted SNI %s", h.ServerName)
 		c := selfSigned([]string{h.ServerName}, getenv("NX_CA_DIR", "/data/ca"))
 		onDemand.Store(h.ServerName, &c)
 		return &c, nil
