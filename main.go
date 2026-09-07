@@ -148,11 +148,22 @@ func (s *server) accessToken(sub string, grant int, bsDid, di, sn string) string
 	return signJWT(map[string]any{"alg": "RS256", "jku": baasJku + "/1.0.0/internal_certificates", "kid": s.accKid, "typ": "JWT"}, claims, s.key)
 }
 
-func (s *server) idToken(u *User, id *Identity, username, di, sn string) string {
+func (s *server) idToken(u *User, id *Identity, username string, app map[string]any) string {
 	now := time.Now().Unix()
+	// VPS parity: the id_token carries an APPLICATION block (ai/at/av/edi/tbh/tbn), taken from
+	// the appAuthNToken when the console sends one, else the VPS defaults.
+	ai, av := "0100f8f0000a2000", "0033"
+	if n, ok := app["nintendo"].(map[string]any); ok {
+		if v := str(n, "ai"); v != "" {
+			ai = v
+		}
+		if v := str(n, "av"); v != "" {
+			av = v
+		}
+	}
 	claims := map[string]any{
-		"aud": baasAudience, "bs:did": randHex(8), "exp": now + 10800, "iat": now, "iss": baasIssuer, "jti": uuid4(),
-		"nintendo": map[string]any{"di": di, "dt": "NX Prod 1", "ist": false, "pc": "HAC", "sn": sn},
+		"aud": baasAudience, "bs:did": u.ID, "exp": now + 10800, "iat": now, "iss": baasIssuer, "jti": uuid4(),
+		"nintendo": map[string]any{"ai": ai, "at": now, "av": av, "edi": randB64(60), "tbh": randB64(32), "tbn": randB64(16)},
 		"sub":      u.ID, "typ": "id_token",
 	}
 	if id != nil {
@@ -245,7 +256,7 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 	}
 	friendsEx := map[string]any{"isChatActivated": true, "isChatInvitable": true, "playLog": ""}
 	everyone := map[string]any{"playLog": ""}
-	thumb1, thumb2, thumbAt := "", "", int64(0)
+	thumb1, thumb2, thumbAt := cdnHost+"/1/default", cdnHost+"/2/default", int64(0) // VPS parity for unlinked users
 	etag := randHex(8)
 	if id != nil {
 		etag = id.BsDid // VPS parity: user.etag == the token bs:did for a linked user
@@ -305,6 +316,16 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 	switch {
 	case strings.HasPrefix(p, "/1/") || strings.HasPrefix(p, "/2/") || strings.HasPrefix(p, "/avatar/"):
 		var pid uint64
+		if strings.HasPrefix(p, "/1/default") || strings.HasPrefix(p, "/2/default") {
+			if img, err := os.ReadFile(getenv("NX_DATA", "/data") + "/default.jpg"); err == nil {
+				w.Header().Set("Content-Type", "image/jpeg")
+				w.Header().Set("Cache-Control", "public, max-age=3600")
+				w.Write(img)
+				return
+			}
+			w.WriteHeader(404)
+			return
+		}
 		if strings.HasPrefix(p, "/avatar/") {
 			pid, _ = strconv.ParseUint(strings.TrimSuffix(strings.TrimPrefix(p, "/avatar/"), ".jpg"), 10, 64)
 		} else if u := s.store.User(p[3:]); u != nil {
@@ -374,6 +395,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				return
 			}
 		}
+		app, _ := parseJWT(form.Get("appAuthNToken"), nil)
 		id := s.identity(u)
 		username := u.Nickname
 		if id != nil {
@@ -381,7 +403,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		s.store.Update(u, func(u *User) { u.Presence.State = "ONLINE"; u.Presence.UpdatedAt = time.Now().Unix() })
 		res := map[string]any{
-			"expiresIn": 10800, "user": s.userObj(u, id, ""), "idToken": s.idToken(u, id, username, di, sn),
+			"expiresIn": 10800, "user": s.userObj(u, id, ""), "idToken": s.idToken(u, id, username, app),
 			"accessToken": s.accessToken(u.ID, 2, func() string {
 				if id != nil {
 					return id.BsDid
@@ -547,7 +569,22 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		writeJSON(w, 200, map[string]any{"deletedUserIds": deleted, "persistentUserIds": persistent})
 		return
 
-	case strings.HasPrefix(p, "/1.0.0/push_channels/") || p == "/1.0.0/devices/me/delete":
+	case strings.HasPrefix(p, "/1.0.0/push_channels/"):
+		// VPS parity: echo the channel back as a full object (the console fails the link on {}).
+		var in map[string]any
+		json.Unmarshal(body, &in)
+		parts := strings.Split(strings.TrimPrefix(p, "/1.0.0/push_channels/"), "/")
+		userID, devID := parts[0], ""
+		if len(parts) > 1 {
+			devID = parts[1]
+		}
+		now := time.Now().Unix()
+		writeJSON(w, 200, map[string]any{
+			"createdAt": now, "deviceAccountId": devID, "deviceAttributes": map[string]any{}, "deviceToken": str(in, "deviceToken"),
+			"service": str(in, "service"), "updatedAt": now, "userAttributes": map[string]any{}, "userId": userID,
+		})
+		return
+	case p == "/1.0.0/devices/me/delete":
 		writeJSON(w, 200, map[string]any{})
 		return
 	}

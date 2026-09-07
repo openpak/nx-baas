@@ -116,3 +116,9 @@ func str(m map[string]any, k string) string {
 	s, _ := m[k].(string)
 	return s
 }
+
+func randB64(n int) string {
+	b := make([]byte, n)
+	rand.Read(b)
+	return base64.RawURLEncoding.EncodeToString(b)
+}
