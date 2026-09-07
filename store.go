@@ -30,6 +30,7 @@ type User struct {
 	ID             string   `json:"id"`
 	PID            uint64   `json:"pid"`
 	NaID           string   `json:"naId"`
+	BsDid          string   `json:"bsDid"` // the account server's bs:did for this user: what a console's id_token carries and the game servers report back
 	Nickname       string   `json:"nickname"`
 	Country        string   `json:"country"`
 	Birthday       string   `json:"birthday"`
@@ -125,6 +126,23 @@ func (s *Store) UserByPID(pid uint64) *User {
 // and federates it with the Nintendo Account; the response must be the account's canonical BAAS
 // user (stable id = openpak-account's baasUserID, so every console and game server agree),
 // with this console's device account added to it. Any previous throwaway is discarded.
+// UserByBsDid finds the user a console identifies itself with. An unlinked user has no
+// account bs:did yet and presents its own BAAS id instead.
+// ponytail: linear scan -- a LAN store holds a handful of users.
+func (s *Store) UserByBsDid(bsDid string) *User {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if bsDid == "" {
+		return nil
+	}
+	for _, u := range s.Users {
+		if u.BsDid == bsDid || u.ID == bsDid {
+			return u
+		}
+	}
+	return nil
+}
+
 func (s *Store) Link(from *User, pid uint64, baasUserID, naID string) *User {
 	s.mu.Lock()
 	defer s.mu.Unlock()

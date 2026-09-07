@@ -209,6 +209,11 @@ func (s *server) identity(u *User) *Identity {
 	}
 	id, err := s.acct.Identity(u.PID)
 	logErr("identity", err)
+	// Remember the account's bs:did: it is what a console's id_token carries and what the
+	// Photon server reports back on /internal/photon-room, which has no PID of its own.
+	if id != nil && id.BsDid != "" && u.BsDid != id.BsDid {
+		s.store.Update(u, func(u *User) { u.BsDid = id.BsDid })
+	}
 	return id
 }
 
@@ -1119,6 +1124,16 @@ func main() {
 		Addr: getenv("NX_ADDR", ":443"), Handler: handler,
 		TLSConfig: tlsConf,
 	}
+	// The game-facing API (Photon room presence, invitations) is plain HTTP on an internal
+	// port -- consoles never reach it, only the Photon server, the emulator and rig tooling.
+	go func() {
+		addr := getenv("NX_API_ADDR", ":20070")
+		if getenv("NX_INTERNAL_KEY", getenv("OPENPAK_INTERNAL_KEY", "")) == "" {
+			log.Printf("[nx-baas] WARNING: game API on %s has no NX_INTERNAL_KEY; keep the port off any untrusted network", addr)
+		}
+		log.Printf("[nx-baas] game API listening %s (photon-room, invitations, mint-token)", addr)
+		log.Fatal(http.ListenAndServe(addr, s.gameAPI()))
+	}()
 	log.Printf("[nx-baas] listening %s (BAAS + Nintendo Account); account backend %s; users=%d devices=%d", srv.Addr, getenv("ACCOUNT_BACKEND", "legacy"), len(s.store.Users), len(s.store.Devices))
 	log.Fatal(srv.ListenAndServeTLS("", ""))
 }

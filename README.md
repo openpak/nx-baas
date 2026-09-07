@@ -36,6 +36,22 @@ code). Identifiers are minted once per account and never migrate (PRD
 SW-01/SW-04). The earlier path stays available (`ACCOUNT_BACKEND` unset)
 until cutover is accepted.
 
+## Game API (`NX_API_ADDR`, default `:20070`)
+
+Plain HTTP on an internal port — consoles never reach it; the Photon server, the
+emulator and rig tooling do. It is what those callers used to get from
+openpak-account.
+
+| Endpoint | Caller | Notes |
+| --- | --- | --- |
+| `POST /internal/photon-room` `{identity,room,app_id}` | Photon | `identity` is `nex:<openpak token>` or `bsdid:<bs:did>`, straight from the client's id_token; this server resolves it. The room becomes the player's friend presence (`app_field` = the title's own application parameter). |
+| `POST /internal/mint-token` `{pid}` | rig tooling | A bearer for any PID the backend knows, no password. Dev convenience. |
+| `GET/POST /api/invitations` | emulator, console | Friend-invitation mailbox: opaque app-parameter bytes in, popped by the target. TTL 5 min, 8 queued per target, senders limited to their own friends. |
+
+`X-Internal-Key` must match `NX_INTERNAL_KEY` (or `OPENPAK_INTERNAL_KEY`) when set;
+`/api/*` uses the `nx2.` openpak bearer. Any other `/api/*` path is forwarded to
+`ACCOUNT_API` until the OpenPak core serves friends/presence/saves itself.
+
 ## Known scaling ceilings (recorded, fine for one console)
 
 - `ensure` holds the global projection mutex across up to three core RPCs,

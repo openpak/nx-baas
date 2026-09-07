@@ -29,4 +29,7 @@ type accountBackend interface {
 	FriendAccept(pid, from uint64, accept bool) error
 	// nexToken signs the "openpak" binding claim game servers verify.
 	nexToken(pid uint64, username string) string
+	// nexSigningKey is the key nexToken signs with, so the game API can verify a
+	// token it (or the account server) minted without a round trip.
+	nexSigningKey() []byte
 }

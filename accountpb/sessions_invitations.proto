@@ -1,0 +1,113 @@
+syntax = "proto3";
+
+package openpak.account.v1;
+
+option go_package = "openpak/account/proto/openpak/account/v1;accountv1";
+
+// Live-session registry and core-routed invitations (PRD SW-06/SW-07).
+// Adapters register sessions with short leases; the core routes invitations
+// to a live session for the target account and title. Leases and expiry are
+// core-owned so stale-session cleanup has a shared clock.
+service Sessions {
+  // Register a live session. A server-side session_id is returned; the
+  // lease (default 30 s) must be renewed by Heartbeat before expiry.
+  rpc RegisterSession(RegisterSessionRequest) returns (RegisterSessionResponse);
+  // Renew the lease. Fails if the session expired or was expired.
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  // Explicit teardown (clean disconnect, host exit).
+  rpc ExpireSession(ExpireSessionRequest) returns (ExpireSessionResponse);
+  // Resolve the live session for an account and title, if any.
+  rpc ResolveSession(ResolveSessionRequest) returns (ResolveSessionResponse);
+}
+
+service Invitations {
+  // Deliver an invitation to a live session. The core enforces CheckInteraction
+  // rules, stamps expiry and a nonce (replay rejection), requires a live
+  // session for the target account + title, and binds the invitation to that
+  // session (delivery fails if the session is replaced, expired, or removed;
+  // blocks are re-checked at delivery time).
+  rpc SendInvitation(SendInvitationRequest) returns (SendInvitationResponse);
+  // Poll pending invitations for an account on one adapter namespace.
+  // Delivery is at-least-once: returned invitations stay pending for a
+  // redelivery window (60 s) until acknowledged, so a lost response is
+  // recovered by polling again. Expired or policy-invalid invitations are
+  // reaped/rejected server-side before delivery.
+  rpc PollInvitations(PollInvitationsRequest) returns (PollInvitationsResponse);
+  // Acknowledge received invitations (id + nonce pairs). Only pending
+  // invitations matching namespace/account/nonce are marked delivered.
+  rpc AckInvitations(AckInvitationsRequest) returns (AckInvitationsResponse);
+}
+
+message RegisterSessionRequest {
+  string account_id = 1;
+  string namespace = 2;      // owning adapter namespace (e.g. "switch")
+  string title_id = 3;       // adapter-scoped title/tenant routing metadata
+  string endpoint_ref = 4;   // opaque adapter-interpreted delivery handle
+  int32 lease_seconds = 5;   // optional; server default 30, cap 300
+}
+
+message RegisterSessionResponse {
+  string session_id = 1;
+  int32 lease_seconds = 2;
+}
+
+message HeartbeatRequest { string session_id = 1; }
+
+message HeartbeatResponse { int32 lease_seconds = 1; }
+
+message ExpireSessionRequest { string session_id = 1; }
+
+message ExpireSessionResponse {}
+
+message ResolveSessionRequest {
+  string account_id = 1;
+  string title_id = 2;
+}
+
+message ResolveSessionResponse {
+  string session_id = 1;
+  string namespace = 2;
+  string endpoint_ref = 3;
+}
+
+message SendInvitationRequest {
+  string from_account_id = 1;
+  string to_account_id = 2;
+  string title_id = 3;
+  bytes payload = 4;         // opaque adapter content; server-capped at 4096 bytes
+  int32 ttl_seconds = 5;     // required; cap 86400
+}
+
+message SendInvitationResponse {
+  string invitation_id = 1;
+  string nonce = 2;          // caller echoes for replay rejection
+}
+
+message PollInvitationsRequest {
+  string namespace = 1;      // delivering adapter's own namespace
+  string account_id = 2;
+  int32 limit = 3;
+}
+
+message PollInvitationsResponse {
+  repeated Invitation invitations = 1;
+}
+
+message AckInvitationsRequest {
+  string namespace = 1;
+  string account_id = 2;
+  repeated string invitation_ids = 3;
+  repeated string nonces = 4; // parallel to invitation_ids
+}
+
+message AckInvitationsResponse { int32 acked = 1; }
+
+message Invitation {
+  string invitation_id = 1;
+  string from_account_id = 2;
+  string from_display_name = 3;
+  string title_id = 4;
+  bytes payload = 5;
+  string nonce = 6;
+  int64 expires_at_unix = 7;
+}

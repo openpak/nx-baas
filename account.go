@@ -149,6 +149,8 @@ func (a *accountClient) nexToken(pid uint64, username string) string {
 	return "nx2." + base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
+func (a *accountClient) nexSigningKey() []byte { return a.secret }
+
 func logErr(what string, err error) {
 	if err != nil {
 		log.Printf("[nx-baas] account: %s: %v", what, err)

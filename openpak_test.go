@@ -2,7 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -10,7 +14,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	accountv1 "openpak/account/proto/openpak/account/v1"
+	accountv1 "nx-baas/accountpb"
 )
 
 // fakeCore implements the three core client surfaces the OpenPak backend
@@ -278,4 +282,55 @@ func strMap(kv ...string) map[string][]string {
 		m[kv[i]] = []string{kv[i+1]}
 	}
 	return m
+}
+
+// One check for the title-server surface: an openpak this backend signed resolves to the player
+// and their friend projections; a forged one and a wrong key are refused.
+func TestInternalSwitchIdentity(t *testing.T) {
+	b, f := newTestBackend(t)
+	f.addAccount("host@example.com", "Host", "pw")
+	f.addAccount("friend@example.com", "Friend", "pw")
+	f.befriend("host@example.com", "friend@example.com")
+	hostPID, _, err := b.LoginPID("host@example.com", "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := b.LoginPID("friend@example.com", "pw"); err != nil {
+		t.Fatal(err)
+	}
+	key := strings.Repeat("i", 32)
+	t.Setenv("NX_INTERNAL_KEY", key)
+	srv := httptest.NewServer((&server{acct: b}).gameAPI())
+	defer srv.Close()
+	post := func(body, k string) (int, struct {
+		switchPlayer
+		Friends []switchPlayer `json:"friends"`
+	}) {
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/internal/switch/identity", strings.NewReader(body))
+		req.Header.Set("X-Internal-Key", k)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out struct {
+			switchPlayer
+			Friends []switchPlayer `json:"friends"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		return resp.StatusCode, out
+	}
+	code, id := post(`{"openpak":"`+b.nexToken(hostPID, "Host")+`"}`, key)
+	if code != 200 || id.PID != hostPID || id.BaasUserID == "" || len(id.Friends) != 1 || id.Friends[0].Nickname != "Friend" {
+		t.Fatalf("openpak path: code=%d id=%+v", code, id)
+	}
+	if code, _ := post(`{"pid":`+strconv.FormatUint(hostPID, 10)+`}`, key); code != 200 {
+		t.Fatalf("pid path: code=%d", code)
+	}
+	if code, _ := post(`{"openpak":"nx2.a.b"}`, key); code != 401 {
+		t.Fatalf("forged openpak accepted: code=%d", code)
+	}
+	if code, _ := post(`{"pid":1}`, "wrong"); code != 401 {
+		t.Fatalf("wrong key accepted: code=%d", code)
+	}
 }

@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package openpak.account.v1;
+
+option go_package = "openpak/account/proto/openpak/account/v1;accountv1";
+
+// Durable invalidation events (PRD §7): consumers poll and process with
+// deduplication. Versions are monotonic per event stream.
+service Events {
+  rpc PollEvents(PollEventsRequest) returns (PollEventsResponse);
+}
+
+message PollEventsRequest {
+  uint64 since_version = 1; // return events with version > this
+  int32  limit = 2;         // max events per page (server-capped at 1000)
+}
+
+message PollEventsResponse {
+  repeated InvalidationEvent events = 1;
+  uint64 max_version = 2;   // highest version in stream; use as next since_version
+}
+
+message InvalidationEvent {
+  uint64 version = 1;
+  string event_id = 2;      // stable ID for dedup
+  string type = 3;          // account_banned | account_unbanned | link_unlinked | account_delete_started | account_deleted | credential_revoked
+  string account_id = 4;
+  string namespace = 5;     // set when scoped to one adapter link
+  string subject_id = 6;    // set when scoped to one adapter link
+  int64  created_at_unix = 7;
+}

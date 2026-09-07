@@ -29,7 +29,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	accountv1 "openpak/account/proto/openpak/account/v1"
+	accountv1 "nx-baas/accountpb"
 )
 
 type openpakBackend struct {
@@ -402,6 +402,8 @@ func (b *openpakBackend) nexToken(pid uint64, username string) string {
 	mac.Write([]byte("nex:" + payload))
 	return "nx2." + base64RawURL([]byte(payload)) + "." + base64RawURL(mac.Sum(nil))
 }
+
+func (b *openpakBackend) nexSigningKey() []byte { return b.nexKey }
 
 func (b *openpakBackend) byPID(ctx context.Context, pid uint64) (*projection, string, error) {
 	b.proj.mu.Lock()
