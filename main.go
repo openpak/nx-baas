@@ -1196,7 +1196,11 @@ func main() {
 		onDemand.Store(h.ServerName, &c)
 		return &c, nil
 	}
-	tlsConf := &tls.Config{GetCertificate: getCert, ClientAuth: tls.NoClientCert, MinVersion: tls.VersionTLS12}
+	// Ask for the console's client certificate but never require it: dauth uses it to tell
+	// consoles apart, while every browser and emulator that talks to this service has none and
+	// must still connect. RequestClientCert accepts whatever is offered without verifying it
+	// against a CA we do not have.
+	tlsConf := &tls.Config{GetCertificate: getCert, ClientAuth: tls.RequestClientCert, MinVersion: tls.VersionTLS12}
 	if os.Getenv("NX_DEBUG") != "" {
 		// Diagnostic: every TLS handshake by SNI, so a connection that never speaks HTTP (the Penne
 		// persistent frontline) is still visible in the log.

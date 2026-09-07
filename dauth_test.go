@@ -35,37 +35,6 @@ func TestDeviceTokenCarriesDeviceID(t *testing.T) {
 	}
 }
 
-func TestDauthIssuesOneTokenPerClient(t *testing.T) {
-	s := dauthServer(t)
-	body := "device_id=dev-9&client_id=aaa&client_id=bbb"
-	r := httptest.NewRequest(http.MethodPost, "/v8/device_auth_tokens", strings.NewReader(body))
-	r.Host = "dauth-lp1.ndas.srv.nintendo.net"
-	w := httptest.NewRecorder()
-	s.dauth(w, r, []byte(body))
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", w.Code)
-	}
-	var out struct {
-		Tokens []struct {
-			ClientID string `json:"client_id"`
-			Token    string `json:"device_auth_token"`
-		} `json:"device_auth_tokens"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
-		t.Fatal(err)
-	}
-	if len(out.Tokens) != 2 {
-		t.Fatalf("got %d tokens, want 2", len(out.Tokens))
-	}
-	for _, tok := range out.Tokens {
-		claims, err := parseJWT(tok.Token, nil)
-		if err != nil || str(claims, "aud") != tok.ClientID {
-			t.Errorf("token for %s does not carry its client_id (%v)", tok.ClientID, err)
-		}
-	}
-}
-
 // dcert serves the keys the console verifies those tokens with; an empty JWKS would fail
 // the console with no useful error.
 func TestDcertServesTheSigningKey(t *testing.T) {
@@ -77,5 +46,43 @@ func TestDcertServesTheSigningKey(t *testing.T) {
 
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "test-kid") {
 		t.Fatalf("dcert /keys = %d %s", w.Code, w.Body.String())
+	}
+}
+
+// The console posts JSON with a list of client ids and no device identifier anywhere; an
+// earlier form-encoded reading of this body issued zero tokens and left the console retrying
+// in a loop.
+func TestDeviceTokensFromRealConsoleBody(t *testing.T) {
+	s := dauthServer(t)
+	body := []byte(`{"system_version":"00160500","fw_revision":"ae93061a","ist":false,` +
+		`"token_requests":[{"client_id":"8f849b5d34778d8e"},{"client_id":"dc656ea03b63cf68"}],` +
+		`"key_generation":22,"challenge":"pdvfdf910","mac":"xn-ynLKpF0BC"}`)
+	r := httptest.NewRequest(http.MethodPost, "/v8/device_auth_tokens", strings.NewReader(string(body)))
+	r.Host = "dauth-lp1.ndas.srv.nintendo.net"
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.dauth(w, r, body)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	var out struct {
+		Tokens []struct {
+			ClientID string `json:"client_id"`
+			Token    string `json:"device_auth_token"`
+		} `json:"device_auth_tokens"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Tokens) != 2 {
+		t.Fatalf("got %d tokens, want one per token_request", len(out.Tokens))
+	}
+	if out.Tokens[0].ClientID != "8f849b5d34778d8e" {
+		t.Errorf("first client_id = %q", out.Tokens[0].ClientID)
+	}
+	claims, err := parseJWT(out.Tokens[1].Token, nil)
+	if err != nil || str(claims, "aud") != "dc656ea03b63cf68" {
+		t.Errorf("second token does not carry its client_id (%v)", err)
 	}
 }

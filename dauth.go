@@ -1,12 +1,31 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"log"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 )
+
+// What the console posts to /v8/device_auth_tokens (captured from a real console, firmware
+// 22.2.0.0): JSON, with one entry per client id it wants a token for. There is no device
+// identifier anywhere in it — the real service knows the console from its TLS client
+// certificate, which is why deviceID falls back to the connection below.
+type deviceTokenRequest struct {
+	SystemVersion string `json:"system_version"`
+	FWRevision    string `json:"fw_revision"`
+	KeyGeneration int    `json:"key_generation"`
+	Challenge     string `json:"challenge"`
+	MAC           string `json:"mac"`
+	IST           bool   `json:"ist"`
+	TokenRequests []struct {
+		ClientID string `json:"client_id"`
+	} `json:"token_requests"`
+}
 
 // Device authentication, the first step of the console's chain: the console proves it is a
 // console to dauth, gets a device_auth_token, and /1.0.0/application/token then trades that
@@ -45,32 +64,36 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 		})
 
 	case p == "/v8/device_auth_tokens" && r.Method == "POST":
-		// One token per requested client_id: the console asks for several at once
-		// (system, applet and title clients) and expects them keyed by client_id.
-		ids := form["client_id"]
-		if len(ids) == 0 {
-			ids = []string{form.Get("client_id")}
+		var req deviceTokenRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			log.Printf("[dauth] token request is not JSON: %v", err)
+			http.Error(w, `{"errors":[{"code":"1000","message":"malformed request"}]}`, http.StatusBadRequest)
+			return
 		}
-		serial := form.Get("system_version") // not a serial; kept only for the log line
-		device := deviceIDFrom(form)
-		out := make([]any, 0, len(ids))
-		for _, id := range ids {
-			if id == "" {
+		device := deviceID(r, req)
+		out := make([]any, 0, len(req.TokenRequests))
+		for _, tr := range req.TokenRequests {
+			if tr.ClientID == "" {
 				continue
 			}
 			out = append(out, map[string]any{
-				"client_id":         id,
-				"device_auth_token": s.deviceToken(device, id),
+				"client_id":         tr.ClientID,
+				"device_auth_token": s.deviceToken(device, tr.ClientID),
 				"expires_in":        86400,
 			})
 		}
-		log.Printf("[dauth] device %s -> %d token(s) (sysver %q)", device, len(out), serial)
+		log.Printf("[dauth] device %s (fw %s) -> %d token(s)", device, req.SystemVersion, len(out))
 		writeJSON(w, 200, map[string]any{"device_auth_tokens": out})
 
 	case p == "/v8/edge_tokens" && r.Method == "POST":
-		device := deviceIDFrom(form)
+		var req deviceTokenRequest
+		_ = json.Unmarshal(body, &req)
+		client := form.Get("client_id")
+		if len(req.TokenRequests) > 0 {
+			client = req.TokenRequests[0].ClientID
+		}
 		writeJSON(w, 200, map[string]any{
-			"edge_token": s.deviceToken(device, form.Get("client_id")),
+			"edge_token": s.deviceToken(deviceID(r, req), client),
 			"expires_in": 86400,
 		})
 
@@ -80,14 +103,17 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 	}
 }
 
-// deviceIDFrom picks the console's identifier out of whichever field this firmware sent.
-// Falls back to a stable placeholder so a missing field cannot wedge the login.
-func deviceIDFrom(form url.Values) string {
-	for _, k := range []string{"device_id", "did", "device_account_id"} {
-		if v := form.Get(k); v != "" {
-			return v
-		}
+// deviceID identifies the console. Nothing in the request body says which console it is, so the
+// TLS client certificate is used when the console presents one — that is how the real service
+// tells consoles apart. Without a certificate every console on this network would share one
+// device account, so the fallback is logged rather than silently accepted.
+func deviceID(r *http.Request, req deviceTokenRequest) string {
+	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+		c := r.TLS.PeerCertificates[0]
+		sum := sha256.Sum256(c.Raw)
+		return "cert-" + hex.EncodeToString(sum[:8])
 	}
+	log.Printf("[dauth] WARNING: no client certificate; consoles cannot be told apart (fw %s)", req.SystemVersion)
 	return "openpak-device"
 }
 
