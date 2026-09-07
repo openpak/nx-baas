@@ -1200,7 +1200,27 @@ func main() {
 	// consoles apart, while every browser and emulator that talks to this service has none and
 	// must still connect. RequestClientCert accepts whatever is offered without verifying it
 	// against a CA we do not have.
-	tlsConf := &tls.Config{GetCertificate: getCert, ClientAuth: tls.RequestClientCert, MinVersion: tls.VersionTLS12}
+	// The console's web applet is an old engine and offers only legacy TLS 1.2 suites, which
+	// modern Go refuses by default: the handshake died immediately after the ClientHello, which
+	// looked exactly like a certificate the browser did not trust. Offer everything Go can
+	// still speak, including the suites it considers insecure, since this is a private network
+	// talking to consoles that cannot be updated.
+	suites := make([]uint16, 0, 32)
+	for _, c := range tls.CipherSuites() {
+		suites = append(suites, c.ID)
+	}
+	for _, c := range tls.InsecureCipherSuites() {
+		suites = append(suites, c.ID)
+	}
+	tlsConf := &tls.Config{
+		GetCertificate: getCert,
+		ClientAuth:     tls.RequestClientCert,
+		MinVersion:     tls.VersionTLS10,
+		CipherSuites:   suites,
+		CurvePreferences: []tls.CurveID{
+			tls.X25519, tls.CurveP256, tls.CurveP384, tls.CurveP521,
+		},
+	}
 	if os.Getenv("NX_DEBUG") != "" {
 		// Diagnostic: every TLS handshake by SNI, so a connection that never speaks HTTP (the Penne
 		// persistent frontline) is still visible in the log.
