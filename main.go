@@ -240,15 +240,10 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 	self := map[string]any{"playLog": ""}
 	nx := u.NxAccount
 	if nx == "" && id != nil && os.Getenv("NX_TEST_NXACCOUNT") != "" {
-		// ponytail: profile blob for Restore User. Layout only partly known (uid[16] + settings);
-		// we reuse a captured blob's settings with a fresh uid so it cannot collide with a
-		// profile already on the console. Proper generation from the account's Mii is TODO.
-		if raw, err := base64.StdEncoding.DecodeString(os.Getenv("NX_TEST_NXACCOUNT")); err == nil && len(raw) > 16 {
-			uid := make([]byte, 16)
-			copy(uid, []byte(u.ID+u.ID))
-			copy(raw, uid)
-			nx = base64.StdEncoding.EncodeToString(raw)
-		}
+		// ponytail: probe -- a captured console profile blob served VERBATIM. Overwriting its
+		// uid[16] made the console answer 2124-0292 (nothing to restore), so the first 16 bytes
+		// are checked somehow; proper generation is TODO.
+		nx = os.Getenv("NX_TEST_NXACCOUNT")
 	}
 	if nx != "" {
 		self["isMediaUploaded"] = true
@@ -953,6 +948,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.na(w, r, body)
 	case strings.Contains(host, "penne.") || strings.Contains(host, "vermillion.") || strings.HasPrefix(host, "beach."):
 		s.penne(w, r, body)
+	case !strings.Contains(host, "baas.nintendo.com"):
+		dump(r, body, "!! UNHANDLED host (catch-all)")
+		writeJSON(w, 404, map[string]any{})
 	default:
 		s.baas(w, r, body)
 	}
@@ -1007,9 +1005,31 @@ func main() {
 		log.Printf("[nx-baas] CAPTURE MODE: forwarding everything to %s and logging bodies", up)
 		handler = newCaptureProxy(up)
 	}
+	// ponytail: Traefik sends every unrouted *nintendo.* SNI here; sign a cert per name on
+	// demand so the console gets past TLS and its request lands in the log as !! UNHANDLED.
+	var onDemand sync.Map
+	getCert := func(h *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		if h.ServerName == "" {
+			return &cert, nil
+		}
+		if c, ok := onDemand.Load(h.ServerName); ok {
+			return c.(*tls.Certificate), nil
+		}
+		c := selfSigned([]string{h.ServerName}, getenv("NX_CA_DIR", "/data/ca"))
+		onDemand.Store(h.ServerName, &c)
+		return &c, nil
+	}
+	tlsConf := &tls.Config{GetCertificate: getCert, ClientAuth: tls.NoClientCert, MinVersion: tls.VersionTLS12}
+	if os.Getenv("NX_UPSTREAM") != "" {
+		// ponytail: capture mode replicates the original capture, which used the fixed multi-SAN
+		// cert. On-demand per-SNI certs disturbed the console's silent NA session and forced a
+		// re-auth; the fixed cert keeps the session silent so both accounts refresh without prompting.
+		tlsConf.GetCertificate = nil
+		tlsConf.Certificates = []tls.Certificate{cert}
+	}
 	srv := &http.Server{
 		Addr: getenv("NX_ADDR", ":443"), Handler: handler,
-		TLSConfig: &tls.Config{Certificates: []tls.Certificate{cert}, ClientAuth: tls.NoClientCert, MinVersion: tls.VersionTLS12},
+		TLSConfig: tlsConf,
 	}
 	log.Printf("[nx-baas] listening %s (BAAS + Nintendo Account); account api %s; users=%d devices=%d", srv.Addr, s.acct.base, len(s.store.Users), len(s.store.Devices))
 	log.Fatal(srv.ListenAndServeTLS("", ""))
