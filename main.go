@@ -753,6 +753,15 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		w.Write(s.jwks)
 		return
 
+	case strings.HasPrefix(p, "/api/1.0.0/users/") && strings.HasSuffix(p, "/qrcode_param"):
+		// Friend-QR parameter (VPS parity): a signed verify URL the console renders as a QR code.
+		naID := strings.TrimSuffix(strings.TrimPrefix(p, "/api/1.0.0/users/"), "/qrcode_param")
+		now := time.Now().Unix()
+		exp := now + 7*86400
+		param := fmt.Sprintf("https://accounts.nintendo.com/qr_verify?sig=%s&iat=%d&aud=6ffd70c434d303c8&sub=%s&exp=%d", randB64(32), now, naID, exp)
+		writeJSON(w, 200, map[string]any{"exp": exp, "param": param, "userId": naID})
+		return
+
 	case p == "/connect/1.0.0/authorize" && r.Method == "POST" && form.Get("prompt") == "none":
 		// SSO for system applets (e-license etc.): identified by our NA access token, no UI.
 		cl, err := parseJWT(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), &s.key.PublicKey)
@@ -981,6 +990,14 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.na(w, r, body)
 	case strings.Contains(host, "penne.") || strings.Contains(host, "vermillion.") || strings.HasPrefix(host, "beach."):
 		s.penne(w, r, body)
+	case strings.HasPrefix(host, "capi.") && strings.HasSuffix(r.URL.Path, "/memberships"):
+		// NSO membership check (VPS parity): every account has an active "default" membership.
+		seg := strings.Split(r.URL.Path, "/")
+		naID := seg[len(seg)-2]
+		writeJSON(w, 200, map[string]any{"count": 2, "items": []any{
+			map[string]any{"context": "ex", "membership": map[string]any{"active": false}, "user_id": naID},
+			map[string]any{"context": "default", "membership": map[string]any{"active": true, "expires_at": time.Now().Unix() + 365*86400}, "user_id": naID},
+		}, "total": 2})
 	case !strings.Contains(host, "baas.nintendo.com"):
 		dump(r, body, "!! UNHANDLED host (catch-all)")
 		writeJSON(w, 404, map[string]any{})
@@ -1032,7 +1049,7 @@ func main() {
 	cert := selfSigned([]string{baasHost, "m-lp1.baas.nintendo.com", "cdn-image-e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com",
 		"accounts.nintendo.com", "api.accounts.nintendo.com", "cdn.accounts.nintendo.com",
 		"god.hac.lp1.penne.srv.nintendo.net", "val.hac.penne.srv.nintendo.net", "val.hac.lp1.penne.srv.nintendo.net",
-		"fro-3.hac.lp1.penne.srv.nintendo.net", "gw.hac.lp1.vermillion.srv.nintendo.net", "beach.hac.lp1.eshop.nintendo.net"}, getenv("NX_CA_DIR", "/data/ca"))
+		"fro-3.hac.lp1.penne.srv.nintendo.net", "gw.hac.lp1.vermillion.srv.nintendo.net", "beach.hac.lp1.eshop.nintendo.net", "capi.lp1.op2.nintendo.net"}, getenv("NX_CA_DIR", "/data/ca"))
 	var handler http.Handler = s
 	if up := os.Getenv("NX_UPSTREAM"); up != "" {
 		log.Printf("[nx-baas] CAPTURE MODE: forwarding everything to %s and logging bodies", up)
