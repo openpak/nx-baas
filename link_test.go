@@ -13,7 +13,7 @@ import (
 // happens on the console rather than on whoever scanned the square.
 func TestLinkCodeLifecycle(t *testing.T) {
 	s := &server{links: newLinkStore()}
-	code := s.links.new(url.Values{"client_id": {"abc"}})
+	code, _ := s.links.new(url.Values{"client_id": {"abc"}})
 
 	if got := s.links.get(code); got == nil || got.State != linkWaiting {
 		t.Fatalf("fresh code state = %v", got)
@@ -32,7 +32,7 @@ func TestLinkCodeLifecycle(t *testing.T) {
 
 func TestApproveRefusedUntilAPhoneClaims(t *testing.T) {
 	s := &server{links: newLinkStore(), codes: map[string]naCode{}}
-	code := s.links.new(url.Values{})
+	code, _ := s.links.new(url.Values{})
 
 	r := httptest.NewRequest(http.MethodPost, "/connect/1.0.0/qr/approve?c="+code, nil)
 	w := httptest.NewRecorder()
@@ -46,7 +46,7 @@ func TestApproveRefusedUntilAPhoneClaims(t *testing.T) {
 
 func TestStateReportsWhoClaimedIt(t *testing.T) {
 	s := &server{links: newLinkStore()}
-	code := s.links.new(url.Values{})
+	code, _ := s.links.new(url.Values{})
 	s.links.update(code, func(p *pendingLink) {
 		p.State, p.Username, p.PID = linkClaimed, "hansolo", 1800000003
 	})
@@ -83,7 +83,7 @@ func TestCodeAlphabet(t *testing.T) {
 // that is already waiting for approval on the console.
 func TestCodeIsSingleUse(t *testing.T) {
 	s := &server{links: newLinkStore(), phones: newPhoneStore()}
-	code := s.links.new(url.Values{})
+	code, _ := s.links.new(url.Values{})
 	s.links.update(code, func(p *pendingLink) {
 		p.State, p.Username, p.PID = linkClaimed, "first", 1
 	})
@@ -126,5 +126,32 @@ func TestSignOutDropsTheSession(t *testing.T) {
 	p.drop(token)
 	if _, ok := p.get(token); ok {
 		t.Error("session survived sign-out")
+	}
+}
+
+// The QR must reveal nothing: it carries a pairing id, and the code appears on the console
+// only once a phone has signed in against that pairing.
+func TestCodeAppearsOnlyAfterSignIn(t *testing.T) {
+	s := &server{links: newLinkStore(), phones: newPhoneStore()}
+	code, pair := s.links.new(url.Values{})
+
+	if code == pair {
+		t.Fatal("the QR carries the code itself")
+	}
+	if got := s.links.get(code); got.State != linkWaiting {
+		t.Fatalf("state before sign-in = %q, want waiting", got.State)
+	}
+
+	s.markSignedIn(pair, phoneSession{PID: 9, Username: "hansolo"})
+
+	got := s.links.get(code)
+	if got.State != linkSignedIn || got.Username != "hansolo" {
+		t.Errorf("after sign-in = %+v, want signed_in for tobagin", got)
+	}
+	// A pairing nobody knows must not move anything.
+	other, _ := s.links.new(url.Values{})
+	s.markSignedIn("not-a-pair", phoneSession{PID: 1, Username: "someone"})
+	if s.links.get(other).State != linkWaiting {
+		t.Error("an unknown pairing changed a console session")
 	}
 }

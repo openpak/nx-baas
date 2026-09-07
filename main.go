@@ -995,8 +995,9 @@ func (s *server) authorizePage(w http.ResponseWriter, r *http.Request, q url.Val
 	for k, v := range q {
 		fmt.Fprintf(&hidden, `<input type="hidden" name="%s" value="%s">`, html.EscapeString(k), html.EscapeString(v[0]))
 	}
-	code := s.links.new(q)
-	linkURL := s.linkBaseURL(r) + "/link?c=" + code
+	code, pair := s.links.new(q)
+	// The QR identifies this console session; it carries neither the code nor any authority.
+	linkURL := s.linkBaseURL(r) + "/link?p=" + pair
 	var e string
 	if msg != "" {
 		e = msg
@@ -1013,9 +1014,12 @@ func (s *server) authorizePage(w http.ResponseWriter, r *http.Request, q url.Val
       <li>Sign in to OpenPak on the phone.</li>
       <li>Check this code matches, then approve below.</li>
     </ol>
-    <p style="margin:16px 0 0"><span class="code">`+code+`</span></p>
+    <div id="codebox" hidden>
+      <p style="margin:16px 0 0">Type this on your phone:</p>
+      <p style="margin:8px 0 0"><span class="code">`+code+`</span></p>
+    </div>
     <p style="margin:10px 0 0;font-size:0.9rem">or open <strong>`+html.EscapeString(strings.TrimPrefix(s.linkBaseURL(r), "http://"))+`/link</strong> on your phone</p>
-    <p id="status" style="margin:14px 0 0">Waiting for your phone&hellip;</p>
+    <p id="status" style="margin:14px 0 0">Waiting for you to sign in on your phone&hellip;</p>
     <div id="confirm" hidden>
       <button id="approve" type="button">Approve</button>
       <button id="deny" class="ghost" type="button">Not me</button>
@@ -1040,7 +1044,10 @@ func (s *server) authorizePage(w http.ResponseWriter, r *http.Request, q url.Val
       if (x.readyState !== 4) return;
       var d = {};
       try { d = JSON.parse(x.responseText); } catch (e) { return; }
-      if (d.state === "claimed") {
+      if (d.state === "signed_in") {
+        document.getElementById("codebox").hidden = false;
+        status.innerHTML = "Signed in as <strong>" + d.account + "</strong>. Now type the code above.";
+      } else if (d.state === "claimed") {
         status.innerHTML = "Signed in on your phone as <strong>" + d.account + "</strong>. Approve to finish.";
         confirm.hidden = false;
       } else if (d.state === "expired") {

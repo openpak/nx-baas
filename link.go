@@ -43,14 +43,19 @@ const (
 type linkState string
 
 const (
-	linkWaiting  linkState = "waiting"  // shown on the console, nobody has claimed it
-	linkClaimed  linkState = "claimed"  // a phone signed in and entered the code
-	linkApproved linkState = "approved" // the person at the console pressed Approve
+	linkWaiting  linkState = "waiting"   // on screen, nobody has scanned it yet
+	linkSignedIn linkState = "signed_in" // a phone scanned the QR and signed in; the code is now shown
+	linkClaimed  linkState = "claimed"   // that phone typed the code back
+	linkApproved linkState = "approved"  // the person at the console pressed Approve
 	linkDenied   linkState = "denied"
 )
 
 type pendingLink struct {
-	State    linkState
+	State linkState
+	// Pair identifies the console session and is what the QR carries. It grants nothing on its
+	// own: a phone still has to sign in, and the code is only revealed on the console once it
+	// has. Photographing the screen therefore gives an onlooker neither.
+	Pair     string
 	PID      uint64
 	Username string
 	NaID     string
@@ -115,13 +120,27 @@ type linkStore struct {
 
 func newLinkStore() *linkStore { return &linkStore{by: map[string]*pendingLink{}} }
 
-func (l *linkStore) new(q url.Values) string {
+func (l *linkStore) new(q url.Values) (code, pair string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.expireLocked()
-	code := randCode()
-	l.by[code] = &pendingLink{State: linkWaiting, Query: q, Created: time.Now()}
-	return code
+	code, pair = randCode(), randHex(16)
+	l.by[code] = &pendingLink{State: linkWaiting, Pair: pair, Query: q, Created: time.Now()}
+	return code, pair
+}
+
+// byPair finds the console session a scanned QR belongs to, and the code it is holding back.
+func (l *linkStore) byPair(pair string) (code string, p *pendingLink) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.expireLocked()
+	for c, cand := range l.by {
+		if cand.Pair == pair && pair != "" {
+			copy := *cand
+			return c, &copy
+		}
+	}
+	return "", nil
 }
 
 func (l *linkStore) get(code string) *pendingLink {
@@ -222,27 +241,33 @@ func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) b
 		return true
 
 	case r.URL.Path == "/link" && r.Method == "GET":
+		pair := r.URL.Query().Get("p")
 		if sess, ok := s.phoneSession(r); ok {
-			s.phoneConfirmPage(w, sess.Username, "")
+			s.markSignedIn(pair, sess)
+			s.phoneConfirmPage(w, sess.Username, pair, "")
 		} else {
-			s.phoneLoginPage(w, "")
+			s.phoneLoginPage(w, pair, "")
 		}
 		return true
 
 	case r.URL.Path == "/link" && r.Method == "POST":
 		// Sign-in step: credentials only. No code is accepted here, so a stolen link cannot
 		// approve anything on its own.
+		pair := form.Get("pair")
 		pid, username, err := s.acct.LoginPID(form.Get("email"), form.Get("password"))
 		if err != nil {
-			s.phoneLoginPage(w, "Wrong e-mail or password.")
+			s.phoneLoginPage(w, pair, "Wrong e-mail or password.")
 			return true
 		}
 		if _, err := s.acct.Identity(pid); err != nil {
-			s.phoneLoginPage(w, "Account lookup failed.")
+			s.phoneLoginPage(w, pair, "Account lookup failed.")
 			return true
 		}
+		sess := phoneSession{PID: pid, Username: username}
 		s.setPhoneCookie(w, r, s.phones.new(pid, username))
-		s.phoneConfirmPage(w, username, "")
+		// Only now does the console reveal its code.
+		s.markSignedIn(pair, sess)
+		s.phoneConfirmPage(w, username, pair, "")
 		return true
 
 	case r.URL.Path == "/link/signout" && r.Method == "POST":
@@ -250,28 +275,28 @@ func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) b
 			s.phones.drop(c.Value)
 		}
 		s.clearPhoneCookie(w, r)
-		s.phoneLoginPage(w, "")
+		s.phoneLoginPage(w, form.Get("pair"), "")
 		return true
 
 	case r.URL.Path == "/link/code" && r.Method == "POST":
 		sess, ok := s.phoneSession(r)
 		if !ok {
-			s.phoneLoginPage(w, "That took too long — sign in again.")
+			s.phoneLoginPage(w, form.Get("pair"), "That took too long — sign in again.")
 			return true
 		}
 		entered := strings.ToUpper(strings.TrimSpace(form.Get("code")))
 		pending := s.links.get(entered)
 		if pending == nil {
-			s.phoneConfirmPage(w, sess.Username, "That code is wrong or has expired. Check the console.")
+			s.phoneConfirmPage(w, sess.Username, form.Get("pair"), "That code is wrong or has expired. Check the console.")
 			return true
 		}
-		if pending.State != linkWaiting {
-			s.phoneConfirmPage(w, sess.Username, "That code has already been used.")
+		if pending.State != linkWaiting && pending.State != linkSignedIn {
+			s.phoneConfirmPage(w, sess.Username, form.Get("pair"), "That code has already been used.")
 			return true
 		}
 		id, err := s.acct.Identity(sess.PID)
 		if err != nil {
-			s.phoneConfirmPage(w, sess.Username, "Account lookup failed.")
+			s.phoneConfirmPage(w, sess.Username, form.Get("pair"), "Account lookup failed.")
 			return true
 		}
 		s.links.update(entered, func(p *pendingLink) {
@@ -392,13 +417,13 @@ func errBlock(msg string) string {
 
 // phoneLoginPage: credentials only. The code is asked for afterwards, so scanning the QR by
 // itself approves nothing.
-func (s *server) phoneLoginPage(w http.ResponseWriter, errMsg string) {
+func (s *server) phoneLoginPage(w http.ResponseWriter, pair, errMsg string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, pageHead("Link a console")+`
 <h1>Sign in</h1>
 <p>Then type the code shown on your console.</p>
 <div class="card">`+errBlock(errMsg)+`<form method="post" action="/link">
-<label for="email">E-mail</label>
+`+pairField(pair)+`<label for="email">E-mail</label>
 <input id="email" name="email" type="email" autocomplete="username" autofocus required>
 <label for="password">Password</label>
 <input id="password" name="password" type="password" autocomplete="current-password" required>
@@ -408,18 +433,41 @@ func (s *server) phoneLoginPage(w http.ResponseWriter, errMsg string) {
 
 // phoneConfirmPage: signed in already — check it is the right account before taking a code,
 // since a phone stays signed in and the console in front of you may not be yours.
-func (s *server) phoneConfirmPage(w http.ResponseWriter, username, errMsg string) {
+func (s *server) phoneConfirmPage(w http.ResponseWriter, username, pair, errMsg string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, pageHead("Link a console")+`
 <h1>Link a console</h1>
 <p>Signed in as <strong class="ok">`+html.EscapeString(username)+`</strong>.</p>
 <div class="card">`+errBlock(errMsg)+`<form method="post" action="/link/code">
-<label for="code">Code shown on the console</label>
+`+pairField(pair)+`<label for="code">Code shown on the console</label>
 <input id="code" name="code" autocapitalize="characters" autocomplete="off" spellcheck="false"
        maxlength="8" pattern="[A-Za-z0-9]{6}" required autofocus>
 <button type="submit">Link this console</button>
 </form></div>
 <div class="card"><p style="margin:0 0 12px">Not your account?</p>
-<form method="post" action="/link/signout"><button class="ghost" type="submit">Sign out and use another</button></form>
+<form method="post" action="/link/signout">`+pairField(pair)+`<button class="ghost" type="submit">Sign out and use another</button></form>
 </div></main></body></html>`)
+}
+
+func pairField(pair string) string {
+	if pair == "" {
+		return ""
+	}
+	return `<input type="hidden" name="pair" value="` + html.EscapeString(pair) + `">`
+}
+
+// markSignedIn tells the console session that a phone has signed in, which is what makes the
+// code appear on the television. Nothing is claimed yet: the code still has to be typed back.
+func (s *server) markSignedIn(pair string, sess phoneSession) {
+	if pair == "" {
+		return
+	}
+	code, p := s.links.byPair(pair)
+	if p == nil || p.State != linkWaiting {
+		return
+	}
+	s.links.update(code, func(p *pendingLink) {
+		p.State, p.Username = linkSignedIn, sess.Username
+	})
+	log.Printf("[link] %s signed in on the phone; console may show its code", sess.Username)
 }
