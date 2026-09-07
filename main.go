@@ -246,7 +246,9 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 	friendsEx := map[string]any{"isChatActivated": true, "isChatInvitable": true, "playLog": ""}
 	everyone := map[string]any{"playLog": ""}
 	thumb1, thumb2, thumbAt := "", "", int64(0)
+	etag := randHex(8)
 	if id != nil {
+		etag = id.BsDid // VPS parity: user.etag == the token bs:did for a linked user
 		nickname = id.Nickname
 		links["nintendoAccount"] = map[string]any{"id": id.NaID, "createdAt": u.CreatedAt, "updatedAt": u.CreatedAt}
 		if !minimal {
@@ -262,7 +264,7 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 	}
 	return map[string]any{
 		"birthday": u.Birthday, "blocksUpdatedAt": u.CreatedAt, "country": country, "createdAt": u.CreatedAt, "deleted": false,
-		"deviceAccounts": devs, "etag": fmt.Sprintf("\"%s\"", randHex(8)),
+		"deviceAccounts": devs, "etag": fmt.Sprintf("\"%s\"", etag),
 		"extras":           map[string]any{"everyone": everyone, "favoriteFriends": map[string]any{"playLog": ""}, "foaf": map[string]any{"playLog": ""}, "friends": friendsEx, "self": self},
 		"friendsUpdatedAt": u.UpdatedAt, "id": u.ID, "links": links, "nickname": nickname, "nicknameUpdatedAt": u.UpdatedAt,
 		"permissions": map[string]any{
