@@ -12,6 +12,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -55,7 +56,7 @@ func getenv(k, d string) string {
 
 type server struct {
 	store  *Store
-	acct   *accountClient
+	acct   accountBackend
 	key    *rsa.PrivateKey
 	idKid  string // kid of id_tokens (openpak-baas-key-1: what Photon/NPLN/S2 already trust)
 	accKid string // kid of BAAS access tokens (/1.0.0/internal_certificates)
@@ -1030,6 +1031,24 @@ func selfSigned(hosts []string, caDir string) tls.Certificate {
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
 }
 
+// newBackend selects the identity source: the historical OpenPak HTTP
+// client (default, keeps the proven deployment running) or the OpenPak
+// account core (ACCOUNT_BACKEND=openpak).
+func newBackend() accountBackend {
+	if os.Getenv("ACCOUNT_BACKEND") == "openpak" {
+		b, err := newOpenpakBackend(context.Background(), getenv("NX_DATA", "/data"))
+		if err != nil {
+			log.Fatalf("[nx-baas] openpak backend: %v", err)
+		}
+		log.Printf("[nx-baas] identity backend: openpak account core (%s)", getenv("ACCOUNT_GRPC_ADDR", "127.0.0.1:7000"))
+		return b
+	}
+	return &accountClient{
+		base: strings.TrimRight(getenv("ACCOUNT_API", "http://account:8080"), "/"), adminKey: os.Getenv("OPENPAK_ADMIN_KEY"),
+		secret: []byte(os.Getenv("OPENPAK_SECRET")), http: &http.Client{Timeout: 10 * time.Second},
+	}
+}
+
 func main() {
 	key := loadRSAKey(getenv("BAAS_SIGNING_KEY", "/keys/baas_signing_key.pem"))
 	s := &server{
@@ -1040,10 +1059,7 @@ func main() {
 		naKid:  getenv("BAAS_NA_KID", "00000000-0000-0000-0000-000000000001"),
 		codes:  map[string]naCode{},
 		device: map[string]string{},
-		acct: &accountClient{
-			base: strings.TrimRight(getenv("ACCOUNT_API", "http://account:8080"), "/"), adminKey: os.Getenv("OPENPAK_ADMIN_KEY"),
-			secret: []byte(os.Getenv("OPENPAK_SECRET")), http: &http.Client{Timeout: 10 * time.Second},
-		},
+		acct:   newBackend(),
 	}
 	s.jwks = jwksFor(&key.PublicKey, s.idKid, getenv("BAAS_ID_KID", "00000000-0000-0000-0000-000000000002"), s.accKid, s.naKid)
 	cert := selfSigned([]string{baasHost, "m-lp1.baas.nintendo.com", "cdn-image-e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com",
@@ -1098,6 +1114,6 @@ func main() {
 		Addr: getenv("NX_ADDR", ":443"), Handler: handler,
 		TLSConfig: tlsConf,
 	}
-	log.Printf("[nx-baas] listening %s (BAAS + Nintendo Account); account api %s; users=%d devices=%d", srv.Addr, s.acct.base, len(s.store.Users), len(s.store.Devices))
+	log.Printf("[nx-baas] listening %s (BAAS + Nintendo Account); account backend %s; users=%d devices=%d", srv.Addr, getenv("ACCOUNT_BACKEND", "legacy"), len(s.store.Users), len(s.store.Devices))
 	log.Fatal(srv.ListenAndServeTLS("", ""))
 }
