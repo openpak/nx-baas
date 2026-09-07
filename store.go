@@ -128,6 +128,9 @@ func (s *Store) UserByPID(pid uint64) *User {
 func (s *Store) Link(from *User, pid uint64, baasUserID, naID string) *User {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	fromID := from.ID // captured: the target==nil branch rewrites from.ID below, and the
+	// device loop must still recognise the throwaway's old id (otherwise every device
+	// account stays pointed at a deleted user and the next /login fails 2124-5002).
 	target := s.Users[baasUserID]
 	if target == nil {
 		target = from
@@ -140,7 +143,7 @@ func (s *Store) Link(from *User, pid uint64, baasUserID, naID string) *User {
 	}
 	target.PID, target.NaID = pid, naID
 	for _, d := range s.Devices {
-		if d.UserID == from.ID || d.UserID == baasUserID {
+		if d.UserID == fromID || d.UserID == baasUserID {
 			d.UserID = target.ID
 		}
 	}
