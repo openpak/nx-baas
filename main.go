@@ -953,7 +953,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func selfSigned(hosts []string, caDir string) tls.Certificate {
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
 	tmpl := x509.Certificate{
-		SerialNumber: big.NewInt(time.Now().Unix()), Subject: pkix.Name{CommonName: hosts[0], Organization: []string{"OpenPak"}},
+		SerialNumber: func() *big.Int { n, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 127)); return n }(), Subject: pkix.Name{CommonName: hosts[0], Organization: []string{"OpenPak"}},
 		NotBefore: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), NotAfter: time.Date(2036, 1, 1, 0, 0, 0, 0, time.UTC),
 		KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, DNSNames: hosts,
 	}
