@@ -913,15 +913,21 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		perm := func(ok bool) map[string]any {
 			return map[string]any{"editable": map[string]any{"admin": false, "self": true}, "permitted": ok, "updatedAt": int64(1524557701), "userConfirmed": true}
 		}
+		// The account's own country and birthday, not the captured sample's. The console links a
+		// Nintendo Account to a BAAS user in one flow and reads both objects: leaving this half
+		// hardcoded told it the person lives in GB and was born in 2000 while the other half said
+		// the account holds neither. Where the account has nothing, the sample's values remain —
+		// a Nintendo Account always carries both, so there is no "absent" to serve here.
+		country, birthday := naProfile(id)
 		me := map[string]any{
 			"agreedTerms": map[string]any{
-				"EULA":          map[string]any{"agreedAt": int64(1524557701), "country": "GB", "version": 2},
-				"privacyPolicy": map[string]any{"agreedAt": int64(1524557701), "country": "GB", "version": 2},
+				"EULA":          map[string]any{"agreedAt": int64(1524557701), "country": country, "version": 2},
+				"privacyPolicy": map[string]any{"agreedAt": int64(1524557701), "country": country, "version": 2},
 			},
 			"analyticsOptedIn": false, "analyticsOptedInUpdatedAt": int64(1524557701),
 			"analyticsPermissions": map[string]any{"dataCollection": perm(false), "internalAnalysis": perm(true), "targetMarketing": perm(false)},
-			"birthday":             "2000-01-01", "clientFriendsOptedIn": true, "clientFriendsOptedInUpdatedAt": int64(1524557701),
-			"country": "GB", "createdAt": int64(1524557701),
+			"birthday":             birthday, "clientFriendsOptedIn": true, "clientFriendsOptedInUpdatedAt": int64(1524557701),
+			"country": country, "createdAt": int64(1524557701),
 			"eachEmailOptedIn": map[string]any{"deals": map[string]any{"optedIn": false, "updatedAt": int64(1524557701)}, "survey": map[string]any{"optedIn": false, "updatedAt": int64(1524557701)}},
 			"email":            "legacy@example.com", "emailOptedIn": false, "emailOptedInUpdatedAt": int64(1524557701), "emailVerified": true,
 			"gender": "unknown", "iconUri": avatarURL(id.PID, id.Avatar, id.ImageUpdatedAt), "id": strings.ToLower(id.NaID), "isChild": false, "language": "en-GB",
@@ -1316,4 +1322,21 @@ func main() {
 	}
 
 	log.Fatal(srv.ListenAndServeTLS("", ""))
+}
+
+// naProfile is the country and birthday the Nintendo Account object carries. A real Nintendo
+// Account always has both, so unlike the BAAS user object there is no "absent" to serve and a
+// fallback is unavoidable — but it must not be a captured stranger's when the account has its
+// own. The two objects are read in the same link, and disagreeing about where someone lives is
+// not something to leave to a constant.
+func naProfile(id *Identity) (country, birthday string) {
+	country, birthday = id.Country, id.Birthday
+	if country == "" {
+		country = getenv("NA_FALLBACK_COUNTRY", "GB")
+		log.Printf("[nx-baas] users/me: account %s has no country of its own; serving %s", id.NaID, country)
+	}
+	if birthday == "" || birthday == "0000-00-00" {
+		birthday = getenv("NA_FALLBACK_BIRTHDAY", "2000-01-01")
+	}
+	return country, birthday
 }

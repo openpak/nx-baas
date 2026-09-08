@@ -155,3 +155,28 @@ func TestUserObjectInventsNothing(t *testing.T) {
 		t.Errorf("country = %q, want the account's own empty value", got)
 	}
 }
+
+// The console reads the Nintendo Account object and the BAAS user object in one link. When the
+// account holds a country, both must say so — telling it the person lives in GB while the other
+// half says the account holds nothing is a contradiction we used to ship unconditionally.
+func TestNintendoAccountFollowsTheAccountsOwnProfile(t *testing.T) {
+	s := dauthServer(t)
+	s.store = &Store{}
+	id := &Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "someone", Country: "IE", Birthday: "1984-03-02"}
+
+	country, birthday := naProfile(id)
+	if country != "IE" || birthday != "1984-03-02" {
+		t.Fatalf("users/me served %q/%q, want the account's own IE/1984-03-02", country, birthday)
+	}
+	obj := s.userObj(&User{ID: "u1", Country: "IE", Birthday: "1984-03-02"}, id, "")
+	if obj["country"] != country || obj["birthday"] != birthday {
+		t.Errorf("the two objects disagree: BAAS %v/%v vs NA %v/%v", obj["country"], obj["birthday"], country, birthday)
+	}
+
+	// With nothing on the account the fallback stands, because a Nintendo Account cannot have
+	// an empty country — but it is the only place in the stack still allowed to substitute.
+	t.Setenv("NA_FALLBACK_COUNTRY", "GB")
+	if c, _ := naProfile(&Identity{NaID: "x"}); c != "GB" {
+		t.Errorf("fallback country = %q, want GB", c)
+	}
+}
