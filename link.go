@@ -301,6 +301,21 @@ func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) b
 	}
 
 	switch {
+	case r.URL.Path == "/connect/1.0.0/qr/new" && r.Method == "POST":
+		// A client that has no browser of its own starts a link here rather than on the console's
+		// authorize page. An emulator is the case: it can open the host's browser at the sign-in
+		// page, but the host's DNS is not redirected, so it cannot render this server's page as a
+		// console does. Same pending link, same states, same approval — only the first step differs.
+		//
+		// The code is deliberately NOT part of link_url. Keeping it out is the whole guard: a code
+		// that travels in a link travels in a phishing link too, and approval cannot save it,
+		// because the approving side is whichever client started the link.
+		code, pair := s.links.new(r.URL.Query())
+		log.Printf("[link] code %s opened by a browserless client (%s)", code, r.UserAgent())
+		writeJSON(w, 200, map[string]any{
+			"code": code, "pair": pair, "link_url": s.linkBaseURL(r) + "/link?p=" + pair})
+		return true
+
 	case r.URL.Path == "/connect/1.0.0/qr/state":
 		p := s.links.get(code)
 		if p == nil {
