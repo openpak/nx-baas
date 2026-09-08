@@ -57,6 +57,24 @@ inline, because a console browser may have no route to the website. Full flow:
 `PREVIEW_DIR=/tmp/link go test -count=1 -run DumpLinkPages .` writes every one of those pages out
 to look at; the console page must be judged at 1280×720.
 
+## Friends
+
+Adding a friend works end to end on hardware except the console's own friend list, which stays
+empty; the whole investigation, every captured shape and every fix, is in
+[`../docs/switch/friend-flow-2026-09-08.md`](../docs/switch/friend-flow-2026-09-08.md).
+
+Two rules from it, because breaking either costs an evening:
+
+- **Every list is `{"count":n,"etag":…,"items":[…],"itemsPerPage":n}`.** Naming the array after
+  its contents makes a console report "unable to find user" or show nothing at all while the data
+  sits in the reply. `testdata/accepted-search-shape.json` is a capture with the values stripped,
+  and the shape test compares against it — including inside `extras`, which is where four invented
+  keys hid.
+- **Answer in the console's own words.** It PATCHes a friend request to `AUTHORIZED`; replying
+  `ACCEPTED` is "a communication error has occurred" even though the friendship committed. Since
+  the console keeps its friend list locally and only writes it on an accept it believes, a reply it
+  cannot read means the friendship exists on the server and nowhere else.
+
 ## The reply the console parses
 
 `2124-3121` means the console could not parse a body, and it says nothing else — no field, no
