@@ -1057,6 +1057,39 @@ func (s *server) authorizeRedirect(q url.Values, code string) string {
 }
 
 // authorizePage is what the console browser shows. Typing an e-mail and password with a
+// The console page describes a phone path only when a phone has somewhere to go; see linkBaseURL.
+func phoneIntro(ok bool) string {
+	if ok {
+		return "Scan the code with your phone, sign in there, then approve it here."
+	}
+	return "Sign in below to link this console."
+}
+
+func qrPanel(ok bool, linkURL string) string {
+	if !ok {
+		return ""
+	}
+	return `<div class="qr"><img src="` + qrDataURI(linkURL) + `" alt="QR code"></div>`
+}
+
+func phoneSteps(ok bool) string {
+	if ok {
+		return `<li>Scan the square with your phone&rsquo;s camera.</li>
+      <li>Sign in to OpenPak on the phone.</li>
+      <li>Check this code matches, then approve below.</li>`
+	}
+	return `<li>Sign in below.</li>
+      <li>Check this code matches, then approve.</li>`
+}
+
+func phoneAddress(ok bool, base string) string {
+	if !ok {
+		return ""
+	}
+	return `<p style="margin:10px 0 0;font-size:0.9rem">or open <strong>` +
+		html.EscapeString(strings.TrimPrefix(base, "http://")) + `/link</strong> on your phone</p>`
+}
+
 // controller is miserable, so the QR path leads: a code and an image to scan, the page polls
 // for a phone to claim it, and the person at the console approves. The password form is still
 // there, one fold down, for anyone without a phone to hand.
@@ -1067,7 +1100,11 @@ func (s *server) authorizePage(w http.ResponseWriter, r *http.Request, q url.Val
 	}
 	code, pair := s.links.new(q)
 	// The QR identifies this console session; it carries neither the code nor any authority.
-	linkURL := s.linkBaseURL(r) + "/link?p=" + pair
+	// phoneOK is false when nothing here is reachable by a phone, in which case no square is
+	// drawn at all — one built on the hostname the console arrived by would send the pairing id
+	// to Nintendo, since that is who owns that name everywhere except on this console.
+	linkBase, phoneOK := s.linkBaseURL(r)
+	linkURL := linkBase + "/link?p=" + pair
 	var e string
 	if msg != "" {
 		e = msg
@@ -1075,20 +1112,18 @@ func (s *server) authorizePage(w http.ResponseWriter, r *http.Request, q url.Val
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, pageHeadFor("Link this console", "console")+`
 <h1>Link this console</h1>
-<p>Scan the code with your phone, sign in there, then approve it here.</p>
+<p>`+phoneIntro(phoneOK)+`</p>
 <div class="card"><div class="split">
-  <div class="qr"><img src="`+qrDataURI(linkURL)+`" alt="QR code"></div>
+  `+qrPanel(phoneOK, linkURL)+`
   <div>
     <ol class="steps">
-      <li>Scan the square with your phone&rsquo;s camera.</li>
-      <li>Sign in to OpenPak on the phone.</li>
-      <li>Check this code matches, then approve below.</li>
+      `+phoneSteps(phoneOK)+`
     </ol>
     <div id="codebox" hidden>
       <p style="margin:16px 0 0">Type this on your phone:</p>
       <p style="margin:8px 0 0"><span class="code">`+groupCode(code)+`</span></p>
     </div>
-    <p style="margin:10px 0 0;font-size:0.9rem">or open <strong>`+html.EscapeString(strings.TrimPrefix(s.linkBaseURL(r), "http://"))+`/link</strong> on your phone</p>
+    `+phoneAddress(phoneOK, linkBase)+`
     <p id="status" style="margin:14px 0 0">Waiting for you to sign in on your phone&hellip;</p>
     <div id="confirm" hidden>
       <button id="approve" type="button">Approve</button>

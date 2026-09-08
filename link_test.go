@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -205,5 +206,62 @@ func TestGroupedCodeIsAccepted(t *testing.T) {
 	}
 	if strings.ReplaceAll(shown, " ", "") != code {
 		t.Errorf("what a person reads does not normalise back to the code")
+	}
+}
+
+// A phone that scans a QR resolves the name in it with its own DNS. The name a console reaches
+// us by is Nintendo's, so a QR built on it does not fail politely — it sends the pairing id to
+// Nintendo from a device that never opted in. Without a reachable address there is no phone
+// path offered at all.
+func TestNoPhonePathIsOfferedOnANintendoHostname(t *testing.T) {
+	s := testServer(t)
+	s.links = &linkStore{by: map[string]*pendingLink{}}
+	t.Setenv("NX_LINK_BASE_URL", "")
+
+	r := httptest.NewRequest("POST", "/connect/1.0.0/qr/new", nil)
+	r.Host = "accounts.nintendo.com"
+	w := httptest.NewRecorder()
+
+	if !s.qrRoutes(w, r, nil) {
+		t.Fatal("qr/new was not handled")
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatalf("reply is not JSON: %v", err)
+	}
+	if out["code"] == "" || out["code"] == nil {
+		t.Error("no code was issued; the form path needs one even with no phone path")
+	}
+	for _, leaky := range []string{"link_url", "qr"} {
+		if v, ok := out[leaky]; ok {
+			t.Errorf("%s was offered anyway: %v", leaky, v)
+		}
+	}
+	if out["no_phone_reason"] == nil {
+		t.Error("no reason given, so a client cannot say why the square is missing")
+	}
+}
+
+func TestPhonePathIsOfferedWhenAnAddressIsConfigured(t *testing.T) {
+	s := testServer(t)
+	s.links = &linkStore{by: map[string]*pendingLink{}}
+	t.Setenv("NX_LINK_BASE_URL", "https://openpak.example")
+
+	r := httptest.NewRequest("POST", "/connect/1.0.0/qr/new", nil)
+	r.Host = "accounts.nintendo.com"
+	w := httptest.NewRecorder()
+	s.qrRoutes(w, r, nil)
+
+	var out map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatalf("reply is not JSON: %v", err)
+	}
+	link, _ := out["link_url"].(string)
+	if !strings.HasPrefix(link, "https://openpak.example/link?p=") {
+		t.Errorf("link_url = %q, want the configured address", link)
+	}
+	if qr, _ := out["qr"].(string); !strings.HasPrefix(qr, "data:image/png;base64,") {
+		t.Error("no QR image came with the link")
 	}
 }

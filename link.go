@@ -283,12 +283,23 @@ func qrDataURI(u string) string {
 	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
 }
 
-// linkBaseURL is what the QR points at: the phone must reach this host by name.
-func (s *server) linkBaseURL(r *http.Request) string {
+// linkBaseURL is what the QR points at: the phone must reach this host by name, and ok says
+// whether any phone can.
+//
+// Falling back to the name the request arrived on is what a console reaches us by, and that name
+// is Nintendo's — reached only because the console's DNS was pointed here. A phone's was not. A
+// QR built on that host does not merely fail: it sends the pairing id to Nintendo, from a device
+// that never opted into any of this. So without NX_LINK_BASE_URL there is no phone path at all,
+// and callers show the code and the password form instead of a square that leaks.
+func (s *server) linkBaseURL(r *http.Request) (string, bool) {
 	if v := getenv("NX_LINK_BASE_URL", ""); v != "" {
-		return strings.TrimRight(v, "/")
+		return strings.TrimRight(v, "/"), true
 	}
-	return "https://" + hostOf(r)
+	host := hostOf(r)
+	if strings.Contains(host, "nintendo.") {
+		return "", false
+	}
+	return "https://" + host, true
 }
 
 // qrRoutes serves the console-side polling endpoints and the phone-side page.
@@ -309,12 +320,21 @@ func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) b
 		//
 		// The QR is rendered here so no client needs a QR encoder to draw the console's screen.
 		code, pair := s.links.new(r.URL.Query())
-		link := s.linkBaseURL(r) + "/link?p=" + pair
-		log.Printf("[link] code %s opened by an in-app client (%s)", code, r.UserAgent())
-		writeJSON(w, 200, map[string]any{
+		out := map[string]any{
 			"code": code, "code_display": groupCode(code), "pair": pair,
-			"link_url": link, "qr": qrDataURI(link), "expires_in": int(codeTTL.Seconds()),
-		})
+			"expires_in": int(codeTTL.Seconds()),
+		}
+		if base, ok := s.linkBaseURL(r); ok {
+			link := base + "/link?p=" + pair
+			out["link_url"], out["qr"] = link, qrDataURI(link)
+		} else {
+			// Said plainly rather than left empty: a client showing a blank square would be a
+			// worse answer than one showing none.
+			out["no_phone_reason"] = "NX_LINK_BASE_URL is not set, so there is no address a phone could open"
+			log.Printf("[link] no phone path offered: NX_LINK_BASE_URL is unset")
+		}
+		log.Printf("[link] code %s opened by an in-app client (%s)", code, r.UserAgent())
+		writeJSON(w, 200, out)
 		return true
 
 	case r.URL.Path == "/connect/1.0.0/qr/state":
