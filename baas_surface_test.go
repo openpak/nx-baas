@@ -196,3 +196,97 @@ func TestSendingAFriendRequestReachesTheHandler(t *testing.T) {
 		t.Fatalf("cancel = %d: %s", cw.Code, cw.Body.String())
 	}
 }
+
+// Every list this server returns uses the envelope a console reads, captured
+// from a working server on 2026-09-08:
+//
+//	{"count":0,"etag":"","items":[],"itemsPerPage":0}
+//
+// Ours named the array after its contents — "friends", "friendRequests",
+// "users" — so a console reading "items" found nothing. That is what an empty
+// friend list and an empty inbox looked like from the sofa, with the data
+// sitting in the reply the whole time.
+func TestListsUseTheEnvelopeAConsoleReads(t *testing.T) {
+	s := dauthServer(t)
+	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	u, _ := s.store.NewUser()
+	s.store.Update(u, func(u *User) { u.PID, u.Nickname = 1, "tester" })
+	s.acct = fakeBackend{id: &Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
+		FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did",
+		Friends:        []Friend{{PID: 2, BaasUserID: "aaaaaaaaaaaa0002", Nickname: "Leia", FriendCode: "SW-1000-0000-0002"}},
+		FriendRequests: []Friend{{PID: 3, BaasUserID: "2222333344445555", Nickname: "Asks", FriendCode: "SW-1111-2222-3333"}},
+	}}
+
+	for _, path := range []string{
+		"/2.0.0/users/" + u.ID + "/friends",
+		"/2.0.0/users/" + u.ID + "/friend_requests/inbox",
+		"/2.0.0/users/" + u.ID + "/friend_requests/outbox",
+	} {
+		r := httptest.NewRequest("GET", "https://"+baasHost+path, nil)
+		r.Host = baasHost
+		r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, r)
+
+		var got map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatalf("%s: not JSON: %v", path, err)
+		}
+		for _, key := range []string{"count", "etag", "items", "itemsPerPage"} {
+			if _, ok := got[key]; !ok {
+				t.Errorf("%s: missing %q", path, key)
+			}
+		}
+		for _, gone := range []string{"friends", "friendRequests", "users"} {
+			if _, ok := got[gone]; ok {
+				t.Errorf("%s: still carries %q; a console reads items", path, gone)
+			}
+		}
+	}
+
+	// An incoming request has to say who sent it.
+	r := httptest.NewRequest("GET", "https://"+baasHost+"/2.0.0/users/"+u.ID+"/friend_requests/inbox", nil)
+	r.Host = baasHost
+	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+	var inbox struct {
+		Items []map[string]any `json:"items"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &inbox)
+	if len(inbox.Items) != 1 {
+		t.Fatalf("inbox: %s", w.Body.String())
+	}
+	sender, _ := inbox.Items[0]["sender"].(map[string]any)
+	if sender == nil || sender["id"] != "2222333344445555" {
+		t.Fatalf("the sender is not the person who asked: %v", inbox.Items[0]["sender"])
+	}
+}
+
+// The relationship check the console runs before it offers to add somebody.
+func TestRelationshipShape(t *testing.T) {
+	s := dauthServer(t)
+	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	u, _ := s.store.NewUser()
+	s.store.Update(u, func(u *User) { u.PID, u.Nickname = 1, "tester" })
+	s.acct = fakeBackend{id: &Identity{PID: 1, Nickname: "tester", FriendCode: "SW-0000-0000-0000", BsDid: "did"}}
+
+	r := httptest.NewRequest("GET", "https://"+baasHost+"/2.0.0/users/"+u.ID+"/relationships/aaaaaaaaaaaa0002", nil)
+	r.Host = baasHost
+	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"userId", "targetUserId", "isFriend", "isFavoriteFriend", "isBlocking", "sentFriendRequestIds"} {
+		if _, ok := got[key]; !ok {
+			t.Errorf("missing %q — captured from a reply a console accepts", key)
+		}
+	}
+	if _, ok := got["relationship"]; ok {
+		t.Error(`still answers with "relationship", which no console asked for`)
+	}
+}

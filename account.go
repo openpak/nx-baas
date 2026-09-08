@@ -281,3 +281,15 @@ func channelsOf(body []byte) []string {
 	}
 	return []string{"FRIEND_CODE"}
 }
+
+// listEnvelope is how this server returns a list, captured from one a console
+// accepts: {"count":n,"etag":"","items":[...],"itemsPerPage":100}. Ours used
+// to name the array after its contents -- "friends", "friendRequests", "users"
+// -- and a console reading "items" found nothing every time, which is what an
+// empty friend list and an empty inbox looked like from the sofa.
+func listEnvelope(items []any) map[string]any {
+	if items == nil {
+		items = []any{}
+	}
+	return map[string]any{"count": len(items), "etag": "", "items": items, "itemsPerPage": 100}
+}

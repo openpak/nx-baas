@@ -966,8 +966,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 				list = append(list, s.friendObj(f, now))
 			}
 		}
-		// ponytail: {count, friends} envelope is a guess; a bare array is the alternative.
-		writeJSON(w, 200, map[string]any{"count": len(list), "friends": list})
+		writeJSON(w, 200, listEnvelope(list))
 		return
 
 	case len(seg) == 4 && seg[0] == "users" && seg[2] == "friends" && r.Method == "PATCH":
@@ -1027,12 +1026,28 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			if seg[3] == "outbox" {
 				src = id.SentRequests
 			}
+			me, _ := me()
 			for _, f := range src {
-				o := s.friendObj(f, now)
-				list = append(list, map[string]any{"id": f.BaasUserID, "sender": o, "receiver": o, "state": "PENDING", "createdAt": f.CreatedAt, "updatedAt": now})
+				other := s.friendObj(f, now)
+				entry := map[string]any{
+					"id": f.BaasUserID, "state": "PENDING",
+					"createdAt": f.CreatedAt, "updatedAt": now,
+					"channels": []string{"FRIEND_CODE"},
+				}
+				// Who sent it is the whole point of an inbox: the same object
+				// in both slots said nothing, and the console had nothing to
+				// show.
+				if seg[3] == "outbox" {
+					entry["sender"], entry["senderId"] = s.userObj(me, id, ""), me.ID
+					entry["receiver"], entry["receiverId"] = other, f.BaasUserID
+				} else {
+					entry["sender"], entry["senderId"] = other, f.BaasUserID
+					entry["receiver"], entry["receiverId"] = s.userObj(me, id, ""), me.ID
+				}
+				list = append(list, entry)
 			}
 		}
-		writeJSON(w, 200, map[string]any{"count": len(list), "friendRequests": list})
+		writeJSON(w, 200, listEnvelope(list))
 		return
 
 	case len(seg) == 1 && seg[0] == "friend_requests" && r.Method == "POST":
@@ -1098,16 +1113,38 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		return
 
 	case len(seg) == 4 && seg[0] == "users" && seg[2] == "relationships":
-		_, id := me()
-		rel := "NONE"
-		if id != nil {
-			for _, f := range id.Friends {
-				if f.BaasUserID == seg[3] {
-					rel = "FRIEND"
+		u, id := me()
+		rel := map[string]any{
+			"userId": "", "targetUserId": seg[3],
+			"isFriend": false, "isFavoriteFriend": false, "isBlocking": false,
+			"sentFriendRequestIds": []string{},
+		}
+		if u != nil {
+			rel["userId"] = u.ID
+			for _, b := range u.Blocks {
+				if b == seg[3] {
+					rel["isBlocking"] = true
+				}
+			}
+			for _, f := range u.Favourites {
+				if f == seg[3] {
+					rel["isFavoriteFriend"] = true
 				}
 			}
 		}
-		writeJSON(w, 200, map[string]any{"id": seg[3], "relationship": rel})
+		if id != nil {
+			for _, f := range id.Friends {
+				if f.BaasUserID == seg[3] {
+					rel["isFriend"] = true
+				}
+			}
+			for _, f := range id.SentRequests {
+				if f.BaasUserID == seg[3] {
+					rel["sentFriendRequestIds"] = []string{f.BaasUserID}
+				}
+			}
+		}
+		writeJSON(w, 200, rel)
 		return
 	}
 	dump(r, body, "!! UNHANDLED 2.0.0")
