@@ -140,3 +140,36 @@ func TestTheOtherConsoleServicesAnswer(t *testing.T) {
 		})
 	}
 }
+
+// POST /2.0.0/friend_requests is two segments. The 2.0.0 dispatch required
+// three, so sending a friend request fell through to the catch-all 404 and the
+// console said "please try again later" (2121-2031) -- with the exact body
+// hardware sends, captured 2026-09-08.
+func TestSendingAFriendRequestReachesTheHandler(t *testing.T) {
+	s := dauthServer(t)
+	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	u, _ := s.store.NewUser()
+	s.store.Update(u, func(u *User) { u.PID, u.Nickname = 1, "tester" })
+	s.acct = codeBackend{
+		fakeBackend: fakeBackend{id: &Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
+			FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did"}},
+		code: "SW-1000-0000-0002",
+		friend: &Friend{PID: 2, BaasUserID: "aaaaaaaaaaaa0002", NaID: "bbbbbbbbbbbb0002",
+			FriendCode: "SW-1000-0000-0002", Nickname: "Leia", Country: "IE", CreatedAt: 1788896080}}
+
+	body := `{"channels":["FRIEND_CODE"],"senderId":"` + u.ID +
+		`","receiverId":"aaaaaaaaaaaa0002","extras":{"sender":{"route:sender":"me"}}}`
+	r := httptest.NewRequest("POST", "https://"+baasHost+"/2.0.0/friend_requests", strings.NewReader(body))
+	r.Host = baasHost
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+
+	if w.Code == http.StatusNotFound {
+		t.Fatalf("the request never reached the handler: %s", w.Body.String())
+	}
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create = %d: %s", w.Code, w.Body.String())
+	}
+}

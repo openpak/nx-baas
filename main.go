@@ -831,7 +831,10 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		return
 
-	case len(seg) >= 3 && seg[0] == "2.0.0":
+	// >= 2, not >= 3: POST /2.0.0/friend_requests is two segments, so sending a
+	// friend request fell straight through to the catch-all 404 and the console
+	// said "please try again later" (2121-2031).
+	case len(seg) >= 2 && seg[0] == "2.0.0":
 		s.friends2(w, r, seg[1:], body)
 		return
 

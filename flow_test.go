@@ -256,7 +256,7 @@ type codeBackend struct {
 }
 
 func (b codeBackend) Resolve(q url.Values) (*Friend, error) {
-	if q.Get("code") == b.code {
+	if q.Get("code") == b.code || (b.friend != nil && q.Get("baas") == b.friend.BaasUserID) {
 		return b.friend, nil
 	}
 	return nil, errNotFound
