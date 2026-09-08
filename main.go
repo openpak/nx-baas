@@ -972,11 +972,12 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		list := []any{}
 		if id != nil {
 			for _, f := range id.Friends {
-				// The same object a search result carries. presence,
-				// isFavoriteFriend and isNewFriend describe the friendship
-				// rather than the person, and a console that was handed them
-				// in a search result refused it.
-				list = append(list, s.searchUserObj(f, now))
+				// A friend entry is a user plus the friendship: presence,
+				// isFavoriteFriend and isNewFriend. The console fetches none
+				// of those separately, so this is the only place it can learn
+				// them. A search result is a different parser and still
+				// refuses them.
+				list = append(list, s.friendObj(f, now))
 			}
 		}
 		writeJSON(w, 200, listEnvelopeWith(list, `""`, 100))

@@ -418,12 +418,12 @@ func TestFriendListEntriesCarryACountry(t *testing.T) {
 	if got.Items[0]["nickname"] == "" || got.Items[0]["thumbnailUrl"] == "" {
 		t.Errorf("friend entry is not renderable: %v", got.Items[0])
 	}
-	// A friend entry is a user object. The friendship-shaped keys were refused
-	// in a search result, and a friend list that stayed empty is the same
-	// symptom in the same parser.
+	// A friend entry is a user plus the friendship. The console never asks
+	// for presence or the favourite/new flags on their own, so a list entry
+	// without them leaves the applet nothing to show.
 	for _, friendOnly := range []string{"presence", "isFavoriteFriend", "isNewFriend"} {
-		if _, ok := got.Items[0][friendOnly]; ok {
-			t.Errorf("friend entry carries %q", friendOnly)
+		if _, ok := got.Items[0][friendOnly]; !ok {
+			t.Errorf("friend entry lacks %q", friendOnly)
 		}
 	}
 	if devs, _ := got.Items[0]["deviceAccounts"].([]any); len(devs) > 1 {
