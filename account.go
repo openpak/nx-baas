@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -164,6 +165,12 @@ func (a *accountClient) nexSigningKey() []byte { return a.secret }
 // the account server there, and nothing asks this path for one.
 func (a *accountClient) friendCodeForAccount(string) (string, bool) { return "", false }
 
+// Codes belong to the account server on this backend, which offers no way to
+// regenerate one. Saying so beats pretending it worked.
+func (a *accountClient) RegenerateFriendCode(uint64) error {
+	return errors.New("friend codes are the account server's on this backend")
+}
+
 func logErr(what string, err error) {
 	if err != nil {
 		log.Printf("[nx-baas] account: %s: %v", what, err)
@@ -192,4 +199,37 @@ func normaliseFriendCode(code string) string {
 	c := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(code), " ", ""))
 	c = strings.TrimPrefix(c, "SW-")
 	return "SW-" + c
+}
+
+// bodyField reads a parameter from either encoding: this server takes form or
+// JSON depending on the method, and the console picks. Documented on kinnay's
+// BAAS page; observed both ways on hardware.
+func bodyField(body []byte, form url.Values, keys ...string) string {
+	var j map[string]any
+	_ = json.Unmarshal(body, &j)
+	for _, k := range keys {
+		if v, ok := j[k].(string); ok && v != "" {
+			return v
+		}
+		if v := form.Get(k); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// permissionsOf serves the user's privacy switches: the documented defaults,
+// overridden by anything they changed on the console. Values are the console's
+// own (friends EVERYONE|FRIENDS|SELF, presence FRIENDS|FAVORITE_FRIENDS|SELF).
+func permissionsOf(u *User) map[string]any {
+	p := map[string]any{
+		"friendRequestReception": true, "friends": "EVERYONE",
+		"personalAnalytics": true, "personalAnalyticsUpdatedAt": u.CreatedAt,
+		"personalNotification": true, "personalNotificationUpdatedAt": u.CreatedAt,
+		"presence": "FRIENDS", "presenceUpdatedAt": u.CreatedAt,
+	}
+	for k, v := range u.Permissions {
+		p[k] = v
+	}
+	return p
 }

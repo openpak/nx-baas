@@ -45,9 +45,21 @@ type User struct {
 	// the website's" -- which is the whole question when both can be edited.
 	AvatarAt       int64    `json:"avatarAt,omitempty"`
 	DeviceAccounts []string `json:"deviceAccounts"`
-	Presence       Presence `json:"presence"`
-	CreatedAt      int64    `json:"createdAt"`
-	UpdatedAt      int64    `json:"updatedAt"`
+	// Permissions are the privacy switches the console PATCHes. Values are the
+	// documented ones: friends EVERYONE|FRIENDS|SELF, presence
+	// FRIENDS|FAVORITE_FRIENDS|SELF. Zero values mean "never set", so userObj
+	// keeps serving the defaults.
+	Permissions map[string]any `json:"permissions,omitempty"`
+	// Blocks is the block list the friends sysmodule manages, by BAAS user id.
+	Blocks []string `json:"blocks,omitempty"`
+	// Favourites are friends marked as such on the console.
+	Favourites []string `json:"favourites,omitempty"`
+	// CodeGeneratedAt gates regeneration: a new friend code is allowed once a
+	// day, and asking sooner is 422 friend_code_unregenerable_state.
+	CodeGeneratedAt int64    `json:"codeGeneratedAt,omitempty"`
+	Presence        Presence `json:"presence"`
+	CreatedAt       int64    `json:"createdAt"`
+	UpdatedAt       int64    `json:"updatedAt"`
 }
 
 type Store struct {

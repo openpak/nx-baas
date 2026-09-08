@@ -22,6 +22,8 @@ func (f fakeBackend) friendCodeForAccount(string) (string, bool) {
 	}
 	return f.id.FriendCode, true
 }
+
+func (f fakeBackend) RegenerateFriendCode(uint64) error   { return nil }
 func (f fakeBackend) Resolve(url.Values) (*Friend, error) { return nil, http.ErrNoLocation }
 func (f fakeBackend) LoginPID(string, string) (uint64, string, error) {
 	return f.id.PID, f.id.Nickname, nil

@@ -46,6 +46,8 @@ func (b *stubBackend) nexToken(pid uint64, username string) string {
 		base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
+func (b *stubBackend) RegenerateFriendCode(uint64) error { return nil }
+
 const (
 	hostPID   = 1800000003
 	joinerPID = 1800000004

@@ -263,6 +263,27 @@ func (b *openpakBackend) friendCodeForAccount(accountID string) (string, bool) {
 	return pr.FriendCode, true
 }
 
+// RegenerateFriendCode mints a new code and retires the old one, so the code
+// somebody handed out stops working -- which is the point of regenerating it.
+func (b *openpakBackend) RegenerateFriendCode(pid uint64) error {
+	b.proj.mu.Lock()
+	defer b.proj.mu.Unlock()
+	accountID, ok := b.proj.ByPID[pid]
+	if !ok {
+		return errors.New("no projection for that pid")
+	}
+	pr := b.proj.ByAccount[accountID]
+	code, err := newFriendCode(b.proj)
+	if err != nil {
+		return err
+	}
+	delete(b.proj.ByCode, pr.FriendCode)
+	pr.FriendCode = code
+	b.proj.ByCode[code] = accountID
+	b.proj.saveLocked()
+	return nil
+}
+
 func (b *openpakBackend) LoginPID(email, password string) (uint64, string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

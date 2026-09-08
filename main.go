@@ -335,10 +335,7 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 		"deviceAccounts": devs, "etag": fmt.Sprintf("\"%s\"", etag),
 		"extras":           map[string]any{"everyone": everyone, "favoriteFriends": map[string]any{"playLog": ""}, "foaf": map[string]any{"playLog": ""}, "friends": friendsEx, "self": self},
 		"friendsUpdatedAt": u.UpdatedAt, "id": u.ID, "links": links, "nickname": nickname, "nicknameUpdatedAt": u.UpdatedAt,
-		"permissions": map[string]any{
-			"friendRequestReception": true, "friends": "EVERYONE", "personalAnalytics": true, "personalAnalyticsUpdatedAt": u.CreatedAt,
-			"personalNotification": true, "personalNotificationUpdatedAt": u.CreatedAt, "presence": "FRIENDS", "presenceUpdatedAt": u.CreatedAt,
-		},
+		"permissions":   permissionsOf(u),
 		"thumbnail2Url": thumb2, "thumbnailUploadedAt": thumbAt, "thumbnailUrl": thumb1, "updatedAt": u.UpdatedAt,
 	}
 }
@@ -639,6 +636,16 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 						u.ThumbnailURL = v
 					case "/extras/self/nxAccount":
 						u.NxAccount = v
+					case "/permissions/personalAnalytics", "/permissions/personalNotification",
+						"/permissions/friendRequestReception", "/permissions/friends",
+						"/permissions/presence":
+						// The privacy switches. Documented as patchable and
+						// silently dropped here until now, so turning one off
+						// on the console lasted until the next reply.
+						if u.Permissions == nil {
+							u.Permissions = map[string]any{}
+						}
+						u.Permissions[strings.TrimPrefix(o.Path, "/permissions/")] = o.Value
 					}
 				}
 			})
@@ -669,16 +676,72 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			s.store.Update(u, func(u *User) { u.PID, u.NaID = 0, "" })
 			writeJSON(w, 200, s.userObj(u, nil, ""))
 		case "generate_code":
-			// Friend codes belong to the OpenPak account; there is nothing to regenerate.
+			// The wiki is explicit: a new code, and no new one for 24 hours.
+			// This used to answer "there is nothing to regenerate" and hand
+			// back the same code, which is a lie a console cannot see through.
+			if u.CodeGeneratedAt > 0 && time.Now().Unix()-u.CodeGeneratedAt < 24*3600 {
+				baasErr(w, r, 422, "friend_code_unregenerable_state", "Friend Code Unregenerable State", "")
+				return
+			}
+			if err := s.acct.RegenerateFriendCode(u.PID); err != nil {
+				log.Printf("[nx-baas] generate_code: %v", err)
+				baasErr(w, r, 500, "internal_server_error", "Internal Server Error", "Internal Server Error")
+				return
+			}
+			s.store.Update(u, func(u *User) { u.CodeGeneratedAt = time.Now().Unix() })
 			writeJSON(w, 200, s.userObj(u, s.identity(u), ""))
+		case "device_histories":
+			// Every console this user has signed in on. We keep no history, and
+			// an empty list is a true answer; a 404 here is not.
+			writeJSON(w, 200, map[string]any{"count": 0, "deviceHistories": []any{}})
 		case "blocks":
-			writeJSON(w, 200, map[string]any{"count": 0, "blocks": []any{}}) // ponytail: no block list
+			switch r.Method {
+			case "POST":
+				target := bodyField(body, form, "userId", "id")
+				if target == "" {
+					baasErr(w, r, 400, "invalid_params", "Invalid Params", "invalid params")
+					return
+				}
+				s.store.Update(u, func(u *User) {
+					for _, b := range u.Blocks {
+						if b == target {
+							return
+						}
+					}
+					u.Blocks = append(u.Blocks, target)
+				})
+				writeJSON(w, 200, map[string]any{"id": target, "createdAt": time.Now().Unix()})
+			default:
+				list := []any{}
+				for _, b := range u.Blocks {
+					list = append(list, map[string]any{"id": b})
+				}
+				writeJSON(w, 200, map[string]any{"count": len(list), "blocks": list})
+			}
 		case "friends", "friend_requests", "relationships":
 			s.friends(w, r, u, seg[3:], body)
 		default:
 			dump(r, body, "!! UNHANDLED user sub-resource")
 			baasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 		}
+		return
+
+	case len(seg) == 5 && seg[0] == "1.0.0" && seg[1] == "users" && seg[3] == "blocks" && r.Method == "DELETE":
+		u := s.store.User(seg[2])
+		if u == nil {
+			baasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
+			return
+		}
+		s.store.Update(u, func(u *User) {
+			kept := u.Blocks[:0]
+			for _, b := range u.Blocks {
+				if b != seg[4] {
+					kept = append(kept, b)
+				}
+			}
+			u.Blocks = kept
+		})
+		w.WriteHeader(204)
 		return
 
 	case len(seg) == 5 && seg[0] == "1.0.0" && seg[1] == "users" && seg[3] == "device_accounts":
@@ -857,6 +920,50 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		}
 		// ponytail: {count, friends} envelope is a guess; a bare array is the alternative.
 		writeJSON(w, 200, map[string]any{"count": len(list), "friends": list})
+		return
+
+	case len(seg) == 4 && seg[0] == "users" && seg[2] == "friends" && r.Method == "PATCH":
+		// Marking a friend as a favourite. The console sends a JSON patch and
+		// expects the friend back; without this it was an UNHANDLED 404 and
+		// the star silently did nothing.
+		u, _ := me()
+		if u == nil {
+			baasErr(w, r, 403, "insufficient_scope", "Token is insufficient", "not linked")
+			return
+		}
+		var ops []struct {
+			Op, Path string
+			Value    any
+		}
+		_ = json.Unmarshal(body, &ops)
+		favourite := true
+		for _, o := range ops {
+			if strings.HasSuffix(o.Path, "isFavoriteFriend") {
+				if b, ok := o.Value.(bool); ok {
+					favourite = b
+				}
+			}
+		}
+		s.store.Update(u, func(u *User) {
+			kept := u.Favourites[:0]
+			for _, f := range u.Favourites {
+				if f != seg[3] {
+					kept = append(kept, f)
+				}
+			}
+			u.Favourites = kept
+			if favourite {
+				u.Favourites = append(u.Favourites, seg[3])
+			}
+		})
+		obj := map[string]any{"id": seg[3], "isFavoriteFriend": favourite, "updatedAt": now}
+		if f, err := s.acct.Resolve(url.Values{"baas": {seg[3]}}); err == nil && f != nil {
+			obj = s.friendObj(*f, now)
+			obj["isFavoriteFriend"] = favourite
+		}
+		// The change is applied either way: refusing because the other account
+		// cannot be rendered would lose a star the person just set.
+		writeJSON(w, 200, obj)
 		return
 
 	case len(seg) == 4 && seg[0] == "users" && seg[2] == "friends" && r.Method == "DELETE":
