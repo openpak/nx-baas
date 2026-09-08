@@ -50,3 +50,26 @@ func (s *server) switchIdentity(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"pid": id.PID, "baas_user_id": id.BaasUserID, "nickname": id.Nickname, "friends": friends})
 }
+
+// switchFriendCode answers "what is this account's friend code" for the
+// website, which cannot know: the code is minted here and the core holds only
+// the link subject, which is the BAAS user id. The site was formatting that
+// hex id as SW-xxxx-xxxx-xxxx, so people were being shown, and reading out, an
+// identifier that is not their friend code.
+func (s *server) switchFriendCode(w http.ResponseWriter, r *http.Request) {
+	if !s.internalOK(r) {
+		apiErr(w, http.StatusUnauthorized, "internal")
+		return
+	}
+	accountID := r.URL.Query().Get("account_id")
+	if accountID == "" {
+		apiErr(w, http.StatusBadRequest, "account_id required")
+		return
+	}
+	code, ok := s.acct.friendCodeForAccount(accountID)
+	if !ok {
+		apiErr(w, http.StatusNotFound, "no console linked to that account")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"friend_code": code})
+}

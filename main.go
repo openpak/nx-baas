@@ -365,6 +365,20 @@ func (s *server) friendObj(f Friend, now int64) map[string]any {
 
 // ---------- BAAS handlers ----------
 
+// reportOnline tells the core that this account is signed in, which is a
+// different claim from playing something and is counted separately. Only the
+// OpenPak backend has a core to tell; the OpenPak one keeps presence to
+// itself, so this is a type assertion rather than another interface method
+// that one of the two would have to no-op.
+func (s *server) reportOnline(ctx context.Context, u *User) {
+	if u == nil || u.PID == 0 {
+		return
+	}
+	if b, ok := s.acct.(*openpakBackend); ok {
+		b.Online(ctx, u.PID)
+	}
+}
+
 func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 	p := r.URL.Path
 	form, _ := url.ParseQuery(string(body))
@@ -531,6 +545,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			username = id.Nickname
 		}
 		s.store.Update(u, func(u *User) { u.Presence.State = "ONLINE"; u.Presence.UpdatedAt = time.Now().Unix() })
+		s.reportOnline(r.Context(), u)
 		res := map[string]any{
 			"expiresIn": 10800, "user": s.userObj(u, id, ""), "idToken": s.idToken(u, id, username, app),
 			"accessToken": s.accessToken(u.ID, 2, func() string {
@@ -653,6 +668,11 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 					u.Presence.LogoutAt = u.Presence.UpdatedAt
 				}
 			})
+			// This is what keeps someone counted as online: the lease the core holds is short,
+			// and a client that has gone away stops renewing it.
+			if u.Presence.State != "OFFLINE" {
+				s.reportOnline(r.Context(), u)
+			}
 			log.Printf("[nx-baas] presence user=%s pid=%d %s app=%s field=%q", u.ID, u.PID, u.Presence.State, u.Presence.AppID, u.Presence.AppField)
 			writeJSON(w, 200, s.userObj(u, s.identity(u), ""))
 		default:

@@ -32,4 +32,7 @@ type accountBackend interface {
 	// nexSigningKey is the key nexToken signs with, so the game API can verify a
 	// token it (or the account server) minted without a round trip.
 	nexSigningKey() []byte
+	// friendCodeForAccount answers the website, which mints no codes and holds
+	// none: the core knows an account is linked, not what its code is.
+	friendCodeForAccount(accountID string) (string, bool)
 }

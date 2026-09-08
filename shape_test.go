@@ -15,7 +15,13 @@ import (
 // endpoint can be driven without a core.
 type fakeBackend struct{ id *Identity }
 
-func (f fakeBackend) Identity(uint64) (*Identity, error)  { return f.id, nil }
+func (f fakeBackend) Identity(uint64) (*Identity, error) { return f.id, nil }
+func (f fakeBackend) friendCodeForAccount(string) (string, bool) {
+	if f.id == nil || f.id.FriendCode == "" {
+		return "", false
+	}
+	return f.id.FriendCode, true
+}
 func (f fakeBackend) Resolve(url.Values) (*Friend, error) { return nil, http.ErrNoLocation }
 func (f fakeBackend) LoginPID(string, string) (uint64, string, error) {
 	return f.id.PID, f.id.Nickname, nil

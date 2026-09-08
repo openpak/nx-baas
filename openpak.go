@@ -37,6 +37,7 @@ type openpakBackend struct {
 	identity  accountv1.IdentityClient
 	links     accountv1.LinksClient
 	social    accountv1.SocialClient
+	sessions  accountv1.SessionsClient
 	proj      *projectionStore
 	namespace string
 	nexKey    []byte
@@ -73,6 +74,7 @@ func newOpenpakBackend(ctx context.Context, dataDir string) (*openpakBackend, er
 	b := newOpenpakBackendWithClients(dataDir,
 		accountv1.NewIdentityClient(conn), accountv1.NewLinksClient(conn),
 		accountv1.NewSocialClient(conn), nexKey)
+	b.sessions = accountv1.NewSessionsClient(conn)
 	b.conn = conn
 	return b, nil
 }
@@ -249,6 +251,16 @@ func newFriendCode(p *projectionStore) (string, error) {
 		}
 	}
 	return "", errors.New("friend-code space exhausted")
+}
+
+func (b *openpakBackend) friendCodeForAccount(accountID string) (string, bool) {
+	b.proj.mu.Lock()
+	defer b.proj.mu.Unlock()
+	pr, ok := b.proj.ByAccount[accountID]
+	if !ok || pr.FriendCode == "" {
+		return "", false
+	}
+	return pr.FriendCode, true
 }
 
 func (b *openpakBackend) LoginPID(email, password string) (uint64, string, error) {
@@ -478,4 +490,37 @@ func isTransient(err error) bool {
 		return true
 	}
 	return false
+}
+
+// onlineLease is short on purpose. Nothing tells this server that an emulator
+// was closed — a process that goes away sends nothing — so "online" has to be
+// a claim that lapses unless it keeps being renewed. A minute is the longest
+// someone should appear online after quitting, and the client renews well
+// inside it.
+const onlineLease = 60 * time.Second
+
+// Online records that an account is signed in to this network and playing
+// nothing in particular: a session with no title, which the core counts toward
+// who is online and deliberately not toward who is playing what.
+//
+// Best effort by design. Presence is not worth failing a console's login over,
+// so a core that cannot be reached costs an accurate status page and nothing
+// else.
+func (b *openpakBackend) Online(ctx context.Context, pid uint64) {
+	if b == nil || b.sessions == nil {
+		return
+	}
+	b.proj.mu.Lock()
+	accountID := b.proj.ByPID[pid]
+	b.proj.mu.Unlock()
+
+	if accountID == "" {
+		return
+	}
+	if _, err := b.sessions.RegisterSession(ctx, &accountv1.RegisterSessionRequest{
+		AccountId: accountID, Namespace: b.namespace, TitleId: "", EndpointRef: "baas",
+		LeaseSeconds: int32(onlineLease.Seconds()),
+	}); err != nil {
+		logErr("presence register", err)
+	}
 }

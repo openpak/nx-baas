@@ -158,6 +158,10 @@ func (a *accountClient) nexToken(pid uint64, username string) string {
 
 func (a *accountClient) nexSigningKey() []byte { return a.secret }
 
+// The legacy backend keeps no account-id projection: friend codes come from
+// the account server there, and nothing asks this path for one.
+func (a *accountClient) friendCodeForAccount(string) (string, bool) { return "", false }
+
 func logErr(what string, err error) {
 	if err != nil {
 		log.Printf("[nx-baas] account: %s: %v", what, err)
