@@ -301,6 +301,22 @@ func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) b
 	}
 
 	switch {
+	case r.URL.Path == "/connect/1.0.0/qr/new" && r.Method == "POST":
+		// The console's link screen, for a client that draws it itself. An emulator has a keyboard
+		// and a window, so it shows this screen in-app rather than in a browser it cannot style —
+		// and every emulator gets the same screen because every emulator gets the same three
+		// things from here: the code, the page a phone should open, and the QR that points at it.
+		//
+		// The QR is rendered here so no client needs a QR encoder to draw the console's screen.
+		code, pair := s.links.new(r.URL.Query())
+		link := s.linkBaseURL(r) + "/link?p=" + pair
+		log.Printf("[link] code %s opened by an in-app client (%s)", code, r.UserAgent())
+		writeJSON(w, 200, map[string]any{
+			"code": code, "code_display": groupCode(code), "pair": pair,
+			"link_url": link, "qr": qrDataURI(link), "expires_in": int(codeTTL.Seconds()),
+		})
+		return true
+
 	case r.URL.Path == "/connect/1.0.0/qr/state":
 		p := s.links.get(code)
 		if p == nil {
