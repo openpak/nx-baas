@@ -392,6 +392,13 @@ func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) b
 		s.phoneConfirmPage(w, username, pair, "")
 		return true
 
+	case r.URL.Path == "/link/signout" && r.Method == "GET":
+		// A phone browser that prefetches the form's action lands here and used
+		// to be shown "404 page not found" in the middle of the flow. Signing
+		// out is not something a GET may do, so send it back to the page.
+		http.Redirect(w, r, "/link", http.StatusSeeOther)
+		return true
+
 	case r.URL.Path == "/link/signout" && r.Method == "POST":
 		if c, err := r.Cookie(phoneCookie); err == nil {
 			s.phones.drop(c.Value)

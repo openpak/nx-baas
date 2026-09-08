@@ -199,3 +199,29 @@ func TestExtrasSelfIsNeverBareForALinkedUser(t *testing.T) {
 		t.Fatalf("extras.self went out bare: %v", self)
 	}
 }
+
+// Every unlinked user's thumbnail points at /1/default, and a 404 there is
+// console 2124-7404 in the middle of "add account". The picture used to be a
+// file someone put in NX_DATA by hand; the deployed volume did not have one,
+// so the console hit the 404 on a live link tonight.
+func TestDefaultThumbnailIsServedWithNoDataDirectory(t *testing.T) {
+	t.Setenv("NX_DATA", t.TempDir()) // empty: nothing hand-placed
+	s := dauthServer(t)
+	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+
+	for _, p := range []string{"/1/default", "/2/default"} {
+		r := httptest.NewRequest("GET", "https://cdn-image-"+baasHost+p, nil)
+		r.Host = "cdn-image-" + baasHost
+		w := httptest.NewRecorder()
+		s.baas(w, r, nil)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s = %d, want 200 (this is 2124-7404 on a console)", p, w.Code)
+		}
+		if ct := w.Header().Get("Content-Type"); ct != "image/jpeg" {
+			t.Errorf("%s content-type = %q", p, ct)
+		}
+		if b := w.Body.Bytes(); len(b) < 1000 || b[0] != 0xFF || b[1] != 0xD8 {
+			t.Errorf("%s did not serve a JPEG (%d bytes)", p, len(b))
+		}
+	}
+}

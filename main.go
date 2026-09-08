@@ -19,6 +19,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	_ "embed"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -46,6 +47,9 @@ const (
 	baasAudience = "ed9e2f05d286f7b8" // what citron's id_token carries; the game servers accept it
 	naIssuer     = "https://accounts.nintendo.com"
 )
+
+//go:embed assets/default.jpg
+var defaultAvatar []byte
 
 func getenv(k, d string) string {
 	if v := os.Getenv(k); v != "" {
@@ -366,13 +370,19 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 	case strings.HasPrefix(p, "/1/") || strings.HasPrefix(p, "/2/") || strings.HasPrefix(p, "/avatar/"):
 		var pid uint64
 		if strings.HasPrefix(p, "/1/default") || strings.HasPrefix(p, "/2/default") {
-			if img, err := os.ReadFile(getenv("NX_DATA", "/data") + "/default.jpg"); err == nil {
-				w.Header().Set("Content-Type", "image/jpeg")
-				w.Header().Set("Cache-Control", "public, max-age=3600")
-				w.Write(img)
-				return
+			// Every unlinked user's thumbnail points here, and a 404 is
+			// console 2124-7404 during "add account". It used to be a file
+			// hand-placed in NX_DATA, which the deployed volume did not have;
+			// the picture now ships inside the binary, so no deployment can be
+			// missing it. A file in NX_DATA still wins if someone wants their
+			// own.
+			img, err := os.ReadFile(getenv("NX_DATA", "/data") + "/default.jpg")
+			if err != nil {
+				img = defaultAvatar
 			}
-			w.WriteHeader(404)
+			w.Header().Set("Content-Type", "image/jpeg")
+			w.Header().Set("Cache-Control", "public, max-age=3600")
+			w.Write(img)
 			return
 		}
 		if strings.HasPrefix(p, "/avatar/") {
