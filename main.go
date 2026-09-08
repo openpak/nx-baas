@@ -257,17 +257,12 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 	nickname, country := u.Nickname, u.Country
 	links := map[string]any{}
 	self := map[string]any{"playLog": ""}
+	// The console uploads its own profile blob (PATCH /extras/self/nxAccount) after linking, and
+	// a foreign blob makes it drop the profile to local-only. Serve nothing until it writes one:
+	// the global constant we briefly served came from a capture of our own probe value, not from
+	// the service, and every account importing one stranger's profile is not a fixture worth
+	// keeping.
 	nx := u.NxAccount
-	if nx == "" && id != nil {
-		// Restore User needs a profile blob to import; the console accepts this constant
-		// (proven 2026-09-07, identical across every VPS account) and then PATCHes its own.
-		nx = os.Getenv("NX_DEFAULT_NXACCOUNT")
-		if nx == "" {
-			// Silent before: the link succeeded, every response was 200, and the console
-			// failed with 2124-3121 because it had no profile to import. Say so.
-			log.Printf("[nx-baas] WARNING: linked user %s has no nxAccount and NX_DEFAULT_NXACCOUNT is unset; the console has nothing to import", u.ID)
-		}
-	}
 	if nx != "" {
 		self["isMediaUploaded"] = true
 		self["nxAccount"] = nx
@@ -291,23 +286,15 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 			}
 		}
 	}
-	// The console parses these two strictly: an empty country or a "0000-00-00" birthday — what
-	// a fresh account carries, since the account core stores neither — reads as a malformed
-	// user object and the link ends with 2124-3121.
-	// Prefer what the account actually holds; the defaults exist only for accounts created
-	// before registration collected either, since the console rejects a malformed value.
+	// Serve what the account actually holds, and nothing more: a captured working response
+	// carries "birthday":"0000-00-00" with the console perfectly happy, so the invented
+	// defaults we used to substitute were fixing a problem that was never demonstrated.
 	if country == "" && id != nil {
 		country = id.Country
 	}
-	if country == "" {
-		country = getenv("NX_DEFAULT_COUNTRY", "GB")
-	}
 	birthday := u.Birthday
-	if (birthday == "" || birthday == "0000-00-00") && id != nil {
+	if (birthday == "" || birthday == "0000-00-00") && id != nil && id.Birthday != "" {
 		birthday = id.Birthday
-	}
-	if birthday == "" || birthday == "0000-00-00" {
-		birthday = getenv("NX_DEFAULT_BIRTHDAY", "1990-01-01")
 	}
 	return map[string]any{
 		"birthday": birthday, "blocksUpdatedAt": u.CreatedAt, "country": country, "createdAt": u.CreatedAt, "deleted": false,
@@ -403,12 +390,6 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		s.device[di] = sn
 		s.mu.Unlock()
 		writeJSON(w, 200, map[string]any{"accessToken": s.accessToken(di, 1, randHex(8), di, sn), "tokenType": "Bearer", "expiresIn": 10800})
-		return
-
-	case p == "/1.0.0/image_upload" && r.Method == "POST":
-		// Profile image upload during account setup. Nothing here stores images yet; accepting
-		// it keeps the console's setup flow moving instead of 404ing mid-way.
-		writeJSON(w, 200, map[string]any{})
 		return
 
 	case p == "/1.0.0/users" && r.Method == "POST":

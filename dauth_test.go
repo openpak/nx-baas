@@ -130,3 +130,28 @@ func TestDeviceTokenCarriesAStableSerial(t *testing.T) {
 		t.Error("two consoles share a serial")
 	}
 }
+
+// Parity with the stack that actually links consoles: serve what the account holds and invent
+// nothing. A shared profile blob makes the console drop the profile to local-only, and the one
+// captured working response carries "0000-00-00" as a birthday, so substituting a "valid" one
+// was inventing a fix for a problem never observed.
+func TestUserObjectInventsNothing(t *testing.T) {
+	s := dauthServer(t)
+	s.store = &Store{}
+	t.Setenv("NX_DEFAULT_NXACCOUNT", "a-foreign-console-profile")
+	t.Setenv("NX_DEFAULT_COUNTRY", "GB")
+	t.Setenv("NX_DEFAULT_BIRTHDAY", "1990-01-01")
+	u := &User{ID: "user-1", Birthday: "0000-00-00"}
+	obj := s.userObj(u, &Identity{PID: 1, Nickname: "someone", FriendCode: "SW-0000-0000-0000"}, "")
+
+	self := obj["extras"].(map[string]any)["self"].(map[string]any)
+	if _, ok := self["nxAccount"]; ok {
+		t.Error("a linked user with no uploaded blob was served one anyway")
+	}
+	if got := obj["birthday"]; got != "0000-00-00" {
+		t.Errorf("birthday = %v, want the account's own 0000-00-00", got)
+	}
+	if got := obj["country"]; got != "" {
+		t.Errorf("country = %q, want the account's own empty value", got)
+	}
+}
