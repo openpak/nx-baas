@@ -132,3 +132,62 @@ func TestTheConsoleIsShownTheAccountsOwnPicture(t *testing.T) {
 		t.Errorf("content-type = %q", ct)
 	}
 }
+
+// A picture can be changed in two places. The console only refetches when
+// thumbnailUploadedAt moves, and it only sees the website's picture if the
+// adapter stops preferring the one the console uploaded — so a change made on
+// the site used to be invisible on a console that had ever set its own.
+func TestTheNewerPictureWins(t *testing.T) {
+	const consoleUpload, websiteEdit = int64(1000), int64(2000)
+
+	newServer := func(t *testing.T, siteBody []byte, siteAt int64) (*server, *User) {
+		t.Helper()
+		site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = w.Write(siteBody)
+		}))
+		t.Cleanup(site.Close)
+		t.Setenv("NX_DATA", t.TempDir())
+		s := dauthServer(t)
+		s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+		u, _ := s.store.NewUser()
+		s.store.Update(u, func(u *User) {
+			u.PID, u.Nickname = 1, "tester"
+			u.Avatar, u.AvatarAt = "/9j/4AAQSkZJRg==", consoleUpload // the console's own
+		})
+		s.acct = fakeBackend{id: &Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
+			FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did",
+			AvatarURL: site.URL + "/console.jpg", ImageUpdatedAt: siteAt}}
+		return s, u
+	}
+
+	fromSite := append([]byte{0xFF, 0xD8, 0xFF, 0xE0}, make([]byte, 400)...)
+
+	t.Run("the website's is newer", func(t *testing.T) {
+		s, u := newServer(t, fromSite, websiteEdit)
+		r := httptest.NewRequest("GET", "https://cdn-image-"+baasHost+"/1/"+u.ID, nil)
+		r.Host = "cdn-image-" + baasHost
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, r)
+		if w.Body.Len() != len(fromSite) {
+			t.Fatalf("served %d bytes, want the website's %d", w.Body.Len(), len(fromSite))
+		}
+		if got := s.userObj(u, s.identity(u), "")["thumbnailUploadedAt"]; got != websiteEdit {
+			t.Fatalf("thumbnailUploadedAt = %v, want the website's %d — the console will not refetch", got, websiteEdit)
+		}
+	})
+
+	t.Run("the console's is newer", func(t *testing.T) {
+		s, u := newServer(t, fromSite, consoleUpload-1)
+		r := httptest.NewRequest("GET", "https://cdn-image-"+baasHost+"/1/"+u.ID, nil)
+		r.Host = "cdn-image-" + baasHost
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, r)
+		if w.Body.Len() == len(fromSite) {
+			t.Fatal("the website's picture overwrote a newer one from the console")
+		}
+		if got := s.userObj(u, s.identity(u), "")["thumbnailUploadedAt"]; got != consoleUpload {
+			t.Fatalf("thumbnailUploadedAt = %v, want the console's %d", got, consoleUpload)
+		}
+	})
+}

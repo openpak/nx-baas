@@ -309,6 +309,10 @@ func (b *openpakBackend) Identity(pid uint64) (*Identity, error) {
 	// for every account that had not uploaded one from a console.
 	if site := getenv("WEBSITE_INTERNAL_URL", ""); site != "" {
 		id.AvatarURL = site + "/media/avatars/" + accountID + "/console.jpg"
+		// When it changed, not the picture itself: a console refetches on the
+		// timestamp alone, so without this a picture changed on the website
+		// would never reach a console that already had one.
+		id.ImageUpdatedAt = websitePictureAt(id.AvatarURL)
 	}
 	friends, err := b.social.ListFriends(ctx, &accountv1.ListFriendsRequest{AccountId: accountID})
 	if err != nil {

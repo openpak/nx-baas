@@ -39,7 +39,11 @@ type User struct {
 	// Avatar is the console's own profile picture, base64 JPEG exactly as it
 	// uploaded it. Kept here because the account core has nowhere to put an
 	// image yet; when it does, this moves and the console never notices.
-	Avatar         string   `json:"avatar,omitempty"`
+	Avatar string `json:"avatar,omitempty"`
+	// AvatarAt is when that upload happened. UpdatedAt moves for any change to
+	// the user, so it cannot answer "whose picture is newer, the console's or
+	// the website's" -- which is the whole question when both can be edited.
+	AvatarAt       int64    `json:"avatarAt,omitempty"`
 	DeviceAccounts []string `json:"deviceAccounts"`
 	Presence       Presence `json:"presence"`
 	CreatedAt      int64    `json:"createdAt"`

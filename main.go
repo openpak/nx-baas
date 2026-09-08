@@ -295,16 +295,12 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 			if pl, ok := id.PlayLog.(string); ok && pl != "" && pl != "null" {
 				friendsEx["playLog"], everyone["playLog"] = pl, pl
 			}
-			if id.Avatar != "" {
-				thumbAt = id.ImageUpdatedAt
-				thumb1, thumb2 = cdnHost+"/1/"+u.ID, cdnHost+"/2/"+u.ID
-			} else if id.AvatarURL != "" {
-				// ponytail: the account's picture, timestamped from the user
-				// record rather than the media row -- a change made on the
-				// site shows on the console the next time anything else about
-				// the user changes. Good enough until the website hands back a
-				// version with the image.
-				thumbAt = u.UpdatedAt
+			if at := newerPicture(u, id); at > 0 {
+				// A picture can be changed in two places, and the console only
+				// refetches when this timestamp moves. It is the newer of the
+				// two: the console's own upload, or the account's picture on
+				// the website.
+				thumbAt = at
 				thumb1, thumb2 = cdnHost+"/1/"+u.ID, cdnHost+"/2/"+u.ID
 			} else if u.Avatar != "" {
 				// The console's own upload. Without this the reply to an
@@ -404,11 +400,14 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			avatar = id.Avatar
 		}
 		if avatar == "" && !strings.HasPrefix(p, "/avatar/") {
-			// Fall back to what the console uploaded: the account core has
-			// nowhere to keep an image, so without this a console that set its
-			// own picture would be shown the default one back.
+			// What the console uploaded -- but only while it is the newer of
+			// the two. Serving it unconditionally meant a picture changed on
+			// the website could never reach a console that had ever set one
+			// of its own.
 			if u := s.store.User(p[3:]); u != nil {
-				avatar = u.Avatar
+				if err != nil || id.ImageUpdatedAt <= newerPicture(u, nil) {
+					avatar = u.Avatar
+				}
 			}
 		}
 		if avatar == "" && err == nil && id.AvatarURL != "" {
@@ -474,7 +473,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			if raw, err := base64.StdEncoding.DecodeString(img.RawContent); err != nil {
 				log.Printf("[nx-baas] image_upload: not base64 (%d bytes): %v", len(img.RawContent), err)
 			} else if u := s.store.User(uid); u != nil {
-				s.store.Update(u, func(u *User) { u.Avatar = img.RawContent })
+				s.store.Update(u, func(u *User) { u.Avatar, u.AvatarAt = img.RawContent, time.Now().Unix() })
 				log.Printf("[nx-baas] image_upload: stored %d bytes for %s", len(raw), uid)
 				// And on to the account, so the picture a person set on their
 				// console is the one the website and the app show.
