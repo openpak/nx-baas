@@ -329,35 +329,66 @@ func (s *server) finishLink(p *pendingLink) string {
 const logoDataURI = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIiBmaWxsPSJub25lIj4gPGRlZnM+IDxsaW5lYXJHcmFkaWVudCBpZD0iYmciIHgxPSIwIiB5MT0iMCIgeDI9IjUxMiIgeTI9IjUxMiIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPiA8c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjNjM2NmYxIi8+IDxzdG9wIG9mZnNldD0iMTAwJSIgc3RvcC1jb2xvcj0iIzQzMzhjYSIvPiA8L2xpbmVhckdyYWRpZW50PiA8L2RlZnM+IDxjaXJjbGUgY3g9IjI1NiIgY3k9IjI1NiIgcj0iMjU2IiBmaWxsPSJ1cmwoI2JnKSIvPiA8Y2lyY2xlIGN4PSIyNTYiIGN5PSIyNTYiIHI9IjE4MCIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyMCIgZmlsbD0ibm9uZSIgb3BhY2l0eT0iMC45Ii8+IDxwYXRoIGQ9Ik0xNjAgMjU2YzAtNTMgNDMtOTYgOTYtOTZzOTYgNDMgOTYgOTYtNDMgOTYtOTYgOTYiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iMjAiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgZmlsbD0ibm9uZSIgb3BhY2l0eT0iMC45Ii8+IDxjaXJjbGUgY3g9IjI1NiIgY3k9IjI1NiIgcj0iMjgiIGZpbGw9IndoaXRlIiBvcGFjaXR5PSIwLjk1Ii8+IDwvc3ZnPg=="
 
 const pageCSS = `
-:root{--paper:#101114;--raised:#1c1e24;--line:#26282e;--ink:#e9eaee;--muted:#8a8e99;
---accent:#818cf8;--accent-weak:#1c2040;--accent-line:#343a6b;--ok:#4ec98a;--r:12px}
+/* The site's tokens, so the page a console sends you to looks like the place
+   it sends you to. Light and dark follow the reader's system setting: this
+   opens on a phone in daylight as often as on a television at night.
+   Inline on purpose — a console browser may have no route to the website. */
+:root{color-scheme:light dark;
+--paper:#ffffff;--paper-2:#f7f7f8;--raised:#ffffff;--ink:#16161a;--ink-2:#3d3f47;--muted:#6b6e79;
+--line:#e4e4e8;--line-2:#c9cad1;--accent:#4f46e5;--accent-weak:#eef0ff;--accent-line:#c7ccfb;
+--ok:#1a7f4b;--ok-weak:#e8f5ee;--ok-line:#bfe0cd;--bad:#b3261e;--bad-weak:#fbeceb;--bad-line:#eec4c1;--r:12px}
+@media (prefers-color-scheme:dark){:root{
+--paper:#101114;--paper-2:#191a1f;--raised:#1c1e24;--ink:#e9eaee;--ink-2:#b7bac2;--muted:#8a8e99;
+--line:#26282e;--line-2:#3b3e47;--accent:#818cf8;--accent-weak:#1c2040;--accent-line:#343a6b;
+--ok:#4ec98a;--ok-weak:#12251b;--ok-line:#2c4d3a;--bad:#ff8079;--bad-weak:#2a1615;--bad-line:#57302c}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;
-display:flex;justify-content:center;padding:32px 20px}
-main{width:100%;max-width:760px}
-h1{font-size:1.6rem;letter-spacing:-0.02em;margin:0 0 6px}
+body{margin:0;background:var(--paper);color:var(--ink);
+font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+display:flex;justify-content:center;padding:24px 16px 40px}
+main{width:100%;max-width:34rem}
+h1{font-size:clamp(1.5rem,5vw,1.8rem);line-height:1.2;letter-spacing:-0.02em;margin:0 0 6px;font-weight:650}
 p{color:var(--muted);margin:0 0 20px}
-.card{background:var(--raised);border:1px solid var(--line);border-radius:var(--r);padding:24px;margin-bottom:16px}
-.brand{display:flex;align-items:center;gap:10px;font-weight:650;margin-bottom:22px}
+strong{color:var(--ink)}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;margin-bottom:24px;color:var(--ink)}
 .brand img{width:28px;height:28px}
-.code{font:600 2.2rem/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:0.18em;
-color:#fff;background:var(--accent-weak);border:1px solid var(--accent-line);border-radius:10px;
-padding:16px 20px;display:inline-block}
+.card{background:var(--raised);border:1px solid var(--line);border-radius:var(--r);padding:20px;margin-bottom:16px}
+/* The code is the whole point of the screen it appears on: as large as it can
+   be without wrapping on a narrow phone. */
+.code{font:600 clamp(1.8rem,9vw,2.4rem)/1 ui-monospace,SFMono-Regular,Menlo,monospace;
+letter-spacing:0.16em;color:var(--accent);background:var(--accent-weak);
+border:1px solid var(--accent-line);border-radius:10px;padding:16px 18px;display:inline-block}
 .qr{background:#fff;padding:12px;border-radius:10px;display:inline-block;line-height:0}
-.qr img{width:220px;height:220px}
-.split{display:flex;gap:28px;flex-wrap:wrap;align-items:center}
-label{display:block;font-size:0.88rem;color:var(--muted);margin:14px 0 6px}
-input{width:100%;padding:12px 14px;font-size:1rem;color:var(--ink);background:var(--paper);
-border:1px solid var(--line);border-radius:8px}
-button{margin-top:18px;padding:13px 18px;font-size:1rem;font-weight:600;color:#fff;
-background:var(--accent);border:0;border-radius:8px;cursor:pointer;width:100%}
-button.ghost{background:transparent;border:1px solid var(--line);color:var(--ink);margin-top:10px}
-.err{color:#ff8079;margin:0 0 12px}
+.qr img{width:min(220px,60vw);height:auto;aspect-ratio:1}
+.split{display:flex;gap:20px;flex-wrap:wrap;align-items:center}
+label{display:block;font-size:0.92rem;color:var(--ink-2);margin:14px 0 6px}
+/* 44px tall and never under 16px: a smaller field makes iOS zoom on focus and
+   leaves the page scrolled sideways. */
+input{width:100%;min-height:44px;padding:0.65rem 0.8rem;font:inherit;font-size:max(1rem,16px);
+color:var(--ink);background:var(--paper);border:1px solid var(--line-2);border-radius:8px}
+input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-weak)}
+button{margin-top:18px;min-height:44px;padding:0.7rem 1.1rem;font:inherit;font-weight:600;
+color:#fff;background:var(--accent);border:1px solid var(--accent);border-radius:8px;
+cursor:pointer;width:100%}
+button.ghost{background:transparent;border-color:var(--line-2);color:var(--ink);margin-top:10px}
+/* One row, tinted by state, with a pill on the right — the same shape the
+   status page uses, so the two read as one product. */
+.row{display:flex;align-items:center;gap:0.75rem;padding:0.9rem 1rem;border-radius:var(--r);
+border:1px solid var(--line);background:var(--raised);margin-bottom:0.6rem}
+.row .name{font-weight:600;overflow-wrap:anywhere}
+.row .pill{margin-left:auto;flex:none;white-space:nowrap;display:inline-flex;align-items:center;
+gap:0.4rem;padding:0.3rem 0.7rem;border-radius:999px;font-size:0.85rem;font-weight:600;
+background:transparent;border:1px solid var(--line-2);color:var(--muted)}
+.row .pill::before{content:"";width:0.45rem;height:0.45rem;border-radius:50%;background:currentColor}
+.row.ok{background:var(--ok-weak);border-color:var(--ok-line)}
+.row.ok .pill{border-color:var(--ok-line);color:var(--ok)}
+.row.bad{background:var(--bad-weak);border-color:var(--bad-line)}
+.row.bad .pill{border-color:var(--bad-line);color:var(--bad)}
+.err{color:var(--bad);margin:0 0 12px}
 .ok{color:var(--ok)}
 .steps{margin:0;padding-left:1.2em;color:var(--muted)}
 .steps li{margin:6px 0}
-hr{border:0;border-top:1px solid var(--line);margin:26px 0}
-details summary{color:var(--muted);cursor:pointer}
+hr{border:0;border-top:1px solid var(--line);margin:24px 0}
+details summary{color:var(--muted);cursor:pointer;min-height:44px;display:flex;align-items:center}
 `
 
 func pageHead(title string) string {
@@ -371,7 +402,7 @@ func (s *server) phoneDonePage(w http.ResponseWriter, username string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, pageHead("Almost there")+`
 <h1>Now approve it on the console</h1>
-<p>Signed in as <strong class="ok">`+html.EscapeString(username)+`</strong>.</p>
+<div class="row ok"><span class="name">`+html.EscapeString(username)+`</span><span class="pill">Signed in</span></div>
 <div class="card"><p style="margin:0">Your console is showing this account. Choose <strong>Approve</strong>
 there to finish linking. You can close this page.</p></div></main></body></html>`)
 }
@@ -437,7 +468,7 @@ func (s *server) phoneConfirmPage(w http.ResponseWriter, username, pair, errMsg 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, pageHead("Link a console")+`
 <h1>Link a console</h1>
-<p>Signed in as <strong class="ok">`+html.EscapeString(username)+`</strong>.</p>
+<div class="row ok"><span class="name">`+html.EscapeString(username)+`</span><span class="pill">Signed in</span></div>
 <div class="card">`+errBlock(errMsg)+`<form method="post" action="/link/code">
 `+pairField(pair)+`<label for="code">Code shown on the console</label>
 <input id="code" name="code" autocapitalize="characters" autocomplete="off" spellcheck="false"
