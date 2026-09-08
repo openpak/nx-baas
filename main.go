@@ -262,6 +262,11 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 		// Restore User needs a profile blob to import; the console accepts this constant
 		// (proven 2026-09-07, identical across every VPS account) and then PATCHes its own.
 		nx = os.Getenv("NX_DEFAULT_NXACCOUNT")
+		if nx == "" {
+			// Silent before: the link succeeded, every response was 200, and the console
+			// failed with 2124-3121 because it had no profile to import. Say so.
+			log.Printf("[nx-baas] WARNING: linked user %s has no nxAccount and NX_DEFAULT_NXACCOUNT is unset; the console has nothing to import", u.ID)
+		}
 	}
 	if nx != "" {
 		self["isMediaUploaded"] = true
