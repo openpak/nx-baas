@@ -264,9 +264,19 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 	// the service, and every account importing one stranger's profile is not a fixture worth
 	// keeping.
 	nx := u.NxAccount
+	if nx == "" && id != nil {
+		// The reply a console accepted carries extras.self.nxAccount and
+		// isMediaUploaded; ours carried neither, because the console only
+		// PATCHes its own blob after a link it never completes. Serving the
+		// captured constant is what the stack did when links worked, so it is
+		// back -- env-gated, so it can be taken away again in one restart.
+		nx = os.Getenv("NX_TEST_NXACCOUNT")
+	}
 	if nx != "" {
 		self["isMediaUploaded"] = true
 		self["nxAccount"] = nx
+	} else if u.Avatar != "" {
+		self["isMediaUploaded"] = true
 	}
 	friendsEx := map[string]any{"isChatActivated": true, "isChatInvitable": true, "playLog": ""}
 	everyone := map[string]any{"playLog": ""}

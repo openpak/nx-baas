@@ -169,3 +169,33 @@ func TestImageUploadAnswersTheUserObjectNotAnEmptyOne(t *testing.T) {
 		t.Fatalf("thumbnail still points at the default after an upload: %v", user["thumbnailUrl"])
 	}
 }
+
+// The shape test above seeds a blob the console had already uploaded, so it
+// never noticed that production served extras.self without nxAccount or
+// isMediaUploaded at all -- which is the state a console is in the first time
+// it links, and exactly what the accepted capture does NOT look like.
+func TestExtrasSelfIsNeverBareForALinkedUser(t *testing.T) {
+	t.Setenv("NX_TEST_NXACCOUNT", "01606150mCH48QS0EACctpGPncaKYw")
+
+	s := dauthServer(t)
+	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	u, d := s.store.NewUser()
+	s.store.Update(u, func(u *User) { u.PID = 1; u.Nickname = "tester" }) // no blob: the console never uploaded one
+	s.acct = fakeBackend{id: &Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
+		FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did"}}
+
+	r := httptest.NewRequest("POST", "https://"+baasHost+"/1.0.0/login", nil)
+	r.Host = baasHost
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	s.baas(w, r, []byte("id="+d.ID+"&password="+d.Password+"&appAuthNToken=x"))
+
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("not JSON: %v", err)
+	}
+	self := got["user"].(map[string]any)["extras"].(map[string]any)["self"].(map[string]any)
+	if self["nxAccount"] == nil || self["isMediaUploaded"] != true {
+		t.Fatalf("extras.self went out bare: %v", self)
+	}
+}
