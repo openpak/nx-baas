@@ -90,3 +90,45 @@ func TestEveryURLTheConsoleIsHandedIsServed(t *testing.T) {
 		})
 	}
 }
+
+// The account's own picture, on the console. Before this the adapter only
+// knew about pictures a console had uploaded, so an account with an avatar on
+// the site was shown the generic default on the Switch — and every account
+// has an avatar now.
+func TestTheConsoleIsShownTheAccountsOwnPicture(t *testing.T) {
+	jpegBytes := []byte{0xFF, 0xD8, 0xFF, 0xE0}
+	jpegBytes = append(jpegBytes, make([]byte, 512)...)
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/console.jpg") {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "image/jpeg")
+		_, _ = w.Write(jpegBytes)
+	}))
+	defer site.Close()
+
+	t.Setenv("NX_DATA", t.TempDir())
+	s := dauthServer(t)
+	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	u, _ := s.store.NewUser()
+	s.store.Update(u, func(u *User) { u.PID = 1; u.Nickname = "tester" }) // no console upload
+	s.acct = fakeBackend{id: &Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
+		FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did",
+		AvatarURL: site.URL + "/media/avatars/acct-1/console.jpg"}}
+
+	r := httptest.NewRequest("GET", "https://cdn-image-"+baasHost+"/1/"+u.ID, nil)
+	r.Host = "cdn-image-" + baasHost
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("thumbnail = %d, want the account's picture", w.Code)
+	}
+	if got := w.Body.Bytes(); len(got) != len(jpegBytes) {
+		t.Fatalf("served %d bytes, want the %d from the website", len(got), len(jpegBytes))
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "image/jpeg" {
+		t.Errorf("content-type = %q", ct)
+	}
+}

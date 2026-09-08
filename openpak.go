@@ -304,6 +304,12 @@ func (b *openpakBackend) Identity(pid uint64) (*Identity, error) {
 	} else {
 		logErr("identity get-account", err)
 	}
+	// The account already has a picture -- its own upload or the preset its id
+	// picks -- and until this line the console was shown the generic default
+	// for every account that had not uploaded one from a console.
+	if site := getenv("WEBSITE_INTERNAL_URL", ""); site != "" {
+		id.AvatarURL = site + "/media/avatars/" + accountID + "/console.jpg"
+	}
 	friends, err := b.social.ListFriends(ctx, &accountv1.ListFriendsRequest{AccountId: accountID})
 	if err != nil {
 		return nil, fmt.Errorf("list friends: %w", err)

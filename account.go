@@ -38,16 +38,20 @@ type Friend struct {
 }
 
 type Identity struct {
-	PID            uint64   `json:"pid"`
-	NaID           string   `json:"naID"`
-	BaasUserID     string   `json:"baasUserID"`
-	BsDid          string   `json:"bsDid"`
-	Nickname       string   `json:"nickname"`
-	FriendCode     string   `json:"friendCode"`
+	PID        uint64 `json:"pid"`
+	NaID       string `json:"naID"`
+	BaasUserID string `json:"baasUserID"`
+	BsDid      string `json:"bsDid"`
+	Nickname   string `json:"nickname"`
+	FriendCode string `json:"friendCode"`
 	// The console's user object carries both and rejects it when either is malformed.
 	Country  string `json:"country"`
 	Birthday string `json:"birthday"`
-	Avatar         string   `json:"avatar"`
+	Avatar   string `json:"avatar"`
+	// AvatarURL is where the account's own picture lives when the adapter does
+	// not hold the bytes: the website's media store. Fetched only when a
+	// console actually asks for the thumbnail, never on the login path.
+	AvatarURL      string   `json:"avatarURL"`
 	ImageUpdatedAt int64    `json:"imageUpdatedAt"`
 	PlayLog        any      `json:"playLog"`
 	Friends        []Friend `json:"friends"`

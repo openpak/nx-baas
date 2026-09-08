@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"time"
@@ -49,4 +51,26 @@ func (s *server) shareAvatar(subject, base64JPEG string) {
 		}
 		log.Printf("[nx-baas] avatar shared with the account for subject %s", subject)
 	}()
+}
+
+// fetchAvatar pulls the account's picture from the website's media store.
+// Short timeout on purpose: a console waiting on a thumbnail should get the
+// default quickly rather than a spinner.
+func fetchAvatar(url string) ([]byte, error) {
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("avatar: %s said %d", url, resp.StatusCode)
+	}
+	img, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return nil, err
+	}
+	if len(img) < 2 || img[0] != 0xFF || img[1] != 0xD8 {
+		return nil, fmt.Errorf("avatar: %s did not return a JPEG", url)
+	}
+	return img, nil
 }

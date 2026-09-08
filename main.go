@@ -298,6 +298,14 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 			if id.Avatar != "" {
 				thumbAt = id.ImageUpdatedAt
 				thumb1, thumb2 = cdnHost+"/1/"+u.ID, cdnHost+"/2/"+u.ID
+			} else if id.AvatarURL != "" {
+				// ponytail: the account's picture, timestamped from the user
+				// record rather than the media row -- a change made on the
+				// site shows on the console the next time anything else about
+				// the user changes. Good enough until the website hands back a
+				// version with the image.
+				thumbAt = u.UpdatedAt
+				thumb1, thumb2 = cdnHost+"/1/"+u.ID, cdnHost+"/2/"+u.ID
 			} else if u.Avatar != "" {
 				// The console's own upload. Without this the reply to an
 				// upload still points at /1/default with an uploaded-at of
@@ -401,6 +409,18 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			// own picture would be shown the default one back.
 			if u := s.store.User(p[3:]); u != nil {
 				avatar = u.Avatar
+			}
+		}
+		if avatar == "" && err == nil && id.AvatarURL != "" {
+			// Fetched here and nowhere else: a login must not wait on the
+			// website, but a console asking for a thumbnail can.
+			if img, ferr := fetchAvatar(id.AvatarURL); ferr == nil {
+				w.Header().Set("Content-Type", "image/jpeg")
+				w.Header().Set("Cache-Control", "public, max-age=300")
+				w.Write(img)
+				return
+			} else {
+				log.Printf("[nx-baas] avatar fetch %s: %v", id.AvatarURL, ferr)
 			}
 		}
 		if avatar == "" {
