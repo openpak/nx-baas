@@ -235,17 +235,6 @@ func permissionsOf(u *User) map[string]any {
 	return p
 }
 
-// selfExtras is the "self" visibility group of a user object. The accepted
-// capture carries isMediaUploaded there for a user who has a picture, and
-// every account has one now.
-func selfExtras(mediaUploaded bool) map[string]any {
-	self := map[string]any{"playLog": ""}
-	if mediaUploaded {
-		self["isMediaUploaded"] = true
-	}
-	return self
-}
-
 // Friend requests this server issued, by their own id. In memory on purpose:
 // the friendship itself lives in the account core, and all this map buys is
 // the console's ability to cancel a request it just made. A restart loses

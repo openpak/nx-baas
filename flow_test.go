@@ -363,6 +363,25 @@ func TestSearchReplyMatchesTheAcceptedShape(t *testing.T) {
 			t.Errorf("item carries %q, which the accepted reply does not", k)
 		}
 	}
+
+	// And inside extras, where four extra keys hid for an evening: foaf and
+	// self are empty about somebody else, and friends has no isChatActivated.
+	we, _ := wu["extras"].(map[string]any)
+	ge, _ := gu["extras"].(map[string]any)
+	for group, want := range we {
+		wm, _ := want.(map[string]any)
+		gm, _ := ge[group].(map[string]any)
+		for k := range gm {
+			if _, ok := wm[k]; !ok {
+				t.Errorf("extras.%s carries %q, which the accepted reply does not", group, k)
+			}
+		}
+		for k := range wm {
+			if _, ok := gm[k]; !ok {
+				t.Errorf("extras.%s is missing %q", group, k)
+			}
+		}
+	}
 }
 
 // A friend in a list is as complete as a user in a search result. The list

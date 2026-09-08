@@ -367,7 +367,6 @@ func (s *server) friendObj(f Friend, now int64) map[string]any {
 	// that says country "" and owns no device accounts is not one the console
 	// accepts.
 	country, devices := f.Country, []map[string]any{}
-	mediaUploaded := false
 	if local := s.store.User(f.BaasUserID); local != nil {
 		if local.Country != "" {
 			country = local.Country
@@ -378,7 +377,6 @@ func (s *server) friendObj(f Friend, now int64) map[string]any {
 		if n := len(local.DeviceAccounts); n > 0 {
 			devices = append(devices, map[string]any{"id": local.DeviceAccounts[n-1]})
 		}
-		mediaUploaded = local.Avatar != "" || local.NxAccount != ""
 	}
 	obj := map[string]any{
 		"id":        f.BaasUserID,
@@ -411,11 +409,15 @@ func (s *server) friendObj(f Friend, now int64) map[string]any {
 			"personalNotification": true, "personalNotificationUpdatedAt": created,
 			"presence": "FRIENDS", "presenceUpdatedAt": created,
 		},
+		// Exactly the groups a reference reply carries about somebody else:
+		// foaf and self are empty, and friends has no isChatActivated. self is
+		// the visibility group only its owner sees, so putting anything in it
+		// for a stranger is both wrong and, to this console, unparsable.
 		"extras": map[string]any{
-			"self":            selfExtras(mediaUploaded),
+			"self":            map[string]any{},
 			"favoriteFriends": map[string]any{"playLog": ""},
-			"friends":         map[string]any{"isChatActivated": true, "isChatInvitable": true, "playLog": ""},
-			"foaf":            map[string]any{"playLog": ""},
+			"friends":         map[string]any{"isChatInvitable": true, "playLog": ""},
+			"foaf":            map[string]any{},
 			"everyone":        map[string]any{"playLog": ""},
 		},
 		// Friend-list only: not part of a self object, and harmless in a
