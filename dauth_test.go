@@ -88,3 +88,45 @@ func TestDeviceTokensFromRealConsoleBody(t *testing.T) {
 		t.Errorf("second token does not carry its client_id (%v)", err)
 	}
 }
+
+// Every path the console touches during account setup must answer. Each 404 here was an
+// account that could not be added: the licence service is asked for all of these while a
+// user is imported, and a missing one reads as "no entitlement".
+func TestAccountSetupPathsAllAnswer(t *testing.T) {
+	s := dauthServer(t)
+	for _, c := range []struct{ host, path string }{
+		{"dragons.hac.lp1.dragons.nintendo.net", "/v2/contents_authorization_token_for_aauth/issue"},
+		{"dragons.hac.lp1.dragons.nintendo.net", "/v2/elicense_archives/publish"},
+		{"dragons.hac.lp1.dragons.nintendo.net", "/v2/rights/publish_device_linked_elicenses"},
+		{"dragons.hac.lp1.dragons.nintendo.net", "/v2/elicenses/exercise"},
+		{"dragons.hac.lp1.dragons.nintendo.net", "/v2/elicenses/migration_state"},
+		{"dragons.hac.lp1.dragons.nintendo.net", "/v2/penne_id"},
+		{"acert-lp1.ndas.srv.nintendo.net", "/keys"},
+		{"dcert-lp1.ndas.srv.nintendo.net", "/keys"},
+	} {
+		r := httptest.NewRequest("POST", "https://"+c.host+c.path, nil)
+		r.Host = c.host
+		w := httptest.NewRecorder()
+		// Through ServeHTTP, not s.dauth: routing the host to this handler at all is half
+		// the contract, and acert was once missing from that list while dauth answered fine.
+		s.ServeHTTP(w, r)
+		if w.Code != http.StatusOK {
+			t.Errorf("%s%s = %d, want 200", c.host, c.path, w.Code)
+		}
+	}
+}
+
+// The serial travels from the device token into the BAAS access token, and the console reads
+// it there. It has to be non-empty and the same on every request from one console.
+func TestDeviceTokenCarriesAStableSerial(t *testing.T) {
+	s := dauthServer(t)
+	claims, _ := parseJWT(s.deviceToken("dev-123", "client-abc"), nil)
+	n, _ := claims["nintendo"].(map[string]any)
+	sn := str(n, "sn")
+	if sn == "" || sn != consoleSerial("dev-123") {
+		t.Fatalf("serial = %q, want the stable one for dev-123", sn)
+	}
+	if consoleSerial("dev-123") == consoleSerial("dev-456") {
+		t.Error("two consoles share a serial")
+	}
+}

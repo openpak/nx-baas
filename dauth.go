@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -53,7 +54,7 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 
 	// aauth shares this handler: it is the next step of the same chain.
 	// dcert: the verification keys for everything signed below.
-	if strings.HasPrefix(host, "dcert") {
+	if strings.HasPrefix(host, "dcert") || strings.HasPrefix(host, "acert") {
 		if p == "/keys" {
 			w.Header().Set("Content-Type", "application/json")
 			w.Write(s.jwks)
@@ -127,17 +128,37 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 			"policy_handler":     "SYSTEM",
 		})
 
-	// dragons: the licence service the console talks to during account setup. A 404 here stops
-	// the setup with 2124-3121, so both endpoints answer plausibly; nothing on this network
-	// sells or revokes licences, so there is nothing to check.
-	case strings.HasPrefix(host, "dragons") && strings.HasSuffix(p, "/elicense_archives/publish"):
-		log.Printf("[dragons] elicense archive published")
-		writeJSON(w, 200, map[string]any{"id": randHex(16), "published_at": time.Now().Unix()})
-
+	// dragons: the licence service the console talks to during account setup. A 404 on any of
+	// these stops the setup (2124-3121 / "cannot use online features"), so each one answers
+	// plausibly; nothing on this network sells or revokes licences, so there is nothing to
+	// check. The two archive endpoints are the ones the console calls while importing a user.
 	case strings.HasPrefix(host, "dragons") && strings.Contains(p, "contents_authorization_token"):
 		appID := r.Header.Get("Nintendo-Application-Id")
+		if appID == "" {
+			appID = "0100f8f0000a2000"
+		}
 		log.Printf("[dragons] contents authorization token for %q", appID)
 		writeJSON(w, 200, map[string]any{"contents_authorization_token": s.applicationToken(appID, "")})
+
+	case strings.HasPrefix(host, "dragons") && strings.HasSuffix(p, "/elicense_archives/publish"),
+		strings.HasPrefix(host, "dragons") && strings.HasSuffix(p, "/rights/publish_device_linked_elicenses"):
+		// Nothing is waiting to be published: an empty list is the "all done" answer.
+		log.Printf("[dragons] %s -> no archives", p)
+		writeJSON(w, 200, map[string]any{"elicense_archives": []any{}})
+
+	case strings.HasPrefix(host, "dragons") && strings.HasSuffix(p, "/report"):
+		writeJSON(w, 200, map[string]any{})
+
+	// Exercising a licence is how the console asks "may this user play online?". The real
+	// service answers 200 with no body; a 404 reads as "no entitlement".
+	case strings.HasPrefix(host, "dragons") && strings.HasSuffix(p, "/elicenses/exercise"):
+		w.WriteHeader(http.StatusOK)
+
+	case strings.HasPrefix(host, "dragons") && strings.HasSuffix(p, "/elicenses/migration_state"):
+		writeJSON(w, 200, map[string]any{"state": "COMPLETED", "migration_state": "NONE"})
+
+	case strings.HasPrefix(host, "dragons") && strings.HasSuffix(p, "/penne_id"):
+		writeJSON(w, 200, map[string]any{"id": "opk" + randHex(16), "password": randB64(24)})
 
 	default:
 		log.Printf("[dauth] !! UNHANDLED %s %s%s", r.Method, host, p)
@@ -148,25 +169,32 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 // edgeDToken builds the CDN's token format: fields joined by ~, with an HMAC the CDN would
 // check. Nothing of ours verifies it, so the digest is random rather than pretend-signed.
 func edgeDToken(exp int64, device string) string {
-	return fmt.Sprintf("exp=%d~acl=%%2F%%2A~data=sub=%s.pc=HAC.id=%s~hmac=%s",
-		exp, device, randHex(16), randHex(32))
+	return fmt.Sprintf("exp=%d~acl=%%2F%%2A~data=sub=%s.sn=%s.pc=HAC.id=%s~hmac=%s",
+		exp, device, consoleSerial(device), uuid4(), randHex(32))
 }
 
-// applicationToken is what aauth hands back for a title.
+// applicationToken is what aauth hands back for a title. Its jku is acert, not dcert: the
+// console fetches the application key from there, and both hosts serve our one JWKS.
 func (s *server) applicationToken(appID, appVersion string) string {
 	now := time.Now().Unix()
+	device := "openpak-device"
+	serial := consoleSerial(device)
 	return signJWT(
-		map[string]any{"alg": "RS256", "jku": "https://dcert-lp1.ndas.srv.nintendo.net/keys", "kid": s.idKid, "typ": "JWT"},
+		map[string]any{"alg": "RS256", "jku": "https://acert-lp1.ndas.srv.nintendo.net/keys", "kid": s.idKid, "typ": "JWT"},
 		map[string]any{
-			"iss": "https://aauth-lp1.ndas.srv.nintendo.net",
-			"jti": randHex(16),
-			"iat": now,
+			"iss": "aauth-lp1.ndas.srv.nintendo.net",
+			"jti": uuid4(),
+			"iat": now - 600,
 			"exp": now + 86400,
 			"sub": appID,
-			"aud": appID,
+			"typ": "application_auth_token",
+			"dvc": map[string]any{"di": device, "sn": serial},
 			"nintendo": map[string]any{
-				"ai": appID,
-				"av": appVersion,
+				"ai": appID, "av": appVersion, "at": now,
+				"edi": randB64(60), "tbn": randB64(16), "tbh": randB64(32),
+				"opp": "MEMBERSHIP_REQUIRED", "ph": "SYSTEM",
+				"di": device, "sn": serial, "pc": "HAC", "dt": "NX Prod 1",
+				"ist": false, "esv": randB64(33),
 			},
 		}, s.key)
 }
@@ -192,13 +220,30 @@ func (s *server) deviceToken(deviceID, clientID string) string {
 	return signJWT(
 		map[string]any{"alg": "RS256", "jku": "https://dcert-lp1.ndas.srv.nintendo.net/keys", "kid": s.idKid, "typ": "JWT"},
 		map[string]any{
-			"iss":       "https://dauth-lp1.ndas.srv.nintendo.net",
-			"jti":       randHex(16),
-			"iat":       now,
-			"exp":       now + 86400,
-			"sub":       deviceID,
-			"aud":       clientID,
-			"nintendo":  map[string]any{"sn": "", "did": deviceID},
+			"iss": "dauth-lp1.ndas.srv.nintendo.net",
+			"jti": uuid4(),
+			"iat": now - 600,
+			"exp": now + 86400,
+			"sub": deviceID,
+			"aud": clientID,
+			"nintendo": map[string]any{
+				"sn": consoleSerial(deviceID), "did": deviceID, "pc": "HAC", "dt": "NX Prod 1",
+				"ist": false, "esv": randB64(33), "x5t#S256": deviceThumbprint,
+			},
 			"client_id": clientID,
 		}, s.key)
+}
+
+// deviceThumbprint is the x5t#S256 the console's own tokens carry; BAAS relays it into the
+// anonymous access token, so dauth and BAAS must agree on one value.
+const deviceThumbprint = "lkYHqHf2uXjNZ2UeDnW83GT_wa3-dH1KtPLVgxao3Rs"
+
+// consoleSerial: the real service reads the serial off the console's certificate. We have no
+// PRODINFO to read, so it is derived from the device id — stable per console, and shaped like
+// the serial the console puts in its own headers (three letters, eleven digits). An empty
+// serial travels into the BAAS access token and the console rejects the result.
+func consoleSerial(deviceID string) string {
+	sum := sha256.Sum256([]byte("serial:" + deviceID))
+	n := binary.BigEndian.Uint64(sum[:8]) % 100000000000
+	return fmt.Sprintf("XKJ%011d", n)
 }

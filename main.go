@@ -144,7 +144,7 @@ func (s *server) accessToken(sub string, grant int, bsDid, di, sn string) string
 	if grant == 1 {
 		claims["bs:pid"] = "pz" + randHex(15)
 		claims["bs:sts"] = []int64{1188950301625811329}
-		claims["nintendo"] = map[string]any{"di": di, "dt": "NX Prod 1", "ist": false, "pc": "HAC", "sn": sn, "x5t#S256": "lkYHqHf2uXjNZ2UeDnW83GT_wa3-dH1KtPLVgxao3Rs"}
+		claims["nintendo"] = map[string]any{"di": di, "dt": "NX Prod 1", "ist": false, "pc": "HAC", "sn": sn, "x5t#S256": deviceThumbprint}
 	} else {
 		claims["bs:sts"] = []int64{10415858080830506, 272640, 9, 0, 0, 19316357715722240, 16}
 	}
@@ -1122,7 +1122,8 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.Contains(host, "accounts.nintendo.com"):
 		s.na(w, r, body)
 	case strings.HasPrefix(host, "dauth") || strings.HasPrefix(host, "dcert") ||
-		strings.HasPrefix(host, "aauth") || strings.HasPrefix(host, "dragons"):
+		strings.HasPrefix(host, "acert") || strings.HasPrefix(host, "aauth") ||
+		strings.HasPrefix(host, "dragons"):
 		s.dauth(w, r, body)
 	case strings.Contains(host, "penne.") || strings.Contains(host, "vermillion.") || strings.HasPrefix(host, "beach."):
 		s.penne(w, r, body)
@@ -1216,7 +1217,12 @@ func main() {
 	cert := selfSigned([]string{baasHost, "m-lp1.baas.nintendo.com", "cdn-image-e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com",
 		"accounts.nintendo.com", "api.accounts.nintendo.com", "cdn.accounts.nintendo.com",
 		"god.hac.lp1.penne.srv.nintendo.net", "val.hac.penne.srv.nintendo.net", "val.hac.lp1.penne.srv.nintendo.net",
-		"fro-3.hac.lp1.penne.srv.nintendo.net", "gw.hac.lp1.vermillion.srv.nintendo.net", "beach.hac.lp1.eshop.nintendo.net", "capi.lp1.op2.nintendo.net"}, getenv("NX_CA_DIR", "/data/ca"))
+		"fro-3.hac.lp1.penne.srv.nintendo.net", "gw.hac.lp1.vermillion.srv.nintendo.net", "beach.hac.lp1.eshop.nintendo.net", "capi.lp1.op2.nintendo.net",
+		// Device auth: these must be on the fixed cert, not minted on demand — the console
+		// rejects an on-demand cert on the names it authenticates against (2123-0013).
+		"dauth-lp1.ndas.srv.nintendo.net", "dcert-lp1.ndas.srv.nintendo.net", "acert-lp1.ndas.srv.nintendo.net",
+		"aauth-lp1.ndas.srv.nintendo.net", "aauth.hac.lp1.ndas.srv.nintendo.net",
+		"dragons.hac.lp1.dragons.nintendo.net", "dragonst.hac.lp1.dragons.nintendo.net"}, getenv("NX_CA_DIR", "/data/ca"))
 	var handler http.Handler = s
 	if up := os.Getenv("NX_UPSTREAM"); up != "" {
 		log.Printf("[nx-baas] CAPTURE MODE: forwarding everything to %s and logging bodies", up)
