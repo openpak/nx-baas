@@ -61,21 +61,60 @@ func TestStateReportsWhoClaimedIt(t *testing.T) {
 	}
 }
 
-// A code goes on a television. It must not be guessable, and must not read as a word.
-func TestCodeAlphabet(t *testing.T) {
+// A code is read off a television and typed on a phone: six digits, nothing
+// else, so the keypad is enough and there is no letter to mistake for a digit.
+func TestCodeShape(t *testing.T) {
 	seen := map[string]bool{}
 	for i := 0; i < 200; i++ {
 		c := randCode()
 		if len(c) != codeLength {
 			t.Fatalf("code %q has length %d", c, len(c))
 		}
-		if strings.ContainsAny(c, "AEIOU01L") {
-			t.Errorf("code %q contains an ambiguous or vowel character", c)
+		if strings.TrimLeft(c, "0123456789") != "" {
+			t.Errorf("code %q is not all digits", c)
 		}
 		seen[c] = true
 	}
+	// Distinct draws are the cheap check that the generator is random at all;
+	// the modulo bias rejection sampling avoids is far too small to see here,
+	// which is why it is handled in the code rather than asserted.
 	if len(seen) < 190 {
 		t.Errorf("only %d distinct codes in 200 draws", len(seen))
+	}
+}
+
+// Six digits is one in a million, so guesses have to be capped: without this a
+// script would work the space and find whichever codes happen to be live.
+func TestGuessesAreCapped(t *testing.T) {
+	g := newGuesses()
+	const who = "1800000001"
+
+	for i := 0; i < guessLimit-1; i++ {
+		g.wrong(who)
+		if blocked, _ := g.blocked(who); blocked {
+			t.Fatalf("blocked after %d wrong codes, before the limit", i+1)
+		}
+	}
+	g.wrong(who)
+	blocked, left := g.blocked(who)
+	if !blocked {
+		t.Fatal("still accepting guesses at the limit")
+	}
+	if left <= 0 || left > guessWindow {
+		t.Errorf("wait of %v is not within the window", left)
+	}
+
+	// Another account is unaffected: one person mistyping must not lock out
+	// everybody else.
+	if blocked, _ := g.blocked("1800000002"); blocked {
+		t.Error("one account's wrong guesses blocked another")
+	}
+
+	// Getting it right clears the count — someone who succeeded is not
+	// mid-attack, and the next link should not start half-way to a lockout.
+	g.right(who)
+	if blocked, _ := g.blocked(who); blocked {
+		t.Error("a correct code did not clear the count")
 	}
 }
 
@@ -153,5 +192,18 @@ func TestCodeAppearsOnlyAfterSignIn(t *testing.T) {
 	s.markSignedIn("not-a-pair", phoneSession{PID: 1, Username: "someone"})
 	if s.links.get(other).State != linkWaiting {
 		t.Error("an unknown pairing changed a console session")
+	}
+}
+
+// The console shows the code grouped and the phone is likely to type it that
+// way, so a space must not be the difference between linking and "wrong code".
+func TestGroupedCodeIsAccepted(t *testing.T) {
+	code := randCode()
+	shown := groupCode(code)
+	if shown != code[:3]+" "+code[3:] {
+		t.Fatalf("grouped %q from %q", shown, code)
+	}
+	if strings.ReplaceAll(shown, " ", "") != code {
+		t.Errorf("what a person reads does not normalise back to the code")
 	}
 }

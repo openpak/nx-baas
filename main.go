@@ -55,18 +55,19 @@ func getenv(k, d string) string {
 }
 
 type server struct {
-	store  *Store
-	acct   accountBackend
-	key    *rsa.PrivateKey
-	idKid  string // kid of id_tokens (openpak-baas-key-1: what Photon/NPLN/S2 already trust)
-	accKid string // kid of BAAS access tokens (/1.0.0/internal_certificates)
-	naKid  string // kid of Nintendo-Account tokens: the console binds kid<->issuer and rejects a kid shared with BAAS (2124-3121)
-	jwks   []byte
-	mu     sync.Mutex
-	codes  map[string]naCode // NA authorization codes / session tokens -> who logged in
-	device map[string]string // device id -> serial, from the dauth assertion
-	links  *linkStore        // pending QR console links, by code
-	phones *phoneStore       // signed-in phones entering a code
+	store   *Store
+	acct    accountBackend
+	key     *rsa.PrivateKey
+	idKid   string // kid of id_tokens (openpak-baas-key-1: what Photon/NPLN/S2 already trust)
+	accKid  string // kid of BAAS access tokens (/1.0.0/internal_certificates)
+	naKid   string // kid of Nintendo-Account tokens: the console binds kid<->issuer and rejects a kid shared with BAAS (2124-3121)
+	jwks    []byte
+	mu      sync.Mutex
+	codes   map[string]naCode // NA authorization codes / session tokens -> who logged in
+	device  map[string]string // device id -> serial, from the dauth assertion
+	links   *linkStore        // pending QR console links, by code
+	guesses *guesses          // wrong-code attempts, per account
+	phones  *phoneStore       // signed-in phones entering a code
 }
 
 type naCode struct {
@@ -1008,7 +1009,7 @@ func (s *server) authorizePage(w http.ResponseWriter, r *http.Request, q url.Val
     </ol>
     <div id="codebox" hidden>
       <p style="margin:16px 0 0">Type this on your phone:</p>
-      <p style="margin:8px 0 0"><span class="code">`+code+`</span></p>
+      <p style="margin:8px 0 0"><span class="code">`+groupCode(code)+`</span></p>
     </div>
     <p style="margin:10px 0 0;font-size:0.9rem">or open <strong>`+html.EscapeString(strings.TrimPrefix(s.linkBaseURL(r), "http://"))+`/link</strong> on your phone</p>
     <p id="status" style="margin:14px 0 0">Waiting for you to sign in on your phone&hellip;</p>
@@ -1199,16 +1200,17 @@ func newBackend() accountBackend {
 func main() {
 	key := loadRSAKey(getenv("BAAS_SIGNING_KEY", "/keys/baas_signing_key.pem"))
 	s := &server{
-		store:  loadStore(getenv("NX_DATA", "/data") + "/baas.json"),
-		key:    key,
-		idKid:  getenv("BAAS_KID", "openpak-baas-key-1"),
-		accKid: getenv("BAAS_ACCESS_KID", "00000000-0000-0000-0000-000000000003"),
-		naKid:  getenv("BAAS_NA_KID", "00000000-0000-0000-0000-000000000001"),
-		codes:  map[string]naCode{},
-		device: map[string]string{},
-		links:  newLinkStore(),
-		phones: newPhoneStore(),
-		acct:   newBackend(),
+		store:   loadStore(getenv("NX_DATA", "/data") + "/baas.json"),
+		key:     key,
+		idKid:   getenv("BAAS_KID", "openpak-baas-key-1"),
+		accKid:  getenv("BAAS_ACCESS_KID", "00000000-0000-0000-0000-000000000003"),
+		naKid:   getenv("BAAS_NA_KID", "00000000-0000-0000-0000-000000000001"),
+		codes:   map[string]naCode{},
+		device:  map[string]string{},
+		links:   newLinkStore(),
+		guesses: newGuesses(),
+		phones:  newPhoneStore(),
+		acct:    newBackend(),
 	}
 	s.jwks = jwksFor(&key.PublicKey, s.idKid, getenv("BAAS_ID_KID", "00000000-0000-0000-0000-000000000002"), s.accKid, s.naKid)
 	cert := selfSigned([]string{baasHost, "m-lp1.baas.nintendo.com", "cdn-image-e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com",

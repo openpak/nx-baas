@@ -24,6 +24,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -32,7 +33,12 @@ import (
 )
 
 // Codes are read off a TV and typed on a phone: no vowels (no accidental words), no 0/O/1/I/L.
-const codeAlphabet = "23456789BCDFGHJKMNPQRSTVWXYZ"
+// Digits only: this is read off a television and typed on a phone, often by
+// someone who cannot see the screen well from the sofa, and a numeric keypad
+// beats a full keyboard for six characters. It costs entropy — 10^6 rather
+// than 28^6 — which is why guesses are capped below; a code alone still cannot
+// finish a link, because the console asks its owner to approve.
+const codeAlphabet = "0123456789"
 
 const (
 	codeLength = 6
@@ -182,10 +188,90 @@ func randCode() string {
 		panic("link: no entropy for a link code: " + err.Error())
 	}
 	b := make([]byte, codeLength)
-	for i, v := range raw {
-		b[i] = codeAlphabet[int(v)%len(codeAlphabet)]
+	for i := range b {
+		// Rejection sampling: 256 is not a multiple of 10, so a plain modulo
+		// would make 0-5 more likely than 6-9 and shrink the space further.
+		for {
+			if _, err := rand.Read(raw[i : i+1]); err != nil {
+				panic("link: no entropy for a link code: " + err.Error())
+			}
+			if v := int(raw[i]); v < 250 {
+				b[i] = codeAlphabet[v%len(codeAlphabet)]
+				break
+			}
+		}
 	}
 	return string(b)
+}
+
+// guessLimit is how many wrong codes one signed-in phone may try before it has
+// to wait. Six digits is one in a million; without a cap, a script working
+// through the space would find whichever codes happen to be live, and there
+// are always fewer live codes than the space is wide. Ten is far more than a
+// person mistypes and far fewer than a search needs.
+const (
+	guessLimit  = 10
+	guessWindow = 10 * time.Minute
+)
+
+// guesses counts wrong codes per account. In memory on purpose: a link
+// code lives ten minutes, so nothing here needs to outlive a restart, and a
+// restart clearing the counters costs an attacker more time than it saves.
+type guesses struct {
+	mu sync.Mutex
+	by map[string]*guessCount
+}
+
+type guessCount struct {
+	n     int
+	until time.Time
+}
+
+func newGuesses() *guesses { return &guesses{by: map[string]*guessCount{}} }
+
+// blocked reports whether this phone has spent its attempts, and how long is
+// left, so the page can say something truer than "wrong code".
+func (g *guesses) blocked(key string) (bool, time.Duration) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	c, ok := g.by[key]
+	if !ok {
+		return false, 0
+	}
+	if time.Now().After(c.until) {
+		delete(g.by, key)
+		return false, 0
+	}
+	return c.n >= guessLimit, time.Until(c.until)
+}
+
+func (g *guesses) wrong(key string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	c, ok := g.by[key]
+	if !ok || time.Now().After(c.until) {
+		c = &guessCount{}
+		g.by[key] = c
+	}
+	c.n++
+	c.until = time.Now().Add(guessWindow)
+}
+
+// right clears the count: someone who got there is not mid-attack.
+func (g *guesses) right(key string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	delete(g.by, key)
+}
+
+// groupCode splits the code for the screen it is read from: six digits in one
+// run are easy to lose your place in across a room, three and three are not.
+// Only for display — what the phone submits is trimmed of spaces anyway.
+func groupCode(code string) string {
+	if len(code) != codeLength {
+		return code
+	}
+	return code[:3] + " " + code[3:]
 }
 
 // qrDataURI renders url as a PNG data URI for an <img>, so the page needs no extra request.
@@ -284,9 +370,20 @@ func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) b
 			s.phoneLoginPage(w, form.Get("pair"), "That took too long — sign in again.")
 			return true
 		}
-		entered := strings.ToUpper(strings.TrimSpace(form.Get("code")))
+		// Keyed by the account, not by the cookie: a counter a person can reset
+		// by clearing a cookie is not a limit.
+		key := strconv.FormatUint(sess.PID, 10)
+		if blocked, left := s.guesses.blocked(key); blocked {
+			log.Printf("[link] %s is out of attempts for %s", sess.Username, left.Round(time.Minute))
+			s.phoneConfirmPage(w, sess.Username, form.Get("pair"),
+				"Too many wrong codes. Wait a few minutes and try again.")
+			return true
+		}
+		// People copy what they see, and what they see has a space in it.
+		entered := strings.ReplaceAll(strings.TrimSpace(form.Get("code")), " ", "")
 		pending := s.links.get(entered)
 		if pending == nil {
+			s.guesses.wrong(key)
 			s.phoneConfirmPage(w, sess.Username, form.Get("pair"), "That code is wrong or has expired. Check the console.")
 			return true
 		}
@@ -299,6 +396,7 @@ func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) b
 			s.phoneConfirmPage(w, sess.Username, form.Get("pair"), "Account lookup failed.")
 			return true
 		}
+		s.guesses.right(key)
 		s.links.update(entered, func(p *pendingLink) {
 			p.State, p.PID, p.Username, p.NaID = linkClaimed, sess.PID, sess.Username, id.NaID
 		})
@@ -471,8 +569,8 @@ func (s *server) phoneConfirmPage(w http.ResponseWriter, username, pair, errMsg 
 <div class="row ok"><span class="name">`+html.EscapeString(username)+`</span><span class="pill">Signed in</span></div>
 <div class="card">`+errBlock(errMsg)+`<form method="post" action="/link/code">
 `+pairField(pair)+`<label for="code">Code shown on the console</label>
-<input id="code" name="code" autocapitalize="characters" autocomplete="off" spellcheck="false"
-       maxlength="8" pattern="[A-Za-z0-9]{6}" required autofocus>
+<input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" spellcheck="false"
+       maxlength="6" minlength="6" pattern="[0-9]{6}" required autofocus>
 <button type="submit">Link this console</button>
 </form></div>
 <div class="card"><p style="margin:0 0 12px">Not your account?</p>
