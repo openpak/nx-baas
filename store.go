@@ -13,10 +13,6 @@ type DeviceAccount struct {
 	ID       string `json:"id"`
 	Password string `json:"password"`
 	UserID   string `json:"userId"`
-	// ConsoleID is the device-auth subject of the console that last signed in
-	// with this device account. Without it two device accounts on one user are
-	// indistinguishable from one console that registered twice.
-	ConsoleID string `json:"consoleId,omitempty"`
 }
 
 type Presence struct {
@@ -151,18 +147,6 @@ func (s *Store) UserByBsDid(bsDid string) *User {
 	return nil
 }
 
-// NoteConsole records which console just signed in with a device account, so a
-// re-registration by that same console can replace its old one instead of
-// piling up beside it.
-func (s *Store) NoteConsole(deviceAccountID, consoleID string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if d := s.Devices[deviceAccountID]; d != nil && consoleID != "" && d.ConsoleID != consoleID {
-		d.ConsoleID = consoleID
-		s.save()
-	}
-}
-
 func (s *Store) Link(from *User, pid uint64, baasUserID, naID string) *User {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -179,13 +163,6 @@ func (s *Store) Link(from *User, pid uint64, baasUserID, naID string) *User {
 		target.DeviceAccounts = append(target.DeviceAccounts, from.DeviceAccounts...)
 		delete(s.Users, from.ID)
 	}
-	// "Add account" registers a fresh device account every time it is opened,
-	// and this used to append every one of them: nine attempts left nine
-	// entries on one user, and a console that had accepted a reply with one
-	// answered 2124-3121 to that. Keep this console's newest and drop the
-	// leftovers -- entries this console already replaced, and entries no
-	// console ever signed in with.
-	target.DeviceAccounts = s.pruneDevices(target, from.DeviceAccounts)
 	target.PID, target.NaID = pid, naID
 	for _, d := range s.Devices {
 		if d.UserID == fromID || d.UserID == baasUserID {
@@ -201,47 +178,6 @@ func (s *Store) Link(from *User, pid uint64, baasUserID, naID string) *User {
 	s.NaToPID[naID] = pid
 	s.save()
 	return target
-}
-
-// pruneDevices returns the device accounts worth keeping on u: the ones that
-// arrived with this attempt, plus one per other console that has actually
-// signed in. Everything it drops is deleted outright -- a device account is
-// created and used within seconds, so one that never completed a sign-in is a
-// leftover from an abandoned attempt and nothing holds it.
-func (s *Store) pruneDevices(u *User, arriving []string) []string {
-	keep := map[string]bool{}
-	for _, id := range arriving {
-		keep[id] = true
-	}
-	thisConsole := map[string]bool{}
-	for _, id := range arriving {
-		if d := s.Devices[id]; d != nil && d.ConsoleID != "" {
-			thisConsole[d.ConsoleID] = true
-		}
-	}
-	out := make([]string, 0, len(u.DeviceAccounts))
-	seen := map[string]bool{}
-	for _, id := range u.DeviceAccounts {
-		d := s.Devices[id]
-		switch {
-		case keep[id]:
-		case d == nil || d.ConsoleID == "":
-			continue // never signed in: an abandoned attempt
-		case thisConsole[d.ConsoleID]:
-			continue // this console re-registered; the new one replaces it
-		}
-		if seen[id] {
-			continue
-		}
-		seen[id] = true
-		out = append(out, id)
-	}
-	for id := range s.Devices {
-		if s.Devices[id].UserID == u.ID && !seen[id] {
-			delete(s.Devices, id)
-		}
-	}
-	return out
 }
 
 func (s *Store) Update(u *User, f func(*User)) {

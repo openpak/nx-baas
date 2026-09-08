@@ -465,7 +465,6 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		if n, ok := tok["nintendo"].(map[string]any); ok {
 			sn = str(n, "sn")
 		}
-		s.store.NoteConsole(form.Get("id"), di)
 		if p == "/1.0.0/federation" {
 			var err error
 			if u, err = s.link(u, form.Get("idToken")); err != nil {
