@@ -94,6 +94,10 @@ func baasErr(w http.ResponseWriter, r *http.Request, status int, code, title, de
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
+	// Captured from a reference reply, which sends both beside the no-cache
+	// this already had.
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Vary", "Accept-Encoding,Origin")
 	w.Header().Set("Cache-Control", "no-store, no-cache")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)

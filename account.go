@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -287,6 +288,14 @@ func listEnvelope(items []any) map[string]any {
 func listEnvelopeWith(items []any, etag string, perPage int) map[string]any {
 	if items == nil {
 		items = []any{}
+	}
+	// An empty etag is what a reference server sends for an empty list, which
+	// is the only list we have ever captured. A list with people in it plainly
+	// has a version; ours said "" regardless, so it gets one derived from the
+	// contents -- same list, same etag, and it moves when the list does.
+	if etag == `""` && len(items) > 0 {
+		sum := sha256.Sum256([]byte(fmt.Sprint(items)))
+		etag = fmt.Sprintf("%q", hex.EncodeToString(sum[:8]))
 	}
 	return map[string]any{"count": len(items), "etag": etag, "items": items, "itemsPerPage": perPage}
 }
