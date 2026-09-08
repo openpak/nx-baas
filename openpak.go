@@ -395,8 +395,20 @@ func (b *openpakBackend) friendView(accountID, displayName string) *Friend {
 	if displayName != "" {
 		nick = displayName
 	}
-	return &Friend{PID: pr.PID, BaasUserID: pr.BaasUserID, NaID: pr.NaID, FriendCode: pr.FriendCode,
+	f := &Friend{PID: pr.PID, BaasUserID: pr.BaasUserID, NaID: pr.NaID, FriendCode: pr.FriendCode,
 		Nickname: nick, CreatedAt: pr.CreatedAt}
+	// Country, same as a looked-up user gets. Without it a friend list entry
+	// goes out with country "" -- which is the state the console refused in a
+	// search result, and a friend list that stays empty after a friendship the
+	// server thinks it made.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if acc, err := b.identity.GetAccount(ctx, &accountv1.GetAccountRequest{AccountId: accountID}); err == nil {
+		f.Country = acc.GetCountry()
+	} else {
+		logErr("friendView get-account", err)
+	}
+	return f
 }
 
 func (b *openpakBackend) Resolve(q url.Values) (*Friend, error) {

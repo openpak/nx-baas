@@ -364,3 +364,39 @@ func TestSearchReplyMatchesTheAcceptedShape(t *testing.T) {
 		}
 	}
 }
+
+// A friend in a list is as complete as a user in a search result. The list
+// path builds entries from the core's friend graph, which carried no country,
+// so every entry went out with country "" — the exact state the console
+// refused when it was a search result.
+func TestFriendListEntriesCarryACountry(t *testing.T) {
+	s := dauthServer(t)
+	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	u, _ := s.store.NewUser()
+	s.store.Update(u, func(u *User) { u.PID, u.Nickname = 1, "Leia" })
+	s.acct = fakeBackend{id: &Identity{PID: 1, Nickname: "Leia", FriendCode: "SW-1000-0000-0002", BsDid: "did",
+		Friends: []Friend{{PID: 2, BaasUserID: "aaaaaaaaaaaa0001", Nickname: "hansolo",
+			FriendCode: "SW-1000-0000-0001", Country: "IE", CreatedAt: 1788818380}}}}
+
+	r := httptest.NewRequest("GET", "https://"+baasHost+"/2.0.0/users/"+u.ID+"/friends?count=300", nil)
+	r.Host = baasHost
+	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+
+	var got struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Items) != 1 {
+		t.Fatalf("friends: %s", w.Body.String())
+	}
+	if got.Items[0]["country"] == "" {
+		t.Error("friend entry has no country; the console refuses a user object like that")
+	}
+	if got.Items[0]["nickname"] == "" || got.Items[0]["thumbnailUrl"] == "" {
+		t.Errorf("friend entry is not renderable: %v", got.Items[0])
+	}
+}
