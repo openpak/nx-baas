@@ -216,24 +216,23 @@ func TestFriendCodeLookupUsesTheQueryTheConsoleSends(t *testing.T) {
 		s.ServeHTTP(w, r)
 
 		var got struct {
-			Count int              `json:"count"`
-			Users []map[string]any `json:"users"`
+			Items []map[string]any `json:"items"`
 		}
 		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 			t.Fatalf("%s: %v", target, err)
 		}
-		if got.Count != 1 || len(got.Users) != 1 {
+		if len(got.Items) != 1 {
 			t.Errorf("%s -> %s; the console says it cannot find the user", target, w.Body.String())
 			continue
 		}
-		if got.Users[0]["id"] != "aaaaaaaaaaaa0002" {
-			t.Errorf("%s returned the wrong user: %v", target, got.Users[0]["id"])
+		if got.Items[0]["id"] != "aaaaaaaaaaaa0002" {
+			t.Errorf("%s returned the wrong user: %v", target, got.Items[0]["id"])
 		}
 		// A search result is a user. presence/isFavoriteFriend/isNewFriend
 		// describe a friendship, and a console that was handed them refused
 		// the user it had just found.
 		for _, friendOnly := range []string{"presence", "isFavoriteFriend", "isNewFriend"} {
-			if _, ok := got.Users[0][friendOnly]; ok {
+			if _, ok := got.Items[0][friendOnly]; ok {
 				t.Errorf("%s: search result carries friend-only key %q", target, friendOnly)
 			}
 		}
@@ -244,7 +243,7 @@ func TestFriendCodeLookupUsesTheQueryTheConsoleSends(t *testing.T) {
 	r.Host = baasHost
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"count":0`) {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"items":[]`) {
 		t.Fatalf("unknown code -> %d %s", w.Code, w.Body.String())
 	}
 }
@@ -305,5 +304,63 @@ func TestFriendObjectCarriesWhatAUserObjectCarries(t *testing.T) {
 	}
 	if obj["createdAt"] == int64(0) {
 		t.Error("createdAt is zero")
+	}
+}
+
+// The search reply, against a capture of one a console accepted. The envelope
+// is the whole point: we answered {"count":1,"users":[...]} for hours while a
+// console read "items", found none, and told the person the user did not
+// exist. The user object inside was already right.
+func TestSearchReplyMatchesTheAcceptedShape(t *testing.T) {
+	raw, err := os.ReadFile("testdata/accepted-search-shape.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want map[string]any
+	if err := json.Unmarshal(raw, &want); err != nil {
+		t.Fatal(err)
+	}
+
+	s := dauthServer(t)
+	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	s.acct = codeBackend{code: "SW-1000-0000-0002", friend: &Friend{
+		PID: 1900000002, BaasUserID: "aaaaaaaaaaaa0002", NaID: "bbbbbbbbbbbb0002",
+		FriendCode: "SW-1000-0000-0002", Nickname: "Leia", Country: "IE", CreatedAt: 1788896080}}
+
+	r := httptest.NewRequest("GET", "https://"+baasHost+"/1.0.0/users?filter.links.friendCode.id.$in=1000-0000-0002", nil)
+	r.Host = baasHost
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("not JSON: %v", err)
+	}
+	for k := range want {
+		if _, ok := got[k]; !ok {
+			t.Errorf("missing top-level %q — the console reads this and nothing else", k)
+		}
+	}
+	for k := range got {
+		if _, ok := want[k]; !ok {
+			t.Errorf("extra top-level %q — not in a reply a console accepted", k)
+		}
+	}
+	wi, _ := want["items"].([]any)
+	gi, _ := got["items"].([]any)
+	if len(wi) == 0 || len(gi) == 0 {
+		t.Fatalf("no item to compare (got %s)", w.Body.String())
+	}
+	wu, _ := wi[0].(map[string]any)
+	gu, _ := gi[0].(map[string]any)
+	for k := range wu {
+		if _, ok := gu[k]; !ok {
+			t.Errorf("item missing %q", k)
+		}
+	}
+	for k := range gu {
+		if _, ok := wu[k]; !ok {
+			t.Errorf("item carries %q, which the accepted reply does not", k)
+		}
 	}
 }

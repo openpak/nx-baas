@@ -857,7 +857,12 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				users = append(users, s.searchUserObj(*f, now))
 			}
 		}
-		writeJSON(w, 200, map[string]any{"count": len(users), "users": users})
+		// {"items": [...]} -- not {"count": n, "users": [...]}. Probed against a
+		// working server on 2026-09-08 with a throwaway device account: the
+		// console reads "items" and nothing else, so a search that found
+		// somebody was reported to the person as "unable to find user" while
+		// our own log said count:1.
+		writeJSON(w, 200, map[string]any{"items": users})
 		return
 
 	case p == "/1.0.0/devices/snapshot":
