@@ -18,11 +18,15 @@ func TestDumpLinkPages(t *testing.T) {
 		t.Skip("set PREVIEW_DIR")
 	}
 	_ = os.MkdirAll(dir, 0o755)
-	s := &server{}
+	s := &server{links: newLinkStore(), guesses: newGuesses()}
 	for name, render := range map[string]func(*httptest.ResponseRecorder){
 		"confirm": func(w *httptest.ResponseRecorder) { s.phoneConfirmPage(w, "hansolo", "pair-1", "") },
 		"done":    func(w *httptest.ResponseRecorder) { s.phoneDonePage(w, "hansolo") },
 		"signin":  func(w *httptest.ResponseRecorder) { s.phoneLoginPage(w, "pair-1", "") },
+		// The console page: a television, not a phone.
+		"console": func(w *httptest.ResponseRecorder) {
+			s.authorizePage(w, httptest.NewRequest("GET", "https://accounts.nintendo.com/connect/1.0.0/authorize", nil), nil, "")
+		},
 	} {
 		w := httptest.NewRecorder()
 		render(w)

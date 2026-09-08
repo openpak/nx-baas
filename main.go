@@ -1035,7 +1035,7 @@ func (s *server) authorizePage(w http.ResponseWriter, r *http.Request, q url.Val
 		e = msg
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, pageHead("Link this console")+`
+	fmt.Fprint(w, pageHeadFor("Link this console", "console")+`
 <h1>Link this console</h1>
 <p>Scan the code with your phone, sign in there, then approve it here.</p>
 <div class="card"><div class="split">

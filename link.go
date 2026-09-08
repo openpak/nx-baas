@@ -487,12 +487,52 @@ background:transparent;border:1px solid var(--line-2);color:var(--muted)}
 .steps li{margin:6px 0}
 hr{border:0;border-top:1px solid var(--line);margin:24px 0}
 details summary{color:var(--muted);cursor:pointer;min-height:44px;display:flex;align-items:center}
+
+/* The console browser: a television, read from a sofa, driven with a stick.
+   Everything is bigger, the two halves sit side by side because a 720p screen
+   is wide and short, and focus is visible because there is no pointer to tell
+   you where you are. Televisions also crop their edges, so nothing important
+   goes near them. */
+body.console{font-size:20px;padding:40px 56px;align-items:flex-start}
+.console main{max-width:66rem}
+.console h1{font-size:2.5rem;margin-bottom:10px}
+.console p{font-size:1.05rem}
+.console .brand{font-size:1.3rem;margin-bottom:28px}
+.console .brand img{width:36px;height:36px}
+.console .card{padding:28px}
+.console .split{flex-wrap:nowrap;gap:40px;align-items:flex-start}
+.console .qr img{width:300px}
+/* The code is read across a room: it is the largest thing on the screen. */
+.console .code{font-size:3.2rem;letter-spacing:0.2em;padding:20px 26px}
+.console .steps{font-size:1.05rem;line-height:1.7}
+.console .steps li{margin:10px 0}
+.console button{width:auto;min-height:60px;padding:0.85rem 1.8rem;font-size:1.05rem;margin-top:0}
+.console #confirm{display:flex;gap:16px;margin-top:22px}
+.console #confirm[hidden]{display:none}
+.console label{font-size:1rem}
+.console input{min-height:52px;font-size:1.05rem}
+/* No pointer, so the focused control has to announce itself. */
+.console :focus-visible{outline:3px solid var(--accent);outline-offset:4px;border-radius:10px}
+@media (max-width:900px){
+  .console .split{flex-wrap:wrap;gap:24px}
+  body.console{padding:24px 20px;font-size:18px}
+  .console .qr img{width:min(240px,60vw)}
+}
 `
 
-func pageHead(title string) string {
+func pageHead(title string) string { return pageHeadFor(title, "") }
+
+// pageHeadFor stamps a body class so one stylesheet can serve two very
+// different screens: a phone held at arm's length, and a television across a
+// room driven with a controller.
+func pageHeadFor(title, class string) string {
+	body := "<body>"
+	if class != "" {
+		body = `<body class="` + class + `">`
+	}
 	return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">` +
 		`<meta name="viewport" content="width=device-width,initial-scale=1"><title>` + title + ` · OpenPak</title>` +
-		`<style>` + pageCSS + `</style></head><body><main>` +
+		`<style>` + pageCSS + `</style></head>` + body + `<main>` +
 		`<div class="brand"><img src="` + logoDataURI + `" alt=""> OpenPak</div>`
 }
 
