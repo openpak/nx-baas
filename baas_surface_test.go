@@ -100,3 +100,43 @@ func TestFriendCodeRegeneratesOncePerDay(t *testing.T) {
 		t.Fatalf("wrong error: %s", w.Body.String())
 	}
 }
+
+// The other services the console reaches here. Each of these was answered with
+// 404 {} tonight, which a console reports as an error rather than as "nothing
+// to show" — the exact requests are from the log, hosts included.
+func TestTheOtherConsoleServicesAnswer(t *testing.T) {
+	s := dauthServer(t)
+	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+
+	for _, c := range []struct {
+		host, method, path, body string
+		wantKey                  string
+	}{
+		{"bcat-topics-lp1.cdn.nintendo.net", "GET",
+			"/api/nx/v1/titles/0100b6001e6d6000/topics?l=en-GB&c%5b%5d=GB", "", "topics"},
+		{"storage.hac.lp1.scsi.srv.nintendo.net", "GET",
+			"/api/console/v3/save_data_archives?datatype=0", "", "save_data_archives"},
+		{"storage.hac.lp1.scsi.srv.nintendo.net", "POST",
+			"/api/console/v3/network_service_accounts/aaaaaaaaaaaa0001/notification_tokens",
+			`{"notification_token":"efc21df7bbbe1d87da1c23521cdbc5dc6e6a"}`, "notification_token"},
+	} {
+		t.Run(c.host+c.path[:20], func(t *testing.T) {
+			r := httptest.NewRequest(c.method, "https://"+c.host+c.path, strings.NewReader(c.body))
+			r.Host = c.host
+			r.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			s.ServeHTTP(w, r)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("%d: %s", w.Code, w.Body.String())
+			}
+			var got map[string]any
+			if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+				t.Fatalf("not JSON: %v", err)
+			}
+			if _, ok := got[c.wantKey]; !ok {
+				t.Fatalf("no %q in %s", c.wantKey, w.Body.String())
+			}
+		})
+	}
+}

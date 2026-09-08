@@ -1455,6 +1455,12 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			map[string]any{"context": "ex", "membership": map[string]any{"active": false}, "user_id": naID},
 			map[string]any{"context": "default", "membership": map[string]any{"active": true, "expires_at": time.Now().Unix() + 365*86400}, "user_id": naID},
 		}, "total": 2})
+	case strings.HasPrefix(host, "bcat-"):
+		s.bcat(w, r, body)
+	case strings.Contains(host, "scsi.srv.nintendo.net"):
+		s.olsc(w, r, body)
+	case strings.Contains(host, "pctl.srv.nintendo.net") || strings.HasPrefix(host, "app.lp1.srv"):
+		s.serviceStatus(w, r, body)
 	case !strings.Contains(host, "baas.nintendo.com"):
 		dump(r, body, "!! UNHANDLED host (catch-all)")
 		writeJSON(w, 404, map[string]any{})
