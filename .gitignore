@@ -1,3 +1,4 @@
 bin/
 *.json
 /nx-baas
+*.tmp
