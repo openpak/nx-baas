@@ -975,7 +975,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 				list = append(list, s.searchUserObj(f, now))
 			}
 		}
-		writeJSON(w, 200, listEnvelope(list))
+		writeJSON(w, 200, listEnvelopeWith(list, `""`, 100))
 		return
 
 	case len(seg) == 4 && seg[0] == "users" && seg[2] == "friends" && r.Method == "PATCH":

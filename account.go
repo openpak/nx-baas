@@ -277,10 +277,18 @@ func channelsOf(body []byte) []string {
 // -- and a console reading "items" found nothing every time, which is what an
 // empty friend list and an empty inbox looked like from the sofa.
 func listEnvelope(items []any) map[string]any {
+	return listEnvelopeWith(items, "", 100)
+}
+
+// listEnvelopeWith exists because the two captures differ and this parser has
+// not forgiven a difference yet: the friend list carries a quoted empty etag
+// and itemsPerPage 100, the request boxes a bare empty etag. The inbox reply
+// with a bare etag is the one a console has demonstrably read, so it keeps it.
+func listEnvelopeWith(items []any, etag string, perPage int) map[string]any {
 	if items == nil {
 		items = []any{}
 	}
-	return map[string]any{"count": len(items), "etag": "", "items": items, "itemsPerPage": 100}
+	return map[string]any{"count": len(items), "etag": etag, "items": items, "itemsPerPage": perPage}
 }
 
 // patchedState reads the state a console set on a friend request. Its own

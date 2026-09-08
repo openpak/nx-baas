@@ -238,6 +238,12 @@ func TestListsUseTheEnvelopeAConsoleReads(t *testing.T) {
 				t.Errorf("%s: missing %q", path, key)
 			}
 		}
+		// The friend list's etag is a quoted empty string in the capture; the
+		// request boxes carry a bare one. Small, and this parser has not
+		// forgiven a difference yet.
+		if strings.HasSuffix(path, "/friends") && got["etag"] != `""` {
+			t.Errorf("%s: etag = %q, want a quoted empty string", path, got["etag"])
+		}
 		for _, gone := range []string{"friends", "friendRequests", "users"} {
 			if _, ok := got[gone]; ok {
 				t.Errorf("%s: still carries %q; a console reads items", path, gone)
