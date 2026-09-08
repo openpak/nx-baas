@@ -229,6 +229,14 @@ func TestFriendCodeLookupUsesTheQueryTheConsoleSends(t *testing.T) {
 		if got.Users[0]["id"] != "aaaaaaaaaaaa0002" {
 			t.Errorf("%s returned the wrong user: %v", target, got.Users[0]["id"])
 		}
+		// A search result is a user. presence/isFavoriteFriend/isNewFriend
+		// describe a friendship, and a console that was handed them refused
+		// the user it had just found.
+		for _, friendOnly := range []string{"presence", "isFavoriteFriend", "isNewFriend"} {
+			if _, ok := got.Users[0][friendOnly]; ok {
+				t.Errorf("%s: search result carries friend-only key %q", target, friendOnly)
+			}
+		}
 	}
 
 	// A code nobody holds is still an empty answer, not an error.

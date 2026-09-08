@@ -407,6 +407,18 @@ func (s *server) friendObj(f Friend, now int64) map[string]any {
 	return obj
 }
 
+// searchUserObj is a user, not a friend. The three keys below belong to a
+// friend-list entry, and a stranger you have just looked up is not one --
+// the console refused a search result that carried them, the same way it
+// refused a login reply that carried an extra "summary".
+func (s *server) searchUserObj(f Friend, now int64) map[string]any {
+	obj := s.friendObj(f, now)
+	delete(obj, "presence")
+	delete(obj, "isFavoriteFriend")
+	delete(obj, "isNewFriend")
+	return obj
+}
+
 // ---------- BAAS handlers ----------
 
 // reportOnline tells the core that this account is signed in, which is a
@@ -420,6 +432,17 @@ func (s *server) reportOnline(ctx context.Context, u *User) {
 	}
 	if b, ok := s.acct.(*openpakBackend); ok {
 		b.Online(ctx, u.PID)
+	}
+}
+
+// reportOffline ends the session immediately when someone says they are going,
+// rather than leaving them online until the lease runs out.
+func (s *server) reportOffline(ctx context.Context, u *User) {
+	if u == nil || u.PID == 0 {
+		return
+	}
+	if b, ok := s.acct.(*openpakBackend); ok {
+		b.Offline(ctx, u.PID)
 	}
 }
 
@@ -780,7 +803,9 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			})
 			// This is what keeps someone counted as online: the lease the core holds is short,
 			// and a client that has gone away stops renewing it.
-			if u.Presence.State != "OFFLINE" {
+			if u.Presence.State == "OFFLINE" {
+				s.reportOffline(r.Context(), u)
+			} else {
 				s.reportOnline(r.Context(), u)
 			}
 			log.Printf("[nx-baas] presence user=%s pid=%d %s app=%s field=%q", u.ID, u.PID, u.Presence.State, u.Presence.AppID, u.Presence.AppField)
@@ -809,12 +834,12 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		users := []any{}
 		for _, code := range queryList(q, "filter.links.friendCode.id.$in", "friendCode") {
 			if f, err := s.acct.Resolve(url.Values{"code": {normaliseFriendCode(code)}}); err == nil && f != nil {
-				users = append(users, s.friendObj(*f, now))
+				users = append(users, s.searchUserObj(*f, now))
 			}
 		}
 		for _, id := range queryList(q, "filter.id.$in", "id") {
 			if f, err := s.acct.Resolve(url.Values{"baas": {id}}); err == nil && f != nil {
-				users = append(users, s.friendObj(*f, now))
+				users = append(users, s.searchUserObj(*f, now))
 			}
 		}
 		writeJSON(w, 200, map[string]any{"count": len(users), "users": users})

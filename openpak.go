@@ -42,6 +42,10 @@ type openpakBackend struct {
 	namespace string
 	nexKey    []byte
 	conn      *grpc.ClientConn
+
+	// account id -> the live "online" session, so a clean goodbye can end it.
+	onlineMu sync.Mutex
+	online   map[string]string
 }
 
 // newOpenpakBackend dials the core and loads the projection store. The key
@@ -409,8 +413,17 @@ func (b *openpakBackend) Resolve(q url.Values) (*Friend, error) {
 		return nil, errors.New("not found")
 	}
 	pr := b.proj.ByAccount[accountID]
-	return &Friend{PID: pr.PID, BaasUserID: pr.BaasUserID, NaID: pr.NaID, FriendCode: pr.FriendCode,
-		Nickname: pr.Nickname, CreatedAt: pr.CreatedAt}, nil
+	f := &Friend{PID: pr.PID, BaasUserID: pr.BaasUserID, NaID: pr.NaID, FriendCode: pr.FriendCode,
+		Nickname: pr.Nickname, CreatedAt: pr.CreatedAt}
+	// Country comes from the core; the projection never held one, so every
+	// looked-up user went out with country "" while the capture the console
+	// accepted carries a real one.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if acc, err := b.identity.GetAccount(ctx, &accountv1.GetAccountRequest{AccountId: accountID}); err == nil {
+		f.Country = acc.GetCountry()
+	}
+	return f, nil
 }
 
 func (b *openpakBackend) FriendRequest(from, to uint64) error {
@@ -515,12 +528,13 @@ func isTransient(err error) bool {
 	return false
 }
 
-// onlineLease is short on purpose. Nothing tells this server that an emulator
-// was closed — a process that goes away sends nothing — so "online" has to be
-// a claim that lapses unless it keeps being renewed. A minute is the longest
-// someone should appear online after quitting, and the client renews well
-// inside it.
-const onlineLease = 60 * time.Second
+// onlineLease is short on purpose. A clean quit says goodbye and drops the
+// session immediately, but a crash, a kill or a yanked cable say nothing at
+// all, so "online" is a claim that lapses unless it keeps being renewed. Half
+// a minute is the longest anyone should linger after their machine stopped
+// talking; the client renews three times inside it, so one lost request is not
+// somebody blinking offline.
+const onlineLease = 30 * time.Second
 
 // Online records that an account is signed in to this network and playing
 // nothing in particular: a session with no title, which the core counts toward
@@ -533,17 +547,56 @@ func (b *openpakBackend) Online(ctx context.Context, pid uint64) {
 	if b == nil || b.sessions == nil {
 		return
 	}
-	b.proj.mu.Lock()
-	accountID := b.proj.ByPID[pid]
-	b.proj.mu.Unlock()
-
+	accountID := b.accountFor(pid)
 	if accountID == "" {
 		return
 	}
-	if _, err := b.sessions.RegisterSession(ctx, &accountv1.RegisterSessionRequest{
+	resp, err := b.sessions.RegisterSession(ctx, &accountv1.RegisterSessionRequest{
 		AccountId: accountID, Namespace: b.namespace, TitleId: "", EndpointRef: "baas",
 		LeaseSeconds: int32(onlineLease.Seconds()),
-	}); err != nil {
+	})
+	if err != nil {
 		logErr("presence register", err)
+		return
 	}
+	// Kept only so a goodbye can name the session it is ending. Losing this map
+	// on a restart costs nothing: the lease still lapses on its own.
+	b.onlineMu.Lock()
+	if b.online == nil {
+		b.online = map[string]string{}
+	}
+	b.online[accountID] = resp.GetSessionId()
+	b.onlineMu.Unlock()
+}
+
+// Offline ends the session at once, for the case where someone actually said
+// they were leaving. Everything else — a crash, a kill, a network that went
+// away — is covered by the lease, which is why this is an optimisation and not
+// the mechanism.
+func (b *openpakBackend) Offline(ctx context.Context, pid uint64) {
+	if b == nil || b.sessions == nil {
+		return
+	}
+	accountID := b.accountFor(pid)
+	if accountID == "" {
+		return
+	}
+	b.onlineMu.Lock()
+	sessionID := b.online[accountID]
+	delete(b.online, accountID)
+	b.onlineMu.Unlock()
+
+	if sessionID == "" {
+		return
+	}
+	if _, err := b.sessions.ExpireSession(ctx, &accountv1.ExpireSessionRequest{SessionId: sessionID}); err != nil {
+		logErr("presence expire", err)
+	}
+}
+
+func (b *openpakBackend) accountFor(pid uint64) string {
+	b.proj.mu.Lock()
+	defer b.proj.mu.Unlock()
+
+	return b.proj.ByPID[pid]
 }
