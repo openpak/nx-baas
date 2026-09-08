@@ -27,15 +27,19 @@ type Presence struct {
 // User is a BAAS user. PID == 0 means not yet linked to a OpenPak account; once linked its ID is
 // the account's derived baasUserID so Photon/NPLN/friends all agree on one identity.
 type User struct {
-	ID             string   `json:"id"`
-	PID            uint64   `json:"pid"`
-	NaID           string   `json:"naId"`
-	BsDid          string   `json:"bsDid"` // the account server's bs:did for this user: what a console's id_token carries and the game servers report back
-	Nickname       string   `json:"nickname"`
-	Country        string   `json:"country"`
-	Birthday       string   `json:"birthday"`
-	ThumbnailURL   string   `json:"thumbnailUrl"`
-	NxAccount      string   `json:"nxAccount"`
+	ID           string `json:"id"`
+	PID          uint64 `json:"pid"`
+	NaID         string `json:"naId"`
+	BsDid        string `json:"bsDid"` // the account server's bs:did for this user: what a console's id_token carries and the game servers report back
+	Nickname     string `json:"nickname"`
+	Country      string `json:"country"`
+	Birthday     string `json:"birthday"`
+	ThumbnailURL string `json:"thumbnailUrl"`
+	NxAccount    string `json:"nxAccount"`
+	// Avatar is the console's own profile picture, base64 JPEG exactly as it
+	// uploaded it. Kept here because the account core has nowhere to put an
+	// image yet; when it does, this moves and the console never notices.
+	Avatar         string   `json:"avatar,omitempty"`
 	DeviceAccounts []string `json:"deviceAccounts"`
 	Presence       Presence `json:"presence"`
 	CreatedAt      int64    `json:"createdAt"`

@@ -26,6 +26,9 @@ accounts via `Links` (namespace `switch`).
 ACCOUNT_BACKEND=openpak
 ACCOUNT_GRPC_ADDR=127.0.0.1:7000   # account core internal gRPC
 ACCOUNT_INTERNAL_KEY=…             # core fail-closed key (>=32 bytes)
+WEBSITE_INTERNAL_URL=…             # website base URL; with the key below, a
+WEBSITE_INTERNAL_KEY=…             # console's uploaded picture becomes the
+                                   # account's avatar. Unset: kept here only.
 NEX_SIGNING_KEY=…                  # openpak signing key (>=32 bytes); title
                                    # servers list this as their trusted issuer
 SWITCH_NAMESPACE=switch

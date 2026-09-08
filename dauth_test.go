@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -178,5 +179,32 @@ func TestNintendoAccountFollowsTheAccountsOwnProfile(t *testing.T) {
 	t.Setenv("NA_FALLBACK_COUNTRY", "GB")
 	if c, _ := naProfile(&Identity{NaID: "x"}); c != "GB" {
 		t.Errorf("fallback country = %q, want GB", c)
+	}
+}
+
+// The console uploads its profile picture while adding an account, and stops
+// with 2124-5104 if that 404s. This endpoint was deleted once on the reasoning
+// that an older stack never answered it; the console had already been observed
+// accepting a reply here, so the test says so rather than the commit message.
+func TestProfileImageUploadIsAccepted(t *testing.T) {
+	s := dauthServer(t)
+	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	u, _ := s.store.NewUser()
+
+	// A one-pixel JPEG is enough: what matters is that base64 in, 200 out, and
+	// the bytes are kept rather than dropped.
+	jpeg := base64.StdEncoding.EncodeToString([]byte{0xFF, 0xD8, 0xFF, 0xD9})
+	body := []byte(`{"rawContent":"` + jpeg + `"}`)
+	r := httptest.NewRequest("POST", "https://"+baasHost+"/1.0.0/image_upload", nil)
+	r.Host = baasHost
+	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "", ""))
+	w := httptest.NewRecorder()
+	s.baas(w, r, body)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("image_upload = %d, want 200", w.Code)
+	}
+	if got := s.store.User(u.ID); got == nil || got.Avatar != jpeg {
+		t.Error("the uploaded picture was not kept")
 	}
 }

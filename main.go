@@ -356,11 +356,23 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			pid = u.PID
 		}
 		id, err := s.acct.Identity(pid)
-		if err != nil || id.Avatar == "" {
+		avatar := ""
+		if err == nil {
+			avatar = id.Avatar
+		}
+		if avatar == "" && !strings.HasPrefix(p, "/avatar/") {
+			// Fall back to what the console uploaded: the account core has
+			// nowhere to keep an image, so without this a console that set its
+			// own picture would be shown the default one back.
+			if u := s.store.User(p[3:]); u != nil {
+				avatar = u.Avatar
+			}
+		}
+		if avatar == "" {
 			w.WriteHeader(404)
 			return
 		}
-		img, err := base64.StdEncoding.DecodeString(id.Avatar)
+		img, err := base64.StdEncoding.DecodeString(avatar)
 		if err != nil {
 			w.WriteHeader(404)
 			return
@@ -391,6 +403,33 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		s.device[di] = sn
 		s.mu.Unlock()
 		writeJSON(w, 200, map[string]any{"accessToken": s.accessToken(di, 1, randHex(8), di, sn), "tokenType": "Bearer", "expiresIn": 10800})
+		return
+
+	case p == "/1.0.0/image_upload" && r.Method == "POST":
+		// The console uploads its profile picture while adding an account and
+		// stops with 2124-5104 if this 404s. It was removed once on the
+		// grounds that the older stack never answered it — but that stack was
+		// never asked, and this endpoint had already been observed working.
+		var img struct {
+			RawContent string `json:"rawContent"`
+		}
+		_ = json.Unmarshal(body, &img)
+		tok := s.bearer(r)
+		if uid := str(tok, "sub"); uid != "" && img.RawContent != "" {
+			if raw, err := base64.StdEncoding.DecodeString(img.RawContent); err != nil {
+				log.Printf("[nx-baas] image_upload: not base64 (%d bytes): %v", len(img.RawContent), err)
+			} else if u := s.store.User(uid); u != nil {
+				s.store.Update(u, func(u *User) { u.Avatar = img.RawContent })
+				log.Printf("[nx-baas] image_upload: stored %d bytes for %s", len(raw), uid)
+				// And on to the account, so the picture a person set on their
+				// console is the one the website and the app show.
+				s.shareAvatar(u.ID, img.RawContent)
+			}
+		}
+		// An empty object is what the console accepted before; it reads the
+		// picture back from the thumbnail URLs in the user object, not from
+		// this reply.
+		writeJSON(w, 200, map[string]any{})
 		return
 
 	case p == "/1.0.0/users" && r.Method == "POST":
