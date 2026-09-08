@@ -290,3 +290,62 @@ func TestRelationshipShape(t *testing.T) {
 		t.Error(`still answers with "relationship", which no console asked for`)
 	}
 }
+
+// Accepting a request, in the console's own words. It PATCHes
+// [{"op":"replace","path":"/state","value":"AUTHORIZED"}] and gets that state
+// back on the whole request object -- captured from hardware on 2026-09-08,
+// where answering "ACCEPTED" with three fields made a friendship that had
+// gone through report itself as a communication error.
+func TestAcceptingAFriendRequestAnswersInTheConsolesWords(t *testing.T) {
+	s := dauthServer(t)
+	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	u, _ := s.store.NewUser()
+	s.store.Update(u, func(u *User) { u.PID, u.Nickname = 1, "Leia" })
+	s.acct = codeBackend{
+		fakeBackend: fakeBackend{id: &Identity{PID: 1, NaID: "bbbbbbbbbbbb0002", Nickname: "Leia",
+			FriendCode: "SW-1000-0000-0002", Country: "IE", BsDid: "did"}},
+		code: "SW-1000-0000-0001",
+		friend: &Friend{PID: 2, BaasUserID: "aaaaaaaaaaaa0001", NaID: "bbbbbbbbbbbb0001",
+			FriendCode: "SW-1000-0000-0001", Nickname: "hansolo", Country: "IE", CreatedAt: 1788818380}}
+
+	r := httptest.NewRequest("PATCH", "https://"+baasHost+"/2.0.0/friend_requests/aaaaaaaaaaaa0001",
+		strings.NewReader(`[{"op":"replace","path":"/state","value":"AUTHORIZED"}]`))
+	r.Host = baasHost
+	r.Header.Set("Content-Type", "application/json-patch+json")
+	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("accept = %d: %s", w.Code, w.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["state"] != "AUTHORIZED" {
+		t.Errorf("state = %v, want the word the console set", got["state"])
+	}
+	for _, key := range []string{"id", "senderId", "receiverId", "sender", "receiver", "createdAt", "updatedAt"} {
+		if _, ok := got[key]; !ok {
+			t.Errorf("missing %q", key)
+		}
+	}
+	sender, _ := got["sender"].(map[string]any)
+	if sender == nil || sender["id"] != "aaaaaaaaaaaa0001" {
+		t.Errorf("sender is not the person who asked: %v", got["sender"])
+	}
+
+	// Refusing keeps the console's word for that too.
+	r = httptest.NewRequest("PATCH", "https://"+baasHost+"/2.0.0/friend_requests/aaaaaaaaaaaa0001",
+		strings.NewReader(`[{"op":"replace","path":"/state","value":"REJECTED"}]`))
+	r.Host = baasHost
+	r.Header.Set("Content-Type", "application/json-patch+json")
+	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
+	w = httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+	_ = json.Unmarshal(w.Body.Bytes(), &got)
+	if got["state"] != "REJECTED" {
+		t.Errorf("declined state = %v", got["state"])
+	}
+}

@@ -293,3 +293,27 @@ func listEnvelope(items []any) map[string]any {
 	}
 	return map[string]any{"count": len(items), "etag": "", "items": items, "itemsPerPage": 100}
 }
+
+// patchedState reads the state a console set on a friend request. Its own
+// words: AUTHORIZED to become friends, REJECTED to refuse. Answering with a
+// different word for the same thing is how a working accept reported itself
+// as a communication error.
+func patchedState(body []byte) string {
+	var ops []struct {
+		Op, Path string
+		Value    any
+	}
+	if err := json.Unmarshal(body, &ops); err == nil {
+		for _, o := range ops {
+			if strings.HasSuffix(o.Path, "/state") {
+				if v, ok := o.Value.(string); ok && v != "" {
+					return strings.ToUpper(v)
+				}
+			}
+		}
+	}
+	if strings.Contains(strings.ToUpper(string(body)), "REJECT") {
+		return "REJECTED"
+	}
+	return "AUTHORIZED"
+}

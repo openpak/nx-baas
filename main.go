@@ -1107,9 +1107,29 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			baasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 			return
 		}
-		accept := r.Method == "PATCH" && !strings.Contains(strings.ToUpper(string(body)), "REJECT")
+		// The console sets the state itself -- [{"op":"replace","path":"/state",
+		// "value":"AUTHORIZED"}] -- and expects that word back. We answered
+		// with our own vocabulary ("ACCEPTED") and a three-field stub, and the
+		// console called it a communication error even though the friendship
+		// had gone through.
+		state := patchedState(body)
+		if r.Method == "DELETE" {
+			state = "CANCELLED"
+		}
+		accept := state == "AUTHORIZED"
 		logErr("friend-accept", s.acct.FriendAccept(u.PID, from.PID, accept))
-		writeJSON(w, 200, map[string]any{"id": seg[1], "state": map[bool]string{true: "ACCEPTED", false: "REJECTED"}[accept], "updatedAt": now})
+		other := s.friendObj(*from, now)
+		writeJSON(w, 200, map[string]any{
+			"id":         seg[1],
+			"senderId":   from.BaasUserID,
+			"receiverId": u.ID,
+			"sender":     other,
+			"receiver":   s.userObj(u, id, ""),
+			"state":      state,
+			"channels":   []string{"FRIEND_CODE"},
+			"createdAt":  from.CreatedAt,
+			"updatedAt":  now,
+		})
 		return
 
 	case len(seg) == 4 && seg[0] == "users" && seg[2] == "relationships":
