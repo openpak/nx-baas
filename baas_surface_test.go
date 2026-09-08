@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Every method kinnay's BAAS page documents, answered by this server.
@@ -347,5 +348,47 @@ func TestAcceptingAFriendRequestAnswersInTheConsolesWords(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &got)
 	if got["state"] != "REJECTED" {
 		t.Errorf("declined state = %v", got["state"])
+	}
+}
+
+// A console caches its friend list and refetches when friendsUpdatedAt moves.
+// Ours reported the user's UpdatedAt, which changes for a nickname or a
+// picture and not for a friendship — so after becoming friends, Leia's console
+// never asked for the list again and showed nothing.
+func TestBecomingFriendsMovesFriendsUpdatedAt(t *testing.T) {
+	s := dauthServer(t)
+	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	old := time.Now().Unix() - 3600 // yesterday's friend list, as far as a console knows
+	me, _ := s.store.NewUser()
+	s.store.Update(me, func(u *User) { u.PID, u.Nickname, u.FriendsUpdatedAt = 1, "Leia", old })
+	other, _ := s.store.NewUser()
+	s.store.Update(other, func(u *User) { u.PID, u.Nickname, u.FriendsUpdatedAt = 2, "hansolo", old })
+
+	s.acct = codeBackend{
+		fakeBackend: fakeBackend{id: &Identity{PID: 1, Nickname: "Leia", FriendCode: "SW-1000-0000-0002", BsDid: "did"}},
+		code:        "SW-1000-0000-0001",
+		friend: &Friend{PID: 2, BaasUserID: other.ID, FriendCode: "SW-1000-0000-0001",
+			Nickname: "hansolo", CreatedAt: 1788818380}}
+
+	before := s.userObj(me, s.identity(me), "")["friendsUpdatedAt"].(int64)
+	otherBefore := s.userObj(other, nil, "")["friendsUpdatedAt"].(int64)
+
+	r := httptest.NewRequest("PATCH", "https://"+baasHost+"/2.0.0/friend_requests/"+other.ID,
+		strings.NewReader(`[{"op":"replace","path":"/state","value":"AUTHORIZED"}]`))
+	r.Host = baasHost
+	r.Header.Set("Content-Type", "application/json-patch+json")
+	r.Header.Set("Authorization", "Bearer "+s.accessToken(me.ID, 2, "did", "device", "serial"))
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("accept = %d: %s", w.Code, w.Body.String())
+	}
+
+	if got := s.userObj(me, s.identity(me), "")["friendsUpdatedAt"].(int64); got <= before {
+		t.Errorf("friendsUpdatedAt did not move for the console that accepted (%d -> %d)", before, got)
+	}
+	// And for the other one, which is not holding the controller.
+	if got := s.userObj(other, nil, "")["friendsUpdatedAt"].(int64); got <= otherBefore {
+		t.Errorf("friendsUpdatedAt did not move for the other side (%d -> %d)", otherBefore, got)
 	}
 }

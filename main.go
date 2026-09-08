@@ -334,7 +334,7 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 		"birthday": birthday, "blocksUpdatedAt": u.CreatedAt, "country": country, "createdAt": u.CreatedAt, "deleted": false,
 		"deviceAccounts": devs, "etag": fmt.Sprintf("\"%s\"", etag),
 		"extras":           map[string]any{"everyone": everyone, "favoriteFriends": map[string]any{"playLog": ""}, "foaf": map[string]any{"playLog": ""}, "friends": friendsEx, "self": self},
-		"friendsUpdatedAt": u.UpdatedAt, "id": u.ID, "links": links, "nickname": nickname, "nicknameUpdatedAt": u.UpdatedAt,
+		"friendsUpdatedAt": friendsUpdatedAt(u), "id": u.ID, "links": links, "nickname": nickname, "nicknameUpdatedAt": u.UpdatedAt,
 		"permissions":   permissionsOf(u),
 		"thumbnail2Url": thumb2, "thumbnailUploadedAt": thumbAt, "thumbnailUrl": thumb1, "updatedAt": u.UpdatedAt,
 	}
@@ -1072,6 +1072,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			return
 		}
 		logErr("friend-request", s.acct.FriendRequest(u.PID, target.PID))
+		s.friendGraphChanged(u, target.BaasUserID)
 		// The request gets its own id. It used to be handed back the
 		// receiver's user id, which is a different thing entirely: the console
 		// PATCHes /2.0.0/friend_requests/<id> to cancel, and an id that is
@@ -1118,6 +1119,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		}
 		accept := state == "AUTHORIZED"
 		logErr("friend-accept", s.acct.FriendAccept(u.PID, from.PID, accept))
+		s.friendGraphChanged(u, from.BaasUserID)
 		other := s.friendObj(*from, now)
 		writeJSON(w, 200, map[string]any{
 			"id":         seg[1],

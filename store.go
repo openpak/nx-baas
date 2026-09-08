@@ -54,6 +54,11 @@ type User struct {
 	Blocks []string `json:"blocks,omitempty"`
 	// Favourites are friends marked as such on the console.
 	Favourites []string `json:"favourites,omitempty"`
+	// FriendsUpdatedAt is when this user's friend graph last changed. The
+	// console caches its friend list and refetches when this moves, so a
+	// friendship that only exists in the core is a friend list that never
+	// appears.
+	FriendsUpdatedAt int64 `json:"friendsUpdatedAt,omitempty"`
 	// CodeGeneratedAt gates regeneration: a new friend code is allowed once a
 	// day, and asking sooner is 422 friend_code_unregenerable_state.
 	CodeGeneratedAt int64    `json:"codeGeneratedAt,omitempty"`

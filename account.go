@@ -317,3 +317,24 @@ func patchedState(body []byte) string {
 	}
 	return "AUTHORIZED"
 }
+
+// friendsUpdatedAt is the version a console watches to decide whether its
+// cached friend list is stale. It used to be the user's UpdatedAt, which moves
+// for a picture or a nickname and not for a friendship, so a console that had
+// just become friends with somebody never asked for the list again.
+func friendsUpdatedAt(u *User) int64 {
+	if u.FriendsUpdatedAt > 0 {
+		return u.FriendsUpdatedAt
+	}
+	return u.UpdatedAt
+}
+
+// friendGraphChanged marks both sides, because a friendship changes two lists
+// and only one of the two consoles is holding the controller.
+func (s *server) friendGraphChanged(u *User, otherBaasID string) {
+	now := time.Now().Unix()
+	s.store.Update(u, func(u *User) { u.FriendsUpdatedAt = now })
+	if other := s.store.User(otherBaasID); other != nil {
+		s.store.Update(other, func(o *User) { o.FriendsUpdatedAt = now })
+	}
+}
