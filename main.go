@@ -1057,8 +1057,22 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			return
 		}
 		logErr("friend-request", s.acct.FriendRequest(u.PID, target.PID))
-		o := s.friendObj(*target, now)
-		writeJSON(w, 201, map[string]any{"id": target.BaasUserID, "sender": s.userObj(u, id, ""), "receiver": o, "state": "PENDING", "createdAt": now, "updatedAt": now})
+		// The request gets its own id. It used to be handed back the
+		// receiver's user id, which is a different thing entirely: the console
+		// PATCHes /2.0.0/friend_requests/<id> to cancel, and an id that is
+		// really somebody's user id is not a request it can act on.
+		reqID := s.rememberRequest(target.BaasUserID)
+		writeJSON(w, 201, map[string]any{
+			"id":         reqID,
+			"senderId":   u.ID,
+			"receiverId": target.BaasUserID,
+			"channels":   channelsOf(body),
+			"sender":     s.userObj(u, id, ""),
+			"receiver":   s.friendObj(*target, now),
+			"state":      "PENDING",
+			"createdAt":  now,
+			"updatedAt":  now,
+		})
 		return
 
 	case len(seg) == 2 && seg[0] == "friend_requests" && (r.Method == "PATCH" || r.Method == "DELETE"):
@@ -1067,7 +1081,13 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			baasErr(w, r, 403, "insufficient_scope", "Token is insufficient", "not linked")
 			return
 		}
-		from, err := s.acct.Resolve(url.Values{"baas": {seg[1]}})
+		// seg[1] is a request id for one the console made here, and a user id
+		// for one it learned about elsewhere. Try both before giving up.
+		target := seg[1]
+		if uid, ok := s.requestTarget(seg[1]); ok {
+			target = uid
+		}
+		from, err := s.acct.Resolve(url.Values{"baas": {target}})
 		if err != nil {
 			baasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 			return

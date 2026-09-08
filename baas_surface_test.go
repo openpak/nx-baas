@@ -172,4 +172,27 @@ func TestSendingAFriendRequestReachesTheHandler(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create = %d: %s", w.Code, w.Body.String())
 	}
+
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("not JSON: %v", err)
+	}
+	// The request's id is its own, not the person it was sent to: the console
+	// cancels with PATCH /2.0.0/friend_requests/<id>.
+	if got["id"] == "aaaaaaaaaaaa0002" {
+		t.Error("the receiver's user id was handed back as the request id")
+	}
+	if got["receiverId"] != "aaaaaaaaaaaa0002" || got["state"] != "PENDING" {
+		t.Errorf("reply does not describe the request it made: %s", w.Body.String())
+	}
+
+	// And that id resolves when the console cancels.
+	cancel := httptest.NewRequest("DELETE", "https://"+baasHost+"/2.0.0/friend_requests/"+got["id"].(string), nil)
+	cancel.Host = baasHost
+	cancel.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
+	cw := httptest.NewRecorder()
+	s.ServeHTTP(cw, cancel)
+	if cw.Code != http.StatusOK {
+		t.Fatalf("cancel = %d: %s", cw.Code, cw.Body.String())
+	}
 }

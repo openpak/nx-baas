@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -243,4 +244,40 @@ func selfExtras(mediaUploaded bool) map[string]any {
 		self["isMediaUploaded"] = true
 	}
 	return self
+}
+
+// Friend requests this server issued, by their own id. In memory on purpose:
+// the friendship itself lives in the account core, and all this map buys is
+// the console's ability to cancel a request it just made. A restart loses
+// that and nothing else.
+var (
+	requestsMu sync.Mutex
+	requests   = map[string]string{} // request id -> receiver's BAAS user id
+)
+
+func (s *server) rememberRequest(receiverBaasID string) string {
+	id := randHex(8)
+	requestsMu.Lock()
+	defer requestsMu.Unlock()
+	requests[id] = receiverBaasID
+	return id
+}
+
+func (s *server) requestTarget(requestID string) (string, bool) {
+	requestsMu.Lock()
+	defer requestsMu.Unlock()
+	id, ok := requests[requestID]
+	return id, ok
+}
+
+// channelsOf echoes back the channels the console said it used, defaulting to
+// the one it uses when adding by code.
+func channelsOf(body []byte) []string {
+	var in struct {
+		Channels []string `json:"channels"`
+	}
+	if err := json.Unmarshal(body, &in); err == nil && len(in.Channels) > 0 {
+		return in.Channels
+	}
+	return []string{"FRIEND_CODE"}
 }
