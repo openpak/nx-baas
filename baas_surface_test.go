@@ -392,3 +392,26 @@ func TestBecomingFriendsMovesFriendsUpdatedAt(t *testing.T) {
 		t.Errorf("friendsUpdatedAt did not move for the other side (%d -> %d)", otherBefore, got)
 	}
 }
+
+// The friends applet calls the recommendation service when it opens, and a
+// working server answers 200 with an empty grpc body. We answered 404 {}.
+func TestFriendRecommendationsAnswerLikeTheReferenceDoes(t *testing.T) {
+	s := dauthServer(t)
+	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+
+	const host = "api-lp1.frs.srv.nintendo.net"
+	r := httptest.NewRequest("GET", "https://"+host+"/v1/friend_recommendations?id_token=x&type=nintendo_account", nil)
+	r.Host = host
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("frs = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/grpc" {
+		t.Errorf("content-type = %q, want application/grpc", ct)
+	}
+	if w.Body.Len() != 0 {
+		t.Errorf("body = %q, want empty", w.Body.String())
+	}
+}

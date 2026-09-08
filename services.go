@@ -61,6 +61,16 @@ func (s *server) olsc(w http.ResponseWriter, r *http.Request, body []byte) {
 	}
 }
 
+// frs is the friend recommendation service the friends applet calls when it
+// opens. Captured from a working server on 2026-09-08: 200, content-type
+// application/grpc, empty body. We answered 404 {} and the applet had a
+// failure in the middle of the screen that shows friends.
+func (s *server) frs(w http.ResponseWriter, r *http.Request, _ []byte) {
+	log.Printf("[nx-baas] frs %s", r.URL.Path)
+	w.Header().Set("Content-Type", "application/grpc")
+	w.WriteHeader(http.StatusOK)
+}
+
 // serviceStatus is the "is this game's online service up" check. Saying yes for
 // everything we serve is right; saying nothing at all reads as an outage.
 func (s *server) serviceStatus(w http.ResponseWriter, r *http.Request, _ []byte) {
