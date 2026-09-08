@@ -355,12 +355,59 @@ func (s *server) friendObj(f Friend, now int64) map[string]any {
 			p.State = "PLAYING"
 		}
 	}
-	return map[string]any{
-		"id": f.BaasUserID, "nickname": f.Nickname, "country": "", "thumbnailUrl": avatarURL(f.PID, f.Avatar, f.CreatedAt), "thumbnail2Url": avatarURL(f.PID, f.Avatar, f.CreatedAt),
-		"links":  map[string]any{"friendCode": map[string]any{"id": friendCodeID(f.FriendCode), "createdAt": f.CreatedAt, "updatedAt": f.CreatedAt}},
-		"extras": extras(), "presence": presenceObj(p), "isFavoriteFriend": false, "isNewFriend": false,
-		"createdAt": f.CreatedAt, "updatedAt": now,
+	// The same object the console accepts for itself, about somebody else.
+	// A search result carrying only id/nickname/links parses into a user the
+	// console then refuses to use: it answered "unable to find user" to a
+	// reply that had found one. Every key here is in a capture a console
+	// accepted; TestFriendObjectCarriesWhatAUserObjectCarries keeps it that
+	// way.
+	created := f.CreatedAt
+	if created == 0 {
+		created = now
 	}
+	obj := map[string]any{
+		"id":        f.BaasUserID,
+		"nickname":  f.Nickname,
+		"country":   f.Country,
+		"birthday":  "0000-00-00",
+		"deleted":   false,
+		"etag":      strconv.Quote(f.BaasUserID),
+		"createdAt": created,
+		"updatedAt": now,
+		// Always a real address: every account has a picture, and an empty
+		// string here is a user the console cannot render.
+		"thumbnailUrl":        cdnHost + "/1/" + f.BaasUserID,
+		"thumbnail2Url":       cdnHost + "/2/" + f.BaasUserID,
+		"thumbnailUploadedAt": created,
+		"nicknameUpdatedAt":   created,
+		"friendsUpdatedAt":    created,
+		"blocksUpdatedAt":     created,
+		"deviceAccounts":      []map[string]any{},
+		"links": map[string]any{
+			"friendCode": map[string]any{
+				"id": friendCodeID(f.FriendCode), "createdAt": created, "updatedAt": created,
+				"regenerable": true, "regenerableAt": created + 30*86400,
+			},
+			"nintendoAccount": map[string]any{"id": f.NaID, "createdAt": created, "updatedAt": created},
+		},
+		"permissions": map[string]any{
+			"friendRequestReception": true, "friends": "EVERYONE",
+			"personalAnalytics": true, "personalAnalyticsUpdatedAt": created,
+			"personalNotification": true, "personalNotificationUpdatedAt": created,
+			"presence": "FRIENDS", "presenceUpdatedAt": created,
+		},
+		"extras": map[string]any{
+			"self":            map[string]any{"playLog": ""},
+			"favoriteFriends": map[string]any{"playLog": ""},
+			"friends":         map[string]any{"isChatActivated": true, "isChatInvitable": true, "playLog": ""},
+			"foaf":            map[string]any{"playLog": ""},
+			"everyone":        map[string]any{"playLog": ""},
+		},
+		// Friend-list only: not part of a self object, and harmless in a
+		// search result.
+		"presence": presenceObj(p), "isFavoriteFriend": false, "isNewFriend": false,
+	}
+	return obj
 }
 
 // ---------- BAAS handlers ----------

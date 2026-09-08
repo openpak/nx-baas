@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -255,3 +256,46 @@ func (b codeBackend) Resolve(q url.Values) (*Friend, error) {
 }
 
 var errNotFound = errors.New("not found")
+
+// What does the console expect in a user object? The one it accepted, which
+// is recorded in testdata/accepted-login-shape.json. A search result used to
+// carry a fifth of those keys and the console answered "unable to find user"
+// to a reply that had found one.
+//
+// The friend object is allowed to add its own keys (presence, isNewFriend),
+// and to leave out the ones that only make sense about yourself.
+func TestFriendObjectCarriesWhatAUserObjectCarries(t *testing.T) {
+	raw, err := os.ReadFile("testdata/accepted-login-shape.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var accepted struct {
+		User map[string]any `json:"user"`
+	}
+	if err := json.Unmarshal(raw, &accepted); err != nil {
+		t.Fatal(err)
+	}
+
+	s := dauthServer(t)
+	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	obj := s.friendObj(Friend{
+		PID: 1900000002, BaasUserID: "aaaaaaaaaaaa0002", NaID: "bbbbbbbbbbbb0002",
+		FriendCode: "SW-1000-0000-0002", Nickname: "Leia", Country: "GB", CreatedAt: 1788896080,
+	}, 1788899654)
+
+	// Only "extras.self" differs on purpose: the blob and isMediaUploaded are
+	// about the signed-in user, not about a stranger.
+	for key := range accepted.User {
+		if _, ok := obj[key]; !ok {
+			t.Errorf("missing %q — the console was given this about a user and accepted it", key)
+		}
+	}
+	for _, empty := range []string{"thumbnailUrl", "thumbnail2Url", "nickname", "id", "etag"} {
+		if v, _ := obj[empty].(string); v == "" {
+			t.Errorf("%s is empty; a user the console cannot render is a user it will not accept", empty)
+		}
+	}
+	if obj["createdAt"] == int64(0) {
+		t.Error("createdAt is zero")
+	}
+}

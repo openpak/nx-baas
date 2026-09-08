@@ -370,7 +370,8 @@ func (b *openpakBackend) friendView(accountID, displayName string) *Friend {
 	if displayName != "" {
 		nick = displayName
 	}
-	return &Friend{PID: pr.PID, BaasUserID: pr.BaasUserID, NaID: pr.NaID, FriendCode: pr.FriendCode, Nickname: nick}
+	return &Friend{PID: pr.PID, BaasUserID: pr.BaasUserID, NaID: pr.NaID, FriendCode: pr.FriendCode,
+		Nickname: nick, CreatedAt: pr.CreatedAt}
 }
 
 func (b *openpakBackend) Resolve(q url.Values) (*Friend, error) {
@@ -387,7 +388,8 @@ func (b *openpakBackend) Resolve(q url.Values) (*Friend, error) {
 		return nil, errors.New("not found")
 	}
 	pr := b.proj.ByAccount[accountID]
-	return &Friend{PID: pr.PID, BaasUserID: pr.BaasUserID, NaID: pr.NaID, FriendCode: pr.FriendCode, Nickname: pr.Nickname}, nil
+	return &Friend{PID: pr.PID, BaasUserID: pr.BaasUserID, NaID: pr.NaID, FriendCode: pr.FriendCode,
+		Nickname: pr.Nickname, CreatedAt: pr.CreatedAt}, nil
 }
 
 func (b *openpakBackend) FriendRequest(from, to uint64) error {

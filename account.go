@@ -27,6 +27,7 @@ type accountClient struct {
 
 type Friend struct {
 	PID              uint64 `json:"pid"`
+	Country          string `json:"country"`
 	BaasUserID       string `json:"baasUserID"`
 	NaID             string `json:"naID"`
 	Nickname         string `json:"nickname"`
