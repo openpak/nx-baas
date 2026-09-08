@@ -362,10 +362,25 @@ func (s *server) friendObj(f Friend, now int64) map[string]any {
 	if created == 0 {
 		created = now
 	}
+	// What this server already knows about them beats what the lookup carried:
+	// the console PATCHes country and uploads a picture here, and a user object
+	// that says country "" and owns no device accounts is not one the console
+	// accepts.
+	country, devices := f.Country, []map[string]any{}
+	mediaUploaded := false
+	if local := s.store.User(f.BaasUserID); local != nil {
+		if local.Country != "" {
+			country = local.Country
+		}
+		for _, d := range local.DeviceAccounts {
+			devices = append(devices, map[string]any{"id": d})
+		}
+		mediaUploaded = local.Avatar != "" || local.NxAccount != ""
+	}
 	obj := map[string]any{
 		"id":        f.BaasUserID,
 		"nickname":  f.Nickname,
-		"country":   f.Country,
+		"country":   country,
 		"birthday":  "0000-00-00",
 		"deleted":   false,
 		"etag":      strconv.Quote(f.BaasUserID),
@@ -379,7 +394,7 @@ func (s *server) friendObj(f Friend, now int64) map[string]any {
 		"nicknameUpdatedAt":   created,
 		"friendsUpdatedAt":    created,
 		"blocksUpdatedAt":     created,
-		"deviceAccounts":      []map[string]any{},
+		"deviceAccounts":      devices,
 		"links": map[string]any{
 			"friendCode": map[string]any{
 				"id": friendCodeID(f.FriendCode), "createdAt": created, "updatedAt": created,
@@ -394,7 +409,7 @@ func (s *server) friendObj(f Friend, now int64) map[string]any {
 			"presence": "FRIENDS", "presenceUpdatedAt": created,
 		},
 		"extras": map[string]any{
-			"self":            map[string]any{"playLog": ""},
+			"self":            selfExtras(mediaUploaded),
 			"favoriteFriends": map[string]any{"playLog": ""},
 			"friends":         map[string]any{"isChatActivated": true, "isChatInvitable": true, "playLog": ""},
 			"foaf":            map[string]any{"playLog": ""},

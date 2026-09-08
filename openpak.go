@@ -422,6 +422,8 @@ func (b *openpakBackend) Resolve(q url.Values) (*Friend, error) {
 	defer cancel()
 	if acc, err := b.identity.GetAccount(ctx, &accountv1.GetAccountRequest{AccountId: accountID}); err == nil {
 		f.Country = acc.GetCountry()
+	} else {
+		logErr("resolve get-account", err) // silence here is why country stayed empty
 	}
 	return f, nil
 }

@@ -233,3 +233,14 @@ func permissionsOf(u *User) map[string]any {
 	}
 	return p
 }
+
+// selfExtras is the "self" visibility group of a user object. The accepted
+// capture carries isMediaUploaded there for a user who has a picture, and
+// every account has one now.
+func selfExtras(mediaUploaded bool) map[string]any {
+	self := map[string]any{"playLog": ""}
+	if mediaUploaded {
+		self["isMediaUploaded"] = true
+	}
+	return self
+}
