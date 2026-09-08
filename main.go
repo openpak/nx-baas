@@ -686,21 +686,28 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		return
 
 	case p == "/1.0.0/users" && r.Method == "GET":
-		// Friend-code / id lookup from the friends sysmodule. ponytail: query keys guessed
-		// (friendCode / id); the catch-all dump tells us the real ones.
+		// Friend-code / id lookup from the friends sysmodule. The console asks
+		// with a filter expression, captured from hardware on 2026-09-08:
+		//
+		//   GET /1.0.0/users?filter.links.friendCode.id.$in=1000-0000-0002
+		//
+		// The keys here used to be guesses ("friendCode", "id"), so every
+		// lookup missed and the console said it could not find the user. The
+		// value carries no SW- prefix and $in may list several.
 		q := r.URL.Query()
-		var f *Friend
-		var err error
-		if c := q.Get("friendCode"); c != "" {
-			f, err = s.acct.Resolve(url.Values{"code": {c}})
-		} else if id := q.Get("id"); id != "" {
-			f, err = s.acct.Resolve(url.Values{"baas": {id}})
+		now := time.Now().Unix()
+		users := []any{}
+		for _, code := range queryList(q, "filter.links.friendCode.id.$in", "friendCode") {
+			if f, err := s.acct.Resolve(url.Values{"code": {normaliseFriendCode(code)}}); err == nil && f != nil {
+				users = append(users, s.friendObj(*f, now))
+			}
 		}
-		if err != nil || f == nil {
-			writeJSON(w, 200, map[string]any{"count": 0, "users": []any{}})
-			return
+		for _, id := range queryList(q, "filter.id.$in", "id") {
+			if f, err := s.acct.Resolve(url.Values{"baas": {id}}); err == nil && f != nil {
+				users = append(users, s.friendObj(*f, now))
+			}
 		}
-		writeJSON(w, 200, map[string]any{"count": 1, "users": []any{s.friendObj(*f, time.Now().Unix())}})
+		writeJSON(w, 200, map[string]any{"count": len(users), "users": users})
 		return
 
 	case p == "/1.0.0/devices/snapshot":

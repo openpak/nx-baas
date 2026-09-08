@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -166,4 +167,28 @@ func logErr(what string, err error) {
 	if err != nil {
 		log.Printf("[nx-baas] account: %s: %v", what, err)
 	}
+}
+
+// queryList reads a console filter parameter, which may repeat and whose $in
+// form is comma-separated. The fallbacks are the older, simpler spellings.
+func queryList(q url.Values, keys ...string) []string {
+	var out []string
+	for _, k := range keys {
+		for _, v := range q[k] {
+			for _, part := range strings.Split(v, ",") {
+				if part = strings.TrimSpace(part); part != "" {
+					out = append(out, part)
+				}
+			}
+		}
+	}
+	return out
+}
+
+// normaliseFriendCode accepts what a console sends (1234-5678-9012), what a
+// person types (SW-1234-5678-9012, any case, spaces) and what we store.
+func normaliseFriendCode(code string) string {
+	c := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(code), " ", ""))
+	c = strings.TrimPrefix(c, "SW-")
+	return "SW-" + c
 }

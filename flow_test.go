@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -191,3 +192,66 @@ func TestTheNewerPictureWins(t *testing.T) {
 		}
 	})
 }
+
+// The exact request a console makes when someone types a friend code, captured
+// from hardware on 2026-09-08. The handler looked for a "friendCode" parameter
+// that no console has ever sent, so every lookup answered {"count":0} and the
+// console said it could not find the user.
+func TestFriendCodeLookupUsesTheQueryTheConsoleSends(t *testing.T) {
+	s := dauthServer(t)
+	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	s.acct = codeBackend{code: "SW-1000-0000-0002", friend: &Friend{
+		PID: 1900000002, BaasUserID: "aaaaaaaaaaaa0002", NaID: "bbbbbbbbbbbb0002",
+		FriendCode: "SW-1000-0000-0002", Nickname: "Leia"}}
+
+	for _, target := range []string{
+		"/1.0.0/users?filter.links.friendCode.id.$in=1000-0000-0002", // what hardware sends
+		"/1.0.0/users?filter.links.friendCode.id.$in=SW-1000-0000-0002",
+		"/1.0.0/users?friendCode=SW-1000-0000-0002", // older spelling, still honoured
+	} {
+		r := httptest.NewRequest("GET", "https://"+baasHost+target, nil)
+		r.Host = baasHost
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, r)
+
+		var got struct {
+			Count int              `json:"count"`
+			Users []map[string]any `json:"users"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatalf("%s: %v", target, err)
+		}
+		if got.Count != 1 || len(got.Users) != 1 {
+			t.Errorf("%s -> %s; the console says it cannot find the user", target, w.Body.String())
+			continue
+		}
+		if got.Users[0]["id"] != "aaaaaaaaaaaa0002" {
+			t.Errorf("%s returned the wrong user: %v", target, got.Users[0]["id"])
+		}
+	}
+
+	// A code nobody holds is still an empty answer, not an error.
+	r := httptest.NewRequest("GET", "https://"+baasHost+"/1.0.0/users?filter.links.friendCode.id.$in=0000-0000-0000", nil)
+	r.Host = baasHost
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"count":0`) {
+		t.Fatalf("unknown code -> %d %s", w.Code, w.Body.String())
+	}
+}
+
+// codeBackend resolves exactly one friend code, the way the projection store does.
+type codeBackend struct {
+	fakeBackend
+	code   string
+	friend *Friend
+}
+
+func (b codeBackend) Resolve(q url.Values) (*Friend, error) {
+	if q.Get("code") == b.code {
+		return b.friend, nil
+	}
+	return nil, errNotFound
+}
+
+var errNotFound = errors.New("not found")
