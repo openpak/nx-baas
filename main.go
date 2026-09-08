@@ -1107,6 +1107,11 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 	switch {
+	// Liveness, for anything checking from outside. Deliberately answered
+	// before host routing: the console-facing names all resolve here, and a
+	// health check should not have to pick one of them.
+	case r.URL.Path == "/healthz":
+		writeJSON(w, 200, map[string]any{"status": "ok", "service": "nx-baas"})
 	case strings.HasPrefix(r.URL.Path, "/connect/1.0.0/qr/") || strings.HasPrefix(r.URL.Path, "/link"):
 		if !s.qrRoutes(w, r, body) {
 			http.NotFound(w, r)
