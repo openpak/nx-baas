@@ -441,10 +441,22 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				s.shareAvatar(u.ID, img.RawContent)
 			}
 		}
-		// An empty object is what the console accepted before; it reads the
-		// picture back from the thumbnail URLs in the user object, not from
-		// this reply.
-		writeJSON(w, 200, map[string]any{})
+		// NOT an empty object. `{}` to a console request is the push_channels
+		// failure verbatim -- that one answered `{}` and the console said the
+		// account could not be linked, every time, until it was given the real
+		// object. This is the last thing we answer during "add account" before
+		// the console gives up with 2124-3121, and it was answering `{}`.
+		//
+		// The user object is what every other mutation here returns, and it
+		// carries what the console needs after an upload: the new thumbnail
+		// URLs and the time they changed.
+		if uid := str(s.bearer(r), "sub"); uid != "" {
+			if u := s.store.User(uid); u != nil {
+				writeJSON(w, 200, s.userObj(u, s.identity(u), ""))
+				return
+			}
+		}
+		baasErr(w, r, 401, "invalid_token", "Invalid token", "no user for this token")
 		return
 
 	case p == "/1.0.0/users" && r.Method == "POST":

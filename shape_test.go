@@ -127,3 +127,45 @@ func compareShape(want map[string]any, got map[string]any, path string) (missing
 	sort.Strings(extra)
 	return missing, extra
 }
+
+// image_upload used to answer `{}`. So did push_channels once, and the console
+// said the account could not be linked every single time until it was given a
+// real object; `{}` to a console request is that failure verbatim. It is the
+// last thing we answer during "add account" before 2124-3121 appears.
+func TestImageUploadAnswersTheUserObjectNotAnEmptyOne(t *testing.T) {
+	s := dauthServer(t)
+	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	u, _ := s.store.NewUser()
+	s.store.Update(u, func(u *User) { u.PID = 1; u.Nickname = "tester" })
+	s.acct = fakeBackend{id: &Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
+		FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did"}}
+
+	r := httptest.NewRequest("POST", "https://"+baasHost+"/1.0.0/image_upload", nil)
+	r.Host = baasHost
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
+	body := []byte(`{"rawContent":"/9j/4AAQSkZJRg=="}`)
+	w := httptest.NewRecorder()
+	s.baas(w, r, body)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("image_upload = %d: %s", w.Code, w.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("not JSON: %v", err)
+	}
+	if len(got) == 0 {
+		t.Fatal("image_upload answered `{}` — the push_channels failure, verbatim")
+	}
+	user, ok := got["user"].(map[string]any)
+	if !ok {
+		user = got
+	}
+	if user["thumbnailUrl"] == nil || user["id"] == nil {
+		t.Fatalf("the reply says nothing about where the picture went: %s", w.Body.String())
+	}
+	if !strings.Contains(user["thumbnailUrl"].(string), u.ID) {
+		t.Fatalf("thumbnail still points at the default after an upload: %v", user["thumbnailUrl"])
+	}
+}
