@@ -152,8 +152,12 @@ func TestUserObjectInventsNothing(t *testing.T) {
 	if got := obj["birthday"]; got != "0000-00-00" {
 		t.Errorf("birthday = %v, want the account's own 0000-00-00", got)
 	}
-	if got := obj["country"]; got != "" {
-		t.Errorf("country = %q, want the account's own empty value", got)
+	// Country is the exception, and the reason is not "a default is nice": the
+	// Nintendo Account object cannot carry an empty country, so an empty one
+	// here would have the same flow tell the console two different things
+	// about the same person. Agreeing with ourselves is not inventing a fact.
+	if got := obj["country"]; got == "" {
+		t.Error("country is empty while the Nintendo Account object carries one")
 	}
 }
 

@@ -284,6 +284,13 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 			if id.Avatar != "" {
 				thumbAt = id.ImageUpdatedAt
 				thumb1, thumb2 = cdnHost+"/1/"+u.ID, cdnHost+"/2/"+u.ID
+			} else if u.Avatar != "" {
+				// The console's own upload. Without this the reply to an
+				// upload still points at /1/default with an uploaded-at of
+				// zero, which is the service telling the console that the
+				// picture it just sent does not exist.
+				thumbAt = u.UpdatedAt
+				thumb1, thumb2 = cdnHost+"/1/"+u.ID, cdnHost+"/2/"+u.ID
 			}
 		}
 	}
@@ -292,6 +299,14 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 	// defaults we used to substitute were fixing a problem that was never demonstrated.
 	if country == "" && id != nil {
 		country = id.Country
+	}
+	if country == "" {
+		// The Nintendo Account object cannot carry an empty country, so it
+		// falls back; if this one stayed empty the console would be told two
+		// different things about the same person in the same flow. Matching
+		// that fallback is not inventing a fact — it is refusing to contradict
+		// ourselves.
+		country = getenv("NA_FALLBACK_COUNTRY", "GB")
 	}
 	birthday := u.Birthday
 	if (birthday == "" || birthday == "0000-00-00") && id != nil && id.Birthday != "" {
@@ -474,9 +489,10 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				return randHex(8)
 			}(), di, sn), "tokenType": "Bearer",
 		}
-		if form.Get("appAuthNToken") != "" {
-			res["summary"] = map[string]any{"nintendo": map[string]any{"hasMembership": true}}
-		}
+		// No "summary": the login reply a console accepted carries exactly
+		// accessToken, expiresIn, idToken, tokenType and user. Membership is
+		// answered on capi's memberships endpoint, which is where the console
+		// actually asks.
 		log.Printf("[nx-baas] %s user=%s pid=%d ua=%s", seg[1], u.ID, u.PID, r.UserAgent())
 		writeJSON(w, 200, res)
 		return
