@@ -372,8 +372,11 @@ func (s *server) friendObj(f Friend, now int64) map[string]any {
 		if local.Country != "" {
 			country = local.Country
 		}
-		for _, d := range local.DeviceAccounts {
-			devices = append(devices, map[string]any{"id": d})
+		// One, as the reference search result carries. Eleven of them is this
+		// server telling a console about every profile that ever registered,
+		// and nothing that reads a friend expects that.
+		if n := len(local.DeviceAccounts); n > 0 {
+			devices = append(devices, map[string]any{"id": local.DeviceAccounts[n-1]})
 		}
 		mediaUploaded = local.Avatar != "" || local.NxAccount != ""
 	}
@@ -963,7 +966,11 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		list := []any{}
 		if id != nil {
 			for _, f := range id.Friends {
-				list = append(list, s.friendObj(f, now))
+				// The same object a search result carries. presence,
+				// isFavoriteFriend and isNewFriend describe the friendship
+				// rather than the person, and a console that was handed them
+				// in a search result refused it.
+				list = append(list, s.searchUserObj(f, now))
 			}
 		}
 		writeJSON(w, 200, listEnvelope(list))

@@ -399,4 +399,15 @@ func TestFriendListEntriesCarryACountry(t *testing.T) {
 	if got.Items[0]["nickname"] == "" || got.Items[0]["thumbnailUrl"] == "" {
 		t.Errorf("friend entry is not renderable: %v", got.Items[0])
 	}
+	// A friend entry is a user object. The friendship-shaped keys were refused
+	// in a search result, and a friend list that stayed empty is the same
+	// symptom in the same parser.
+	for _, friendOnly := range []string{"presence", "isFavoriteFriend", "isNewFriend"} {
+		if _, ok := got.Items[0][friendOnly]; ok {
+			t.Errorf("friend entry carries %q", friendOnly)
+		}
+	}
+	if devs, _ := got.Items[0]["deviceAccounts"].([]any); len(devs) > 1 {
+		t.Errorf("friend entry reveals %d device accounts; a reference reply carries one", len(devs))
+	}
 }
