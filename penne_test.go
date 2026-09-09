@@ -1,13 +1,50 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
+
+// The Penne frontline POST must be held open and heartbeated, not 404-ed: closing it immediately
+// errors the client. So the handler stays until the client disconnects and streams a keepalive
+// while it waits.
+func TestFrontlineHoldsOpenAndHeartbeatsNot404(t *testing.T) {
+	old := frontlineHeartbeat
+	frontlineHeartbeat = time.Millisecond
+	defer func() { frontlineHeartbeat = old }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	r := httptest.NewRequest("POST", "/", nil).WithContext(ctx)
+	r.Host = "fro-3.hac.lp1.penne.srv.nintendo.net"
+	w := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() { (&server{}).penne(w, r, nil); close(done) }()
+
+	select { // held open: it must not return on its own
+	case <-done:
+		t.Fatal("frontline returned without the client disconnecting")
+	case <-time.After(20 * time.Millisecond):
+	}
+	cancel()
+	select { // and it must return once the client does
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("frontline did not return after the client disconnected")
+	}
+	if w.Code != 200 {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+	if w.Body.Len() == 0 {
+		t.Errorf("no heartbeat was written on the held-open connection")
+	}
+}
 
 // A gw. account read must answer 200 with a {"payload": base64(json)} envelope. vphyms used to
 // answer 404, which the title reads as account setup failed -- it then restarts its whole

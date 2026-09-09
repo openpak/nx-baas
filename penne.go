@@ -44,6 +44,8 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 		writeJSON(w, 200, map[string]any{"current_time": now, "frontline_fqdn": frontline, "persistent_connection_params_simple": params})
 	case strings.HasPrefix(host, "val.") && p == "/v1/login_tickets":
 		writeJSON(w, 200, map[string]any{"expires_at": now + 4*86400, "frontline_fqdn": frontline, "issued_at": now, "persistent_connection_params_simple": params, "ticket": randHex(32)})
+	case strings.HasPrefix(host, "fro-"):
+		s.frontline(w, r)
 	case strings.HasPrefix(host, "beach."):
 		writeJSON(w, 200, map[string]any{}) // /contents, /penne_id/register, /set: observed 200 {}
 	case strings.HasPrefix(host, "gw.") && p == "/v1/accounts/config":
@@ -61,6 +63,42 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 		writeJSON(w, 404, map[string]any{})
 	}
 	log.Printf("[nx-baas] penne %s %s%s -> handled", r.Method, host, p)
+}
+
+// frontlineHeartbeat is how often the held-open frontline connection emits a keepalive chunk.
+var frontlineHeartbeat = 30 * time.Second
+
+// frontline answers the Penne persistent "frontline" POST (fro-N.hac.lp1.penne...). The client
+// holds this connection open for room-code registration and push notifications; closing it
+// immediately errors the client (the Splatoon 2 form of the failure is 2307-2103). So we accept
+// it 200, stream chunked, and emit a keepalive until the console goes away, instead of 404-ing.
+//
+// ponytail: the held-open + chunked + heartbeat SHAPE is the recorded fact
+// (servers/splatoon-3/docs/provenance.md); the heartbeat's CONTENT is not captured, so a benign
+// newline stands in and nothing is actually pushed yet. A capture of the real frontline frame is
+// the upgrade -- swap the write payload, the connection lifecycle stays as is.
+func (s *server) frontline(w http.ResponseWriter, r *http.Request) {
+	fl, ok := w.(http.Flusher)
+	if !ok {
+		writeJSON(w, 200, map[string]any{"status": "connected"}) // never {} -- an empty reply is the failure class here
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.WriteHeader(200)
+	fl.Flush() // let the client see the connection accepted before the first heartbeat
+	t := time.NewTicker(frontlineHeartbeat)
+	defer t.Stop()
+	for {
+		select {
+		case <-r.Context().Done(): // console hung up
+			return
+		case <-t.C:
+			if _, err := w.Write([]byte("\n")); err != nil {
+				return
+			}
+			fl.Flush()
+		}
+	}
 }
 
 // payloadEnvelope wraps an object the way the vermillion account endpoints return it:
