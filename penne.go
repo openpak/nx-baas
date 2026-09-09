@@ -1,9 +1,12 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -47,6 +50,8 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 		writeJSON(w, 404, map[string]any{})
 	case strings.HasPrefix(host, "gw.") && (r.Method == "PUT" || r.Method == "POST") && strings.HasPrefix(p, "/v1/devices/"):
 		w.WriteHeader(204)
+	case strings.HasPrefix(host, "gw.") && p == "/v1/devices/vermillion-device-id":
+		writeJSON(w, 200, map[string]any{"vermillionDeviceId": vermillionDeviceID(deviceIDFromUA(r.UserAgent()))})
 	case strings.HasPrefix(host, "gw."):
 		writeJSON(w, 200, map[string]any{}) // /v1/devices/<id>, /v1/accounts/config
 	default:
@@ -54,4 +59,35 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 		writeJSON(w, 404, map[string]any{})
 	}
 	log.Printf("[nx-baas] penne %s %s%s -> handled", r.Method, host, p)
+}
+
+// deviceIDFromUA pulls the console's own device id out of the SDK's User-Agent,
+// which is where the SDK puts it: "NintendoSDK Firmware/<ver> (platform:NX; did:<hex>; eid:lp1)".
+func deviceIDFromUA(ua string) string {
+	i := strings.Index(ua, "did:")
+	if i < 0 {
+		return ""
+	}
+	rest := ua[i+len("did:"):]
+	if j := strings.IndexAny(rest, "; )"); j >= 0 {
+		rest = rest[:j]
+	}
+	return rest
+}
+
+// The id the vermillion gateway hands back for a device: 16 bytes, base64. The client uses the
+// value as a URL path segment, so an encoding containing "/" crashes it -- keep re-deriving
+// until one has none. Answering the wrong key, or "{}", leaves the client with no device id and
+// it loops its bootstrap forever.
+//
+// ponytail: derived from the console's own device id rather than stored, so it is stable across
+// reboots with no state at all. A stored per-device value is the upgrade if a console ever
+// stops carrying "did:" in its User-Agent -- every such console shares one id here.
+func vermillionDeviceID(did string) string {
+	for i := 0; ; i++ {
+		sum := sha256.Sum256([]byte("openpak/vermillion-device-id/" + did + "/" + strconv.Itoa(i)))
+		if v := base64.StdEncoding.EncodeToString(sum[:16]); !strings.Contains(v, "/") {
+			return v
+		}
+	}
 }
