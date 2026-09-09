@@ -41,11 +41,15 @@ func (s *server) switchIdentity(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case in.IDToken != "":
-		var ok bool
-		if pid, ok = s.pidForIDToken(in.IDToken); !ok {
+		var genuine bool
+		if pid, genuine = s.pidForIDToken(in.IDToken); !genuine {
 			apiErr(w, http.StatusUnauthorized, "id_token not proven")
 			return
 		}
+		// pid can be 0 here, and that is deliberately not a 401: the token is genuine and we
+		// simply do not know the account. servers/nex maps 401 to TokenExpired and the console
+		// fetches a fresh token and retries, so answering 401 for an unknown account is a
+		// refresh loop. Falling through gives the 404 that maps to ValidationFailed instead.
 	}
 	id, err := s.acct.Identity(pid)
 	if err != nil {
@@ -71,6 +75,10 @@ func (s *server) switchIdentity(w http.ResponseWriter, r *http.Request) {
 // Every token this server signs uses the same key, so the signature alone does not say what kind
 // of token this is: "typ" and "iss" are what keep an access token, a Nintendo-Account token or a
 // refresh token from being spent here as a login.
+//
+// The bool is "this token is genuine", not "this call succeeded". A genuine token for an account
+// we do not know returns (0, true), because the two cases are answered with different status
+// codes and a caller that conflates them makes a console retry forever.
 func (s *server) pidForIDToken(tok string) (uint64, bool) {
 	c, err := parseJWT(tok, &s.key.PublicKey)
 	if err != nil {
@@ -83,12 +91,12 @@ func (s *server) pidForIDToken(tok string) (uint64, bool) {
 	if int64(exp) <= time.Now().Unix() {
 		return 0, false
 	}
-	// ponytail: the subject is the BAAS user id, which is the store's own key, so the lookup is
-	// the mapping. A session table is the upgrade if a token ever has to be revocable before it
-	// expires.
+	// Genuine from here on. ponytail: the subject is the BAAS user id, which is the store's own
+	// key, so the lookup is the mapping. A session table is the upgrade if a token ever has to be
+	// revocable before it expires.
 	u := s.store.User(str(c, "sub"))
 	if u == nil || u.PID == 0 {
-		return 0, false
+		return 0, true
 	}
 	return u.PID, true
 }

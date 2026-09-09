@@ -41,4 +41,13 @@ func TestSwitchIdentityProvesAPlainConsoleIDToken(t *testing.T) {
 	if w := do(t, s, "POST", "/internal/switch/identity", "", `{"id_token":"not.a.jwt"}`); w.Code != 401 {
 		t.Fatalf("a junk token was accepted: %d %s", w.Code, w.Body)
 	}
+
+	// A genuine token for an account we do not know is NOT 401. servers/nex maps 401 to
+	// TokenExpired, so the console would throw a perfectly good token away and fetch another,
+	// forever. It has to be the 404 that maps to ValidationFailed.
+	stranger, _ := s.store.NewUser()
+	unknown := s.idToken(stranger, nil, "", nil)
+	if w := do(t, s, "POST", "/internal/switch/identity", "", `{"id_token":"`+unknown+`"}`); w.Code != 404 {
+		t.Fatalf("unlinked account answered %d, want 404 -- 401 puts the console in a refresh loop: %s", w.Code, w.Body)
+	}
 }

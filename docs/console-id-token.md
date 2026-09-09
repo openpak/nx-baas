@@ -45,6 +45,22 @@ nothing about what *kind* of token it is. Three checks, and all three are load-b
 Then the subject must resolve to a user that is actually **linked** (`PID != 0`). An unlinked
 BAAS user has a valid token and no account behind it.
 
+## The status code is part of the contract
+
+`servers/nex` maps this endpoint's status, so the codes are behaviour, not logging:
+
+| Status | What `servers/nex` does | Right for |
+| --- | --- | --- |
+| 401 | `Authentication::TokenExpired` — the console fetches a fresh token and **retries** | a token that fails its signature, is the wrong kind, or has expired |
+| any other non-200 | `Authentication::ValidationFailed` — **no retry** | a genuine token whose account we do not know |
+
+So the two failures must not be answered alike. `pidForIDToken` returns "this token is genuine",
+not "this call succeeded": a genuine token for an unknown or unlinked subject comes back as
+`(0, true)` and falls through to the handler's existing 404, which is what the endpoint already
+answers for a pid it cannot resolve. Answering 401 there would tell a console its perfectly good
+token had expired, and it would fetch another and ask again — forever. That case has its own
+assertion in the test, confirmed by inverting it and watching the 401 come back.
+
 `openpak` still takes precedence when both fields are sent, so every emulator login goes down exactly
 the path it did before.
 
