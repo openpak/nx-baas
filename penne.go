@@ -47,7 +47,7 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 	case strings.HasPrefix(host, "beach."):
 		writeJSON(w, 200, map[string]any{}) // /contents, /penne_id/register, /set: observed 200 {}
 	case strings.HasPrefix(host, "gw.") && strings.Contains(p, "/accounts/vphyms"):
-		writeJSON(w, 404, map[string]any{})
+		writeJSON(w, 200, payloadEnvelope(map[string]any{})) // 404 makes the title restart its whole bootstrap with a new penne id, forever
 	case strings.HasPrefix(host, "gw.") && (r.Method == "PUT" || r.Method == "POST") && strings.HasPrefix(p, "/v1/devices/"):
 		w.WriteHeader(204)
 	case strings.HasPrefix(host, "gw.") && p == "/v1/devices/vermillion-device-id":
@@ -59,6 +59,15 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 		writeJSON(w, 404, map[string]any{})
 	}
 	log.Printf("[nx-baas] penne %s %s%s -> handled", r.Method, host, p)
+}
+
+// payloadEnvelope wraps an object the way the vermillion account endpoints return it:
+// {"payload": "<base64 of the object's JSON>"}. A bare 404 (or a "{}") on one of these reads as
+// account setup failed, and the title restarts its whole bootstrap with a fresh penne id --
+// forever. An empty inner object is fine; the 200 with an envelope is what breaks the loop.
+func payloadEnvelope(inner map[string]any) map[string]any {
+	b, _ := json.Marshal(inner)
+	return map[string]any{"payload": base64.StdEncoding.EncodeToString(b)}
 }
 
 // deviceIDFromUA pulls the console's own device id out of the SDK's User-Agent,

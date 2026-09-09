@@ -3,10 +3,51 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+// A gw. account read must answer 200 with a {"payload": base64(json)} envelope. vphyms used to
+// answer 404, which the title reads as account setup failed -- it then restarts its whole
+// bootstrap with a fresh penne id, forever. An empty inner object is fine; the envelope is not.
+func TestAccountsVphymsAnswersAPayloadEnvelopeNot404(t *testing.T) {
+	r := httptest.NewRequest("GET", "/v1/accounts/vphyms", nil)
+	r.Host = "gw.hac.lp1.vermillion.srv.nintendo.net"
+	w := httptest.NewRecorder()
+	(&server{}).penne(w, r, nil)
+
+	if w.Code != 200 {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if _, err := decodePayload(t, w.Body.Bytes()); err != nil {
+		t.Fatalf("body is not a payload envelope: %v (%s)", err, w.Body.String())
+	}
+}
+
+// decodePayload unwraps a {"payload": base64(json)} envelope into its inner object, asserting the
+// reply is not a bare "{}" (the known failure class on these endpoints).
+func decodePayload(t *testing.T, body []byte) (map[string]any, error) {
+	t.Helper()
+	var env map[string]any
+	if err := json.Unmarshal(body, &env); err != nil {
+		return nil, err
+	}
+	p, ok := env["payload"].(string)
+	if !ok {
+		return nil, errNoPayload
+	}
+	raw, err := base64.StdEncoding.DecodeString(p)
+	if err != nil {
+		return nil, err
+	}
+	var inner map[string]any
+	err = json.Unmarshal(raw, &inner)
+	return inner, err
+}
+
+var errNoPayload = errors.New(`reply has no string "payload" field`)
 
 // The vermillion gateway's device id is read by the client as a URL path segment and stored as
 // its device identity. Three things have to hold at once or the client never leaves its
