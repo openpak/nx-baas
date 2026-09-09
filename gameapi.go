@@ -167,6 +167,34 @@ func (s *server) photonRoom(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
+// POST /internal/photon-identity {"identity":"nex:...|bsdid:..."} -> {"pid":..,"country":"AU"}
+// The Photon master asks this when a player authenticates, so a room they create can be placed
+// on the region node for their country. Same identity shapes as photon-room.
+func (s *server) photonIdentity(w http.ResponseWriter, r *http.Request) {
+	if !s.internalOK(r) {
+		apiErr(w, http.StatusUnauthorized, "internal")
+		return
+	}
+	var in struct {
+		Identity string `json:"identity"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in); err != nil {
+		apiErr(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	pid := s.pidForIdentity(in.Identity)
+	if pid == 0 {
+		apiErr(w, http.StatusBadRequest, "unknown identity")
+		return
+	}
+	id, err := s.acct.Identity(pid)
+	if err != nil {
+		apiErr(w, http.StatusNotFound, "unknown pid")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"pid": pid, "country": id.Country})
+}
+
 func validRoomCode(room string) bool {
 	if len(room) < 4 || len(room) > 8 {
 		return false
@@ -319,6 +347,7 @@ func (s *server) mintToken(w http.ResponseWriter, r *http.Request) {
 func (s *server) gameAPI() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/internal/photon-room", s.photonRoom)
+	mux.HandleFunc("/internal/photon-identity", s.photonIdentity)
 	mux.HandleFunc("/internal/mint-token", s.mintToken)
 	mux.HandleFunc("/internal/switch/identity", s.switchIdentity)
 	mux.HandleFunc("/internal/switch/friend-code", s.switchFriendCode)

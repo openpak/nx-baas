@@ -26,7 +26,7 @@ func (b *stubBackend) Identity(pid uint64) (*Identity, error) {
 	if !ok {
 		return nil, fmt.Errorf("unknown pid %d", pid)
 	}
-	id := &Identity{PID: pid, Nickname: name, FriendCode: "SW-0000-0000-0000"}
+	id := &Identity{PID: pid, Nickname: name, FriendCode: "SW-0000-0000-0000", Country: "AU"}
 	for _, f := range b.friends[pid] {
 		id.Friends = append(id.Friends, Friend{PID: f})
 	}
@@ -125,6 +125,26 @@ func TestInvitationMailbox(t *testing.T) {
 	w = do(t, s, "GET", "/api/invitations", s.acct.nexToken(joinerPID, "OutboundJoiner"), "")
 	if !strings.Contains(w.Body.String(), `"invitations":[]`) {
 		t.Fatalf("poll must consume: %s", w.Body)
+	}
+}
+
+// The Photon master places a new room on the node for its creator's country; this is where it
+// learns the country. Same identity shapes as photon-room, same refusal of a stranger.
+func TestPhotonIdentityAnswersCountry(t *testing.T) {
+	s := testServer(t)
+	for _, identity := range []string{"nex:" + s.acct.nexToken(hostPID, "OutboundHost"), "bsdid:hostbsdid"} {
+		w := do(t, s, "POST", "/internal/photon-identity", "", fmt.Sprintf(`{"identity":%q}`, identity))
+		if w.Code != 200 || !strings.Contains(w.Body.String(), `"country":"AU"`) {
+			t.Fatalf("%s: %d %s", identity, w.Code, w.Body)
+		}
+	}
+	if w := do(t, s, "POST", "/internal/photon-identity", "", `{"identity":"bsdid:nobody"}`); w.Code != 400 {
+		t.Fatalf("unknown identity accepted: %d", w.Code)
+	}
+	// The identity reply a game server reads carries it too.
+	w := do(t, s, "POST", "/internal/switch/identity", "", fmt.Sprintf(`{"pid":%d}`, hostPID))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"country":"AU"`) {
+		t.Fatalf("switch/identity: %d %s", w.Code, w.Body)
 	}
 }
 
