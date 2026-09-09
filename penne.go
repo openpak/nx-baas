@@ -46,6 +46,8 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 		writeJSON(w, 200, map[string]any{"expires_at": now + 4*86400, "frontline_fqdn": frontline, "issued_at": now, "persistent_connection_params_simple": params, "ticket": randHex(32)})
 	case strings.HasPrefix(host, "beach."):
 		writeJSON(w, 200, map[string]any{}) // /contents, /penne_id/register, /set: observed 200 {}
+	case strings.HasPrefix(host, "gw.") && p == "/v1/accounts/config":
+		writeJSON(w, 200, payloadEnvelope(map[string]any{"online_license": map[string]any{"is_available": true}})) // the online gate; is_available:false parks the game at the lobby with 2321-4992
 	case strings.HasPrefix(host, "gw.") && strings.Contains(p, "/accounts/vphyms"):
 		writeJSON(w, 200, payloadEnvelope(map[string]any{})) // 404 makes the title restart its whole bootstrap with a new penne id, forever
 	case strings.HasPrefix(host, "gw.") && (r.Method == "PUT" || r.Method == "POST") && strings.HasPrefix(p, "/v1/devices/"):
@@ -53,7 +55,7 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 	case strings.HasPrefix(host, "gw.") && p == "/v1/devices/vermillion-device-id":
 		writeJSON(w, 200, map[string]any{"vermillionDeviceId": vermillionDeviceID(deviceIDFromUA(r.UserAgent()))})
 	case strings.HasPrefix(host, "gw."):
-		writeJSON(w, 200, map[string]any{}) // /v1/devices/<id>, /v1/accounts/config
+		writeJSON(w, 200, map[string]any{}) // /v1/devices/<id>
 	default:
 		dump(r, body, "!! UNHANDLED penne/npns")
 		writeJSON(w, 404, map[string]any{})

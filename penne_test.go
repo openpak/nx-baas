@@ -26,6 +26,28 @@ func TestAccountsVphymsAnswersAPayloadEnvelopeNot404(t *testing.T) {
 	}
 }
 
+// config is the online gate: its payload must carry online_license.is_available true, or the game
+// reaches the lobby and stops with 2321-4992. Before this it fell to the gw. catchall and answered
+// a bare "{}", which carries no licence at all.
+func TestAccountsConfigCarriesOnlineLicense(t *testing.T) {
+	r := httptest.NewRequest("GET", "/v1/accounts/config", nil)
+	r.Host = "gw.hac.lp1.vermillion.srv.nintendo.net"
+	w := httptest.NewRecorder()
+	(&server{}).penne(w, r, nil)
+
+	if w.Code != 200 {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	inner, err := decodePayload(t, w.Body.Bytes())
+	if err != nil {
+		t.Fatalf("body is not a payload envelope: %v (%s)", err, w.Body.String())
+	}
+	lic, _ := inner["online_license"].(map[string]any)
+	if lic == nil || lic["is_available"] != true {
+		t.Errorf("online_license.is_available is not true; payload = %v", inner)
+	}
+}
+
 // decodePayload unwraps a {"payload": base64(json)} envelope into its inner object, asserting the
 // reply is not a bare "{}" (the known failure class on these endpoints).
 func decodePayload(t *testing.T, body []byte) (map[string]any, error) {
