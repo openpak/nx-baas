@@ -1693,6 +1693,9 @@ func main() {
 		phones:  newPhoneStore(),
 		acct:    newBackend(),
 	}
+	if b, ok := s.acct.(*openpakBackend); ok {
+		go s.followCoreEvents(b)
+	}
 	if u := os.Getenv("SAVES_URL"); u != "" {
 		s.saves, s.savesKey = newSavesProxy(u), os.Getenv("SAVES_INTERNAL_KEY")
 		log.Printf("[nx-baas] save-data cloud: forwarding scsi hosts to %s", u)
