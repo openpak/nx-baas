@@ -351,6 +351,9 @@ func (s *server) gameAPI() http.Handler {
 	mux.HandleFunc("/internal/mint-token", s.mintToken)
 	mux.HandleFunc("/internal/switch/identity", s.switchIdentity)
 	mux.HandleFunc("/internal/switch/friend-code", s.switchFriendCode)
+	mux.HandleFunc("/internal/switch/emulator", s.switchEmulator)
+	mux.HandleFunc("/internal/switch/emulator/friend", s.switchEmulatorFriend)
+	mux.HandleFunc("/internal/switch/ca", s.switchCA)
 	mux.HandleFunc("/api/invitations", s.invitations)
 	if base := os.Getenv("ACCOUNT_API"); base != "" {
 		if u, err := url.Parse(strings.TrimRight(base, "/")); err == nil {
