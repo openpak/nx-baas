@@ -13,6 +13,8 @@ package main
 import (
 	"log"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -34,10 +36,11 @@ func (s *server) bcat(w http.ResponseWriter, r *http.Request, body []byte) {
 	}
 }
 
-// olsc serves online save storage. Nothing is stored, so every list is empty
-// and every upload is refused politely rather than 404'd: a console that gets
-// a 404 here reports a save-data error, one that gets an empty list simply has
-// no cloud saves.
+// olsc is the answer when no saves service is configured (SAVES_URL empty):
+// nothing is stored, so every list is empty and every upload is refused
+// politely rather than 404'd. A console that gets a 404 here reports a
+// save-data error; one that gets an empty list simply has no cloud saves.
+// With SAVES_URL set the scsi hosts never reach this: see savesProxy.
 func (s *server) olsc(w http.ResponseWriter, r *http.Request, body []byte) {
 	p := r.URL.Path
 	switch {
@@ -76,4 +79,47 @@ func (s *server) frs(w http.ResponseWriter, r *http.Request, _ []byte) {
 func (s *server) serviceStatus(w http.ResponseWriter, r *http.Request, _ []byte) {
 	log.Printf("[nx-baas] service status %s", r.URL.Path)
 	writeJSON(w, 200, map[string]any{"status": "available", "type": "NORMAL"})
+}
+
+// newSavesProxy forwards a scsi-host request to the saves service: same path under /scsi,
+// same query, body streamed. The console's bearer is replaced by the account it proves.
+func newSavesProxy(base string) *httputil.ReverseProxy {
+	target, err := url.Parse(base)
+	if err != nil {
+		log.Fatalf("[nx-baas] SAVES_URL %q: %v", base, err)
+	}
+	return &httputil.ReverseProxy{
+		Director: func(r *http.Request) {
+			r.URL.Scheme, r.URL.Host = target.Scheme, target.Host
+			r.URL.Path = "/scsi" + r.URL.Path
+			r.URL.RawPath = ""
+			r.Host = target.Host
+		},
+		FlushInterval: -1,
+	}
+}
+
+// savesProxy attaches who the console is. The storage API carries the BAAS access token;
+// the blob hosts carry nothing, and the saves service treats their signed URLs as the
+// credential. The token never travels on: only the account it proved does.
+func (s *server) savesProxy(w http.ResponseWriter, r *http.Request) {
+	r.Header.Del("X-OpenPak-Account")
+	r.Header.Del("X-OpenPak-NSA")
+	r.Header.Del("X-OpenPak-Device")
+	r.Header.Set("X-Internal-Key", s.savesKey)
+	if claims := s.bearer(r); claims != nil {
+		if uid := str(claims, "sub"); uid != "" {
+			if u := s.store.User(uid); u != nil {
+				if b, ok := s.acct.(interface{ accountFor(uint64) string }); ok {
+					if acct := b.accountFor(u.PID); acct != "" {
+						r.Header.Set("X-OpenPak-Account", acct)
+						r.Header.Set("X-OpenPak-NSA", uid)
+						r.Header.Set("X-OpenPak-Device", str(claims, "bs:did"))
+					}
+				}
+			}
+		}
+	}
+	r.Header.Del("Authorization")
+	s.saves.ServeHTTP(w, r)
 }

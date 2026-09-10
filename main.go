@@ -29,6 +29,7 @@ import (
 	"log"
 	"math/big"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"strconv"
@@ -72,6 +73,10 @@ type server struct {
 	links   *linkStore        // pending QR console links, by code
 	guesses *guesses          // wrong-code attempts, per account
 	phones  *phoneStore       // signed-in phones entering a code
+	// saves forwards the scsi hosts (save-data cloud) to the saves service, with the
+	// console's proven account attached. nil answers the empty-cloud fallback instead.
+	saves    *httputil.ReverseProxy
+	savesKey string
 }
 
 type naCode struct {
@@ -1559,9 +1564,14 @@ var debug = os.Getenv("NX_DEBUG") != ""
 var minimal = os.Getenv("NX_MINIMAL") != "" // bisecting 2124-0292: only the NA link on top of the POST /users shape
 
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	host := hostOf(r)
 	log.Printf("[nx-baas] %s %s%s ua=%q", r.Method, host, r.URL.RequestURI(), r.UserAgent())
+	if s.saves != nil && strings.Contains(host, "scsi.srv.nintendo.net") {
+		// Before the body is read: a save can be hundreds of MB and streams through.
+		s.savesProxy(w, r)
+		return
+	}
+	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if debug && !strings.HasPrefix(r.URL.Path, "/avatar/") {
 		dump(r, passwordRe.ReplaceAll(body, []byte("password=***")), "DBG >>>")
 		rec := &recorder{ResponseWriter: w, status: 200}
@@ -1682,6 +1692,10 @@ func main() {
 		guesses: newGuesses(),
 		phones:  newPhoneStore(),
 		acct:    newBackend(),
+	}
+	if u := os.Getenv("SAVES_URL"); u != "" {
+		s.saves, s.savesKey = newSavesProxy(u), os.Getenv("SAVES_INTERNAL_KEY")
+		log.Printf("[nx-baas] save-data cloud: forwarding scsi hosts to %s", u)
 	}
 	s.jwks = jwksFor(&key.PublicKey, s.idKid, getenv("BAAS_ID_KID", "00000000-0000-0000-0000-000000000002"), s.accKid, s.naKid)
 	cert := selfSigned([]string{baasHost, "m-lp1.baas.nintendo.com", "cdn-image-e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com",
