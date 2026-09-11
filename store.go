@@ -66,6 +66,12 @@ type FriendRequestRecord struct {
 	ToPID     uint64 `json:"toPid"`
 	CreatedAt int64  `json:"createdAt"`
 	UpdatedAt int64  `json:"updatedAt"`
+	// State is empty while the request is open, then the answer it was
+	// settled with. The record outlives the answer so that the console's
+	// repeat of the same PATCH gets the same reply instead of a 404 it
+	// reads as "this invitation is no longer valid".
+	State     string `json:"state,omitempty"`
+	SettledAt int64  `json:"settledAt,omitempty"`
 }
 
 // User is a BAAS user. PID == 0 means not yet linked to a OpenPak account; once linked its ID is
@@ -312,10 +318,17 @@ func bumpFriendsUpdated(u *User, now int64) int64 {
 func (s *Store) EnsureRequest(fromPID, toPID uint64) (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := time.Now().Unix()
 	if s.Requests == nil {
 		s.Requests = map[string]*FriendRequestRecord{}
 	}
-	for _, r := range s.Requests {
+	for id, r := range s.Requests {
+		if r.State != "" {
+			if now-r.SettledAt > settledRequestRetention {
+				delete(s.Requests, id) // answered long ago: nobody retries that far back
+			}
+			continue // a settled id must not be reused for a new request
+		}
 		if r.FromPID == fromPID && r.ToPID == toPID {
 			return r.ID, false
 		}
@@ -324,7 +337,6 @@ func (s *Store) EnsureRequest(fromPID, toPID uint64) (string, bool) {
 	for s.Requests[id] != nil { // collision with a historic id
 		id = randHex(8)
 	}
-	now := time.Now().Unix()
 	s.Requests[id] = &FriendRequestRecord{ID: id, FromPID: fromPID, ToPID: toPID, CreatedAt: now, UpdatedAt: now}
 	s.save()
 	return id, true
@@ -342,20 +354,24 @@ func (s *Store) RequestByID(id string) *FriendRequestRecord {
 	return &cp
 }
 
-// DropRequest removes a request record whose lifecycle is over (accepted,
-// rejected, cancelled): the core is the state of record, and a stale id must
-// not authorize a second accept. Keeping history would also grow the store
-// without bound.
-func (s *Store) DropRequest(id string) {
+// settledRequestRetention is how long an answered request keeps answering
+// repeats of its own PATCH. The core is the state of record either way; this
+// is only so the console can ask twice.
+const settledRequestRetention = 7 * 24 * 3600
+
+// SettleRequest marks a request answered. The record stays so a repeat of the
+// same answer replies the same way, but it can no longer authorize a second
+// commit: the handler sees State and skips the core call.
+func (s *Store) SettleRequest(id, state string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.Requests == nil {
+	r := s.Requests[id]
+	if r == nil {
 		return
 	}
-	if _, ok := s.Requests[id]; ok {
-		delete(s.Requests, id)
-		s.save()
-	}
+	now := time.Now().Unix()
+	r.State, r.SettledAt, r.UpdatedAt = state, now, now
+	s.save()
 }
 
 // LiveUsers snapshots the users for the presence reconciler: the reconciler

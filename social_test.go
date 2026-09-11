@@ -223,19 +223,36 @@ func TestRejectCancelRemoveCommitOrError(t *testing.T) {
 
 // A second answer to a settled request is refused: the record is dropped
 // after its lifecycle ends, and the core refuses what the cache shows.
-func TestSettledRequestCannotBeAnsweredTwice(t *testing.T) {
+// The console answers the same request twice — once from the request box and
+// once confirming — so the repeat has to reply like the first: 404 there reads
+// as "this invitation is no longer valid" even though the friendship went
+// through. It must not commit a second time, and it must not answer a
+// different state.
+func TestSettledRequestAnswersTheSameTwiceAndCommitsOnce(t *testing.T) {
 	s, _, users := socialServer(t)
 	a, b := users[0], users[1]
 	_, req := postRequest(t, s, a, `{"receiverId":"`+b.ID+`"}`)
 	reqID := req["id"].(string)
-	if code, _ := answerRequest(t, s, b, "PATCH", reqID,
-		`[{"op":"replace","path":"/state","value":"AUTHORIZED"}]`); code != http.StatusOK {
+	accept := `[{"op":"replace","path":"/state","value":"AUTHORIZED"}]`
+	if code, _ := answerRequest(t, s, b, "PATCH", reqID, accept); code != http.StatusOK {
 		t.Fatal("first accept failed")
 	}
-	code, _ := answerRequest(t, s, b, "PATCH", reqID,
-		`[{"op":"replace","path":"/state","value":"AUTHORIZED"}]`)
-	if code < 400 {
-		t.Errorf("second accept returned %d; a settled request must not authorize twice", code)
+	code, again := answerRequest(t, s, b, "PATCH", reqID, accept)
+	if code != http.StatusOK {
+		t.Fatalf("second accept returned %d, want 200", code)
+	}
+	if again["state"] != "AUTHORIZED" {
+		t.Errorf("second accept state = %v, want AUTHORIZED", again["state"])
+	}
+	// One friendship, not two: the repeat replied without touching the core.
+	id, err := s.acct.Identity(b.PID)
+	if err != nil || len(id.Friends) != 1 {
+		t.Errorf("friends after the repeat: %+v %v, want exactly one", id, err)
+	}
+	// A different answer to a settled request is genuinely gone.
+	if code, _ := answerRequest(t, s, b, "PATCH", reqID,
+		`[{"op":"replace","path":"/state","value":"REJECTED"}]`); code != http.StatusNotFound {
+		t.Errorf("reject after accept returned %d, want 404", code)
 	}
 }
 

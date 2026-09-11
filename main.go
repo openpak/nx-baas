@@ -1323,6 +1323,16 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		record, other := s.friendRequestByRef(seg[1])
 		var err error
 		switch {
+		case record != nil && record.State != "":
+			// Already answered. The console PATCHes the same request twice —
+			// once from the request box, once confirming — and a 404 on the
+			// second one reads as "this invitation is no longer valid" even
+			// though the friendship went through. Same answer, no second
+			// commit; a different answer is genuinely gone.
+			if record.State != state {
+				baasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
+				return
+			}
 		case record != nil:
 			// The durable path: the record names the pair, so authorization
 			// is exact — only the addressee answers, only the sender cancels.
@@ -1338,7 +1348,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 				return
 			}
 			if err == nil {
-				s.store.DropRequest(record.ID) // answered: a stale id must not answer twice
+				s.store.SettleRequest(record.ID, state) // a stale id must not commit twice
 			}
 		case other != nil:
 			// A bare user id: a request box cached by an older build of this
