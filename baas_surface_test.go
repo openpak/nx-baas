@@ -427,3 +427,21 @@ func TestFriendRecommendationsAnswerLikeTheReferenceDoes(t *testing.T) {
 		t.Errorf("body = %q, want empty", w.Body.String())
 	}
 }
+
+// Consoles that cached the empty list from the old friend-list shape hold a
+// friendsUpdatedAt from before the fix, so nothing tells them to fetch again.
+// The format epoch is that one-time nudge: every account reports at least it.
+func TestOldFriendListCacheIsInvalidatedOnce(t *testing.T) {
+	s := dauthServer(t)
+	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	me, _ := s.store.NewUser()
+	s.store.Update(me, func(u *User) { u.PID, u.FriendsUpdatedAt = 1, friendListFormatEpoch-1 })
+	if got := s.userObj(me, nil, "")["friendsUpdatedAt"].(int64); got != friendListFormatEpoch {
+		t.Errorf("stale cache not invalidated: friendsUpdatedAt = %d, want %d", got, friendListFormatEpoch)
+	}
+	// A later friendship still wins; the floor is a floor, not the answer.
+	s.store.Update(me, func(u *User) { u.FriendsUpdatedAt = friendListFormatEpoch + 5 })
+	if got := s.userObj(me, nil, "")["friendsUpdatedAt"].(int64); got != friendListFormatEpoch+5 {
+		t.Errorf("friendsUpdatedAt = %d, want %d", got, friendListFormatEpoch+5)
+	}
+}
