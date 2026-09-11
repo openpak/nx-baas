@@ -371,6 +371,38 @@ func (s *server) mintToken(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"pid": in.PID, "username": id.Nickname, "friend_code": id.FriendCode, "token": tok})
 }
 
+// POST /internal/notifications/test {"user_id":"…","kind":"presence_updated","payload":{...}}
+// B workstream, DEVELOPMENT ONLY: a synthetic event source so the notification
+// pipeline (submit -> outbox -> frontline frame) can be exercised without the
+// real A/C feeds. It permits development, not end-to-end completion (PRD:
+// "A synthetic event source permits development, not end-to-end completion").
+// Native acceptance still requires the real core events on two consoles.
+func (s *server) penneTestNotification(w http.ResponseWriter, r *http.Request) {
+	if !s.internalOK(r) {
+		apiErr(w, http.StatusUnauthorized, "internal")
+		return
+	}
+	if r.Method != http.MethodPost {
+		apiErr(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	var in struct {
+		UserID  string         `json:"user_id"`
+		Kind    string         `json:"kind"`
+		Payload map[string]any `json:"payload"`
+		ID      string         `json:"id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in); err != nil || in.UserID == "" || in.Kind == "" {
+		apiErr(w, http.StatusBadRequest, "user_id and kind required")
+		return
+	}
+	res := s.SubmitNotification(PenneDelivery{
+		ID: in.ID, UserID: in.UserID, Kind: in.Kind, Payload: in.Payload,
+	})
+	log.Printf("[nx-baas] penne: test notification user=%s kind=%s -> %s", in.UserID, in.Kind, res.Outcome)
+	writeJSON(w, 200, map[string]any{"accepted": res.Accepted, "duplicate": res.Duplicate, "outcome": string(res.Outcome), "id": res.ID})
+}
+
 // ---------- mux ----------
 
 func (s *server) gameAPI() http.Handler {
@@ -385,6 +417,7 @@ func (s *server) gameAPI() http.Handler {
 	mux.HandleFunc("/internal/switch/emulator/friend", s.switchEmulatorFriend)
 	mux.HandleFunc("/internal/switch/ca", s.switchCA)
 	mux.HandleFunc("/api/invitations", s.invitations)
+	mux.HandleFunc("/internal/notifications/test", s.penneTestNotification)
 	if base := os.Getenv("ACCOUNT_API"); base != "" {
 		if u, err := url.Parse(strings.TrimRight(base, "/")); err == nil {
 			proxy := httputil.NewSingleHostReverseProxy(u)
