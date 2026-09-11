@@ -110,8 +110,9 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 		writeJSON(w, 200, map[string]any{"expires_at": ticketRec.ExpiresAt, "frontline_fqdn": frontline, "issued_at": ticketRec.IssuedAt, "persistent_connection_params_simple": params, "ticket": ticket})
 	case strings.HasPrefix(host, "fro-"):
 		s.frontline(w, r)
-	case strings.HasPrefix(host, "beach."):
-		writeJSON(w, 200, map[string]any{}) // /contents, /penne_id/register, /set: observed 200 {} (D workstream owns the Beach surface)
+	// Beach moved to beach.go (store workstream): the `{}` placeholder could not carry the
+	// device/link/rights state the native store journey needs. The router sends beach hosts
+	// straight there; this handler no longer sees them.
 	case strings.HasPrefix(host, "gw.") && p == "/v1/accounts/config":
 		writeJSON(w, 200, payloadEnvelope(map[string]any{"online_license": map[string]any{"is_available": true}})) // the online gate; is_available:false parks the game at the lobby with 2321-4992
 	case strings.HasPrefix(host, "gw.") && strings.Contains(p, "/accounts/vphyms"):

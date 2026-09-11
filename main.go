@@ -91,6 +91,10 @@ type server struct {
 	// versions when unset, so direct handler tests keep working.
 	penneState *penneStore
 	penneHub   *penneHub
+	// shop is the store workstream's state (catalog, entitlements, tasks, beach links);
+	// shopUI holds the storefront's in-memory diagnostics ring.
+	shop   *shopState
+	shopUI *shopUI
 }
 
 type naCode struct {
@@ -1872,11 +1876,29 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	case strings.Contains(host, "accounts.nintendo.com"):
 		s.na(w, r, body)
+	// Store workstream (native OpenPak store, prds/native-switch-store-prd.md): the shop
+	// applet host, the content host and the rights family. These sit before the dauth case
+	// because its prefix list claims the dragons hosts; dauth keeps its setup-critical
+	// dragons answers (console link, 2124-3121) and this only takes the store rights
+	// routes. Beach moved from penne's `{}` placeholder to a real handler; the extraction
+	// keeps penne's own cases untouched.
+	case strings.HasPrefix(host, "bugyo."):
+		s.shopHandler(w, r, body)
+	case strings.Contains(host, ".d4c.nintendo.net"):
+		s.atum(w, r, body)
+	case strings.HasPrefix(host, "dragonst.") || strings.HasPrefix(host, "tigers."):
+		s.dragons(w, r, body)
+	case strings.HasPrefix(host, "dragons.") && shopRightsRoute(r.URL.Path):
+		s.dragons(w, r, body)
+	case strings.HasPrefix(host, "beach."):
+		s.beach(w, r, body)
 	case strings.HasPrefix(host, "dauth") || strings.HasPrefix(host, "dcert") ||
 		strings.HasPrefix(host, "acert") || strings.HasPrefix(host, "aauth") ||
 		strings.HasPrefix(host, "dragons"):
+		// dragons hosts that are not store rights routes keep the dauth handler's
+		// setup-critical answers (elicense archives, exercise, migration state, penne id).
 		s.dauth(w, r, body)
-	case strings.Contains(host, "penne.") || strings.Contains(host, "vermillion.") || strings.HasPrefix(host, "beach."):
+	case strings.Contains(host, "penne.") || strings.Contains(host, "vermillion."):
 		s.penne(w, r, body)
 	case strings.HasSuffix(host, ".five.nintendo.net"):
 		// Native online-play invitations (the friends sysmodule's invite UI).
@@ -1975,6 +1997,7 @@ func main() {
 		guesses: newGuesses(),
 		phones:  newPhoneStore(),
 		acct:    newBackend(),
+		shop:    newShopState(getenv("NX_DATA", "/data") + "/shop"),
 	}
 	if b, ok := s.acct.(*openpakBackend); ok {
 		go s.followCoreEvents(b)
@@ -1998,6 +2021,10 @@ func main() {
 		"god.hac.lp1.penne.srv.nintendo.net", "val.hac.penne.srv.nintendo.net", "val.hac.lp1.penne.srv.nintendo.net",
 		"app.lp1.five.nintendo.net",
 		"fro-3.hac.lp1.penne.srv.nintendo.net", "gw.hac.lp1.vermillion.srv.nintendo.net", "beach.hac.lp1.eshop.nintendo.net", "capi.lp1.op2.nintendo.net",
+		// Store workstream: shop applet host, content host and the tigers eticket host.
+		// dragons/dragonst are already above. The ashigaru page may reference further eshop
+		// names (samurai/sun) — unrouted SNIs still get on-demand certs below.
+		"bugyo.hac.lp1.eshop.nintendo.net", "atum.hac.lp1.d4c.nintendo.net", "tigers.hac.lp1.dragons.nintendo.net",
 		// Device auth: these must be on the fixed cert, not minted on demand — the console
 		// rejects an on-demand cert on the names it authenticates against (2123-0013).
 		"dauth-lp1.ndas.srv.nintendo.net", "dcert-lp1.ndas.srv.nintendo.net", "acert-lp1.ndas.srv.nintendo.net",

@@ -109,6 +109,16 @@ openpak-account.
 `/api/*` uses the `nx2.` openpak bearer. Any other `/api/*` path is forwarded to
 `ACCOUNT_API` until the OpenPak core serves friends/presence/saves itself.
 
+## Native OpenPak store
+
+The shop applet's surface: the storefront and its API on `bugyo.hac.lp1.eshop.nintendo.net`,
+device links and rights on `beach.`/`dragons.`/`dragonst.`/`tigers.`, content delivery with
+edge-token authorization and resumable ranges on `atum.hac.lp1.d4c.nintendo.net`. Catalog,
+entitlements and download tasks persist under `$NX_DATA/shop/` (`catalog.json` you author,
+`state.json` the server writes). What is implemented, what is pending hardware, the wiring
+A needs, and the console-trust proposal for native install:
+[`docs/native-shop.md`](docs/native-shop.md).
+
 ## Known scaling ceilings (recorded, fine for one console)
 
 - `ensure` holds the global projection mutex across up to three core RPCs,
