@@ -9,6 +9,8 @@ Endpoints: `/1.0.0/application/token`, `/1.0.0/users` (+`/<id>`, `/<id>/link`, `
 `device_accounts` presence patch), `/1.0.0/login`, `/1.0.0/federation`, `/1.0.0/certificates`,
 `/2.0.0/users/<id>/friends`, `/2.0.0/friend_requests`, and the Nintendo-Account link flow
 (`/connect/1.0.0/authorize`, `api/session_token`, `api/token`, `/2.0.0/users/me`).
+The native invitation surface (`app.lp1.five.nintendo.net`) and its lifecycle contract live in
+[`docs/invitations.md`](docs/invitations.md).
 Everything unknown is logged in full (`!! UNHANDLED`), which is how the undocumented parts
 (friend invitations) get discovered.
 
