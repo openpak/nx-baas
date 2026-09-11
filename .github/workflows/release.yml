@@ -16,12 +16,16 @@ permissions:
 jobs:
   image:
     runs-on: [self-hosted, linux, podman]
-    env:
-      REGISTRY_AUTH_FILE: ${{ runner.temp }}/auth.json # job-scoped login; never the runner user's own
     steps:
       - uses: actions/checkout@v4
-      - run: echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
-      - run: |
+      # Job-scoped login, never the runner user's own. The runner context is not
+      # available in job-level env, so each step that touches the registry sets it.
+      - env:
+          REGISTRY_AUTH_FILE: ${{ runner.temp }}/auth.json
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - env:
+          REGISTRY_AUTH_FILE: ${{ runner.temp }}/auth.json
+        run: |
           set -e
           IMG="ghcr.io/${{ github.repository }}"
           case "${GITHUB_REF_NAME}" in v*) VER="${GITHUB_REF_NAME#v}";; *) VER="";; esac
