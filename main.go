@@ -1878,6 +1878,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.dauth(w, r, body)
 	case strings.Contains(host, "penne.") || strings.Contains(host, "vermillion.") || strings.HasPrefix(host, "beach."):
 		s.penne(w, r, body)
+	case strings.HasSuffix(host, ".five.nintendo.net"):
+		// Native online-play invitations (the friends sysmodule's invite UI).
+		s.five(w, r, body)
 	case strings.HasPrefix(host, "capi.") && strings.HasSuffix(r.URL.Path, "/memberships"):
 		// NSO membership check (VPS parity): every account has an active "default" membership.
 		seg := strings.Split(r.URL.Path, "/")
@@ -1993,6 +1996,7 @@ func main() {
 	cert := selfSigned([]string{baasHost, "m-lp1.baas.nintendo.com", "cdn-image-e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com",
 		"accounts.nintendo.com", "api.accounts.nintendo.com", "cdn.accounts.nintendo.com",
 		"god.hac.lp1.penne.srv.nintendo.net", "val.hac.penne.srv.nintendo.net", "val.hac.lp1.penne.srv.nintendo.net",
+		"app.lp1.five.nintendo.net",
 		"fro-3.hac.lp1.penne.srv.nintendo.net", "gw.hac.lp1.vermillion.srv.nintendo.net", "beach.hac.lp1.eshop.nintendo.net", "capi.lp1.op2.nintendo.net",
 		// Device auth: these must be on the fixed cert, not minted on demand — the console
 		// rejects an on-demand cert on the names it authenticates against (2123-0013).

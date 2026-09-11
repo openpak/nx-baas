@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -58,9 +59,10 @@ const (
 
 func testServer(t *testing.T) *server {
 	t.Helper()
-	invitationsMu.Lock()
-	invitationsBy = map[uint64][]pendingInvitation{}
-	invitationsMu.Unlock()
+	// The durable invitation store lives in the test's temp dir (INV-03: the
+	// mailbox survives restarts, so tests must exercise the file, not memory).
+	invStoreOverride = loadInvitationStore(filepath.Join(t.TempDir(), "invitations.json"))
+	t.Cleanup(func() { invStoreOverride = nil })
 	acct := &stubBackend{
 		key:     []byte("0123456789abcdef0123456789abcdef"),
 		friends: map[uint64][]uint64{hostPID: {joinerPID}, joinerPID: {hostPID}},
@@ -68,6 +70,7 @@ func testServer(t *testing.T) *server {
 	}
 	s := &server{store: loadStore(t.TempDir() + "/baas.json"), acct: acct}
 	s.store.Users["aaaa"] = &User{ID: "aaaa", PID: hostPID, BsDid: "hostbsdid"}
+	s.store.Users["bbbb"] = &User{ID: "bbbb", PID: joinerPID, BsDid: "joinerbsdid"}
 	return s
 }
 

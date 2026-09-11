@@ -1,0 +1,12 @@
+{
+ "id": "int",
+ "sender_id": "str",
+ "invitation_type": "str",
+ "application_id": "str",
+ "application_group_id": "str",
+ "application_data": "str",
+ "messages": {"en-US": "str"},
+ "created_at": "int",
+ "updated_at": "int",
+ "invitations": ["<object>"]
+}

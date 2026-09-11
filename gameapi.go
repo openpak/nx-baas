@@ -16,6 +16,7 @@ package main
 // ponytail: drop the forwarder once the OpenPak core serves those directly.
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -27,7 +28,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -41,17 +41,8 @@ const maxQueuedPerTarget = 8
 // FriendInvitationApplicationParameterSizeMax on the console side.
 const maxAppParam = 1024
 
-type pendingInvitation struct {
-	FromPID  uint64
-	FromName string
-	AppParam []byte // opaque, game-defined bytes -- never inspected here
-	Created  time.Time
-}
-
-var (
-	invitationsMu sync.Mutex
-	invitationsBy = map[uint64][]pendingInvitation{} // target pid -> queued invitations
-)
+// Superseded by the durable invitation store (invitations.go); the five-minute
+// staleness bound is kept there (invitationLegacyTTL).
 
 func apiErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]any{"error": msg})
@@ -238,20 +229,11 @@ func validRoomCode(room string) bool {
 
 // ---------- invitations ----------
 
-func pruneInvitationsLocked(pid uint64) []pendingInvitation {
-	queue := invitationsBy[pid]
-	if len(queue) == 0 {
-		return queue
-	}
-	fresh, now := queue[:0], time.Now()
-	for _, inv := range queue {
-		if now.Sub(inv.Created) <= invitationTTL {
-			fresh = append(fresh, inv)
-		}
-	}
-	invitationsBy[pid] = fresh
-	return fresh
-}
+// The legacy mailbox is now a view over the durable invitation store
+// (invitations.go): the emulator and the console title path keep their exact
+// wire shape, but a restart no longer loses queued invitations, native and
+// legacy sends land in one lifecycle, and a stale room fails the pop cleanly
+// (INV-03/INV-04). The five-minute TTL stands as the room-staleness bound.
 
 func (s *server) invitations(w http.ResponseWriter, r *http.Request) {
 	pid, name, ok := s.callerPID(r)
@@ -271,7 +253,9 @@ func (s *server) invitations(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/invitations {"target_pids":[...],"app_param_base64":"..."}
 // Only queues to the sender's mutual friends -- the console's own Invite Friends only ever
-// lists friends, and without the check this is a generic spam relay.
+// lists friends, and without the check this is a generic spam relay. With the OpenPak core
+// attached, the core's own interaction check (friendship, blocks, account status) is the
+// authority; the friend list is the fallback for the legacy backend.
 func (s *server) sendInvitation(w http.ResponseWriter, r *http.Request, from uint64, name string) {
 	var in struct {
 		TargetPIDs     []uint64 `json:"target_pids"`
@@ -299,20 +283,39 @@ func (s *server) sendInvitation(w http.ResponseWriter, r *http.Request, from uin
 	if id.Nickname != "" {
 		name = id.Nickname
 	}
+	sender := s.store.UserByPID(from)
+	if sender == nil {
+		apiErr(w, http.StatusBadRequest, "unknown identity")
+		return
+	}
+	// The sender's title now, so the invitation carries an application id and
+	// the staleness check can answer "is this room still alive" later.
+	appID := sender.Presence.AppID
+	core := s.invitationCoreFor()
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
 	sent := 0
-	invitationsMu.Lock()
 	for _, pid := range in.TargetPIDs {
-		if !isFriend(id, pid) {
+		target := s.store.UserByPID(pid)
+		if target == nil || !isFriend(id, pid) {
 			continue
 		}
-		queue := pruneInvitationsLocked(pid)
-		if len(queue) >= maxQueuedPerTarget {
-			queue = queue[1:]
+		if core != nil {
+			actorID, _ := core.AccountForBaas(sender.ID)
+			targetID, ok := core.AccountForBaas(target.ID)
+			if !ok {
+				continue
+			}
+			allowed, _, err := core.CheckInteraction(ctx, actorID, targetID)
+			if err != nil || !allowed {
+				continue
+			}
+		} else if meBlocks(sender, target.ID) || targetBlocksUser(s, target.ID, sender.ID) {
+			continue
 		}
-		invitationsBy[pid] = append(queue, pendingInvitation{FromPID: from, FromName: name, AppParam: appParam, Created: time.Now()})
+		createLegacyInvitation(sender, name, target, in.AppParamBase64, appID)
 		sent++
 	}
-	invitationsMu.Unlock()
 	log.Printf("[nx-baas] invitation %s(%d) -> %d/%d target(s)", name, from, sent, len(in.TargetPIDs))
 	writeJSON(w, 200, map[string]any{"ok": true, "sent": sent})
 }
@@ -329,15 +332,15 @@ func isFriend(id *Identity, pid uint64) bool {
 // GET /api/invitations -- pops every invitation queued for the caller, matching the console's
 // own TryPopFromFriendInvitationStorageChannel (a poll-until-something's-there call).
 func (s *server) pollInvitations(w http.ResponseWriter, pid uint64) {
-	invitationsMu.Lock()
-	queue := pruneInvitationsLocked(pid)
-	delete(invitationsBy, pid)
-	invitationsMu.Unlock()
-
-	out := make([]map[string]any, 0, len(queue))
-	for _, inv := range queue {
-		out = append(out, map[string]any{"from_pid": inv.FromPID, "from_name": inv.FromName,
-			"app_param_base64": base64.StdEncoding.EncodeToString(inv.AppParam)})
+	receiver := s.store.UserByPID(pid)
+	if receiver == nil {
+		writeJSON(w, 200, map[string]any{"invitations": []any{}})
+		return
+	}
+	out := make([]map[string]any, 0, 4)
+	for _, inv := range popLegacyInvitations(s, receiver) {
+		out = append(out, map[string]any{"from_pid": inv.LegacyFromPID, "from_name": inv.LegacyFromName,
+			"app_param_base64": inv.ApplicationData})
 	}
 	writeJSON(w, 200, map[string]any{"invitations": out})
 }
