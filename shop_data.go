@@ -203,31 +203,31 @@ func pluralY(n int) string {
 // It exists so SHP-01/02 have something deterministic to render before the operator places
 // a real redistributable package; its content is synthetic and says so.
 func defaultShopCatalog() map[string]*ShopTitle {
-	return map[string]*ShopTitle{
-		// Title ids in this store end in 0, as every real title id does (the low nibble is
-		// where the rights-id mapping stores the title type; see rightsIDFor).
-		"0f9f0c0ffee00000": {
-			TitleID:       "0f9f0c0ffee00001",
-			Publisher:     "OpenPak",
-			Category:      "test",
-			SizeBytes:     64,
-			Version:       65536,
-			VersionLabel:  "1.0.0",
-			Compatibility: []string{"handheld", "docked"},
-			Languages:     []string{"en-US"},
-			Content:       []ShopContent{},
-			Distribution: ShopDistribution{
-				Source:     "synthetic fixture",
-				Permission: "OpenPak original test fixture: the repository's own synthetic data, no third-party material.",
-			},
-			Localized: map[string]ShopText{
-				"en-US": {Name: "OpenPak Store Test Title", Description: "Synthetic fixture for the native store tests. Not a real game."},
-				"ja":    {Name: "OpenPak ストア テスト", Description: "ネイティブストアのテスト用フィクスチャ。"},
-			},
-			DefaultLang: "en-US",
-			UpdatedAt:   time.Date(2026, 9, 11, 0, 0, 0, 0, time.UTC).Unix(),
+	fixture := &ShopTitle{
+		TitleID:       "0f9f0c0ffee00000",
+		Publisher:     "OpenPak",
+		Category:      "test",
+		SizeBytes:     64,
+		Version:       65536,
+		VersionLabel:  "1.0.0",
+		Compatibility: []string{"handheld", "docked"},
+		Languages:     []string{"en-US"},
+		Content:       []ShopContent{},
+		Distribution: ShopDistribution{
+			Source:     "synthetic fixture",
+			Permission: "OpenPak original test fixture: the repository's own synthetic data, no third-party material.",
 		},
+		Localized: map[string]ShopText{
+			"en-US": {Name: "OpenPak Store Test Title", Description: "Synthetic fixture for the native store tests. Not a real game."},
+			"ja":    {Name: "OpenPak ストア テスト", Description: "ネイティブストアのテスト用フィクスチャ。"},
+		},
+		DefaultLang: "en-US",
+		UpdatedAt:   time.Date(2026, 9, 11, 0, 0, 0, 0, time.UTC).Unix(),
 	}
+	// Title ids in this store end in 0, as every real title id does (the low nibble is
+	// where the rights-id mapping stores the title type; see rightsIDFor). The map is
+	// keyed by the id field itself so the two cannot drift apart again.
+	return map[string]*ShopTitle{fixture.TitleID: fixture}
 }
 
 // text applies the language fallback: exact tag, then primary subtag, then the entry's
