@@ -243,3 +243,37 @@ func TestPushChannelsAndLinksPersist(t *testing.T) {
 		t.Fatal("push channel not persisted")
 	}
 }
+
+// Consoles that registered against the permissive build hold ids this store
+// never minted; they retry a 401 forever rather than re-register, so the
+// account token they already present adopts the pair. It must not become a way
+// to take over an id that exists, or to register without an account.
+func TestAdoptsAPreExistingIDOnlyForAProvenAccount(t *testing.T) {
+	s := &server{}
+	store := s.notifStore()
+	now := time.Now()
+	old := map[string]any{"id": "pzxi59slaemjyhqvc6ecv6yyerka74wdc", "password": "4f37li22zp0e79vnzthn9ed195pug1bh"}
+
+	if _, ok := s.penneAuthedAssoc(store, old, "", "device-a", now); ok {
+		t.Error("adopted an id with no account behind the request")
+	}
+	a, ok := s.penneAuthedAssoc(store, old, "user-a", "device-a", now)
+	if !ok {
+		t.Fatal("a console with a valid account token could not adopt its own id")
+	}
+	if a.UserID != "user-a" || a.DeviceID != "device-a" {
+		t.Errorf("adopted association bound to %s/%s", a.UserID, a.DeviceID)
+	}
+	// Adopted once, it authenticates like any other registration...
+	if _, err := store.CheckAssoc(old["id"].(string), old["password"].(string), now); err != nil {
+		t.Errorf("adopted credentials do not authenticate: %v", err)
+	}
+	// ...and nobody else can claim it with a password of their own.
+	thief := map[string]any{"id": old["id"], "password": "not-the-password"}
+	if _, ok := s.penneAuthedAssoc(store, thief, "user-b", "device-b", now); ok {
+		t.Error("a wrong password took over an existing id")
+	}
+	if _, err := store.CheckAssoc(old["id"].(string), old["password"].(string), now); err != nil {
+		t.Errorf("the original credentials stopped working: %v", err)
+	}
+}

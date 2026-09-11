@@ -237,6 +237,32 @@ func (s *penneStore) Register(deviceID, userID, nsaID string, now time.Time) (id
 	return id, password
 }
 
+// Adopt takes a credential pair the console already holds and makes it real,
+// but only when the id is unknown here and the caller proved an account with a
+// BAAS token: the id names the registration, the token authorizes it. Consoles
+// registered against the permissive build carry ids this store never minted,
+// and without this they retry a 401 forever instead of re-registering.
+func (s *penneStore) Adopt(id, password, deviceID, userID string, now time.Time) (*penneAssoc, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id == "" || password == "" || userID == "" || s.d.Assocs[id] != nil {
+		return nil, false
+	}
+	a := &penneAssoc{
+		ID: id, PasswordHash: hashCred(password),
+		UserID: userID, DeviceID: deviceID,
+		CreatedAt: now.Unix(),
+	}
+	s.d.Assocs[id] = a
+	if deviceID != "" {
+		s.d.ByDevice[deviceID] = id
+	}
+	s.d.ByUser[userID] = id
+	s.saveLocked()
+	cp := *a
+	return &cp, true
+}
+
 // CheckAssoc verifies a penne id + password pair. A wrong password, unknown id
 // or revoked registration is an error naming nothing an attacker can use.
 func (s *penneStore) CheckAssoc(id, password string, now time.Time) (*penneAssoc, error) {

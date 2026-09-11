@@ -141,7 +141,13 @@ func (s *server) penneAuthedAssoc(store *penneStore, in map[string]any, userID, 
 		if a, err := store.CheckAssoc(id, pw, now); err == nil {
 			return a, true
 		}
-		// A supplied id with a wrong password is a denial, never a fallback.
+		// An id this store never minted, from a console that registered against
+		// the old build: adopt it under the account the request already proved.
+		if a, ok := store.Adopt(id, pw, deviceID, userID, now); ok {
+			log.Printf("[nx-baas] penne: adopted a pre-existing id for user %s device %s", userID, deviceID)
+			return a, true
+		}
+		// A known id with a wrong password is a denial, never a fallback.
 		log.Printf("[nx-baas] penne: supplied id denied (bad credentials)")
 		return nil, false
 	}
