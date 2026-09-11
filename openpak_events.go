@@ -41,6 +41,13 @@ func (s *server) followCoreEvents(b *openpakBackend) {
 			switch e.GetType() {
 			case "friend_requested", "friend_accepted", "friend_removed":
 				s.projectionFriendsChanged(b, e.GetAccountId(), e.GetSubjectId())
+			case "account_banned", "account_deleted", "account_delete_started", "credential_revoked", "link_unlinked":
+				// An account that can no longer sign in has no live presence:
+				// end its claims here, and let its friends' consoles re-fetch
+				// (PRE-03: account status reaches every read). unbanned needs
+				// nothing: the account is simply allowed back.
+				s.revokeAccountPresence(b, e.GetAccountId())
+				s.projectionFriendsChanged(b, e.GetAccountId(), e.GetSubjectId())
 			}
 			version = e.GetVersion()
 		}
@@ -49,6 +56,24 @@ func (s *server) followCoreEvents(b *openpakBackend) {
 			continue
 		}
 		time.Sleep(2 * time.Second)
+	}
+}
+
+// revokeAccountPresence ends every device claim of one core account: a
+// banned, deleted or unlinked account is offline everywhere, now, instead of
+// whenever its leases happen to lapse.
+func (s *server) revokeAccountPresence(b *openpakBackend, accountID string) {
+	b.proj.mu.Lock()
+	pr := b.proj.ByAccount[accountID]
+	b.proj.mu.Unlock()
+	if pr == nil {
+		return
+	}
+	if u := s.store.User(pr.BaasUserID); u != nil {
+		s.store.Update(u, func(u *User) {
+			u.DevicePresence = nil
+			u.Presence = Presence{State: "OFFLINE", UpdatedAt: time.Now().Unix(), LogoutAt: time.Now().Unix()}
+		})
 	}
 }
 

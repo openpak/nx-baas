@@ -17,9 +17,10 @@ import (
 	accountv1 "nx-baas/accountpb"
 )
 
-// fakeCore implements the three core client surfaces the OpenPak backend
+// fakeCore implements the core client surfaces the OpenPak backend
 // uses, mirroring the core's rules: one active link per (namespace, account),
-// verified logins only, directional friend state.
+// verified logins only, one pending request per pair (reverse pending fails),
+// directional blocks that deny interactions both ways.
 type fakeCore struct {
 	accounts   map[string]*accountv1.GetAccountResponse
 	passwords  map[string]string
@@ -27,6 +28,7 @@ type fakeCore struct {
 	friends    map[string][]string
 	incoming   map[string][]string
 	outgoing   map[string][]string
+	blocks     map[string]bool // "blocker\x00blocked"
 }
 
 func newFakeCore() *fakeCore {
@@ -37,6 +39,7 @@ func newFakeCore() *fakeCore {
 		friends:    map[string][]string{},
 		incoming:   map[string][]string{},
 		outgoing:   map[string][]string{},
+		blocks:     map[string]bool{},
 	}
 }
 
@@ -49,6 +52,29 @@ func (f *fakeCore) addAccount(id, display, password string) {
 func (f *fakeCore) befriend(a, b string) {
 	f.friends[a] = append(f.friends[a], b)
 	f.friends[b] = append(f.friends[b], a)
+}
+
+func (f *fakeCore) block(a, b string) { f.blocks[a+"\x00"+b] = true }
+
+// blockedEither mirrors requireNoBlock: a block in either direction denies
+// the interaction.
+func (f *fakeCore) blockedEither(a, b string) bool {
+	return f.blocks[a+"\x00"+b] || f.blocks[b+"\x00"+a]
+}
+
+func (f *fakeCore) isFriend(a, b string) bool { return containsStr(f.friends[a], b) }
+
+func (f *fakeCore) pendingFromTo(from, to string) bool {
+	return containsStr(f.outgoing[from], to) && containsStr(f.incoming[to], from)
+}
+
+func containsStr(list []string, v string) bool {
+	for _, s := range list {
+		if s == v {
+			return true
+		}
+	}
+	return false
 }
 
 type fakeIdentity struct {
@@ -146,16 +172,84 @@ func (x fakeSocial) ListOutgoingRequests(ctx context.Context, r *accountv1.ListO
 
 func (x fakeSocial) RequestFriend(ctx context.Context, r *accountv1.RequestFriendRequest, _ ...grpc.CallOption,
 ) (*accountv1.RequestFriendResponse, error) {
-	x.f.incoming[r.GetAddresseeId()] = append(x.f.incoming[r.GetAddresseeId()], r.GetRequesterId())
-	x.f.outgoing[r.GetRequesterId()] = append(x.f.outgoing[r.GetRequesterId()], r.GetAddresseeId())
+	from, to := r.GetRequesterId(), r.GetAddresseeId()
+	if from == "" || to == "" {
+		return nil, status.Error(codes.InvalidArgument, "invalid request")
+	}
+	if from == to {
+		return nil, status.Error(codes.InvalidArgument, "self-request")
+	}
+	if x.f.blockedEither(from, to) {
+		return nil, status.Error(codes.FailedPrecondition, "blocked")
+	}
+	if x.f.isFriend(from, to) {
+		return &accountv1.RequestFriendResponse{State: accountv1.FriendState_FRIEND_STATE_ACCEPTED}, nil
+	}
+	if x.f.pendingFromTo(to, from) { // they already asked us
+		return nil, status.Error(codes.FailedPrecondition, "addressee already requested")
+	}
+	if !x.f.pendingFromTo(from, to) { // idempotent while pending
+		x.f.incoming[to] = append(x.f.incoming[to], from)
+		x.f.outgoing[from] = append(x.f.outgoing[from], to)
+	}
 	return &accountv1.RequestFriendResponse{State: accountv1.FriendState_FRIEND_STATE_PENDING}, nil
 }
 
 func (x fakeSocial) AcceptFriend(ctx context.Context, r *accountv1.AcceptFriendRequest, _ ...grpc.CallOption,
 ) (*accountv1.AcceptFriendResponse, error) {
-	x.f.befriend(r.GetAddresseeId(), r.GetRequesterId())
-	x.f.dropRequest(r.GetRequesterId(), r.GetAddresseeId())
-	return &accountv1.AcceptFriendResponse{State: accountv1.FriendState_FRIEND_STATE_ACCEPTED}, nil
+	addressee, requester := r.GetAddresseeId(), r.GetRequesterId()
+	if x.f.pendingFromTo(requester, addressee) {
+		x.f.befriend(addressee, requester)
+		x.f.dropRequest(requester, addressee)
+		return &accountv1.AcceptFriendResponse{State: accountv1.FriendState_FRIEND_STATE_ACCEPTED}, nil
+	}
+	if x.f.isFriend(addressee, requester) {
+		return &accountv1.AcceptFriendResponse{State: accountv1.FriendState_FRIEND_STATE_ACCEPTED}, nil
+	}
+	return nil, status.Error(codes.FailedPrecondition, "request not pending")
+}
+
+func (x fakeSocial) RemoveFriend(ctx context.Context, r *accountv1.RemoveFriendRequest, _ ...grpc.CallOption,
+) (*accountv1.RemoveFriendResponse, error) {
+	a, b := r.GetAccountId(), r.GetOtherId()
+	// Pending or accepted, either side, idempotent when absent (the core's
+	// RemoveFriend rule).
+	x.f.dropRequest(a, b)
+	x.f.dropRequest(b, a)
+	x.f.friends[a] = removeID(x.f.friends[a], b)
+	x.f.friends[b] = removeID(x.f.friends[b], a)
+	return &accountv1.RemoveFriendResponse{}, nil
+}
+
+func (x fakeSocial) Block(ctx context.Context, r *accountv1.BlockRequest, _ ...grpc.CallOption,
+) (*accountv1.BlockResponse, error) {
+	x.f.block(r.GetBlockerId(), r.GetBlockedId())
+	return &accountv1.BlockResponse{}, nil
+}
+
+func (x fakeSocial) Unblock(ctx context.Context, r *accountv1.UnblockRequest, _ ...grpc.CallOption,
+) (*accountv1.UnblockResponse, error) {
+	delete(x.f.blocks, r.GetBlockerId()+"\x00"+r.GetBlockedId())
+	return &accountv1.UnblockResponse{}, nil
+}
+
+func (x fakeSocial) GetRelationship(ctx context.Context, r *accountv1.GetRelationshipRequest, _ ...grpc.CallOption,
+) (*accountv1.GetRelationshipResponse, error) {
+	me, other := r.GetAccountId(), r.GetOtherId()
+	rel := accountv1.Relationship_RELATIONSHIP_NONE
+	switch {
+	case x.f.blocks[me+"\x00"+other]:
+		rel = accountv1.Relationship_RELATIONSHIP_BLOCKED_BY_SELF
+	case x.f.blocks[other+"\x00"+me]:
+		rel = accountv1.Relationship_RELATIONSHIP_BLOCKED_BY_OTHER
+	case x.f.isFriend(me, other):
+		rel = accountv1.Relationship_RELATIONSHIP_FRIENDS
+	case x.f.pendingFromTo(other, me):
+		rel = accountv1.Relationship_RELATIONSHIP_PENDING_INCOMING
+	case x.f.pendingFromTo(me, other):
+		rel = accountv1.Relationship_RELATIONSHIP_PENDING_OUTGOING
+	}
+	return &accountv1.GetRelationshipResponse{Relationship: rel}, nil
 }
 
 func (f *fakeCore) dropRequest(from, to string) {

@@ -1,0 +1,63 @@
+{
+ "items": [
+  {
+   "birthday": "<string>",
+   "blocksUpdatedAt": "<int>",
+   "country": "<string>",
+   "createdAt": "<int>",
+   "deleted": "<bool>",
+   "deviceAccounts": [
+    {
+     "id": "<string>"
+    }
+   ],
+   "etag": "<string>",
+   "extras": {
+    "everyone": {
+     "playLog": "<string>"
+    },
+    "favoriteFriends": {
+     "playLog": "<string>"
+    },
+    "foaf": {},
+    "friends": {
+     "isChatInvitable": "<bool>",
+     "playLog": "<string>"
+    },
+    "self": {}
+   },
+   "friendsUpdatedAt": "<int>",
+   "id": "<string>",
+   "links": {
+    "friendCode": {
+     "createdAt": "<int>",
+     "id": "<string>",
+     "regenerable": "<bool>",
+     "regenerableAt": "<int>",
+     "updatedAt": "<int>"
+    },
+    "nintendoAccount": {
+     "createdAt": "<int>",
+     "id": "<string>",
+     "updatedAt": "<int>"
+    }
+   },
+   "nickname": "<string>",
+   "nicknameUpdatedAt": "<int>",
+   "permissions": {
+    "friendRequestReception": "<bool>",
+    "friends": "<string>",
+    "personalAnalytics": "<bool>",
+    "personalAnalyticsUpdatedAt": "<int>",
+    "personalNotification": "<bool>",
+    "personalNotificationUpdatedAt": "<int>",
+    "presence": "<string>",
+    "presenceUpdatedAt": "<int>"
+   },
+   "thumbnail2Url": "<string>",
+   "thumbnailUploadedAt": "<int>",
+   "thumbnailUrl": "<string>",
+   "updatedAt": "<int>"
+  }
+ ]
+}

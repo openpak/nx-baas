@@ -385,18 +385,26 @@ func (b *openpakBackend) Identity(pid uint64) (*Identity, error) {
 // console projection are skipped: they have no pid/friend code to render and
 // fabricating one would break identity guarantees (SW-04).
 func (b *openpakBackend) friendView(accountID, displayName string) *Friend {
+	// Copy the projection under the lock; the core call below must not hold
+	// it (SOC-05: a global lock across per-friend network calls serialises a
+	// whole friend list behind the slowest identity lookup).
 	b.proj.mu.Lock()
-	defer b.proj.mu.Unlock()
-	pr, ok := b.proj.ByAccount[accountID]
-	if !ok {
+	pr := b.proj.ByAccount[accountID]
+	var prCopy *projection
+	if pr != nil {
+		c := *pr
+		prCopy = &c
+	}
+	b.proj.mu.Unlock()
+	if prCopy == nil {
 		return nil
 	}
-	nick := pr.Nickname
+	nick := prCopy.Nickname
 	if displayName != "" {
 		nick = displayName
 	}
-	f := &Friend{PID: pr.PID, BaasUserID: pr.BaasUserID, NaID: pr.NaID, FriendCode: pr.FriendCode,
-		Nickname: nick, CreatedAt: pr.CreatedAt}
+	f := &Friend{PID: prCopy.PID, BaasUserID: prCopy.BaasUserID, NaID: prCopy.NaID, FriendCode: prCopy.FriendCode,
+		Nickname: nick, CreatedAt: prCopy.CreatedAt}
 	// Country, same as a looked-up user gets. Without it a friend list entry
 	// goes out with country "" -- which is the state the console refused in a
 	// search result, and a friend list that stays empty after a friendship the
@@ -412,8 +420,8 @@ func (b *openpakBackend) friendView(accountID, displayName string) *Friend {
 }
 
 func (b *openpakBackend) Resolve(q url.Values) (*Friend, error) {
+	// Same rule as friendView: copy under the lock, network outside it.
 	b.proj.mu.Lock()
-	defer b.proj.mu.Unlock()
 	var accountID string
 	switch {
 	case q.Get("code") != "":
@@ -421,10 +429,16 @@ func (b *openpakBackend) Resolve(q url.Values) (*Friend, error) {
 	case q.Get("baas") != "":
 		accountID = b.proj.ByBaas[q.Get("baas")]
 	}
-	if accountID == "" {
+	var prCopy *projection
+	if pr := b.proj.ByAccount[accountID]; accountID != "" && pr != nil {
+		c := *pr
+		prCopy = &c
+	}
+	b.proj.mu.Unlock()
+	if prCopy == nil {
 		return nil, errors.New("not found")
 	}
-	pr := b.proj.ByAccount[accountID]
+	pr := prCopy
 	f := &Friend{PID: pr.PID, BaasUserID: pr.BaasUserID, NaID: pr.NaID, FriendCode: pr.FriendCode,
 		Nickname: pr.Nickname, CreatedAt: pr.CreatedAt}
 	// Country comes from the core; the projection never held one, so every
@@ -453,7 +467,19 @@ func (b *openpakBackend) FriendRequest(from, to uint64) error {
 	}
 	_, err = b.social.RequestFriend(ctx, &accountv1.RequestFriendRequest{
 		RequesterId: fromID, AddresseeId: toID, IdempotencyKey: fmt.Sprintf("baas:%d:%d", from, to)})
-	return err
+	if err == nil {
+		return nil
+	}
+	if status.Code(err) == codes.FailedPrecondition {
+		// One pending request per pair: FailedPrecondition is either the
+		// reverse rule or a block. Ask the core which, so the console sees
+		// the pending incoming request instead of an unexplained failure.
+		rel, rerr := b.social.GetRelationship(ctx, &accountv1.GetRelationshipRequest{AccountId: fromID, OtherId: toID})
+		if rerr == nil && rel.GetRelationship() == accountv1.Relationship_RELATIONSHIP_PENDING_INCOMING {
+			return errReversePending
+		}
+	}
+	return coreErr(err)
 }
 
 func (b *openpakBackend) FriendAccept(pid, from uint64, accept bool) error {
@@ -470,10 +496,81 @@ func (b *openpakBackend) FriendAccept(pid, from uint64, accept bool) error {
 	if accept {
 		_, err = b.social.AcceptFriend(ctx, &accountv1.AcceptFriendRequest{
 			AddresseeId: accountID, RequesterId: fromID, IdempotencyKey: "baas-accept"})
-		return err
+		return coreErr(err)
 	}
 	_, err = b.social.RemoveFriend(ctx, &accountv1.RemoveFriendRequest{AccountId: accountID, OtherId: fromID})
-	return err
+	return coreErr(err)
+}
+
+// RemoveFriend ends a pending or accepted friendship from either side. The
+// core is idempotent when absent, so a retried removal stays a success.
+func (b *openpakBackend) RemoveFriend(pid, other uint64) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	accountID, err := b.accountForPID(ctx, pid)
+	if err != nil {
+		return err
+	}
+	otherID, err := b.accountForPID(ctx, other)
+	if err != nil {
+		return err
+	}
+	_, err = b.social.RemoveFriend(ctx, &accountv1.RemoveFriendRequest{AccountId: accountID, OtherId: otherID})
+	return coreErr(err)
+}
+
+// Block commits a durable directional block in the core. Blocking does not
+// remove a friendship; enforcement denies interactions either way.
+func (b *openpakBackend) Block(pid, other uint64) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	accountID, err := b.accountForPID(ctx, pid)
+	if err != nil {
+		return err
+	}
+	otherID, err := b.accountForPID(ctx, other)
+	if err != nil {
+		return err
+	}
+	_, err = b.social.Block(ctx, &accountv1.BlockRequest{BlockerId: accountID, BlockedId: otherID})
+	return coreErr(err)
+}
+
+// Unblock lifts a block this account made. Unblocking does not restore a
+// friendship; only a new request does.
+func (b *openpakBackend) Unblock(pid, other uint64) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	accountID, err := b.accountForPID(ctx, pid)
+	if err != nil {
+		return err
+	}
+	otherID, err := b.accountForPID(ctx, other)
+	if err != nil {
+		return err
+	}
+	_, err = b.social.Unblock(ctx, &accountv1.UnblockRequest{BlockerId: accountID, BlockedId: otherID})
+	return coreErr(err)
+}
+
+// coreErr translates core failures into the adapter's domain errors, so the
+// HTTP layer maps them uniformly whichever backend answered.
+func coreErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	switch status.Code(err) {
+	case codes.InvalidArgument:
+		return errCoreInvalid
+	case codes.NotFound:
+		return errCoreNotFound
+	case codes.FailedPrecondition:
+		return errStateConflict
+	case codes.Unavailable, codes.DeadlineExceeded, codes.Canceled:
+		return errCoreUnavailable
+	default:
+		return errCoreInternal
+	}
 }
 
 // nexToken signs the same "openpak" wire format the title servers verify; the

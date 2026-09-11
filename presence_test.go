@@ -1,0 +1,344 @@
+package main
+
+// Presence tests (PRE-01/02/03): deterministic aggregation from per-device
+// claims, lease expiry over restarts and silent loss, account switch, the
+// reconciler's core-session agreement, and viewer-aware visibility.
+
+import (
+	"context"
+	"encoding/json"
+	"net/http/httptest"
+	"sync"
+	"testing"
+	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	accountv1 "nx-baas/accountpb"
+)
+
+// fakeSessions is the core's session registry, the way the reconciler sees
+// it: sessions with leases that expire unless heartbeated.
+type fakeSessions struct {
+	accountv1.SessionsClient
+	mu     sync.Mutex
+	leases map[string]int64 // session id -> unix expiry
+	byAcct map[string]string
+	gone   bool // the core lost everything (restart)
+}
+
+func newFakeSessions() *fakeSessions {
+	return &fakeSessions{leases: map[string]int64{}, byAcct: map[string]string{}}
+}
+
+func (x *fakeSessions) RegisterSession(ctx context.Context, r *accountv1.RegisterSessionRequest, _ ...grpc.CallOption,
+) (*accountv1.RegisterSessionResponse, error) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	if x.gone {
+		return nil, status.Error(codes.Unavailable, "core restarting")
+	}
+	id := "sess-" + r.GetAccountId()
+	x.leases[id] = time.Now().Unix() + int64(r.GetLeaseSeconds())
+	x.byAcct[r.GetAccountId()] = id
+	return &accountv1.RegisterSessionResponse{SessionId: id, LeaseSeconds: r.GetLeaseSeconds()}, nil
+}
+
+func (x *fakeSessions) Heartbeat(ctx context.Context, r *accountv1.HeartbeatRequest, _ ...grpc.CallOption,
+) (*accountv1.HeartbeatResponse, error) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	if x.gone {
+		return nil, status.Error(codes.NotFound, "no such session")
+	}
+	if exp, ok := x.leases[r.GetSessionId()]; !ok || exp <= time.Now().Unix() {
+		return nil, status.Error(codes.NotFound, "session expired")
+	}
+	x.leases[r.GetSessionId()] = time.Now().Unix() + 30
+	return &accountv1.HeartbeatResponse{LeaseSeconds: 30}, nil
+}
+
+func (x *fakeSessions) ExpireSession(ctx context.Context, r *accountv1.ExpireSessionRequest, _ ...grpc.CallOption,
+) (*accountv1.ExpireSessionResponse, error) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	delete(x.leases, r.GetSessionId())
+	return &accountv1.ExpireSessionResponse{}, nil
+}
+
+func (x *fakeSessions) ResolveSession(ctx context.Context, r *accountv1.ResolveSessionRequest, _ ...grpc.CallOption,
+) (*accountv1.ResolveSessionResponse, error) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	id, ok := x.byAcct[r.GetAccountId()]
+	if !ok || x.gone || x.leases[id] <= time.Now().Unix() {
+		return nil, status.Error(codes.NotFound, "no live session")
+	}
+	return &accountv1.ResolveSessionResponse{SessionId: id}, nil
+}
+
+func (x *fakeSessions) live(id string) bool {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	return x.leases[id] > time.Now().Unix()
+}
+
+// presenceFixture: a server with the OpenPak backend and a fake core session
+// registry, with the fixture's two linked users.
+func presenceFixture(t *testing.T) (*server, *fakeSessions, *User, *User) {
+	t.Helper()
+	s, _, users := socialServer(t)
+	sess := newFakeSessions()
+	if b, ok := s.acct.(*openpakBackend); ok {
+		b.sessions = sess
+	}
+	return s, sess, users[0], users[1]
+}
+
+// patchPresence drives the console's per-device presence PATCH.
+func patchPresence(t *testing.T, s *server, u *User, device, state string) *httptest.ResponseRecorder {
+	t.Helper()
+	r := authed("PATCH", "/1.0.0/users/"+u.ID+"/device_accounts/"+device,
+		`[{"op":"replace","path":"/presence/state","value":"`+state+`"}]`, u, s)
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+	return w
+}
+
+// friendPresenceOf renders what A's friend list shows about B.
+func friendPresenceOf(t *testing.T, s *server, viewer, subject *User) map[string]any {
+	t.Helper()
+	r := authed("GET", "/2.0.0/users/"+viewer.ID+"/friends", "", viewer, s)
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+	var env struct {
+		Items []map[string]any `json:"items"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &env)
+	if len(env.Items) != 1 {
+		t.Fatalf("list: %s", w.Body.String())
+	}
+	friend := env.Items[0]["friend"].(map[string]any)
+	return friend["presence"].(map[string]any)
+}
+
+// Aggregation is deterministic (PRE-01): PLAYING beats ONLINE, expiry decays
+// to OFFLINE with the lease deadline as the departure time.
+func TestAggregatePresencePrecedence(t *testing.T) {
+	s := dauthServer(t)
+	s.store = loadStore(t.TempDir() + "/baas.json")
+	u, _ := s.store.NewUser()
+	now := time.Now().Unix()
+	lease := presenceLease()
+
+	s.store.Update(u, func(u *User) {
+		u.DevicePresence = map[string]*DevicePresence{
+			"dev-a": {DeviceID: "dev-a", State: "ONLINE", UpdatedAt: now - 5, ExpiresAt: now + 60},
+			"dev-b": {DeviceID: "dev-b", State: "PLAYING", AppID: "0100", UpdatedAt: now - 3, ExpiresAt: now + 60},
+		}
+	})
+	agg := aggregatePresence(s.store.User(u.ID), now, lease)
+	if agg.State != "PLAYING" || agg.AppID != "0100" {
+		t.Errorf("two live devices: %+v", agg)
+	}
+
+	// The playing device's lease lapses: the other console keeps the account
+	// ONLINE — one device going quiet is not the person leaving.
+	s.store.Update(u, func(u *User) { u.DevicePresence["dev-b"].ExpiresAt = now - 1 })
+	agg = aggregatePresence(s.store.User(u.ID), now, lease)
+	if agg.State != "ONLINE" {
+		t.Errorf("after one device expired: %+v", agg)
+	}
+
+	// Both gone: OFFLINE, and the departure is the later lease deadline.
+	s.store.Update(u, func(u *User) { u.DevicePresence["dev-a"].ExpiresAt = now - 10 })
+	agg = aggregatePresence(s.store.User(u.ID), now, lease)
+	if agg.State != "OFFLINE" || agg.LogoutAt != now-1 {
+		t.Errorf("after all expired: %+v", agg)
+	}
+}
+
+// Each device's PATCH writes its own claim; one going OFFLINE does not end
+// the account while the other is still live (PRE-01, two consoles).
+func TestPresencePatchIsPerDevice(t *testing.T) {
+	s, _, a, b := presenceFixture(t)
+
+	if w := patchPresence(t, s, b, "dev-1", "ONLINE"); w.Code != 200 {
+		t.Fatalf("presence patch: %d %s", w.Code, w.Body.String())
+	}
+	if got := friendPresenceOf(t, s, a, b)["state"]; got != "ONLINE" {
+		t.Errorf("after B online: %v", got)
+	}
+	if w := patchPresence(t, s, b, "dev-2", "PLAYING"); w.Code != 200 {
+		t.Fatal("second device patch failed")
+	}
+	if got := friendPresenceOf(t, s, a, b)["state"]; got != "PLAYING" {
+		t.Errorf("after B playing on dev-2: %v", got)
+	}
+	// dev-1 goes offline; dev-2 is still playing.
+	if w := patchPresence(t, s, b, "dev-1", "OFFLINE"); w.Code != 200 {
+		t.Fatal("offline patch failed")
+	}
+	if got := friendPresenceOf(t, s, a, b)["state"]; got != "PLAYING" {
+		t.Errorf("after dev-1 left: %v", got)
+	}
+	// Both off: offline, with the departure recorded.
+	if w := patchPresence(t, s, b, "dev-2", "OFFLINE"); w.Code != 200 {
+		t.Fatal("second offline patch failed")
+	}
+	p := friendPresenceOf(t, s, a, b)
+	if p["state"] != "OFFLINE" {
+		t.Errorf("after both left: %v", p)
+	}
+}
+
+// Stale persisted data must not override an expired session — including
+// across a restart (PRE-01): deadlines are absolute timestamps.
+func TestStalePresenceDoesNotSurviveARestart(t *testing.T) {
+	dir := t.TempDir()
+	s := dauthServer(t)
+	s.store = loadStore(dir + "/baas.json")
+	u, _ := s.store.NewUser()
+	past := time.Now().Unix() - 3600
+	s.store.Update(u, func(u *User) {
+		u.DevicePresence = map[string]*DevicePresence{
+			"dev-1": {DeviceID: "dev-1", State: "PLAYING", AppID: "0100", UpdatedAt: past - 60, ExpiresAt: past},
+		}
+	})
+	// Reload from disk, as a restarted process would.
+	s.store = loadStore(dir + "/baas.json")
+	agg := aggregatePresence(s.store.User(u.ID), time.Now().Unix(), presenceLease())
+	if agg.State != "OFFLINE" {
+		t.Errorf("a claim that lapsed an hour ago still renders: %+v", agg)
+	}
+}
+
+// The subject's own presence permission and the block lists decide what a
+// viewer sees (PRE-03).
+func TestPresenceVisibility(t *testing.T) {
+	s, _, a, b := presenceFixture(t)
+	view := func() string {
+		return friendPresenceOf(t, s, a, b)["state"].(string)
+	}
+	if w := patchPresence(t, s, b, "dev-1", "PLAYING"); w.Code != 200 {
+		t.Fatal("presence patch failed")
+	}
+	if got := view(); got != "PLAYING" {
+		t.Fatalf("fixture: viewer should see PLAYING, sees %v", got)
+	}
+
+	// B narrows presence to favourite friends only; A is not one of B's
+	// favourites.
+	s.store.Update(s.store.User(b.ID), func(u *User) { u.Permissions = map[string]any{"presence": "FAVORITE_FRIENDS"} })
+	if got := view(); got != "OFFLINE" {
+		t.Errorf("non-favourite viewer saw %v under FAVORITE_FRIENDS", got)
+	}
+	// B favourites A: presence flows again.
+	s.store.Update(s.store.User(b.ID), func(u *User) { u.pref(a.ID).Favorite = true })
+	if got := view(); got != "PLAYING" {
+		t.Errorf("favourite viewer saw %v", got)
+	}
+	// SELF hides from everyone but the subject.
+	s.store.Update(s.store.User(b.ID), func(u *User) { u.Permissions["presence"] = "SELF" })
+	if got := view(); got != "OFFLINE" {
+		t.Errorf("viewer saw %v under SELF", got)
+	}
+	s.store.Update(s.store.User(b.ID), func(u *User) { u.Permissions["presence"] = "FRIENDS" })
+
+	// A block in either direction hides presence outright.
+	s.store.Update(s.store.User(b.ID), func(u *User) { u.Blocks = []string{a.ID} })
+	if got := view(); got != "OFFLINE" {
+		t.Errorf("viewer saw %v while blocked by the subject", got)
+	}
+}
+
+// An account switch on one device ends the previous user's claim for that
+// device (PRE-02): the console is where the new login says it is.
+func TestAccountSwitchEndsPreviousClaim(t *testing.T) {
+	s, _, a, b := presenceFixture(t)
+	const device = "dev-shared"
+	if w := patchPresence(t, s, a, device, "PLAYING"); w.Code != 200 {
+		t.Fatal("A presence patch failed")
+	}
+	// B signs in on the same device: the login handler expires the device's
+	// claim everywhere before writing B's.
+	s.expireDeviceEverywhere(device, b.ID)
+	s.noteDevicePresence(b, device, "ONLINE", "", "", "")
+
+	lease := presenceLease()
+	now := time.Now().Unix()
+	if agg := aggregatePresence(s.store.User(a.ID), now, lease); agg.State != "OFFLINE" {
+		t.Errorf("A still shows %v on a device B just took over", agg.State)
+	}
+	if agg := aggregatePresence(s.store.User(b.ID), now, lease); agg.State != "ONLINE" {
+		t.Errorf("B shows %v after taking the device", agg.State)
+	}
+}
+
+// The reconciler agrees with the core (PRE-02): it keeps a session alive for
+// a fresh claim, recovers the session id after losing it, and tears the
+// session down when the claim lapses.
+func TestReconcilerAgreesWithTheCore(t *testing.T) {
+	s, sess, a, b := presenceFixture(t)
+	now := time.Now().Unix()
+	lease := presenceLease()
+
+	bAcct := ""
+	if bb, ok := s.acct.(*openpakBackend); ok {
+		bAcct = bb.accountFor(b.PID)
+	}
+	if bAcct == "" {
+		t.Fatal("fixture: no core account for B")
+	}
+	sessionID := func() string {
+		sess.mu.Lock()
+		defer sess.mu.Unlock()
+		return sess.byAcct[bAcct]
+	}
+
+	// B comes online: the PATCH itself registers a session through
+	// reportOnline; the reconciler adopts it into its own map and keeps it
+	// renewed while the claim is fresh.
+	if w := patchPresence(t, s, b, "dev-1", "ONLINE"); w.Code != 200 {
+		t.Fatal("presence patch failed")
+	}
+	s.reconcilePresenceOnce(time.Unix(now, 0), lease)
+	s.reconcilePresenceOnce(time.Unix(now+1, 0), lease)
+	if !sess.live(sessionID()) {
+		t.Error("reconciler did not renew the core session for a fresh claim")
+	}
+
+	// Silent loss: B's claim lapses, the reconciler expires it locally and
+	// tears the core session down instead of waiting out its lease.
+	s.store.Update(s.store.User(b.ID), func(u *User) {
+		u.DevicePresence["dev-1"].ExpiresAt = now + 2
+	})
+	s.reconcilePresenceOnce(time.Unix(now+3, 0), lease)
+	if sess.live(sessionID()) {
+		t.Error("core session outlived an account the adapter considers offline")
+	}
+	if agg := aggregatePresence(s.store.User(b.ID), now+3, lease); agg.State != "OFFLINE" {
+		t.Errorf("lapsed claim not expired: %+v", agg)
+	}
+
+	// A fresh claim after the core lost all state (a core restart): the
+	// reconciler re-establishes the session — the claim is the console's,
+	// the session id is the adapter's bookkeeping and is re-derived.
+	if w := patchPresence(t, s, b, "dev-1", "ONLINE"); w.Code != 200 {
+		t.Fatal("second presence patch failed")
+	}
+	sess.mu.Lock()
+	sess.gone = true
+	sess.mu.Unlock()
+	s.reconcilePresenceOnce(time.Unix(now+4, 0), lease) // register fails; claim stays
+	sess.mu.Lock()
+	sess.gone = false
+	sess.mu.Unlock()
+	s.reconcilePresenceOnce(time.Unix(now+5, 0), lease)
+	if !sess.live(sessionID()) {
+		t.Error("reconciler did not re-establish the session after a core restart")
+	}
+	_ = a
+}

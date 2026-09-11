@@ -201,6 +201,7 @@ func TestTheNewerPictureWins(t *testing.T) {
 func TestFriendCodeLookupUsesTheQueryTheConsoleSends(t *testing.T) {
 	s := dauthServer(t)
 	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	u, _ := s.store.NewUser() // the signed-in console doing the looking up
 	s.acct = codeBackend{code: "SW-1000-0000-0002", friend: &Friend{
 		PID: 1900000002, BaasUserID: "aaaaaaaaaaaa0002", NaID: "bbbbbbbbbbbb0002",
 		FriendCode: "SW-1000-0000-0002", Nickname: "Leia"}}
@@ -212,6 +213,7 @@ func TestFriendCodeLookupUsesTheQueryTheConsoleSends(t *testing.T) {
 	} {
 		r := httptest.NewRequest("GET", "https://"+baasHost+target, nil)
 		r.Host = baasHost
+		r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, r)
 
@@ -241,6 +243,7 @@ func TestFriendCodeLookupUsesTheQueryTheConsoleSends(t *testing.T) {
 	// A code nobody holds is still an empty answer, not an error.
 	r := httptest.NewRequest("GET", "https://"+baasHost+"/1.0.0/users?filter.links.friendCode.id.$in=0000-0000-0000", nil)
 	r.Host = baasHost
+	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"items":[]`) {
@@ -323,12 +326,14 @@ func TestSearchReplyMatchesTheAcceptedShape(t *testing.T) {
 
 	s := dauthServer(t)
 	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	u, _ := s.store.NewUser() // the signed-in console doing the looking up
 	s.acct = codeBackend{code: "SW-1000-0000-0002", friend: &Friend{
 		PID: 1900000002, BaasUserID: "aaaaaaaaaaaa0002", NaID: "bbbbbbbbbbbb0002",
 		FriendCode: "SW-1000-0000-0002", Nickname: "Leia", Country: "IE", CreatedAt: 1788896080}}
 
 	r := httptest.NewRequest("GET", "https://"+baasHost+"/1.0.0/users?filter.links.friendCode.id.$in=1000-0000-0002", nil)
 	r.Host = baasHost
+	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
 
@@ -384,10 +389,10 @@ func TestSearchReplyMatchesTheAcceptedShape(t *testing.T) {
 	}
 }
 
-// A friend in a list is as complete as a user in a search result. The list
-// path builds entries from the core's friend graph, which carried no country,
-// so every entry went out with country "" — the exact state the console
-// refused when it was a search result.
+// A friend-list entry is a *relationship* in the shape the 22.5.0 parser
+// counts: friendId, a nested friend user, and the viewer's own relationship
+// state. The old flat entry parsed zero items, which is what an empty friend
+// list looked like from the sofa with the data sitting in the reply.
 func TestFriendListEntriesCarryACountry(t *testing.T) {
 	s := dauthServer(t)
 	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
@@ -412,21 +417,46 @@ func TestFriendListEntriesCarryACountry(t *testing.T) {
 	if len(got.Items) != 1 {
 		t.Fatalf("friends: %s", w.Body.String())
 	}
-	if got.Items[0]["country"] == "" {
-		t.Error("friend entry has no country; the console refuses a user object like that")
+	entry := got.Items[0]
+	// The parser's three-field gate: an entry missing any of these never
+	// reaches the list, however right the rest of it is.
+	if gaps := relationshipEntryGaps(entry); len(gaps) > 0 {
+		t.Errorf("entry would be dropped by the parser, missing %v", gaps)
 	}
-	if got.Items[0]["nickname"] == "" || got.Items[0]["thumbnailUrl"] == "" {
-		t.Errorf("friend entry is not renderable: %v", got.Items[0])
+	if entry["friendId"] != "aaaaaaaaaaaa0001" {
+		t.Errorf("friendId = %v, want the friend's BAAS id", entry["friendId"])
 	}
-	// A friend entry is a user plus the friendship. The console never asks
-	// for presence or the favourite/new flags on their own, so a list entry
-	// without them leaves the applet nothing to show.
-	for _, friendOnly := range []string{"presence", "isFavoriteFriend", "isNewFriend"} {
-		if _, ok := got.Items[0][friendOnly]; !ok {
-			t.Errorf("friend entry lacks %q", friendOnly)
+	friend, _ := entry["friend"].(map[string]any)
+	if friend["country"] == "" {
+		t.Error("friend has no country; the console refuses a user object like that")
+	}
+	if friend["nickname"] == "" || friend["thumbnailUrl"] == "" {
+		t.Errorf("friend is not renderable: %v", friend)
+	}
+	// The nested user carries presence; the relationship carries the
+	// viewer's own extras.self preferences (SOC-02).
+	if _, ok := friend["presence"]; !ok {
+		t.Error("friend lacks presence; the applet has nothing to show")
+	}
+	for _, key := range []string{"isFavorite", "createdAt", "updatedAt"} {
+		if _, ok := entry[key]; !ok {
+			t.Errorf("relationship lacks %q", key)
 		}
 	}
-	if devs, _ := got.Items[0]["deviceAccounts"].([]any); len(devs) > 1 {
-		t.Errorf("friend entry reveals %d device accounts; a reference reply carries one", len(devs))
+	self, _ := entry["extras"].(map[string]any)["self"].(map[string]any)
+	for _, key := range []string{"isConfirmed", "isOnlineNotification"} {
+		if _, ok := self[key]; !ok {
+			t.Errorf("extras.self lacks %q", key)
+		}
+	}
+	// The old flat shape must not come back: top-level id/nickname were what
+	// the parser ignored.
+	for _, gone := range []string{"id", "nickname", "isFavoriteFriend", "isNewFriend"} {
+		if _, ok := entry[gone]; ok {
+			t.Errorf("relationship carries flat-entry key %q; the parser reads the nested shape", gone)
+		}
+	}
+	if devs, _ := friend["deviceAccounts"].([]any); len(devs) > 1 {
+		t.Errorf("friend reveals %d device accounts; a reference reply carries one", len(devs))
 	}
 }

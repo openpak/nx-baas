@@ -1,0 +1,18 @@
+{
+  "_comment": "Independently authored structural example of the 22.5.0 friends-list parser contract (see docs/switch/firmware findings): an item counts only when friendId, friend.nickname and friend.thumbnailUrl parse. Values are synthetic; the shape is the contract. The required-paths list is what the parser gate checks, encoded so a flat entry fails it.",
+  "requiredPaths": {
+    "friendId": "0123456789abcdef",
+    "friend.nickname": "OpenPak Test",
+    "friend.thumbnailUrl": "https://cdn-image.example/avatar.jpg"
+  },
+  "entry": {
+    "friendId": "0123456789abcdef",
+    "friend": {
+      "nickname": "OpenPak Test",
+      "thumbnailUrl": "https://cdn-image.example/avatar.jpg",
+      "presence": { "state": "OFFLINE", "updatedAt": 0, "logoutAt": 0 }
+    },
+    "isFavorite": false,
+    "extras": { "self": { "isConfirmed": true, "isOnlineNotification": true } }
+  }
+}

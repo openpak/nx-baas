@@ -24,6 +24,50 @@ type Presence struct {
 	LogoutAt        int64  `json:"logoutAt"`
 }
 
+// DevicePresence is one console's claim about where its user is, with the
+// lease that keeps the claim honest (PRE-01/02): a console that stops talking
+// — sleep, crash, yanked cable — holds its entry only until ExpiresAt.
+// Entries are keyed per device account, so a user signed in on two consoles
+// is online for as long as either of them is.
+// ponytail: written by the pre-lease code, which had one Presence per user and
+// no device key. The aggregate in presence.go still reads that field as an
+// entry with an implied lease, so old stores and the game API keep working.
+type DevicePresence struct {
+	DeviceID        string `json:"deviceId"` // the BAAS device account in the presence PATCH path
+	State           string `json:"state"`    // OFFLINE, ONLINE, PLAYING
+	AppID           string `json:"appId,omitempty"`
+	AppField        string `json:"appField,omitempty"`
+	PresenceGroupID string `json:"presenceGroupId,omitempty"`
+	UpdatedAt       int64  `json:"updatedAt"` // last state change (never moved by a render)
+	ExpiresAt       int64  `json:"expiresAt"` // lease deadline; 0 = not leased (explicit offline)
+	LogoutAt        int64  `json:"logoutAt"`  // set when this device said it is done
+}
+
+// FriendPreference is one viewer's per-relationship state (SOC-02): what the
+// console PATCHes on the relationship and what the list must project back.
+// False must remain false, so every field keeps its own value — there is no
+// "absent means true" here except onlineNotification, whose native default is
+// on and which is therefore a pointer: nil = never set = alert enabled.
+type FriendPreference struct {
+	Favorite           bool  `json:"favorite"`
+	Confirmed          bool  `json:"confirmed"`
+	OnlineNotification *bool `json:"onlineNotification,omitempty"`
+	UpdatedAt          int64 `json:"updatedAt"`
+}
+
+// FriendRequestRecord is the durable identity of one friend request (SOC-03):
+// the console cancels, rejects and accepts by this id, so it must survive a
+// restart and mean the same pair on every surface that shows it. The
+// friendship itself stays canonical in the account core; this is the native
+// id mapping and nothing else.
+type FriendRequestRecord struct {
+	ID        string `json:"id"`
+	FromPID   uint64 `json:"fromPid"`
+	ToPID     uint64 `json:"toPid"`
+	CreatedAt int64  `json:"createdAt"`
+	UpdatedAt int64  `json:"updatedAt"`
+}
+
 // User is a BAAS user. PID == 0 means not yet linked to a OpenPak account; once linked its ID is
 // the account's derived baasUserID so Photon/NPLN/friends all agree on one identity.
 type User struct {
@@ -52,8 +96,16 @@ type User struct {
 	Permissions map[string]any `json:"permissions,omitempty"`
 	// Blocks is the block list the friends sysmodule manages, by BAAS user id.
 	Blocks []string `json:"blocks,omitempty"`
-	// Favourites are friends marked as such on the console.
+	// Favourites are friends marked as such on the console. Superseded by
+	// FriendPrefs, into which loadStore folds it once; kept so a store written
+	// by this build still reads correctly on a rollback build.
 	Favourites []string `json:"favourites,omitempty"`
+	// FriendPrefs is the per-relationship preference state (SOC-02), by the
+	// friend's BAAS user id: /isFavorite, /extras/self/isConfirmed and
+	// /extras/self/isOnlineNotification.
+	FriendPrefs map[string]*FriendPreference `json:"friendPrefs,omitempty"`
+	// DevicePresence holds the live per-device presence entries (PRE-01).
+	DevicePresence map[string]*DevicePresence `json:"devicePresence,omitempty"`
 	// FriendsUpdatedAt is when this user's friend graph last changed. The
 	// console caches its friend list and refetches when this moves, so a
 	// friendship that only exists in the core is a friend list that never
@@ -68,11 +120,12 @@ type User struct {
 }
 
 type Store struct {
-	mu      sync.Mutex
-	path    string
-	Devices map[string]*DeviceAccount `json:"devices"`
-	Users   map[string]*User          `json:"users"`
-	NaToPID map[string]uint64         `json:"naToPid"` // Nintendo-Account id_token sub -> OpenPak PID
+	mu       sync.Mutex
+	path     string
+	Devices  map[string]*DeviceAccount       `json:"devices"`
+	Users    map[string]*User                `json:"users"`
+	NaToPID  map[string]uint64               `json:"naToPid"` // Nintendo-Account id_token sub -> OpenPak PID
+	Requests map[string]*FriendRequestRecord `json:"requests,omitempty"`
 }
 
 func loadStore(path string) *Store {
@@ -80,7 +133,38 @@ func loadStore(path string) *Store {
 	if b, err := os.ReadFile(path); err == nil {
 		json.Unmarshal(b, s)
 	}
+	// Migration: fold the old favourites list into FriendPrefs once (SOC-02).
+	// Unknown fields are skipped by older binaries, so a rollback build keeps
+	// working; it just will not see preferences recorded after the upgrade.
+	migrated := false
+	for _, u := range s.Users {
+		for _, f := range u.Favourites {
+			p := u.pref(f)
+			if !p.Favorite {
+				p.Favorite = true
+				p.UpdatedAt = u.UpdatedAt
+				migrated = true
+			}
+		}
+	}
+	if migrated {
+		s.save()
+	}
 	return s
+}
+
+// pref returns the caller's preference record for one friend, creating an
+// empty one when there is none. Called with the store lock held.
+func (u *User) pref(friendBaasID string) *FriendPreference {
+	if u.FriendPrefs == nil {
+		u.FriendPrefs = map[string]*FriendPreference{}
+	}
+	p := u.FriendPrefs[friendBaasID]
+	if p == nil {
+		p = &FriendPreference{}
+		u.FriendPrefs[friendBaasID] = p
+	}
+	return p
 }
 
 // save is called with mu held.
@@ -207,6 +291,94 @@ func (s *Store) Update(u *User, f func(*User)) {
 	f(u)
 	u.UpdatedAt = time.Now().Unix()
 	s.save()
+}
+
+// bumpFriendsUpdated moves the friend-list version, strictly monotonically
+// (SOC-05): two mutations inside the same wall-clock second must still be
+// distinguishable, or a console that refetched between them keeps the stale
+// list forever. The value stays Unix-shaped, so a console comparing it against
+// what it cached before the change sees nothing unusual.
+func bumpFriendsUpdated(u *User, now int64) int64 {
+	if now <= u.FriendsUpdatedAt {
+		now = u.FriendsUpdatedAt + 1
+	}
+	u.FriendsUpdatedAt = now
+	return now
+}
+
+// EnsureRequest returns the durable id of the request from -> to, creating
+// the record on first sight. Idempotent: create, inbox and outbox all name
+// the same request by the same id (SOC-03).
+func (s *Store) EnsureRequest(fromPID, toPID uint64) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Requests == nil {
+		s.Requests = map[string]*FriendRequestRecord{}
+	}
+	for _, r := range s.Requests {
+		if r.FromPID == fromPID && r.ToPID == toPID {
+			return r.ID, false
+		}
+	}
+	id := randHex(8)
+	for s.Requests[id] != nil { // collision with a historic id
+		id = randHex(8)
+	}
+	now := time.Now().Unix()
+	s.Requests[id] = &FriendRequestRecord{ID: id, FromPID: fromPID, ToPID: toPID, CreatedAt: now, UpdatedAt: now}
+	s.save()
+	return id, true
+}
+
+// RequestByID returns a copy of the record: callers read it without the lock.
+func (s *Store) RequestByID(id string) *FriendRequestRecord {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.Requests[id]
+	if r == nil {
+		return nil
+	}
+	cp := *r
+	return &cp
+}
+
+// DropRequest removes a request record whose lifecycle is over (accepted,
+// rejected, cancelled): the core is the state of record, and a stale id must
+// not authorize a second accept. Keeping history would also grow the store
+// without bound.
+func (s *Store) DropRequest(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Requests == nil {
+		return
+	}
+	if _, ok := s.Requests[id]; ok {
+		delete(s.Requests, id)
+		s.save()
+	}
+}
+
+// LiveUsers snapshots the users for the presence reconciler: the reconciler
+// runs on its own goroutine, so it must not walk the live map while handlers
+// mutate it. Entry structs are copied; their DevicePresence maps are copied
+// one level deep, which is enough because entries are replaced (never mutated
+// in place) under the same lock.
+func (s *Store) LiveUsers() []*User {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*User, 0, len(s.Users))
+	for _, u := range s.Users {
+		cp := *u
+		if u.DevicePresence != nil {
+			cp.DevicePresence = make(map[string]*DevicePresence, len(u.DevicePresence))
+			for k, e := range u.DevicePresence {
+				eCopy := *e
+				cp.DevicePresence[k] = &eCopy
+			}
+		}
+		out = append(out, &cp)
+	}
+	return out
 }
 
 func (s *Store) RememberNA(naID string, pid uint64) {

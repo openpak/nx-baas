@@ -77,6 +77,11 @@ type server struct {
 	// console's proven account attached. nil answers the empty-cloud fallback instead.
 	saves    *httputil.ReverseProxy
 	savesKey string
+	// liveSessions maps BAAS user id -> the core session the adapter registered
+	// for it, so the presence reconciler can renew and expire what it created.
+	// In-memory by design: a restart re-derives truth from the core (and local
+	// leases), never from this map.
+	liveSessions map[string]string
 }
 
 type naCode struct {
@@ -142,6 +147,52 @@ func (s *server) bearer(r *http.Request) map[string]any {
 		return nil
 	}
 	return c
+}
+
+// validBearer returns the claims of our own *live* access token: signature,
+// issuer, type and expiry all checked. bearer() above only checked the
+// signature, which let an expired token — or a refresh or Nintendo-Account
+// token, which we also sign with this key — spend itself as a credential.
+func (s *server) validBearer(r *http.Request) map[string]any {
+	c := s.bearer(r)
+	if c == nil {
+		return nil
+	}
+	if str(c, "typ") != "token" || str(c, "iss") != baasIssuer {
+		return nil
+	}
+	exp, ok := c["exp"].(float64)
+	if !ok || int64(exp) <= time.Now().Unix() {
+		return nil
+	}
+	return c
+}
+
+// bearerUser resolves the user an authenticated request acts as, or nil.
+func (s *server) bearerUser(r *http.Request) *User {
+	c := s.validBearer(r)
+	if c == nil {
+		return nil
+	}
+	return s.store.User(str(c, "sub"))
+}
+
+// requireCaller enforces the principal binding on a user-scoped path: the
+// path may only name the authenticated user. Returns false having written
+// the error when it does not.
+func (s *server) requireCaller(w http.ResponseWriter, r *http.Request, pathUserID string) *User {
+	me := s.bearerUser(r)
+	if me == nil {
+		baasErr(w, r, 401, "invalid_token", "Invalid token", "a current access token is required")
+		return nil
+	}
+	if pathUserID != "" && pathUserID != me.ID {
+		// Cross-account denial: a valid token for someone else must not read
+		// or write this user's social state, ever.
+		baasErr(w, r, 403, "insufficient_scope", "Token is insufficient", "the token does not belong to this user")
+		return nil
+	}
+	return me
 }
 
 // ---------- tokens ----------
@@ -349,18 +400,18 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 	}
 }
 
-// friendObj: a friend as seen from another user. The other console's live presence (if it is
-// logged in here) beats the account server's coarse status.
+// friendObj: a *user* about somebody else. This is the nested renderer — the
+// value inside a relationship's "friend", and the whole item of a search
+// result. Relationship-level state (friendId, isFavorite, extras.self) and
+// presence are the relationship renderer's job (social.go), which is also
+// why none of them appear here: a search result carrying them was refused by
+// the console, the same way it refused a login reply with an extra
+// "summary".
+//
+// Every timestamp is derived from state we hold, never from the render, so
+// rendering the same person twice yields the same object and a stable list
+// etag (SOC-05).
 func (s *server) friendObj(f Friend, now int64) map[string]any {
-	p := Presence{State: "OFFLINE", UpdatedAt: now}
-	if fu := s.store.UserByPID(f.PID); fu != nil {
-		p = fu.Presence
-	} else if f.PresenceStatus > 0 {
-		p = Presence{State: "ONLINE", AppField: f.PresenceAppField, AppID: f.PresenceAppID, PresenceGroupID: f.PresenceAppID, UpdatedAt: now}
-		if f.PresenceStatus == 2 {
-			p.State = "PLAYING"
-		}
-	}
 	// The same object the console accepts for itself, about somebody else.
 	// A search result carrying only id/nickname/links parses into a user the
 	// console then refuses to use: it answered "unable to find user" to a
@@ -374,11 +425,16 @@ func (s *server) friendObj(f Friend, now int64) map[string]any {
 	// What this server already knows about them beats what the lookup carried:
 	// the console PATCHes country and uploads a picture here, and a user object
 	// that says country "" and owns no device accounts is not one the console
-	// accepts.
+	// accepts. updatedAt follows the local record's own clock when there is
+	// one — a lookup-time constant is not a state change.
+	updatedAt := created
 	country, devices := f.Country, []map[string]any{}
 	if local := s.store.User(f.BaasUserID); local != nil {
 		if local.Country != "" {
 			country = local.Country
+		}
+		if local.UpdatedAt > updatedAt {
+			updatedAt = local.UpdatedAt
 		}
 		// One, as the reference search result carries. Eleven of them is this
 		// server telling a console about every profile that ever registered,
@@ -395,9 +451,12 @@ func (s *server) friendObj(f Friend, now int64) map[string]any {
 		"deleted":   false,
 		"etag":      strconv.Quote(f.BaasUserID),
 		"createdAt": created,
-		"updatedAt": now,
+		"updatedAt": updatedAt,
 		// Always a real address: every account has a picture, and an empty
-		// string here is a user the console cannot render.
+		// string here is a user the console cannot render. The avatar route
+		// answers this address with the account's picture, or the default
+		// when it has none — a URL in a reply this server 404s is how a
+		// "reachable avatar" becomes a broken one.
 		"thumbnailUrl":        cdnHost + "/1/" + f.BaasUserID,
 		"thumbnail2Url":       cdnHost + "/2/" + f.BaasUserID,
 		"thumbnailUploadedAt": created,
@@ -429,23 +488,18 @@ func (s *server) friendObj(f Friend, now int64) map[string]any {
 			"foaf":            map[string]any{},
 			"everyone":        map[string]any{"playLog": ""},
 		},
-		// Friend-list only: not part of a self object, and harmless in a
-		// search result.
-		"presence": presenceObj(p), "isFavoriteFriend": false, "isNewFriend": false,
 	}
 	return obj
 }
 
-// searchUserObj is a user, not a friend. The three keys below belong to a
-// friend-list entry, and a stranger you have just looked up is not one --
-// the console refused a search result that carried them, the same way it
-// refused a login reply that carried an extra "summary".
+// searchUserObj is a user, not a friend. The friend-list keys — friendId,
+// presence, the viewer's own extras — belong to the relationship renderer,
+// and a stranger you have just looked up is not one. The console refused a
+// search result that carried them, the same way it refused a login reply
+// that carried an extra "summary"; the exact-match test
+// TestSearchReplyMatchesTheAcceptedShape keeps it that way.
 func (s *server) searchUserObj(f Friend, now int64) map[string]any {
-	obj := s.friendObj(f, now)
-	delete(obj, "presence")
-	delete(obj, "isFavoriteFriend")
-	delete(obj, "isNewFriend")
-	return obj
+	return s.friendObj(f, now)
 }
 
 // ---------- BAAS handlers ----------
@@ -533,6 +587,20 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			}
 		}
 		if avatar == "" {
+			if strings.HasPrefix(p, "/1/") || strings.HasPrefix(p, "/2/") {
+				// The URL came out of a reply this server wrote, so a 404 here
+				// is our own left hand failing our own right: the console shows
+				// a friend with a broken picture. The default avatar is what an
+				// account without a picture means (SOC-01: a reachable avatar).
+				img, derr := os.ReadFile(getenv("NX_DATA", "/data") + "/default.jpg")
+				if derr != nil {
+					img = defaultAvatar
+				}
+				w.Header().Set("Content-Type", "image/jpeg")
+				w.Header().Set("Cache-Control", "public, max-age=300")
+				w.Write(img)
+				return
+			}
 			w.WriteHeader(404)
 			return
 		}
@@ -578,7 +646,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			RawContent string `json:"rawContent"`
 		}
 		_ = json.Unmarshal(body, &img)
-		tok := s.bearer(r)
+		tok := s.validBearer(r)
 		if uid := str(tok, "sub"); uid != "" && img.RawContent != "" {
 			if raw, err := base64.StdEncoding.DecodeString(img.RawContent); err != nil {
 				log.Printf("[nx-baas] image_upload: not base64 (%d bytes): %v", len(img.RawContent), err)
@@ -640,7 +708,12 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		if id != nil {
 			username = id.Nickname
 		}
-		s.store.Update(u, func(u *User) { u.Presence.State = "ONLINE"; u.Presence.UpdatedAt = time.Now().Unix() })
+		// Signed in on this device: a per-device presence claim with a lease
+		// (PRE-01/02). If the same device account was signed in as someone
+		// else a moment ago, that person's claim ends here — an account
+		// switch is a departure for whoever held the console before.
+		s.expireDeviceEverywhere(form.Get("id"), u.ID)
+		s.noteDevicePresence(u, form.Get("id"), "ONLINE", "", "", "")
 		s.reportOnline(r.Context(), u)
 		res := map[string]any{
 			"expiresIn": 10800, "user": s.userObj(u, id, ""), "idToken": s.idToken(u, id, username, app),
@@ -663,6 +736,12 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		u := s.store.User(seg[2])
 		if u == nil {
 			baasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
+			return
+		}
+		// Reading or writing a user object binds to the authenticated user:
+		// a profile is not a public page (the friend list carries what
+		// friends may see about a person).
+		if s.requireCaller(w, r, seg[2]) == nil {
 			return
 		}
 		switch r.Method {
@@ -728,6 +807,9 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			s.store.Update(u, func(u *User) { u.PID, u.NaID = 0, "" })
 			writeJSON(w, 200, s.userObj(u, nil, ""))
 		case "generate_code":
+			if s.requireCaller(w, r, seg[2]) == nil {
+				return
+			}
 			// The wiki is explicit: a new code, and no new one for 24 hours.
 			// This used to answer "there is nothing to regenerate" and hand
 			// back the same code, which is a lie a console cannot see through.
@@ -743,6 +825,9 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			s.store.Update(u, func(u *User) { u.CodeGeneratedAt = time.Now().Unix() })
 			writeJSON(w, 200, s.userObj(u, s.identity(u), ""))
 		case "device_histories":
+			if s.requireCaller(w, r, seg[2]) == nil {
+				return
+			}
 			// Every console this user has signed in on. We keep no history, and
 			// an empty list is a true answer; a 404 here is not.
 			writeJSON(w, 200, map[string]any{"count": 0, "deviceHistories": []any{}})
@@ -754,16 +839,28 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 					baasErr(w, r, 400, "invalid_params", "Invalid Params", "invalid params")
 					return
 				}
-				s.store.Update(u, func(u *User) {
-					for _, b := range u.Blocks {
-						if b == target {
-							return
-						}
-					}
-					u.Blocks = append(u.Blocks, target)
-				})
+				if s.requireCaller(w, r, seg[2]) == nil {
+					return
+				}
+				other := s.resolveFriend(target)
+				if other == nil {
+					baasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
+					return
+				}
+				// Blocks commit in the core, which owns enforcement for every
+				// adapter (SOC-03); the local mirror only feeds this server's
+				// own reads.
+				if err := s.setBlock(u, other, true); err != nil {
+					log.Printf("[nx-baas] block failed user=%s target=%s: %v", u.ID, target, err)
+					status, code, title, detail := baasFailure(err)
+					baasErr(w, r, status, code, title, detail)
+					return
+				}
 				writeJSON(w, 200, map[string]any{"id": target, "createdAt": time.Now().Unix()})
 			default:
+				if s.requireCaller(w, r, seg[2]) == nil {
+					return
+				}
 				list := []any{}
 				for _, b := range u.Blocks {
 					list = append(list, map[string]any{"id": b})
@@ -784,15 +881,20 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			baasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 			return
 		}
-		s.store.Update(u, func(u *User) {
-			kept := u.Blocks[:0]
-			for _, b := range u.Blocks {
-				if b != seg[4] {
-					kept = append(kept, b)
-				}
-			}
-			u.Blocks = kept
-		})
+		if s.requireCaller(w, r, seg[2]) == nil {
+			return
+		}
+		other := s.resolveFriend(seg[4])
+		if other == nil {
+			baasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
+			return
+		}
+		if err := s.setBlock(u, other, false); err != nil {
+			log.Printf("[nx-baas] unblock failed user=%s target=%s: %v", u.ID, seg[4], err)
+			status, code, title, detail := baasFailure(err)
+			baasErr(w, r, status, code, title, detail)
+			return
+		}
 		w.WriteHeader(204)
 		return
 
@@ -802,8 +904,19 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			baasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 			return
 		}
+		if s.requireCaller(w, r, seg[2]) == nil {
+			return
+		}
+		// seg[4] names the device account whose presence this is (PRE-01):
+		// two consoles signed in as the same user hold two claims, and one
+		// of them going quiet must not end the other's.
+		device := seg[4]
 		switch r.Method {
 		case "DELETE":
+			// The device unlinks itself (or the account switches): its claim
+			// ends now, not when a lease happens to run out.
+			s.expireDevicePresence(u, device)
+			s.expireDeviceEverywhere(device, u.ID)
 			w.WriteHeader(204)
 		case "PATCH": // presence (friends sysmodule), JSON patch
 			var ops []struct {
@@ -811,33 +924,33 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				Value    any
 			}
 			json.Unmarshal(body, &ops)
-			s.store.Update(u, func(u *User) {
-				for _, o := range ops {
-					v, _ := o.Value.(string)
-					switch o.Path {
-					case "/presence/state":
-						u.Presence.State = v
-					case "/presence/extras/friends/appField":
-						u.Presence.AppField = v
-					case "/presence/extras/friends/appInfo:appId":
-						u.Presence.AppID = v
-					case "/presence/extras/friends/appInfo:presenceGroupId":
-						u.Presence.PresenceGroupID = v
-					}
+			state, appID, appField, groupID := "", "", "", ""
+			for _, o := range ops {
+				v, _ := o.Value.(string)
+				switch o.Path {
+				case "/presence/state":
+					state = v
+				case "/presence/extras/friends/appField":
+					appField = v
+				case "/presence/extras/friends/appInfo:appId":
+					appID = v
+				case "/presence/extras/friends/appInfo:presenceGroupId":
+					groupID = v
 				}
-				u.Presence.UpdatedAt = time.Now().Unix()
-				if u.Presence.State == "OFFLINE" {
-					u.Presence.LogoutAt = u.Presence.UpdatedAt
-				}
-			})
+			}
+			if state == "" {
+				baasErr(w, r, 400, "invalid_params", "Invalid Params", "no presence state in patch")
+				return
+			}
+			s.noteDevicePresence(u, device, state, appID, appField, groupID)
 			// This is what keeps someone counted as online: the lease the core holds is short,
 			// and a client that has gone away stops renewing it.
-			if u.Presence.State == "OFFLINE" {
+			if state == "OFFLINE" {
 				s.reportOffline(r.Context(), u)
 			} else {
 				s.reportOnline(r.Context(), u)
 			}
-			log.Printf("[nx-baas] presence user=%s pid=%d %s app=%s field=%q", u.ID, u.PID, u.Presence.State, u.Presence.AppID, u.Presence.AppField)
+			log.Printf("[nx-baas] presence user=%s pid=%d device=%s %s app=%s field=%q", u.ID, u.PID, device, state, appID, appField)
 			writeJSON(w, 200, s.userObj(u, s.identity(u), ""))
 		default:
 			dump(r, body, "!! UNHANDLED device_accounts")
@@ -853,14 +966,20 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		return
 
 	case p == "/1.0.0/users" && r.Method == "GET":
-		// Friend-code / id lookup from the friends sysmodule. The console asks
-		// with a filter expression, captured from hardware on 2026-09-08:
+		// Friend-code / id lookup from the friends sysmodule. Protected: a
+		// live token first (discovery is a social operation, not a public
+		// directory), then the console's filter expression, captured from
+		// hardware on 2026-09-08:
 		//
 		//   GET /1.0.0/users?filter.links.friendCode.id.$in=1000-0000-0002
 		//
 		// The keys here used to be guesses ("friendCode", "id"), so every
 		// lookup missed and the console said it could not find the user. The
 		// value carries no SW- prefix and $in may list several.
+		if s.validBearer(r) == nil {
+			baasErr(w, r, 401, "invalid_token", "Invalid token", "a current access token is required")
+			return
+		}
 		q := r.URL.Query()
 		now := time.Now().Unix()
 		users := []any{}
@@ -914,6 +1033,19 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		})
 		return
 	case p == "/1.0.0/devices/me/delete":
+		// A device deleting itself is a departure (PRE-02): its presence claim
+		// ends here, not when a lease happens to lapse. The request names the
+		// device; where it names a user too, end it on that user's record.
+		if dev := bodyField(body, form, "deviceId", "deviceAccountId", "device"); dev != "" {
+			if uid := bodyField(body, form, "userId", "user"); uid != "" {
+				if u := s.store.User(uid); u != nil {
+					s.expireDevicePresence(u, dev)
+				}
+			}
+			s.expireDeviceEverywhere(dev, "")
+		} else {
+			log.Printf("[nx-baas] devices/me/delete without a device id; nothing to expire")
+		}
 		writeJSON(w, 200, map[string]any{})
 		return
 	}
@@ -947,7 +1079,7 @@ func (s *server) friends(w http.ResponseWriter, r *http.Request, u *User, rest [
 	s.friends2(w, r, append([]string{"users", u.ID}, rest...), body)
 }
 
-// /2.0.0/... friends API (friends sysmodule).
+// /2.0.0 friends surface: see the function comment on friends2.
 func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, body []byte) {
 	now := time.Now().Unix()
 	var in map[string]any
@@ -959,42 +1091,47 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		}
 		return form.Get(k)
 	}
-	me := func() (*User, *Identity) {
-		if len(seg) >= 2 && seg[0] == "users" {
-			u := s.store.User(seg[1])
-			return u, s.identity(u)
-		}
-		if c := s.bearer(r); c != nil {
-			u := s.store.User(str(c, "sub"))
-			return u, s.identity(u)
-		}
-		return nil, nil
+	// me: the authenticated caller. The legacy path-based identity is gone:
+	// trusting /users/<id> to choose whose social state is accessed is what
+	// let one account read another's list.
+	me := s.bearerUser(r)
+	if me == nil {
+		baasErr(w, r, 401, "invalid_token", "Invalid token", "a current access token is required")
+		return
 	}
+	// The caller's identity as the core sees it, for rendering "me" objects.
+	myID := s.identity(me)
 
 	switch {
 	case len(seg) == 3 && seg[0] == "users" && seg[2] == "friends" && r.Method == "GET":
-		_, id := me()
+		if s.requireCaller(w, r, seg[1]) == nil {
+			return
+		}
 		list := []any{}
-		if id != nil {
-			for _, f := range id.Friends {
-				// A friend entry is a user plus the friendship: presence,
-				// isFavoriteFriend and isNewFriend. The console fetches none
-				// of those separately, so this is the only place it can learn
-				// them. A search result is a different parser and still
-				// refuses them.
-				list = append(list, s.friendObj(f, now))
+		if myID != nil {
+			for _, f := range myID.Friends {
+				// One relationship entry per core friend, in the shape the
+				// 22.5.0 parser counts: friendId + friend{nickname,
+				// thumbnailUrl} + the viewer's own relationship state.
+				list = append(list, s.relationshipObj(me, f, now))
+			}
+			if len(list) > maxListEntries {
+				// The parser caps at 300 itself; sending more would be
+				// dropped silently at the far end. No native cursor exists
+				// to paginate with, so the bound is the contract.
+				list = list[:maxListEntries]
 			}
 		}
 		writeJSON(w, 200, listEnvelopeWith(list, `""`, 100))
 		return
 
 	case len(seg) == 4 && seg[0] == "users" && seg[2] == "friends" && r.Method == "PATCH":
-		// Marking a friend as a favourite. The console sends a JSON patch and
-		// expects the friend back; without this it was an UNHANDLED 404 and
-		// the star silently did nothing.
-		u, _ := me()
-		if u == nil {
-			baasErr(w, r, 403, "insufficient_scope", "Token is insufficient", "not linked")
+		// Relationship preferences (SOC-02): /isFavorite (what 22.5.0 sends),
+		// /extras/self/isConfirmed (the new-friend acknowledgement) and
+		// /extras/self/isOnlineNotification (the online-alert preference).
+		// The older isFavoriteFriend spelling maps to the same persisted
+		// state: one relationship, one favourite flag.
+		if s.requireCaller(w, r, seg[1]) == nil {
 			return
 		}
 		var ops []struct {
@@ -1002,83 +1139,130 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			Value    any
 		}
 		_ = json.Unmarshal(body, &ops)
-		favourite := true
-		for _, o := range ops {
-			if strings.HasSuffix(o.Path, "isFavoriteFriend") {
-				if b, ok := o.Value.(bool); ok {
-					favourite = b
+		changed := false
+		s.store.Update(me, func(u *User) {
+			for _, o := range ops {
+				p := u.pref(seg[3])
+				switch {
+				case strings.HasSuffix(o.Path, "isFavorite") || strings.HasSuffix(o.Path, "isFavoriteFriend"):
+					if b, ok := o.Value.(bool); ok {
+						p.Favorite = b
+						p.UpdatedAt = now
+						changed = true
+					}
+				case strings.HasSuffix(o.Path, "isConfirmed"):
+					if b, ok := o.Value.(bool); ok {
+						p.Confirmed = b
+						p.UpdatedAt = now
+						changed = true
+					}
+				case strings.HasSuffix(o.Path, "isOnlineNotification"):
+					if b, ok := o.Value.(bool); ok {
+						p.OnlineNotification = &b
+						p.UpdatedAt = now
+						changed = true
+					}
 				}
-			}
-		}
-		s.store.Update(u, func(u *User) {
-			kept := u.Favourites[:0]
-			for _, f := range u.Favourites {
-				if f != seg[3] {
-					kept = append(kept, f)
-				}
-			}
-			u.Favourites = kept
-			if favourite {
-				u.Favourites = append(u.Favourites, seg[3])
 			}
 		})
-		obj := map[string]any{"id": seg[3], "isFavoriteFriend": favourite, "updatedAt": now}
-		if f, err := s.acct.Resolve(url.Values{"baas": {seg[3]}}); err == nil && f != nil {
-			obj = s.friendObj(*f, now)
-			obj["isFavoriteFriend"] = favourite
+		if !changed {
+			baasErr(w, r, 400, "invalid_params", "Invalid Params", "no known relationship field in patch")
+			return
 		}
-		// The change is applied either way: refusing because the other account
-		// cannot be rendered would lose a star the person just set.
-		writeJSON(w, 200, obj)
+		// Answer with the single-friend shape the firmware's single-entry
+		// parser reads: $.friendId, $.friend.nickname, $.isFavorite.
+		target := s.resolveFriend(seg[3])
+		if target == nil {
+			// The person may be unresolvable right now; the preference change
+			// is still committed (losing a star the person just set is worse
+			// than a plainer reply), so render what we know.
+			target = &Friend{BaasUserID: seg[3]}
+		}
+		writeJSON(w, 200, s.relationshipObj(me, *target, now))
 		return
 
 	case len(seg) == 4 && seg[0] == "users" && seg[2] == "friends" && r.Method == "DELETE":
-		dump(r, body, "friend-delete (not applied)")
+		// Removing a friend commits through the core (SOC-03). The old reply
+		// logged "not applied" and answered 204, which was a success statement
+		// about an operation that never happened.
+		if s.requireCaller(w, r, seg[1]) == nil {
+			return
+		}
+		target := s.resolveFriend(seg[3])
+		if target == nil {
+			baasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
+			return
+		}
+		if err := s.removeFriend(me, target); err != nil {
+			log.Printf("[nx-baas] friend-remove failed user=%s other=%s: %v", me.ID, seg[3], err)
+			status, code, title, detail := baasFailure(err)
+			baasErr(w, r, status, code, title, detail)
+			return
+		}
 		w.WriteHeader(204)
 		return
 
 	case len(seg) == 4 && seg[0] == "users" && seg[2] == "friend_requests":
-		_, id := me()
+		// The request boxes. Entries name their durable request id, so the
+		// console's PATCH/DELETE later means the same request whoever answers
+		// (SOC-03). The core's lists are the state of record; the ids are the
+		// adapter's mapping, persisted across restarts.
+		if s.requireCaller(w, r, seg[1]) == nil {
+			return
+		}
+		if myID == nil {
+			baasErr(w, r, 403, "insufficient_scope", "Token is insufficient", "not linked")
+			return
+		}
 		list := []any{}
-		if id != nil {
-			src := id.FriendRequests
-			if seg[3] == "outbox" {
-				src = id.SentRequests
+		incoming := seg[3] != "outbox"
+		requests := myID.FriendRequests
+		if !incoming {
+			requests = myID.SentRequests
+		}
+		meObj := s.userObj(me, myID, "")
+		for _, f := range requests {
+			var reqID string
+			if incoming {
+				reqID, _ = s.store.EnsureRequest(f.PID, me.PID)
+			} else {
+				reqID, _ = s.store.EnsureRequest(me.PID, f.PID)
 			}
-			me, _ := me()
-			for _, f := range src {
-				other := s.friendObj(f, now)
-				entry := map[string]any{
-					"id": f.BaasUserID, "state": "PENDING",
-					"createdAt": f.CreatedAt, "updatedAt": now,
-					"channels": []string{"FRIEND_CODE"},
-				}
-				// Who sent it is the whole point of an inbox: the same object
-				// in both slots said nothing, and the console had nothing to
-				// show.
-				if seg[3] == "outbox" {
-					entry["sender"], entry["senderId"] = s.userObj(me, id, ""), me.ID
-					entry["receiver"], entry["receiverId"] = other, f.BaasUserID
-				} else {
-					entry["sender"], entry["senderId"] = other, f.BaasUserID
-					entry["receiver"], entry["receiverId"] = s.userObj(me, id, ""), me.ID
-				}
-				list = append(list, entry)
+			record := s.store.RequestByID(reqID)
+			createdAt, updatedAt := now, now
+			if record != nil {
+				createdAt, updatedAt = record.CreatedAt, record.UpdatedAt
 			}
+			other := s.friendObj(f, now)
+			entry := map[string]any{
+				"id": reqID, "state": "PENDING",
+				"createdAt": createdAt, "updatedAt": updatedAt,
+				"channels": []string{"FRIEND_CODE"},
+			}
+			// Who sent it is the whole point of an inbox: the same object
+			// in both slots said nothing, and the console had nothing to
+			// show.
+			if incoming {
+				entry["sender"], entry["senderId"] = other, f.BaasUserID
+				entry["receiver"], entry["receiverId"] = meObj, me.ID
+			} else {
+				entry["sender"], entry["senderId"] = meObj, me.ID
+				entry["receiver"], entry["receiverId"] = other, f.BaasUserID
+			}
+			list = append(list, entry)
 		}
 		writeJSON(w, 200, listEnvelope(list))
 		return
 
 	case len(seg) == 1 && seg[0] == "friend_requests" && r.Method == "POST":
-		u, id := me()
-		if id == nil {
+		if myID == nil {
 			baasErr(w, r, 403, "insufficient_scope", "Token is insufficient", "not linked")
 			return
 		}
 		var target *Friend
 		var err error
 		if c := field("friendCode"); c != "" {
-			target, err = s.acct.Resolve(url.Values{"code": {c}})
+			target, err = s.acct.Resolve(url.Values{"code": {normaliseFriendCode(c)}})
 		} else if t := field("receiverId"); t != "" {
 			target, err = s.acct.Resolve(url.Values{"baas": {t}})
 		} else if t := field("userId"); t != "" {
@@ -1090,96 +1274,153 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			baasErr(w, r, 400, "invalid_friend_code_format", "Invalid friend code", "no such user")
 			return
 		}
-		logErr("friend-request", s.acct.FriendRequest(u.PID, target.PID))
-		s.friendGraphChanged(u, target.BaasUserID)
-		// The request gets its own id. It used to be handed back the
+		created, incoming, reqID, err := s.commitFriendRequest(me, target)
+		if err != nil {
+			// The request did not commit, so this is an error, never a
+			// success with a timestamp (the old code logged the failure and
+			// answered 201 anyway).
+			log.Printf("[nx-baas] friend-request failed user=%s target=%s: %v", me.ID, target.BaasUserID, err)
+			status, code, title, detail := baasFailure(err)
+			baasErr(w, r, status, code, title, detail)
+			return
+		}
+		s.friendGraphChanged(me, target.BaasUserID)
+		// The request gets its own durable id. It used to be handed back the
 		// receiver's user id, which is a different thing entirely: the console
 		// PATCHes /2.0.0/friend_requests/<id> to cancel, and an id that is
 		// really somebody's user id is not a request it can act on.
-		reqID := s.rememberRequest(target.BaasUserID)
-		writeJSON(w, 201, map[string]any{
-			"id":         reqID,
-			"senderId":   u.ID,
-			"receiverId": target.BaasUserID,
-			"channels":   channelsOf(body),
-			"sender":     s.userObj(u, id, ""),
-			"receiver":   s.friendObj(*target, now),
-			"state":      "PENDING",
-			"createdAt":  now,
-			"updatedAt":  now,
-		})
+		code := 200
+		if created && !incoming {
+			code = 201
+		}
+		writeJSON(w, code, s.friendRequestReply(me, myID, target, reqID, incoming, body, now))
 		return
 
 	case len(seg) == 2 && seg[0] == "friend_requests" && (r.Method == "PATCH" || r.Method == "DELETE"):
-		u, id := me()
-		if id == nil {
+		if myID == nil {
 			baasErr(w, r, 403, "insufficient_scope", "Token is insufficient", "not linked")
 			return
 		}
-		// seg[1] is a request id for one the console made here, and a user id
-		// for one it learned about elsewhere. Try both before giving up.
-		target := seg[1]
-		if uid, ok := s.requestTarget(seg[1]); ok {
-			target = uid
+		state := patchedState(body)
+		if r.Method == "DELETE" {
+			state = "CANCELLED"
 		}
-		from, err := s.acct.Resolve(url.Values{"baas": {target}})
-		if err != nil {
+		record, other := s.friendRequestByRef(seg[1])
+		var err error
+		switch {
+		case record != nil:
+			// The durable path: the record names the pair, so authorization
+			// is exact — only the addressee answers, only the sender cancels.
+			switch state {
+			case "AUTHORIZED":
+				err = s.settleRequest(me, record, true)
+			case "REJECTED":
+				err = s.settleRequest(me, record, false)
+			case "CANCELLED":
+				err = s.cancelRequest(me, record)
+			default:
+				baasErr(w, r, 400, "invalid_params", "Invalid Params", "unknown request state")
+				return
+			}
+			if err == nil {
+				s.store.DropRequest(record.ID) // answered: a stale id must not answer twice
+			}
+		case other != nil:
+			// A bare user id: a request box cached by an older build of this
+			// server. The core enforces the direction — accepting a request
+			// that does not address this caller fails there.
+			if state == "CANCELLED" {
+				err = s.acct.RemoveFriend(me.PID, other.PID)
+			} else {
+				err = s.acct.FriendAccept(me.PID, other.PID, state == "AUTHORIZED")
+			}
+		default:
 			baasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 			return
+		}
+		if err != nil {
+			// No commit, no success: the console is told, in its own error
+			// contract, and can re-sync.
+			log.Printf("[nx-baas] friend-request %s failed user=%s ref=%s: %v", state, me.ID, seg[1], err)
+			status, code, title, detail := baasFailure(err)
+			baasErr(w, r, status, code, title, detail)
+			return
+		}
+		// The other side of the request, for the reply the console expects.
+		var otherFriend *Friend
+		if other != nil {
+			otherFriend = other
+		} else {
+			otherPID := record.FromPID
+			if otherPID == me.PID {
+				otherPID = record.ToPID
+			}
+			otherFriend = s.friendByPID(otherPID)
+		}
+		if otherFriend == nil {
+			otherFriend = &Friend{BaasUserID: seg[1]}
+		}
+		otherBaas := otherFriend.BaasUserID
+		s.friendGraphChanged(me, otherBaas)
+		// An acceptance completes the new-friend acknowledgement too: the
+		// friendship is not news to the person who just accepted it.
+		if state == "AUTHORIZED" {
+			s.store.Update(me, func(u *User) {
+				p := u.pref(otherBaas)
+				p.Confirmed, p.UpdatedAt = true, now
+			})
 		}
 		// The console sets the state itself -- [{"op":"replace","path":"/state",
 		// "value":"AUTHORIZED"}] -- and expects that word back. We answered
 		// with our own vocabulary ("ACCEPTED") and a three-field stub, and the
 		// console called it a communication error even though the friendship
 		// had gone through.
-		state := patchedState(body)
-		if r.Method == "DELETE" {
-			state = "CANCELLED"
+		otherObj := s.friendObj(*otherFriend, now)
+		meObj := s.userObj(me, myID, "")
+		senderObj, receiverObj := any(otherObj), any(meObj)
+		senderID, receiverID := otherBaas, me.ID
+		if state == "CANCELLED" || (record != nil && record.FromPID == me.PID) {
+			// A cancellation answers the request the caller sent.
+			senderObj, receiverObj = receiverObj, senderObj
+			senderID, receiverID = receiverID, senderID
 		}
-		accept := state == "AUTHORIZED"
-		logErr("friend-accept", s.acct.FriendAccept(u.PID, from.PID, accept))
-		s.friendGraphChanged(u, from.BaasUserID)
-		other := s.friendObj(*from, now)
+		createdAt := now
+		if otherFriend.CreatedAt > 0 {
+			createdAt = otherFriend.CreatedAt
+		}
 		writeJSON(w, 200, map[string]any{
-			"id":         seg[1],
-			"senderId":   from.BaasUserID,
-			"receiverId": u.ID,
-			"sender":     other,
-			"receiver":   s.userObj(u, id, ""),
-			"state":      state,
-			"channels":   []string{"FRIEND_CODE"},
-			"createdAt":  from.CreatedAt,
-			"updatedAt":  now,
+			"id":       seg[1],
+			"senderId": senderID, "receiverId": receiverID,
+			"sender": senderObj, "receiver": receiverObj,
+			"state": state, "channels": []string{"FRIEND_CODE"},
+			"createdAt": createdAt, "updatedAt": now,
 		})
 		return
 
 	case len(seg) == 4 && seg[0] == "users" && seg[2] == "relationships":
-		u, id := me()
+		if s.requireCaller(w, r, seg[1]) == nil {
+			return
+		}
 		rel := map[string]any{
-			"userId": "", "targetUserId": seg[3],
+			"userId": me.ID, "targetUserId": seg[3],
 			"isFriend": false, "isFavoriteFriend": false, "isBlocking": false,
 			"sentFriendRequestIds": []string{},
 		}
-		if u != nil {
-			rel["userId"] = u.ID
-			for _, b := range u.Blocks {
-				if b == seg[3] {
-					rel["isBlocking"] = true
-				}
-			}
-			for _, f := range u.Favourites {
-				if f == seg[3] {
-					rel["isFavoriteFriend"] = true
-				}
+		for _, b := range me.Blocks {
+			if b == seg[3] {
+				rel["isBlocking"] = true
 			}
 		}
-		if id != nil {
-			for _, f := range id.Friends {
+		if p := s.prefOf(me, seg[3]); p != nil && p.Favorite {
+			rel["isFavoriteFriend"] = true
+		}
+		if myID != nil {
+			for _, f := range myID.Friends {
 				if f.BaasUserID == seg[3] {
 					rel["isFriend"] = true
 				}
 			}
-			for _, f := range id.SentRequests {
+			for _, f := range myID.SentRequests {
 				if f.BaasUserID == seg[3] {
 					rel["sentFriendRequestIds"] = []string{f.BaasUserID}
 				}
@@ -1695,6 +1936,9 @@ func main() {
 	}
 	if b, ok := s.acct.(*openpakBackend); ok {
 		go s.followCoreEvents(b)
+		// One presence reconciler beside the one core-event poller: leases,
+		// heartbeats and expiries on the adapter's clock (PRE-02).
+		go s.reconcilePresenceLoop()
 	}
 	if u := os.Getenv("SAVES_URL"); u != "" {
 		s.saves, s.savesKey = newSavesProxy(u), os.Getenv("SAVES_INTERNAL_KEY")

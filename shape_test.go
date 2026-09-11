@@ -23,13 +23,26 @@ func (f fakeBackend) friendCodeForAccount(string) (string, bool) {
 	return f.id.FriendCode, true
 }
 
-func (f fakeBackend) RegenerateFriendCode(uint64) error   { return nil }
-func (f fakeBackend) Resolve(url.Values) (*Friend, error) { return nil, http.ErrNoLocation }
+func (f fakeBackend) RegenerateFriendCode(uint64) error { return nil }
+
+// Resolve answers baas-id lookups with a synthetic user, so the mutation
+// handlers' target resolution succeeds for whatever id a test names. Code
+// lookups stay unresolvable: search tests use codeBackend, which owns that
+// behaviour.
+func (f fakeBackend) Resolve(q url.Values) (*Friend, error) {
+	if id := q.Get("baas"); id != "" {
+		return &Friend{BaasUserID: id, Nickname: "Someone", FriendCode: "SW-0000-0000-0001", Country: "IE"}, nil
+	}
+	return nil, http.ErrNoLocation
+}
 func (f fakeBackend) LoginPID(string, string) (uint64, string, error) {
 	return f.id.PID, f.id.Nickname, nil
 }
 func (f fakeBackend) FriendRequest(uint64, uint64) error      { return nil }
 func (f fakeBackend) FriendAccept(uint64, uint64, bool) error { return nil }
+func (f fakeBackend) RemoveFriend(uint64, uint64) error       { return nil }
+func (f fakeBackend) Block(uint64, uint64) error              { return nil }
+func (f fakeBackend) Unblock(uint64, uint64) error            { return nil }
 func (f fakeBackend) nexToken(uint64, string) string          { return "nx2.test" }
 func (f fakeBackend) nexSigningKey() []byte                   { return []byte("test") }
 

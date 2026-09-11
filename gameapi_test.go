@@ -36,6 +36,9 @@ func (b *stubBackend) Resolve(url.Values) (*Friend, error)             { return 
 func (b *stubBackend) LoginPID(string, string) (uint64, string, error) { return 0, "", nil }
 func (b *stubBackend) FriendRequest(uint64, uint64) error              { return nil }
 func (b *stubBackend) FriendAccept(uint64, uint64, bool) error         { return nil }
+func (b *stubBackend) RemoveFriend(uint64, uint64) error               { return nil }
+func (b *stubBackend) Block(uint64, uint64) error                      { return nil }
+func (b *stubBackend) Unblock(uint64, uint64) error                    { return nil }
 func (b *stubBackend) nexSigningKey() []byte                           { return b.key }
 func (b *stubBackend) friendCodeForAccount(string) (string, bool)      { return "SW-0000-0000-0000", true }
 func (b *stubBackend) nexToken(pid uint64, username string) string {

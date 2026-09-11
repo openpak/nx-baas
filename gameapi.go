@@ -159,11 +159,40 @@ func (s *server) photonRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	appParam := append([]byte{1, 0, 0, 0, byte(len(in.Room))}, in.Room...)
-	s.store.Update(u, func(u *User) {
-		u.Presence = Presence{State: "PLAYING", AppField: base64.StdEncoding.EncodeToString(appParam),
-			AppID: in.AppID, PresenceGroupID: in.AppID, UpdatedAt: time.Now().Unix()}
-	})
+	// A title's room is one device's claim, keyed by that identity, so a
+	// friend's list shows PLAYING for exactly as long as the room lives —
+	// and not one request longer than the lease if the game never reports
+	// the departure.
+	s.noteDevicePresence(u, "photon:"+in.Identity, "PLAYING", in.AppID,
+		base64.StdEncoding.EncodeToString(appParam), in.AppID)
 	log.Printf("[nx-baas] photon-room pid=%d app=%s room=%s", pid, in.AppID, in.Room)
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// POST /internal/photon-room-leave {"identity":"nex:...|bsdid:..."}
+// The room a player left is not a room they are in: without this the PLAYING
+// claim outlived the game and a friend's list offered a join into nothing
+// (PRE-02, room leave).
+func (s *server) photonRoomLeave(w http.ResponseWriter, r *http.Request) {
+	if !s.internalOK(r) {
+		apiErr(w, http.StatusUnauthorized, "internal")
+		return
+	}
+	var in struct {
+		Identity string `json:"identity"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in); err != nil || in.Identity == "" {
+		apiErr(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	pid := s.pidForIdentity(in.Identity)
+	u := s.store.UserByPID(pid)
+	if pid == 0 || u == nil {
+		apiErr(w, http.StatusBadRequest, "unknown identity")
+		return
+	}
+	s.noteDevicePresence(u, "photon:"+in.Identity, "OFFLINE", "", "", "")
+	log.Printf("[nx-baas] photon-room-leave pid=%d", pid)
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -347,6 +376,7 @@ func (s *server) mintToken(w http.ResponseWriter, r *http.Request) {
 func (s *server) gameAPI() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/internal/photon-room", s.photonRoom)
+	mux.HandleFunc("/internal/photon-room-leave", s.photonRoomLeave)
 	mux.HandleFunc("/internal/photon-identity", s.photonIdentity)
 	mux.HandleFunc("/internal/mint-token", s.mintToken)
 	mux.HandleFunc("/internal/switch/identity", s.switchIdentity)

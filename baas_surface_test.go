@@ -47,6 +47,7 @@ func TestEveryDocumentedBaasMethodIsAnswered(t *testing.T) {
 		t.Run(c.method+" "+strings.SplitN(c.path, "?", 2)[0], func(t *testing.T) {
 			r := httptest.NewRequest(c.method, "https://"+baasHost+c.path, strings.NewReader(c.body))
 			r.Host = baasHost
+			r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
 			if c.ctype != "" {
 				r.Header.Set("Content-Type", c.ctype)
 			}
@@ -85,6 +86,7 @@ func TestFriendCodeRegeneratesOncePerDay(t *testing.T) {
 			strings.NewReader("type=NX"))
 		r.Host = baasHost
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, r)
 		return w
