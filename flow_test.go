@@ -412,21 +412,33 @@ func TestFriendListEntriesCarryACountry(t *testing.T) {
 	if len(got.Items) != 1 {
 		t.Fatalf("friends: %s", w.Body.String())
 	}
-	if got.Items[0]["country"] == "" {
-		t.Error("friend entry has no country; the console refuses a user object like that")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d", w.Code)
 	}
-	if got.Items[0]["nickname"] == "" || got.Items[0]["thumbnailUrl"] == "" {
-		t.Errorf("friend entry is not renderable: %v", got.Items[0])
+	entry := got.Items[0]
+	if entry["friendId"] != "aaaaaaaaaaaa0001" {
+		t.Fatalf("missing relationship id: %v", entry)
 	}
-	// A friend entry is a user plus the friendship. The console never asks
-	// for presence or the favourite/new flags on their own, so a list entry
-	// without them leaves the applet nothing to show.
-	for _, friendOnly := range []string{"presence", "isFavoriteFriend", "isNewFriend"} {
-		if _, ok := got.Items[0][friendOnly]; !ok {
-			t.Errorf("friend entry lacks %q", friendOnly)
+	friend, ok := entry["friend"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing nested friend: %v", entry)
+	}
+	for _, key := range []string{"country", "nickname", "thumbnailUrl"} {
+		value, ok := friend[key].(string)
+		if !ok || value == "" {
+			t.Errorf("missing nested %s", key)
 		}
 	}
-	if devs, _ := got.Items[0]["deviceAccounts"].([]any); len(devs) > 1 {
-		t.Errorf("friend entry reveals %d device accounts; a reference reply carries one", len(devs))
+	if _, ok := friend["presence"].(map[string]any); !ok {
+		t.Error("missing nested presence")
+	}
+	if entry["isFavorite"] != false {
+		t.Error("unexpected favourite state")
+	}
+	if _, ok := entry["nickname"]; ok {
+		t.Error("flat user in relationship list")
+	}
+	if devs, _ := friend["deviceAccounts"].([]any); len(devs) > 1 {
+		t.Errorf("friend exposes %d device accounts", len(devs))
 	}
 }

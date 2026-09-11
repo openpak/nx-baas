@@ -973,16 +973,31 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 
 	switch {
 	case len(seg) == 3 && seg[0] == "users" && seg[2] == "friends" && r.Method == "GET":
-		_, id := me()
+		viewer, id := me()
 		list := []any{}
 		if id != nil {
 			for _, f := range id.Friends {
-				// A friend entry is a user plus the friendship: presence,
-				// isFavoriteFriend and isNewFriend. The console fetches none
-				// of those separately, so this is the only place it can learn
-				// them. A search result is a different parser and still
-				// refuses them.
-				list = append(list, s.friendObj(f, now))
+				// Firmware 22.5.0 counts a relationship only when friendId,
+				// friend.nickname and friend.thumbnailUrl are present.
+				// Search and request-box objects retain their own user shape.
+				favorite := false
+				if viewer != nil {
+					for _, friendID := range viewer.Favourites {
+						if friendID == f.BaasUserID {
+							favorite = true
+							break
+						}
+					}
+				}
+				list = append(list, map[string]any{
+					"friendId":   f.BaasUserID,
+					"friend":     s.friendObj(f, now),
+					"isFavorite": favorite,
+					"createdAt":  f.CreatedAt,
+				})
+				if len(list) == 300 {
+					break
+				}
 			}
 		}
 		writeJSON(w, 200, listEnvelopeWith(list, `""`, 100))
