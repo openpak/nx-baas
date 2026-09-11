@@ -14,12 +14,24 @@ import (
 // Push-notification registration the console performs right after a user is imported
 // (NPNS sysmodule, system 18+): Penne id, notification token, account link, plus the Beach and
 // Vermillion registrations that sit in the same sequence. Shapes per kinnay's Penne-Servers page
-// and the Fix_Experimental hardware trace; the persistent frontline connection is not served.
+// and the Fix_Experimental hardware trace.
+//
+// Everything below persists through the penne store (NTF-01): a registration is durable, a
+// token or ticket inherits its binding, and revocation kills everything minted under it.
+// Request-side credential field names are not yet captured; where a request carries none, the
+// binding falls back to the device association the console already established (flagged in
+// docs/penne-protocol.md as provisional until a capture shows the real shapes).
 func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 	host, p := hostOf(r), r.URL.Path
 	var in map[string]any
 	json.Unmarshal(body, &in)
-	now := time.Now().Unix()
+	now := time.Now()
+	store := s.notifStore()
+	deviceID := deviceIDFromUA(r.UserAgent())
+	userID := "" // bound when a request carries one of our own access tokens
+	if c := s.bearer(r); c != nil {
+		userID = str(c, "sub")
+	}
 	params := map[string]any{
 		"awake": map[string]any{"count": 2, "idle": 60, "interval": 10}, "ignore_rst": true, "retry_count": 2,
 		"sleep": map[string]any{"count": 1440, "idle": 60, "interval": 10}, "wait_sec": 3600,
@@ -27,27 +39,77 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 	const frontline = "fro-3.hac.lp1.penne.srv.nintendo.net"
 	switch {
 	case strings.HasPrefix(host, "god.") && p == "/v1/penne_ids":
-		writeJSON(w, 200, map[string]any{"id": "p" + randHex(16), "password": randHex(16)})
+		// Registration always mints; a supplied id alone authorizes nothing.
+		// With id+password both present it is a rotation: prove the pair,
+		// retire everything minted under it, mint fresh.
+		if id := str(in, "id"); id != "" {
+			if _, err := store.CheckAssoc(id, str(in, "password"), now); err != nil {
+				log.Printf("[nx-baas] penne: rotation denied for a supplied id (%v)", err)
+				writeJSON(w, 403, map[string]any{"status": 403, "title": "forbidden"})
+				return
+			}
+			store.Revoke(id, now)
+		}
+		id, password := store.Register(deviceID, userID, "", now)
+		writeJSON(w, 200, map[string]any{"id": id, "password": password})
 	case strings.HasPrefix(host, "god.") && p == "/v1/immigrate":
-		writeJSON(w, 404, map[string]any{})
+		writeJSON(w, 404, map[string]any{}) // nothing to migrate from legacy NPNS
 	case strings.HasPrefix(host, "god.") && strings.HasSuffix(p, "/notification_tokens"):
-		writeJSON(w, 200, map[string]any{"notification_token": randHex(18)})
+		assoc, ok := s.penneAuthedAssoc(store, in, userID, deviceID, now)
+		if !ok {
+			writeJSON(w, 401, map[string]any{"status": 401, "title": "authentication required"})
+			return
+		}
+		tok, err := store.NotificationTokenFor(assoc, now)
+		if err != nil {
+			writeJSON(w, 401, map[string]any{"status": 401, "title": "authentication failed"})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"notification_token": tok})
 	case strings.HasPrefix(host, "god.") && strings.HasSuffix(p, "/links"):
 		nsa := ""
 		if cl, err := parseJWT(str(in, "nsa_id_token"), nil); err == nil {
 			nsa = str(cl, "sub")
 		}
+		if assoc, ok := s.penneAuthedAssoc(store, in, userID, deviceID, now); ok && nsa != "" {
+			store.LinkNSA(assoc.ID, nsa, now)
+		}
 		writeJSON(w, 200, map[string]any{"nsa_id": nsa})
 	case strings.HasPrefix(host, "god.") && r.Method == "DELETE":
+		// Revocation: the association being deleted must belong to the
+		// requesting device, or carry its own valid credentials.
+		revoked := 0
+		if id := str(in, "id"); id != "" {
+			if _, err := store.CheckAssoc(id, str(in, "password"), now); err == nil {
+				revoked = store.Revoke(id, now)
+			} else if a := store.AssocForDevice(deviceID); a != nil && a.ID == id {
+				revoked = store.Revoke(id, now)
+			}
+		} else if a := store.AssocForDevice(deviceID); a != nil {
+			revoked = store.Revoke(a.ID, now)
+			store.RevokeDevice(deviceID, now)
+		}
+		log.Printf("[nx-baas] penne: DELETE revoked %d credential(s) for device %s", revoked, deviceID)
 		writeJSON(w, 200, map[string]any{"result": "ok"})
 	case strings.HasPrefix(host, "val.") && p == "/v1/frontlines":
-		writeJSON(w, 200, map[string]any{"current_time": now, "frontline_fqdn": frontline, "persistent_connection_params_simple": params})
+		writeJSON(w, 200, map[string]any{"current_time": now.Unix(), "frontline_fqdn": frontline, "persistent_connection_params_simple": params})
 	case strings.HasPrefix(host, "val.") && p == "/v1/login_tickets":
-		writeJSON(w, 200, map[string]any{"expires_at": now + 4*86400, "frontline_fqdn": frontline, "issued_at": now, "persistent_connection_params_simple": params, "ticket": randHex(32)})
+		assoc, ok := s.penneAuthedAssoc(store, in, userID, deviceID, now)
+		if !ok {
+			writeJSON(w, 401, map[string]any{"status": 401, "title": "authentication required"})
+			return
+		}
+		ticketRec, ticket, err := store.IssueTicketFor(assoc, now, 4*24*time.Hour)
+		if err != nil {
+			writeJSON(w, 401, map[string]any{"status": 401, "title": "authentication failed"})
+			return
+		}
+		_ = ticketRec
+		writeJSON(w, 200, map[string]any{"expires_at": ticketRec.ExpiresAt, "frontline_fqdn": frontline, "issued_at": ticketRec.IssuedAt, "persistent_connection_params_simple": params, "ticket": ticket})
 	case strings.HasPrefix(host, "fro-"):
 		s.frontline(w, r)
 	case strings.HasPrefix(host, "beach."):
-		writeJSON(w, 200, map[string]any{}) // /contents, /penne_id/register, /set: observed 200 {}
+		writeJSON(w, 200, map[string]any{}) // /contents, /penne_id/register, /set: observed 200 {} (D workstream owns the Beach surface)
 	case strings.HasPrefix(host, "gw.") && p == "/v1/accounts/config":
 		writeJSON(w, 200, payloadEnvelope(map[string]any{"online_license": map[string]any{"is_available": true}})) // the online gate; is_available:false parks the game at the lobby with 2321-4992
 	case strings.HasPrefix(host, "gw.") && strings.Contains(p, "/accounts/vphyms"):
@@ -65,40 +127,32 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 	log.Printf("[nx-baas] penne %s %s%s -> handled", r.Method, host, p)
 }
 
-// frontlineHeartbeat is how often the held-open frontline connection emits a keepalive chunk.
-var frontlineHeartbeat = 30 * time.Second
-
-// frontline answers the Penne persistent "frontline" POST (fro-N.hac.lp1.penne...). The client
-// holds this connection open for room-code registration and push notifications; closing it
-// immediately errors the client (the Splatoon 2 form of the failure is 2307-2103). So we accept
-// it 200, stream chunked, and emit a keepalive until the console goes away, instead of 404-ing.
-//
-// ponytail: the held-open + chunked + heartbeat SHAPE is the recorded fact
-// (servers/splatoon-3/docs/provenance.md); the heartbeat's CONTENT is not captured, so a benign
-// newline stands in and nothing is actually pushed yet. A capture of the real frontline frame is
-// the upgrade -- swap the write payload, the connection lifecycle stays as is.
-func (s *server) frontline(w http.ResponseWriter, r *http.Request) {
-	fl, ok := w.(http.Flusher)
-	if !ok {
-		writeJSON(w, 200, map[string]any{"status": "connected"}) // never {} -- an empty reply is the failure class here
-		return
+// penneAuthedAssoc resolves the registration a Penne REST call acts on. The
+// order is: explicit id+password in the body (the one shape that authorizes a
+// supplied id), then the access token's account, then the device's newest
+// association. The last fallback keeps the console's bootstrap moving when its
+// request shape carries no credentials; it is recorded as provisional.
+func (s *server) penneAuthedAssoc(store *penneStore, in map[string]any, userID, deviceID string, now time.Time) (*penneAssoc, bool) {
+	if id := str(in, "id"); id != "" {
+		pw := str(in, "password")
+		if a, err := store.CheckAssoc(id, pw, now); err == nil {
+			return a, true
+		}
+		// A supplied id with a wrong password is a denial, never a fallback.
+		log.Printf("[nx-baas] penne: supplied id denied (bad credentials)")
+		return nil, false
 	}
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.WriteHeader(200)
-	fl.Flush() // let the client see the connection accepted before the first heartbeat
-	t := time.NewTicker(frontlineHeartbeat)
-	defer t.Stop()
-	for {
-		select {
-		case <-r.Context().Done(): // console hung up
-			return
-		case <-t.C:
-			if _, err := w.Write([]byte("\n")); err != nil {
-				return
+	if userID != "" {
+		if id := store.AssocIDForUser(userID); id != "" {
+			if a := store.AssocByID(id); a != nil {
+				return a, true
 			}
-			fl.Flush()
 		}
 	}
+	if a := store.AssocForDevice(deviceID); a != nil {
+		return a, true
+	}
+	return nil, false
 }
 
 // payloadEnvelope wraps an object the way the vermillion account endpoints return it:

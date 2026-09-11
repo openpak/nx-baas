@@ -11,6 +11,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -23,11 +24,13 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
 	"log"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -82,6 +85,12 @@ type server struct {
 	// In-memory by design: a restart re-derives truth from the core (and local
 	// leases), never from this map.
 	liveSessions map[string]string
+	// Penne notification channel (workstream B): durable push-channel state
+	// (registrations, tokens, tickets, subscriptions, delivery outbox) and the
+	// live frontline session registry. notifStore() lazily creates in-memory
+	// versions when unset, so direct handler tests keep working.
+	penneState *penneStore
+	penneHub   *penneHub
 }
 
 type naCode struct {
@@ -1027,6 +1036,8 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			devID = parts[1]
 		}
 		now := time.Now().Unix()
+		// B workstream (NTF-01): keep the association this echo used to drop.
+		s.notifStore().RecordPushChannel(userID, devID, str(in, "service"), str(in, "deviceToken"), time.Unix(now, 0))
 		writeJSON(w, 200, map[string]any{
 			"createdAt": now, "deviceAccountId": devID, "deviceAttributes": map[string]any{}, "deviceToken": str(in, "deviceToken"),
 			"service": str(in, "service"), "updatedAt": now, "userAttributes": map[string]any{}, "userId": userID,
@@ -1801,6 +1812,26 @@ func (rec *recorder) Write(b []byte) (int, error) {
 	return rec.ResponseWriter.Write(b)
 }
 
+// Flush forwards to the wrapped writer when it can stream. Without this the
+// debug wrapper hid http.Flusher from handlers: the Penne frontline (and any
+// other held-open response) silently fell back to a buffered, non-streaming
+// answer whenever NX_DEBUG was set. B workstream fix (NTF-03).
+func (rec *recorder) Flush() {
+	if f, ok := rec.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Hijack forwards likewise: the NPNS frontline takes the raw connection for
+// its bidirectional frame stream, so the debug wrapper must not hide
+// http.Hijacker either. B workstream fix (NTF-03).
+func (rec *recorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := rec.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, errors.New("recorder: wrapped writer is not a Hijacker")
+}
+
 var debug = os.Getenv("NX_DEBUG") != ""
 var minimal = os.Getenv("NX_MINIMAL") != "" // bisecting 2124-0292: only the NA link on top of the POST /users shape
 
@@ -1812,7 +1843,15 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.savesProxy(w, r)
 		return
 	}
-	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	// B workstream (NTF-02): the Penne frontline POST is bidirectional -- the
+	// request body carries the client's frames, so it must reach the handler
+	// unread. Everything else keeps the buffered path it has always had.
+	var body []byte
+	if isPenneFrontline(host) {
+		body = nil
+	} else {
+		body, _ = io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	}
 	if debug && !strings.HasPrefix(r.URL.Path, "/avatar/") {
 		dump(r, passwordRe.ReplaceAll(body, []byte("password=***")), "DBG >>>")
 		rec := &recorder{ResponseWriter: w, status: 200}
@@ -1940,6 +1979,11 @@ func main() {
 		// heartbeats and expiries on the adapter's clock (PRE-02).
 		go s.reconcilePresenceLoop()
 	}
+	// B workstream: the penne state file lives beside the BAAS store; the
+	// sweeper drives delivery retries, expiry and retention (NTF-05).
+	s.penneState = newPenneStore(getenv("NX_DATA", "/data") + "/penne.json")
+	s.penneHub = newPenneHub()
+	go s.penneSweep()
 	if u := os.Getenv("SAVES_URL"); u != "" {
 		s.saves, s.savesKey = newSavesProxy(u), os.Getenv("SAVES_INTERNAL_KEY")
 		log.Printf("[nx-baas] save-data cloud: forwarding scsi hosts to %s", u)

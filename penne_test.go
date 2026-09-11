@@ -5,44 +5,109 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 )
 
-// The Penne frontline POST must be held open and heartbeated, not 404-ed: closing it immediately
-// errors the client. So the handler stays until the client disconnects and streams a keepalive
-// while it waits.
-func TestFrontlineHoldsOpenAndHeartbeatsNot404(t *testing.T) {
-	old := frontlineHeartbeat
-	frontlineHeartbeat = time.Millisecond
-	defer func() { frontlineHeartbeat = old }()
+// The Penne frontline POST must be held open, not 404-ed, and only for a real
+// login ticket: the console re-registers on a denial, so a denial must be fast
+// and honest. These tests drive s.penne (the routed entry point) the way the
+// console drives it after registration.
+func frontlineServer(t *testing.T, deviceID string) (*server, string) {
+	t.Helper()
+	s := &server{}
+	id, pw := s.notifStore().Register(deviceID, "u_"+deviceID, "", time.Now())
+	_, ticket, err := s.notifStore().IssueTicket(id, pw, time.Now(), time.Hour)
+	if err != nil {
+		t.Fatalf("issue ticket: %v", err)
+	}
+	return s, ticket
+}
 
-	ctx, cancel := context.WithCancel(context.Background())
+func frontlineRequest(ticket, deviceID string) *http.Request {
+	return frontlineRequestCtx(context.Background(), ticket, deviceID)
+}
+
+func frontlineRequestCtx(ctx context.Context, ticket, deviceID string) *http.Request {
 	r := httptest.NewRequest("POST", "/", nil).WithContext(ctx)
 	r.Host = "fro-3.hac.lp1.penne.srv.nintendo.net"
-	w := httptest.NewRecorder()
+	if ticket != "" {
+		r.Header.Set("Authorization", "Bearer "+ticket)
+	}
+	if deviceID != "" {
+		r.Header.Set("User-Agent", "NintendoSDK Firmware/22.5.0 (platform:NX; did:"+deviceID+"; eid:lp1)")
+	}
+	return r
+}
 
+func TestFrontlineHoldsOpenWithATicket(t *testing.T) {
+	const device = "0123456789abcdef"
+	s, ticket := frontlineServer(t, device)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w := httptest.NewRecorder()
 	done := make(chan struct{})
-	go func() { (&server{}).penne(w, r, nil); close(done) }()
+	go func() { s.penne(w, frontlineRequestCtx(ctx, ticket, device), nil); close(done) }()
 
 	select { // held open: it must not return on its own
 	case <-done:
 		t.Fatal("frontline returned without the client disconnecting")
-	case <-time.After(20 * time.Millisecond):
+	case <-time.After(50 * time.Millisecond):
 	}
-	cancel()
-	select { // and it must return once the client does
+	cancel() // console hung up
+	select {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("frontline did not return after the client disconnected")
 	}
+	// Only after the handler returned may the recorder be read.
 	if w.Code != 200 {
 		t.Errorf("status = %d, want 200", w.Code)
 	}
-	if w.Body.Len() == 0 {
-		t.Errorf("no heartbeat was written on the held-open connection")
+	if ct := w.Header().Get("Content-Type"); ct != "application/octet-stream" {
+		t.Errorf("content type = %q, want octet-stream", ct)
+	}
+}
+
+func TestFrontlineDeniesBadTickets(t *testing.T) {
+	const device = "0123456789abcdef"
+	s, ticket := frontlineServer(t, device)
+	id, pw := s.notifStore().Register(device, "u2", "", time.Now())
+
+	_, revoked, err := s.notifStore().IssueTicket(id, pw, time.Now(), time.Hour)
+	if err != nil {
+		t.Fatalf("issue revoked ticket: %v", err)
+	}
+	_, expired, err := s.notifStore().IssueTicket(id, pw, time.Now().Add(-2*time.Hour), time.Hour)
+	if err != nil {
+		t.Fatalf("issue expired ticket: %v", err)
+	}
+	s.notifStore().Revoke(id, time.Now())
+
+	cases := map[string]struct {
+		ticket, device string
+	}{
+		"no ticket":      {"", ""},
+		"unknown ticket": {strings.Repeat("ab", 32), device},
+		"revoked":        {revoked, device},
+		"expired":        {expired, device},
+		"wrong device":   {ticket, "ffffffffffffffff"},
+	}
+	for name, tc := range cases {
+		w := httptest.NewRecorder()
+		done := make(chan struct{})
+		go func() { s.penne(w, frontlineRequest(tc.ticket, tc.device), nil); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatalf("%s: frontline stayed open on a denial", name)
+		}
+		if w.Code != 401 {
+			t.Errorf("%s: status = %d, want 401", name, w.Code)
+		}
 	}
 }
 
