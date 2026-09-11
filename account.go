@@ -324,15 +324,24 @@ func patchedState(body []byte) string {
 	return "AUTHORIZED"
 }
 
+// friendListFormatEpoch is when the 22.5.0 friend-list shape shipped. Consoles
+// that cached an empty list from the old shape only refetch when the version
+// moves past the one they stored, so every account's version floors here once.
+const friendListFormatEpoch = 1789159700 // 2026-09-11T20:48:20Z, when this shipped
+
 // friendsUpdatedAt is the version a console watches to decide whether its
 // cached friend list is stale. It used to be the user's UpdatedAt, which moves
 // for a picture or a nickname and not for a friendship, so a console that had
 // just become friends with somebody never asked for the list again.
 func friendsUpdatedAt(u *User) int64 {
+	v := u.UpdatedAt
 	if u.FriendsUpdatedAt > 0 {
-		return u.FriendsUpdatedAt
+		v = u.FriendsUpdatedAt
 	}
-	return u.UpdatedAt
+	if v < friendListFormatEpoch {
+		return friendListFormatEpoch
+	}
+	return v
 }
 
 // friendGraphChanged marks both sides, because a friendship changes two lists
