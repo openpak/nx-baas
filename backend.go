@@ -1,7 +1,19 @@
 package main
 
 import (
+	"errors"
 	"net/url"
+)
+
+// Errors the backends translate core failures into, so the HTTP layer maps
+// them without knowing which backend answered. The core remains canonical;
+// these only carry failure semantics across the interface (SOC-03).
+var (
+	errCoreInvalid     = errors.New("the core rejected the request")
+	errCoreNotFound    = errors.New("the core does not know that account or request")
+	errStateConflict   = errors.New("the relationship is not in the required state")
+	errCoreUnavailable = errors.New("the core is unavailable")
+	errCoreInternal    = errors.New("internal core error")
 )
 
 // accountBackend is the identity source behind the BAAS surface. Two
@@ -23,10 +35,18 @@ type accountBackend interface {
 	// LoginPID verifies email + password for the "Link Nintendo Account"
 	// flow and returns the canonical PID + username.
 	LoginPID(email, password string) (uint64, string, error)
-	// FriendRequest sends a request from one PID to another.
+	// FriendRequest sends a request from one PID to another. A pending
+	// request in the other direction is reported as errReversePending.
 	FriendRequest(from, to uint64) error
-	// FriendAccept accepts/declines a request addressed to pid.
+	// FriendAccept accepts/declines a request addressed to pid. Declining
+	// ends the pending request, which is the same core operation as removal.
 	FriendAccept(pid, from uint64, accept bool) error
+	// RemoveFriend ends a pending or accepted friendship from either side.
+	RemoveFriend(pid, other uint64) error
+	// Block/Unblock commit durable directional blocks in the core, which owns
+	// the enforcement every other adapter sees.
+	Block(pid, other uint64) error
+	Unblock(pid, other uint64) error
 	// nexToken signs the "openpak" binding claim game servers verify.
 	nexToken(pid uint64, username string) string
 	// nexSigningKey is the key nexToken signs with, so the game API can verify a

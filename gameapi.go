@@ -16,6 +16,7 @@ package main
 // ponytail: drop the forwarder once the OpenPak core serves those directly.
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -27,7 +28,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -41,17 +41,8 @@ const maxQueuedPerTarget = 8
 // FriendInvitationApplicationParameterSizeMax on the console side.
 const maxAppParam = 1024
 
-type pendingInvitation struct {
-	FromPID  uint64
-	FromName string
-	AppParam []byte // opaque, game-defined bytes -- never inspected here
-	Created  time.Time
-}
-
-var (
-	invitationsMu sync.Mutex
-	invitationsBy = map[uint64][]pendingInvitation{} // target pid -> queued invitations
-)
+// Superseded by the durable invitation store (invitations.go); the five-minute
+// staleness bound is kept there (invitationLegacyTTL).
 
 func apiErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]any{"error": msg})
@@ -159,11 +150,40 @@ func (s *server) photonRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	appParam := append([]byte{1, 0, 0, 0, byte(len(in.Room))}, in.Room...)
-	s.store.Update(u, func(u *User) {
-		u.Presence = Presence{State: "PLAYING", AppField: base64.StdEncoding.EncodeToString(appParam),
-			AppID: in.AppID, PresenceGroupID: in.AppID, UpdatedAt: time.Now().Unix()}
-	})
+	// A title's room is one device's claim, keyed by that identity, so a
+	// friend's list shows PLAYING for exactly as long as the room lives —
+	// and not one request longer than the lease if the game never reports
+	// the departure.
+	s.noteDevicePresence(u, "photon:"+in.Identity, "PLAYING", in.AppID,
+		base64.StdEncoding.EncodeToString(appParam), in.AppID)
 	log.Printf("[nx-baas] photon-room pid=%d app=%s room=%s", pid, in.AppID, in.Room)
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// POST /internal/photon-room-leave {"identity":"nex:...|bsdid:..."}
+// The room a player left is not a room they are in: without this the PLAYING
+// claim outlived the game and a friend's list offered a join into nothing
+// (PRE-02, room leave).
+func (s *server) photonRoomLeave(w http.ResponseWriter, r *http.Request) {
+	if !s.internalOK(r) {
+		apiErr(w, http.StatusUnauthorized, "internal")
+		return
+	}
+	var in struct {
+		Identity string `json:"identity"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in); err != nil || in.Identity == "" {
+		apiErr(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	pid := s.pidForIdentity(in.Identity)
+	u := s.store.UserByPID(pid)
+	if pid == 0 || u == nil {
+		apiErr(w, http.StatusBadRequest, "unknown identity")
+		return
+	}
+	s.noteDevicePresence(u, "photon:"+in.Identity, "OFFLINE", "", "", "")
+	log.Printf("[nx-baas] photon-room-leave pid=%d", pid)
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -209,20 +229,11 @@ func validRoomCode(room string) bool {
 
 // ---------- invitations ----------
 
-func pruneInvitationsLocked(pid uint64) []pendingInvitation {
-	queue := invitationsBy[pid]
-	if len(queue) == 0 {
-		return queue
-	}
-	fresh, now := queue[:0], time.Now()
-	for _, inv := range queue {
-		if now.Sub(inv.Created) <= invitationTTL {
-			fresh = append(fresh, inv)
-		}
-	}
-	invitationsBy[pid] = fresh
-	return fresh
-}
+// The legacy mailbox is now a view over the durable invitation store
+// (invitations.go): the emulator and the console title path keep their exact
+// wire shape, but a restart no longer loses queued invitations, native and
+// legacy sends land in one lifecycle, and a stale room fails the pop cleanly
+// (INV-03/INV-04). The five-minute TTL stands as the room-staleness bound.
 
 func (s *server) invitations(w http.ResponseWriter, r *http.Request) {
 	pid, name, ok := s.callerPID(r)
@@ -242,7 +253,9 @@ func (s *server) invitations(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/invitations {"target_pids":[...],"app_param_base64":"..."}
 // Only queues to the sender's mutual friends -- the console's own Invite Friends only ever
-// lists friends, and without the check this is a generic spam relay.
+// lists friends, and without the check this is a generic spam relay. With the OpenPak core
+// attached, the core's own interaction check (friendship, blocks, account status) is the
+// authority; the friend list is the fallback for the legacy backend.
 func (s *server) sendInvitation(w http.ResponseWriter, r *http.Request, from uint64, name string) {
 	var in struct {
 		TargetPIDs     []uint64 `json:"target_pids"`
@@ -270,20 +283,39 @@ func (s *server) sendInvitation(w http.ResponseWriter, r *http.Request, from uin
 	if id.Nickname != "" {
 		name = id.Nickname
 	}
+	sender := s.store.UserByPID(from)
+	if sender == nil {
+		apiErr(w, http.StatusBadRequest, "unknown identity")
+		return
+	}
+	// The sender's title now, so the invitation carries an application id and
+	// the staleness check can answer "is this room still alive" later.
+	appID := sender.Presence.AppID
+	core := s.invitationCoreFor()
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
 	sent := 0
-	invitationsMu.Lock()
 	for _, pid := range in.TargetPIDs {
-		if !isFriend(id, pid) {
+		target := s.store.UserByPID(pid)
+		if target == nil || !isFriend(id, pid) {
 			continue
 		}
-		queue := pruneInvitationsLocked(pid)
-		if len(queue) >= maxQueuedPerTarget {
-			queue = queue[1:]
+		if core != nil {
+			actorID, _ := core.AccountForBaas(sender.ID)
+			targetID, ok := core.AccountForBaas(target.ID)
+			if !ok {
+				continue
+			}
+			allowed, _, err := core.CheckInteraction(ctx, actorID, targetID)
+			if err != nil || !allowed {
+				continue
+			}
+		} else if meBlocks(sender, target.ID) || targetBlocksUser(s, target.ID, sender.ID) {
+			continue
 		}
-		invitationsBy[pid] = append(queue, pendingInvitation{FromPID: from, FromName: name, AppParam: appParam, Created: time.Now()})
+		createLegacyInvitation(sender, name, target, in.AppParamBase64, appID)
 		sent++
 	}
-	invitationsMu.Unlock()
 	log.Printf("[nx-baas] invitation %s(%d) -> %d/%d target(s)", name, from, sent, len(in.TargetPIDs))
 	writeJSON(w, 200, map[string]any{"ok": true, "sent": sent})
 }
@@ -300,15 +332,15 @@ func isFriend(id *Identity, pid uint64) bool {
 // GET /api/invitations -- pops every invitation queued for the caller, matching the console's
 // own TryPopFromFriendInvitationStorageChannel (a poll-until-something's-there call).
 func (s *server) pollInvitations(w http.ResponseWriter, pid uint64) {
-	invitationsMu.Lock()
-	queue := pruneInvitationsLocked(pid)
-	delete(invitationsBy, pid)
-	invitationsMu.Unlock()
-
-	out := make([]map[string]any, 0, len(queue))
-	for _, inv := range queue {
-		out = append(out, map[string]any{"from_pid": inv.FromPID, "from_name": inv.FromName,
-			"app_param_base64": base64.StdEncoding.EncodeToString(inv.AppParam)})
+	receiver := s.store.UserByPID(pid)
+	if receiver == nil {
+		writeJSON(w, 200, map[string]any{"invitations": []any{}})
+		return
+	}
+	out := make([]map[string]any, 0, 4)
+	for _, inv := range popLegacyInvitations(s, receiver) {
+		out = append(out, map[string]any{"from_pid": inv.LegacyFromPID, "from_name": inv.LegacyFromName,
+			"app_param_base64": inv.ApplicationData})
 	}
 	writeJSON(w, 200, map[string]any{"invitations": out})
 }
@@ -342,11 +374,44 @@ func (s *server) mintToken(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"pid": in.PID, "username": id.Nickname, "friend_code": id.FriendCode, "token": tok})
 }
 
+// POST /internal/notifications/test {"user_id":"…","kind":"presence_updated","payload":{...}}
+// B workstream, DEVELOPMENT ONLY: a synthetic event source so the notification
+// pipeline (submit -> outbox -> frontline frame) can be exercised without the
+// real A/C feeds. It permits development, not end-to-end completion (PRD:
+// "A synthetic event source permits development, not end-to-end completion").
+// Native acceptance still requires the real core events on two consoles.
+func (s *server) penneTestNotification(w http.ResponseWriter, r *http.Request) {
+	if !s.internalOK(r) {
+		apiErr(w, http.StatusUnauthorized, "internal")
+		return
+	}
+	if r.Method != http.MethodPost {
+		apiErr(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	var in struct {
+		UserID  string         `json:"user_id"`
+		Kind    string         `json:"kind"`
+		Payload map[string]any `json:"payload"`
+		ID      string         `json:"id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in); err != nil || in.UserID == "" || in.Kind == "" {
+		apiErr(w, http.StatusBadRequest, "user_id and kind required")
+		return
+	}
+	res := s.SubmitNotification(PenneDelivery{
+		ID: in.ID, UserID: in.UserID, Kind: in.Kind, Payload: in.Payload,
+	})
+	log.Printf("[nx-baas] penne: test notification user=%s kind=%s -> %s", in.UserID, in.Kind, res.Outcome)
+	writeJSON(w, 200, map[string]any{"accepted": res.Accepted, "duplicate": res.Duplicate, "outcome": string(res.Outcome), "id": res.ID})
+}
+
 // ---------- mux ----------
 
 func (s *server) gameAPI() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/internal/photon-room", s.photonRoom)
+	mux.HandleFunc("/internal/photon-room-leave", s.photonRoomLeave)
 	mux.HandleFunc("/internal/photon-identity", s.photonIdentity)
 	mux.HandleFunc("/internal/mint-token", s.mintToken)
 	mux.HandleFunc("/internal/switch/identity", s.switchIdentity)
@@ -355,6 +420,7 @@ func (s *server) gameAPI() http.Handler {
 	mux.HandleFunc("/internal/switch/emulator/friend", s.switchEmulatorFriend)
 	mux.HandleFunc("/internal/switch/ca", s.switchCA)
 	mux.HandleFunc("/api/invitations", s.invitations)
+	mux.HandleFunc("/internal/notifications/test", s.penneTestNotification)
 	if base := os.Getenv("ACCOUNT_API"); base != "" {
 		if u, err := url.Parse(strings.TrimRight(base, "/")); err == nil {
 			proxy := httputil.NewSingleHostReverseProxy(u)

@@ -9,6 +9,8 @@ Endpoints: `/1.0.0/application/token`, `/1.0.0/users` (+`/<id>`, `/<id>/link`, `
 `device_accounts` presence patch), `/1.0.0/login`, `/1.0.0/federation`, `/1.0.0/certificates`,
 `/2.0.0/users/<id>/friends`, `/2.0.0/friend_requests`, and the Nintendo-Account link flow
 (`/connect/1.0.0/authorize`, `api/session_token`, `api/token`, `/2.0.0/users/me`).
+The native invitation surface (`app.lp1.five.nintendo.net`) and its lifecycle contract live in
+[`docs/invitations.md`](docs/invitations.md).
 Everything unknown is logged in full (`!! UNHANDLED`), which is how the undocumented parts
 (friend invitations) get discovered.
 
@@ -106,6 +108,16 @@ openpak-account.
 `X-Internal-Key` must match `NX_INTERNAL_KEY` (or `OPENPAK_INTERNAL_KEY`) when set;
 `/api/*` uses the `nx2.` openpak bearer. Any other `/api/*` path is forwarded to
 `ACCOUNT_API` until the OpenPak core serves friends/presence/saves itself.
+
+## Native OpenPak store
+
+The shop applet's surface: the storefront and its API on `bugyo.hac.lp1.eshop.nintendo.net`,
+device links and rights on `beach.`/`dragons.`/`dragonst.`/`tigers.`, content delivery with
+edge-token authorization and resumable ranges on `atum.hac.lp1.d4c.nintendo.net`. Catalog,
+entitlements and download tasks persist under `$NX_DATA/shop/` (`catalog.json` you author,
+`state.json` the server writes). What is implemented, what is pending hardware, the wiring
+A needs, and the console-trust proposal for native install:
+[`docs/native-shop.md`](docs/native-shop.md).
 
 ## Known scaling ceilings (recorded, fine for one console)
 

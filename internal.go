@@ -212,7 +212,11 @@ func (s *server) switchEmulatorFriend(w http.ResponseWriter, r *http.Request) {
 	}
 	target := in.PID
 	if in.Action == "request" && in.FriendCode != "" {
-		f, err := s.acct.Resolve(url.Values{"friend_code": {in.FriendCode}})
+		// Resolve speaks of codes: the query key is "code" (see both backends).
+		// "friend_code" was silently matched by nothing, so every emulator
+		// add-by-code failed with "no account for that friend code" while the
+		// code itself was perfectly good (SOC-04).
+		f, err := s.acct.Resolve(url.Values{"code": {normaliseFriendCode(in.FriendCode)}})
 		if err != nil || f == nil {
 			apiErr(w, http.StatusNotFound, "no account for that friend code")
 			return

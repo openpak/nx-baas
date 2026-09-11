@@ -1,0 +1,440 @@
+package main
+
+// Social mutation tests (SOC-03/04/05) and the authentication rules that
+// guard the surface: durable request identity, cross-account denial,
+// duplicate/reverse request behaviour, block/unblock and removal committing
+// through the core (or failing loudly), and the emulator friend-code lookup.
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+)
+
+// socialServer wires the OpenPak backend (over the fake core) to a real
+// server and store, with two linked users: users[0] and users[1], each with
+// a projection, a friend code, and a mutual friendship. The store user is
+// keyed by the projection's BAAS id, exactly as a console link re-keys it.
+func socialServer(t *testing.T) (*server, *fakeCore, []*User) {
+	t.Helper()
+	b, f := newTestBackend(t)
+	s := dauthServer(t)
+	s.store = loadStore(t.TempDir() + "/baas.json")
+	s.acct = b
+
+	users := []*User{}
+	for _, acc := range []struct{ id, name, pw string }{
+		{"acc-a@example.com", "PlayerA", "pw-a-aaaaaaaaaaa"},
+		{"acc-b@example.com", "PlayerB", "pw-b-bbbbbbbbbbb"},
+	} {
+		f.addAccount(acc.id, acc.name, acc.pw)
+		pid, _, err := b.LoginPID(acc.id, acc.pw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		u, _ := s.store.NewUser()
+		baas := b.proj.ByAccount[acc.id].BaasUserID
+		s.store.mu.Lock()
+		delete(s.store.Users, u.ID)
+		u.ID = baas
+		s.store.Users[baas] = u
+		for _, d := range s.store.Devices { // the device account follows the user
+			if d.UserID == u.ID || d.UserID == "" {
+				d.UserID = baas
+			}
+		}
+		s.store.mu.Unlock()
+		s.store.Update(u, func(u *User) { u.PID, u.Nickname = pid, acc.name })
+		users = append(users, s.store.User(baas))
+	}
+	f.befriend("acc-a@example.com", "acc-b@example.com")
+	return s, f, users
+}
+
+// authed builds a request with the caller's own live access token.
+func authed(method, path, body string, u *User, s *server) *http.Request {
+	r := httptest.NewRequest(method, "https://"+baasHost+path, strings.NewReader(body))
+	r.Host = baasHost
+	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
+	return r
+}
+
+// postRequest drives POST /2.0.0/friend_requests and decodes the reply.
+func postRequest(t *testing.T, s *server, from *User, body string) (int, map[string]any) {
+	t.Helper()
+	r := authed("POST", "/2.0.0/friend_requests", body, from, s)
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+	var out map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &out)
+	return w.Code, out
+}
+
+// answerRequest drives PATCH/DELETE /2.0.0/friend_requests/<id>.
+func answerRequest(t *testing.T, s *server, by *User, method, id, body string) (int, map[string]any) {
+	t.Helper()
+	r := authed(method, "/2.0.0/friend_requests/"+id, body, by, s)
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+	var out map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &out)
+	return w.Code, out
+}
+
+// A request has its own durable id, and that id means the same request to
+// create, inbox, outbox, accept and cancel — including across a restart
+// (SOC-03: the old in-process map lost all of it).
+func TestDurableRequestIdentitySurvivesRestart(t *testing.T) {
+	s, f, users := socialServer(t)
+	a, b := users[0], users[1]
+	f.friends, f.incoming, f.outgoing = map[string][]string{}, map[string][]string{}, map[string][]string{}
+
+	code, reply := postRequest(t, s, a, `{"friendCode":"`+codeOf(s, b)+`"}`)
+	if code != http.StatusCreated || reply["state"] != "PENDING" {
+		t.Fatalf("create: %d %v", code, reply)
+	}
+	reqID, _ := reply["id"].(string)
+	if reqID == "" || reqID == b.ID {
+		t.Fatalf("request id %v is not its own", reply["id"])
+	}
+
+	// The inbox names the same request by the same id.
+	r := authed("GET", "/2.0.0/users/"+b.ID+"/friend_requests/inbox", "", b, s)
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+	var inbox struct {
+		Items []map[string]any `json:"items"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &inbox)
+	if len(inbox.Items) != 1 || inbox.Items[0]["id"] != reqID {
+		t.Fatalf("inbox: %v", inbox.Items)
+	}
+
+	// Restart: the id still resolves and still authorizes the addressee.
+	s.store = loadStore(s.store.path)
+	code, reply = answerRequest(t, s, b, "PATCH", reqID, `[{"op":"replace","path":"/state","value":"AUTHORIZED"}]`)
+	if code != http.StatusOK || reply["state"] != "AUTHORIZED" {
+		t.Fatalf("accept after restart: %d %v", code, reply)
+	}
+
+	// And the friendship exists in the core for both.
+	idA, _ := s.acct.Identity(a.PID)
+	if len(idA.Friends) != 1 || idA.Friends[0].BaasUserID != b.ID {
+		t.Fatalf("friends after accept: %+v", idA.Friends)
+	}
+}
+
+// Both sides of an acceptance (J1): A requests, B accepts, both lists show
+// the relationship. Also: duplicates are idempotent and a reverse request
+// resolves truthfully to the request that already exists.
+func TestRequestAcceptAndTheReverseCase(t *testing.T) {
+	s, f, users := socialServer(t)
+	a, b := users[0], users[1]
+	f.friends, f.incoming, f.outgoing = map[string][]string{}, map[string][]string{}, map[string][]string{}
+
+	code1, r1 := postRequest(t, s, a, `{"receiverId":"`+b.ID+`"}`)
+	code2, r2 := postRequest(t, s, a, `{"receiverId":"`+b.ID+`"}`)
+	if code1 != http.StatusCreated || code2 != http.StatusOK {
+		t.Fatalf("duplicate creates: %d/%d", code1, code2)
+	}
+	if r1["id"] != r2["id"] {
+		t.Errorf("duplicate requests got ids %v and %v; a retry must not mint a second request", r1["id"], r2["id"])
+	}
+	// Reverse: B asks A while A's request is pending. The truthful answer
+	// describes the pending incoming request, so B's console can accept it.
+	code3, r3 := postRequest(t, s, b, `{"receiverId":"`+a.ID+`"}`)
+	if code3 != http.StatusOK {
+		t.Fatalf("reverse request: %d %v", code3, r3)
+	}
+	if r3["senderId"] != a.ID || r3["receiverId"] != b.ID || r3["state"] != "PENDING" {
+		t.Errorf("reverse request reply is not the truth: %v", r3)
+	}
+
+	// B accepts; both lists become current with one mutual friend.
+	if code, reply := answerRequest(t, s, b, "PATCH", r3["id"].(string),
+		`[{"op":"replace","path":"/state","value":"AUTHORIZED"}]`); code != http.StatusOK || reply["state"] != "AUTHORIZED" {
+		t.Fatalf("accept: %d %v", code, reply)
+	}
+	for i, u := range []*User{a, b} {
+		id, err := s.acct.Identity(u.PID)
+		if err != nil || len(id.Friends) != 1 {
+			t.Fatalf("user %d friends after accept: %+v %v", i, id, err)
+		}
+	}
+}
+
+// Reject and cancel end a pending request; remove ends a friendship; none of
+// them can return success for an uncommitted operation.
+func TestRejectCancelRemoveCommitOrError(t *testing.T) {
+	s, f, users := socialServer(t)
+	a, b := users[0], users[1]
+	friends0 := func() int {
+		id, _ := s.acct.Identity(a.PID)
+		return len(id.Friends)
+	}
+
+	// Reject: the request is gone and no friendship exists.
+	_, req := postRequest(t, s, a, `{"receiverId":"`+b.ID+`"}`)
+	if code, reply := answerRequest(t, s, b, "PATCH", req["id"].(string),
+		`[{"op":"replace","path":"/state","value":"REJECTED"}]`); code != http.StatusOK || reply["state"] != "REJECTED" {
+		t.Fatalf("reject: %d %v", code, reply)
+	}
+	if id, _ := s.acct.Identity(a.PID); len(id.FriendRequests)+len(id.Friends)+len(id.SentRequests) != 0 {
+		t.Errorf("rejected request left state: %+v", id)
+	}
+
+	// Cancel by the requester.
+	_, req = postRequest(t, s, a, `{"receiverId":"`+b.ID+`"}`)
+	if code, _ := answerRequest(t, s, a, "DELETE", req["id"].(string), ""); code != http.StatusOK {
+		t.Fatalf("cancel: %d", code)
+	}
+	if id, _ := s.acct.Identity(a.PID); len(id.SentRequests) != 0 {
+		t.Errorf("cancelled request still in the outbox: %+v", id.SentRequests)
+	}
+
+	// Remove an actual friendship.
+	f.befriend("acc-a@example.com", "acc-b@example.com")
+	if friends0() != 1 {
+		t.Fatal("fixture: expected one friendship")
+	}
+	r := authed("DELETE", "/2.0.0/users/"+a.ID+"/friends/"+b.ID, "", a, s)
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("remove: %d %s", w.Code, w.Body.String())
+	}
+	if friends0() != 0 {
+		t.Error("remove answered 204 but the friendship survived in the core")
+	}
+
+	// An uncommitted operation never reads as success: accepting a request
+	// that does not exist fails in the core and must fail here.
+	r = authed("PATCH", "/2.0.0/friend_requests/"+b.ID,
+		`[{"op":"replace","path":"/state","value":"AUTHORIZED"}]`, b, s)
+	w = httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+	if w.Code < 400 {
+		t.Errorf("accepting a nonexistent request returned %d", w.Code)
+	}
+}
+
+// A second answer to a settled request is refused: the record is dropped
+// after its lifecycle ends, and the core refuses what the cache shows.
+func TestSettledRequestCannotBeAnsweredTwice(t *testing.T) {
+	s, _, users := socialServer(t)
+	a, b := users[0], users[1]
+	_, req := postRequest(t, s, a, `{"receiverId":"`+b.ID+`"}`)
+	reqID := req["id"].(string)
+	if code, _ := answerRequest(t, s, b, "PATCH", reqID,
+		`[{"op":"replace","path":"/state","value":"AUTHORIZED"}]`); code != http.StatusOK {
+		t.Fatal("first accept failed")
+	}
+	code, _ := answerRequest(t, s, b, "PATCH", reqID,
+		`[{"op":"replace","path":"/state","value":"AUTHORIZED"}]`)
+	if code < 400 {
+		t.Errorf("second accept returned %d; a settled request must not authorize twice", code)
+	}
+}
+
+// Only the addressee answers a request, and only the sender cancels it:
+// a valid token for the wrong user is a denial, not a success.
+func TestCrossAccountDenial(t *testing.T) {
+	s, f, users := socialServer(t)
+	a, b := users[0], users[1]
+	// A third account, for isolation.
+	f.addAccount("acc-c@example.com", "PlayerC", "pw-c-ccccccccccc")
+	c := newUserFor(t, s, "acc-c@example.com", "pw-c-ccccccccccc")
+
+	_, req := postRequest(t, s, a, `{"receiverId":"`+b.ID+`"}`)
+	reqID := req["id"].(string)
+
+	// C answers B's request: denied.
+	if code, _ := answerRequest(t, s, c, "PATCH", reqID,
+		`[{"op":"replace","path":"/state","value":"AUTHORIZED"}]`); code != http.StatusForbidden {
+		t.Errorf("third-party accept returned %d, want 403", code)
+	}
+	// C cancels A's request: denied.
+	if code, _ := answerRequest(t, s, c, "DELETE", reqID, ""); code != http.StatusForbidden {
+		t.Errorf("third-party cancel returned %d, want 403", code)
+	}
+	// C reads A's friend list with C's token: denied.
+	r := authed("GET", "/2.0.0/users/"+a.ID+"/friends", "", c, s)
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("cross-account list read returned %d, want 403", w.Code)
+	}
+	// C PATCHes A's presence device state: denied.
+	r = authed("PATCH", "/1.0.0/users/"+a.ID+"/device_accounts/"+a.DeviceAccounts[0],
+		`[{"op":"replace","path":"/presence/state","value":"ONLINE"}]`, c, s)
+	w = httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("cross-account presence write returned %d, want 403", w.Code)
+	}
+}
+
+// Blocks commit through the core and take effect on the social surface in
+// both directions (J6): a blocked pair's request is refused and presence is
+// hidden, and unblocking lifts it.
+func TestBlockUnblockCommitAndTakeEffect(t *testing.T) {
+	s, f, users := socialServer(t)
+	a, b := users[0], users[1]
+
+	r := authed("POST", "/1.0.0/users/"+a.ID+"/blocks", `{"userId":"`+b.ID+`"}`, a, s)
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("block: %d %s", w.Code, w.Body.String())
+	}
+	if !f.blockedEither("acc-a@example.com", "acc-b@example.com") {
+		t.Error("block answered 200 but never reached the core")
+	}
+	// The block list the console reads shows it.
+	r = authed("GET", "/1.0.0/users/"+a.ID+"/blocks", "", a, s)
+	w = httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+	if !strings.Contains(w.Body.String(), b.ID) {
+		t.Errorf("block list: %s", w.Body.String())
+	}
+	// B's request to A is now refused, never a success.
+	if code, _ := postRequest(t, s, b, `{"receiverId":"`+a.ID+`"}`); code < 400 {
+		t.Errorf("blocked request returned %d", code)
+	}
+	// Unblock lifts it.
+	r = authed("DELETE", "/1.0.0/users/"+a.ID+"/blocks/"+b.ID, "", a, s)
+	w = httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("unblock: %d %s", w.Code, w.Body.String())
+	}
+	if f.blockedEither("acc-a@example.com", "acc-b@example.com") {
+		t.Error("unblock answered 204 but the core still holds the block")
+	}
+}
+
+// The emulator's add-by-code path speaks the same Resolve contract as the
+// console (SOC-04): "code", not a key nothing matched.
+func TestEmulatorFriendCodeLookup(t *testing.T) {
+	s, f, users := socialServer(t)
+	_, other := users[0], users[1]
+	f.addAccount("acc-d@example.com", "PlayerD", "pw-d-ddddddddddd")
+	d := newUserFor(t, s, "acc-d@example.com", "pw-d-ddddddddddd")
+
+	key := strings.Repeat("i", 32)
+	t.Setenv("NX_INTERNAL_KEY", key)
+	body := `{"account_id":"acc-d@example.com","action":"request","friend_code":"` + codeOf(s, other) + `"}`
+	r := httptest.NewRequest("POST", "http://api/internal/switch/emulator/friend", strings.NewReader(body))
+	r.Header.Set("X-Internal-Key", key)
+	w := httptest.NewRecorder()
+	s.gameAPI().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("emulator add-by-code: %d %s", w.Code, w.Body.String())
+	}
+	// The request exists in the core, addressed to the right person.
+	id, _ := s.acct.Identity(other.PID)
+	if len(id.FriendRequests) != 1 || id.FriendRequests[0].PID != d.PID {
+		t.Errorf("request not in the addressee's inbox: %+v", id.FriendRequests)
+	}
+}
+
+// Two changes inside the same wall-clock second must still be distinguishable
+// (SOC-05): the friends-list version is strictly monotonic.
+func TestFriendsUpdatedAtIsStrictlyMonotonic(t *testing.T) {
+	s := dauthServer(t)
+	s.store = loadStore(t.TempDir() + "/baas.json")
+	u, _ := s.store.NewUser()
+	now := time.Now().Unix()
+	s.store.Update(u, func(u *User) { bumpFriendsUpdated(u, now) })
+	first := s.store.User(u.ID).FriendsUpdatedAt
+	for i := 0; i < 3; i++ {
+		s.store.Update(u, func(u *User) { bumpFriendsUpdated(u, now) })
+	}
+	if got := s.store.User(u.ID).FriendsUpdatedAt; got != first+3 {
+		t.Errorf("three bumps within one second moved the version %d -> %d", first, got)
+	}
+}
+
+// ---------- authentication of the surface ----------
+
+func TestExpiredAndForeignTokensAreRefused(t *testing.T) {
+	s, _, users := socialServer(t)
+	a := users[0]
+	path := "/2.0.0/users/" + a.ID + "/friends"
+
+	expired := s.accessToken(a.ID, 2, "did", "device", "serial")
+	// Forge an expired one with the server's own key: same signature path,
+	// dead exp.
+	claims := map[string]any{
+		"aud": baasAudience, "bs:did": "did", "bs:grt": 2, "exp": time.Now().Unix() - 10,
+		"iat": time.Now().Unix() - 100, "iss": baasIssuer, "sub": a.ID, "typ": "token",
+	}
+	tok := signJWT(map[string]any{"alg": "RS256", "kid": "test-kid", "typ": "JWT"}, claims, s.key)
+
+	call := func(bearer string) int {
+		r := httptest.NewRequest("GET", "https://"+baasHost+path, nil)
+		r.Host = baasHost
+		if bearer != "" {
+			r.Header.Set("Authorization", "Bearer "+bearer)
+		}
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, r)
+		return w.Code
+	}
+	if code := call(""); code != http.StatusUnauthorized {
+		t.Errorf("no token returned %d, want 401", code)
+	}
+	if code := call(expired); code != http.StatusOK {
+		t.Errorf("live token returned %d", code)
+	}
+	if code := call(tok); code != http.StatusUnauthorized {
+		t.Errorf("expired token returned %d, want 401", code)
+	}
+	// An id_token is a different token type, signed with the same key: it
+	// must not spend as an access token.
+	idTok := s.idToken(a, nil, "x", nil)
+	if code := call(idTok); code != http.StatusUnauthorized {
+		t.Errorf("id_token as access token returned %d, want 401", code)
+	}
+	// Garbage is garbage.
+	if code := call("not-a-jwt"); code != http.StatusUnauthorized {
+		t.Errorf("garbage token returned %d, want 401", code)
+	}
+}
+
+// ---------- helpers ----------
+
+func codeOf(s *server, u *User) string {
+	id, err := s.acct.Identity(u.PID)
+	if err != nil {
+		return ""
+	}
+	return id.FriendCode
+}
+
+// newUserFor links a fresh store user to a core account's projection.
+func newUserFor(t *testing.T, s *server, accountID, pw string) *User {
+	t.Helper()
+	b := s.acct.(*openpakBackend)
+	pid, _, err := b.LoginPID(accountID, pw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, _ := s.store.NewUser()
+	baas := b.proj.ByAccount[accountID].BaasUserID
+	s.store.mu.Lock()
+	delete(s.store.Users, u.ID)
+	u.ID = baas
+	s.store.Users[baas] = u
+	for _, d := range s.store.Devices {
+		if d.UserID == u.ID {
+			d.UserID = baas
+		}
+	}
+	s.store.mu.Unlock()
+	s.store.Update(u, func(u *User) { u.PID = pid })
+	return s.store.User(baas)
+}

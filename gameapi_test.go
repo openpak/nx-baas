@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -36,6 +37,9 @@ func (b *stubBackend) Resolve(url.Values) (*Friend, error)             { return 
 func (b *stubBackend) LoginPID(string, string) (uint64, string, error) { return 0, "", nil }
 func (b *stubBackend) FriendRequest(uint64, uint64) error              { return nil }
 func (b *stubBackend) FriendAccept(uint64, uint64, bool) error         { return nil }
+func (b *stubBackend) RemoveFriend(uint64, uint64) error               { return nil }
+func (b *stubBackend) Block(uint64, uint64) error                      { return nil }
+func (b *stubBackend) Unblock(uint64, uint64) error                    { return nil }
 func (b *stubBackend) nexSigningKey() []byte                           { return b.key }
 func (b *stubBackend) friendCodeForAccount(string) (string, bool)      { return "SW-0000-0000-0000", true }
 func (b *stubBackend) nexToken(pid uint64, username string) string {
@@ -55,9 +59,10 @@ const (
 
 func testServer(t *testing.T) *server {
 	t.Helper()
-	invitationsMu.Lock()
-	invitationsBy = map[uint64][]pendingInvitation{}
-	invitationsMu.Unlock()
+	// The durable invitation store lives in the test's temp dir (INV-03: the
+	// mailbox survives restarts, so tests must exercise the file, not memory).
+	invStoreOverride = loadInvitationStore(filepath.Join(t.TempDir(), "invitations.json"))
+	t.Cleanup(func() { invStoreOverride = nil })
 	acct := &stubBackend{
 		key:     []byte("0123456789abcdef0123456789abcdef"),
 		friends: map[uint64][]uint64{hostPID: {joinerPID}, joinerPID: {hostPID}},
@@ -65,6 +70,7 @@ func testServer(t *testing.T) *server {
 	}
 	s := &server{store: loadStore(t.TempDir() + "/baas.json"), acct: acct}
 	s.store.Users["aaaa"] = &User{ID: "aaaa", PID: hostPID, BsDid: "hostbsdid"}
+	s.store.Users["bbbb"] = &User{ID: "bbbb", PID: joinerPID, BsDid: "joinerbsdid"}
 	return s
 }
 

@@ -68,9 +68,25 @@ func (s *server) olsc(w http.ResponseWriter, r *http.Request, body []byte) {
 // opens. Captured from a working server on 2026-09-08: 200, content-type
 // application/grpc, empty body. We answered 404 {} and the applet had a
 // failure in the middle of the screen that shows friends.
+//
+// Only that one operation is evidenced. Everything else FRS could serve is
+// answered with an explicit gRPC UNIMPLEMENTED and a NOTICE log (SOC-04):
+// an undocumented operation that pretends to succeed with an empty body is
+// indistinguishable from a working one, which is exactly how unsupported
+// operations stay broken and invisible. A console trace naming another
+// operation is the evidence that promotes it to a documented answer.
 func (s *server) frs(w http.ResponseWriter, r *http.Request, _ []byte) {
-	log.Printf("[nx-baas] frs %s", r.URL.Path)
+	const knownGood = "/v1/friend_recommendations"
+	if strings.HasPrefix(r.URL.Path, knownGood) {
+		log.Printf("[nx-baas] frs %s", r.URL.Path)
+		w.Header().Set("Content-Type", "application/grpc")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	log.Printf("[nx-baas] frs UNSUPPORTED %s %s (answered grpc-status 12)", r.Method, r.URL.Path)
 	w.Header().Set("Content-Type", "application/grpc")
+	w.Header().Set("Grpc-Status", "12") // UNIMPLEMENTED
+	w.Header().Set("Grpc-Message", "operation not implemented by this server")
 	w.WriteHeader(http.StatusOK)
 }
 

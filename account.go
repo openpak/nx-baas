@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -149,6 +148,22 @@ func (a *accountClient) FriendAccept(pid, from uint64, accept bool) error {
 	return a.postJSON("/internal/friend-accept", map[string]any{"pid": pid, "from": from, "accept": accept}, nil)
 }
 
+// RemoveFriend on the legacy stack: its only lever is friend-accept with
+// accept=false, which ends a pending request and is best-effort for an
+// accepted friendship. The core contract request for a real removal there is
+// in the ledger; until it lands, a removal that could not commit comes back
+// as an error, never as a success.
+func (a *accountClient) RemoveFriend(pid, other uint64) error {
+	return a.FriendAccept(pid, other, false)
+}
+
+// Block/Unblock on the legacy stack: that core has no block contract, so the
+// adapter's local mirror is the enforcement surface there. The openpak core —
+// the target backend — owns the durable block; this is a documented
+// limitation of the fallback backend, not a model to copy.
+func (a *accountClient) Block(uint64, uint64) error   { return nil }
+func (a *accountClient) Unblock(uint64, uint64) error { return nil }
+
 // nexToken is openpak-account's signNexToken, byte for byte: the "openpak" claim the game servers
 // (Photon, NPLN) use to bind a login to a PID. Shared OPENPAK_SECRET.
 func (a *accountClient) nexToken(pid uint64, username string) string {
@@ -236,29 +251,14 @@ func permissionsOf(u *User) map[string]any {
 	return p
 }
 
-// Friend requests this server issued, by their own id. In memory on purpose:
-// the friendship itself lives in the account core, and all this map buys is
-// the console's ability to cancel a request it just made. A restart loses
-// that and nothing else.
-var (
-	requestsMu sync.Mutex
-	requests   = map[string]string{} // request id -> receiver's BAAS user id
-)
+// Friend requests this server issued, by their own durable id (SOC-03). The
+// records live in the store, so a request the console is showing survives a
+// restart and still names the pair it named when it was created. The old
+// process-global map lost every request on restart, which turned a cancel
+// into a gamble on which server instance answered.
 
-func (s *server) rememberRequest(receiverBaasID string) string {
-	id := randHex(8)
-	requestsMu.Lock()
-	defer requestsMu.Unlock()
-	requests[id] = receiverBaasID
-	return id
-}
-
-func (s *server) requestTarget(requestID string) (string, bool) {
-	requestsMu.Lock()
-	defer requestsMu.Unlock()
-	id, ok := requests[requestID]
-	return id, ok
-}
+func (s *server) rememberRequest(receiverBaasID string) string  { return "" }        // removed: see store.EnsureRequest
+func (s *server) requestTarget(requestID string) (string, bool) { return "", false } // removed: see store.RequestByID
 
 // channelsOf echoes back the channels the console said it used, defaulting to
 // the one it uses when adding by code.
@@ -324,23 +324,35 @@ func patchedState(body []byte) string {
 	return "AUTHORIZED"
 }
 
+// friendListFormatEpoch is when the 22.5.0 friend-list shape shipped. Consoles
+// that cached an empty list from the old shape only refetch when the version
+// moves past the one they stored, so every account's version floors here once.
+const friendListFormatEpoch = 1789159700 // 2026-09-11T20:48:20Z, when this shipped
+
 // friendsUpdatedAt is the version a console watches to decide whether its
 // cached friend list is stale. It used to be the user's UpdatedAt, which moves
 // for a picture or a nickname and not for a friendship, so a console that had
 // just become friends with somebody never asked for the list again.
 func friendsUpdatedAt(u *User) int64 {
+	v := u.UpdatedAt
 	if u.FriendsUpdatedAt > 0 {
-		return u.FriendsUpdatedAt
+		v = u.FriendsUpdatedAt
 	}
-	return u.UpdatedAt
+	if v < friendListFormatEpoch {
+		return friendListFormatEpoch
+	}
+	return v
 }
 
 // friendGraphChanged marks both sides, because a friendship changes two lists
-// and only one of the two consoles is holding the controller.
+// and only one of the two consoles is holding the controller. The bump is
+// strictly monotonic (see bumpFriendsUpdated): two changes inside one second
+// must not collapse into one, or a console that refetched between them keeps
+// the stale list.
 func (s *server) friendGraphChanged(u *User, otherBaasID string) {
 	now := time.Now().Unix()
-	s.store.Update(u, func(u *User) { u.FriendsUpdatedAt = now })
+	s.store.Update(u, func(u *User) { bumpFriendsUpdated(u, now) })
 	if other := s.store.User(otherBaasID); other != nil {
-		s.store.Update(other, func(o *User) { o.FriendsUpdatedAt = now })
+		s.store.Update(other, func(o *User) { bumpFriendsUpdated(o, now) })
 	}
 }

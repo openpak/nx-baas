@@ -1,0 +1,15 @@
+{
+ "id": "int",
+ "invitation_group_id": "int",
+ "invitation_type": "str",
+ "sender_id": "str",
+ "application_id": "str",
+ "application_group_id": "str",
+ "application_data": "str",
+ "application_id_match": "bool",
+ "acd_index": "int",
+ "messages": {"en-US": "str"},
+ "read": "bool",
+ "created_at": "int",
+ "updated_at": "int"
+}
