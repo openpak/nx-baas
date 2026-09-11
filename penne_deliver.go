@@ -65,6 +65,7 @@ func (s *server) notifStore() *penneStore {
 	}
 	if s.penneHub == nil {
 		s.penneHub = newPenneHub()
+		s.registerDefaultPennePolicies()
 	}
 	return s.penneState
 }
@@ -73,6 +74,31 @@ func (s *server) notifStore() *penneStore {
 func (s *server) notifHub() *penneHub {
 	s.notifStore()
 	return s.penneHub
+}
+
+// registerDefaultPennePolicies installs the delivery checks this deployment
+// can make on its own. A and C add theirs on top; names deduplicate.
+func (s *server) registerDefaultPennePolicies() {
+	if s.store == nil {
+		return
+	}
+	s.penneHub.RegisterPolicy("online-notification", func(d PenneDelivery, now time.Time) bool {
+		// PRE-04: the per-friend online-alert preference gates the presence
+		// alert only. A friend with alerts off still becomes current in the
+		// list through the REST side; only the toast-worthy push is held.
+		if d.Kind != EventPresenceUpdated {
+			return true
+		}
+		friendID, _ := d.Payload["friendId"].(string)
+		if friendID == "" {
+			return true
+		}
+		viewer := s.store.User(d.UserID)
+		if viewer == nil {
+			return true
+		}
+		return onlineNotificationOf(s.prefOf(viewer, friendID))
+	})
 }
 
 func newPenneHub() *penneHub {

@@ -29,8 +29,10 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 	store := s.notifStore()
 	deviceID := deviceIDFromUA(r.UserAgent())
 	userID := "" // bound when a request carries one of our own access tokens
-	if c := s.bearer(r); c != nil {
-		userID = str(c, "sub")
+	if s.key != nil {
+		if c := s.bearer(r); c != nil {
+			userID = str(c, "sub")
+		}
 	}
 	params := map[string]any{
 		"awake": map[string]any{"count": 2, "idle": 60, "interval": 10}, "ignore_rst": true, "retry_count": 2,

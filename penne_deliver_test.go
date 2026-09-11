@@ -152,3 +152,51 @@ func TestEventJSONCarriesTypeIDDedup(t *testing.T) {
 		t.Fatalf("body = %s", body)
 	}
 }
+
+// The per-friend online-notification preference (A's SOC-02 state) gates the
+// presence alert at dispatch but never the social events (PRE-04).
+func TestOnlineNotificationPreferenceGatesOnlyPresence(t *testing.T) {
+	s, uid := deliverServer(t)
+	u := s.store.User(uid)
+	s.store.Update(u, func(u *User) {
+		p := u.pref("aaaa")
+		off := false
+		p.OnlineNotification = &off
+	})
+	sess := &penneSession{
+		user: uid, device: "devA",
+		ctx:  context.Background(),
+		send: make(chan penneOutbound, 2),
+	}
+	s.notifHub().attach(sess)
+
+	s.SubmitNotification(PenneDelivery{
+		ID: "ev-pres", UserID: uid, Kind: EventPresenceUpdated,
+		Payload: map[string]any{"friendId": "aaaa"},
+	})
+	s.SubmitNotification(PenneDelivery{
+		ID: "ev-req", UserID: uid, Kind: EventFriendRequestReceived,
+		Payload: map[string]any{"friendId": "aaaa"},
+	})
+	s.penneWake(uid)
+
+	// Delivery is at-least-once (client dedups by event id), so collapse the
+	// offered set before asserting: the presence alert must be absent and the
+	// social event present.
+	seen := map[string]bool{}
+	for {
+		select {
+		case o := <-sess.send:
+			seen[o.id] = true
+			continue
+		default:
+		}
+		break
+	}
+	if seen["ev-pres"] {
+		t.Fatal("presence alert delivered despite the per-friend preference")
+	}
+	if !seen["ev-req"] {
+		t.Fatalf("social event not delivered: %v", seen)
+	}
+}

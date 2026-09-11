@@ -1983,6 +1983,7 @@ func main() {
 	// sweeper drives delivery retries, expiry and retention (NTF-05).
 	s.penneState = newPenneStore(getenv("NX_DATA", "/data") + "/penne.json")
 	s.penneHub = newPenneHub()
+	s.registerDefaultPennePolicies()
 	go s.penneSweep()
 	if u := os.Getenv("SAVES_URL"); u != "" {
 		s.saves, s.savesKey = newSavesProxy(u), os.Getenv("SAVES_INTERNAL_KEY")
