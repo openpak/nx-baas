@@ -41,6 +41,9 @@ func (s *server) followCoreEvents(b *openpakBackend) {
 			switch e.GetType() {
 			case "friend_requested", "friend_accepted", "friend_removed":
 				s.projectionFriendsChanged(b, e.GetAccountId(), e.GetSubjectId())
+				// Integration wiring: the state above is committed, so the
+				// native notification may now be submitted (notify_wiring.go).
+				s.notifyCoreFriendEvent(b, e.GetType(), e.GetAccountId(), e.GetSubjectId(), e.GetVersion())
 			case "account_banned", "account_deleted", "account_delete_started", "credential_revoked", "link_unlinked":
 				// An account that can no longer sign in has no live presence:
 				// end its claims here, and let its friends' consoles re-fetch

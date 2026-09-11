@@ -152,6 +152,8 @@ func devicePresenceWins(a, b *DevicePresence) bool {
 func (s *server) noteDevicePresence(u *User, deviceID, state, appID, appField, groupID string) {
 	now := time.Now().Unix()
 	lease := int64(presenceLease().Seconds())
+	before := s.presenceSnapshot(u.ID)
+	defer func() { s.notifyPresenceIfChanged(u.ID, before) }()
 	s.store.Update(u, func(u *User) {
 		if u.DevicePresence == nil {
 			u.DevicePresence = map[string]*DevicePresence{}
@@ -182,6 +184,8 @@ func (s *server) noteDevicePresence(u *User, deviceID, state, appID, appField, g
 // switch ends the previous user's presence now rather than at lease time.
 func (s *server) expireDevicePresence(u *User, deviceID string) {
 	now := time.Now().Unix()
+	before := s.presenceSnapshot(u.ID)
+	defer func() { s.notifyPresenceIfChanged(u.ID, before) }()
 	s.store.Update(u, func(u *User) {
 		e := u.DevicePresence[deviceID]
 		if e == nil || e.ExpiresAt <= now {
@@ -313,6 +317,8 @@ func (s *server) reconcilePresenceOnce(now time.Time, lease time.Duration) {
 // (never mutated in place), so a snapshot taken under the store lock stays
 // consistent while this runs.
 func (s *server) expireLocalPresence(u *User, now int64, lease time.Duration) {
+	before := s.presenceSnapshot(u.ID)
+	defer func() { s.notifyPresenceIfChanged(u.ID, before) }()
 	s.store.Update(u, func(u *User) {
 		for id, e := range u.DevicePresence {
 			if e.ExpiresAt != 0 && e.ExpiresAt <= now {

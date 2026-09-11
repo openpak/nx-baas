@@ -363,22 +363,19 @@ func notifyCommitted(ev InvitationEvent) {
 // (audit P1: jwt.go alone does not do this). The returned user is the
 // principal every path/body id is bound against.
 func (s *server) fiveAuth(r *http.Request) *User {
-	tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-	if tok == "" {
-		return nil
-	}
-	c, err := parseJWT(tok, &s.key.PublicKey)
-	if err != nil {
+	// Integration: the base rules (signature, issuer, type, expiry) are A's
+	// validBearer, so the two surfaces cannot drift apart -- the shared
+	// contract names one token validator. The checks below are the extra
+	// binding this host needs on top, not a second copy of the base rules.
+	c := s.validBearer(r)
+	if c == nil {
 		return nil
 	}
 	now := time.Now().Unix()
-	if exp, ok := c["exp"].(float64); !ok || now >= int64(exp) {
-		return nil
-	}
 	if iat, ok := c["iat"].(float64); ok && now+60 < int64(iat) {
 		return nil
 	}
-	if str(c, "iss") != baasIssuer || str(c, "typ") != "token" || str(c, "aud") != baasAudience {
+	if str(c, "aud") != baasAudience {
 		return nil
 	}
 	// Grant 2 is a user token. Grant 1 (anonymous device) tokens carry a

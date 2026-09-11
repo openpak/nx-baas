@@ -2010,6 +2010,10 @@ func main() {
 	s.penneState = newPenneStore(getenv("NX_DATA", "/data") + "/penne.json")
 	s.penneHub = newPenneHub()
 	s.registerDefaultPennePolicies()
+	// Integration wiring: C's committed-invitation seam delivers through B
+	// (notify_wiring.go). Registered here so the REST surface keeps working
+	// unchanged when the notification side is absent.
+	s.wireInvitationNotifications()
 	go s.penneSweep()
 	if u := os.Getenv("SAVES_URL"); u != "" {
 		s.saves, s.savesKey = newSavesProxy(u), os.Getenv("SAVES_INTERNAL_KEY")
