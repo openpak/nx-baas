@@ -7,6 +7,7 @@ package main
 import (
 	"encoding/json"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"testing"
@@ -69,7 +70,7 @@ func TestGlobalIPProbeReportsTheForwardedAddress(t *testing.T) {
 	r := httptest.NewRequest("GET", "https://api.hac.lp1.ctest.srv.nintendo.net/v1/ip", nil)
 	r.Host = "api.hac.lp1.ctest.srv.nintendo.net"
 	r.RemoteAddr = "10.0.0.1:5000"
-	r.Header.Set("X-Forwarded-For", "203.0.113.7, 10.0.0.1")
+	r.Header.Set("X-Forwarded-For", "10.89.2.12, 203.0.113.7")
 	w := httptest.NewRecorder()
 	s.netdiag(w, r)
 
@@ -78,7 +79,22 @@ func TestGlobalIPProbeReportsTheForwardedAddress(t *testing.T) {
 		t.Fatalf("not JSON: %v", err)
 	}
 	if got["ip"] != "203.0.113.7" {
-		t.Fatalf("ip = %v, want the forwarded client address", got["ip"])
+		t.Fatalf("ip = %v, want the first public address in the chain, not a proxy hop", got["ip"])
+	}
+}
+
+// When every hop is private the console's address is genuinely not visible.
+// Report what we can see rather than inventing a plausible public address.
+func TestGlobalIPProbeDoesNotInventAnAddress(t *testing.T) {
+	ip, public := clientIP(&http.Request{
+		RemoteAddr: "10.89.2.12:40000",
+		Header:     http.Header{"X-Forwarded-For": []string{"10.89.2.247"}},
+	})
+	if public {
+		t.Fatal("a chain of private hops was reported as a public address")
+	}
+	if ip != "10.89.2.12" {
+		t.Fatalf("ip = %q, want the address actually seen", ip)
 	}
 }
 

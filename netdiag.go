@@ -57,8 +57,16 @@ func (s *server) netdiag(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 		w.Write([]byte(strconv.FormatInt(ms, 10)))
 	case r.URL.Path == "/v1/ip":
-		ip := clientIP(r)
-		log.Printf("[netdiag] global IP probe -> %s", ip)
+		ip, public := clientIP(r)
+		if public {
+			log.Printf("[netdiag] global IP probe -> %s", ip)
+		} else {
+			// Not a defect to route around silently: no hop in front of this
+			// server passes the console's address on, so this is the closest
+			// true answer available. PROXY protocol on the Traefik TCP router
+			// is what would carry the real one.
+			log.Printf("[netdiag] global IP probe -> %s (no public address visible; the console is hidden behind TLS passthrough)", ip)
+		}
 		// Key name from public research on this endpoint, not from the module:
 		// `nn::netdiag::detail::ExtractIpAddress` parses the document with a
 		// SAX handler whose member comparison did not fall out of the binary
@@ -127,19 +135,26 @@ func (zeroReader) Read(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// clientIP prefers the proxy's X-Forwarded-For: Traefik terminates the
-// connection, so RemoteAddr is the proxy on every request that came through it.
-func clientIP(r *http.Request) string {
-	if f := r.Header.Get("X-Forwarded-For"); f != "" {
-		if i := strings.IndexByte(f, ','); i >= 0 {
-			f = f[:i]
-		}
-		if ip := strings.TrimSpace(f); ip != "" {
-			return ip
+// clientIP finds the console's own address, which on this topology is harder
+// than it looks: Traefik splices the TLS connection through without terminating
+// it, so the only address anything downstream can see is the previous hop's.
+// Prefer the first PUBLIC address in the forwarded chain -- a private one is a
+// proxy, never the console -- and say so plainly when the chain has none rather
+// than reporting 10.x to a screen that is labelled "global IP".
+func clientIP(r *http.Request) (ip string, public bool) {
+	for _, hop := range strings.Split(r.Header.Get("X-Forwarded-For"), ",") {
+		if a := net.ParseIP(strings.TrimSpace(hop)); a != nil && isPublic(a) {
+			return a.String(), true
 		}
 	}
-	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		return h
+	ip = r.RemoteAddr
+	if h, _, err := net.SplitHostPort(ip); err == nil {
+		ip = h
 	}
-	return r.RemoteAddr
+	a := net.ParseIP(ip)
+	return ip, a != nil && isPublic(a)
+}
+
+func isPublic(a net.IP) bool {
+	return !a.IsLoopback() && !a.IsPrivate() && !a.IsLinkLocalUnicast() && !a.IsUnspecified()
 }
