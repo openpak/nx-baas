@@ -154,6 +154,11 @@ func (s *server) SubmitNotification(d PenneDelivery) PenneSubmission {
 		d.ID = "ev" + randHex(8)
 	}
 	res := s.notifStore().Submit(d, now)
+	// Say it out loud. "Was this event ever queued?" was unanswerable from the
+	// log twice in one evening of hardware testing, and the difference between
+	// "never submitted" and "submitted and the console ignored it" is the
+	// difference between two completely different bugs.
+	log.Printf("[nx-baas] notify: %s for %s -> %s (id=%s)", d.Kind, d.UserID, res.Outcome, d.ID)
 	if res.Accepted {
 		s.penneWake(d.UserID)
 	}
@@ -225,6 +230,12 @@ func (s *server) penneWake(userID string) {
 	}
 	h := s.notifHub()
 	h.mu.Lock()
+	if len(h.sessions[userID]) == 0 {
+		// The commonest reason nothing arrives, and it used to be invisible:
+		// the work is claimed and there is nobody to hand it to. It stays
+		// queued for the next connection.
+		log.Printf("[nx-baas] notify: %d delivery(ies) for %s have no live connection; still queued", len(due), userID)
+	}
 	sessions := make([]*penneSession, len(h.sessions[userID]))
 	copy(sessions, h.sessions[userID])
 	h.mu.Unlock()
@@ -249,6 +260,7 @@ func (s *server) penneWake(userID string) {
 			// A notification is a record: the event body is written to the
 			// account's c-friends record, which the console stores and then
 			// announces to its friends module (docs/penne-protocol.md §4d).
+			log.Printf("[nx-baas] notify: writing %s to the wire for %s (id=%s, device=%q)", e.Kind, e.UserID, e.ID, sess.device)
 			sess.offer(e.ID, s.penneRecordFrame(e))
 		}
 	}
