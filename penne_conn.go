@@ -369,6 +369,13 @@ func (s *server) sessionUser(rec *penneTicketRec) string {
 // question of this shape.
 var penneSyncProbe = os.Getenv("NX_PENNE_SYNC_PROBE") != ""
 
+// penneReconcile turns on the leaf half of the sync: answering the console's
+// LeafHash, and (step two, once this is proven on hardware) advertising the
+// namespaces we hold records under in the RootHash answer so the console asks
+// for them. Off means production keeps the empty-vector answer, which is the
+// only one the console accepts today.
+var penneReconcile = os.Getenv("NX_PENNE_RECONCILE") != ""
+
 // penneSyncReply picks the answer and names it for the log.
 //
 // **An empty entry vector is the answer.** The console opens with a RootHash
@@ -567,6 +574,37 @@ func (s *server) penneDispatch(sess *penneSession, frame []byte) {
 		// by evidence. Logged by name because the first one the console ever
 		// sends is what settles the opening handshake.
 		log.Printf("[nx-baas] penne: %s from user=%s device=%s%s", env.TypeName(), sess.user, sess.device, frameHex(frame))
+	case penne.TypeLeafHash:
+		// The other half of the sync, and the frame this server has always
+		// dropped. The console is not rejecting anything here: it names a
+		// namespace and lists the leaves IT holds under it, and waits for ours
+		// back. Unanswered it gives up after about seventy seconds, which is
+		// what every entries-bearing sync answer did [runtime capture,
+		// 2026-09-12]. Dark until NX_PENNE_RECONCILE, because advertising in
+		// the RootHash without this reply is the loop we already measured.
+		if !penneReconcile {
+			store.unknownType.Add(1)
+			log.Printf("[nx-baas] penne: frame type LeafHash counted, reconciliation is off%s", frameHex(frame))
+			return
+		}
+		p, ok := env.Payload()
+		if !ok {
+			store.unknownType.Add(1)
+			log.Printf("[nx-baas] penne: LeafHash without a payload; counted")
+			return
+		}
+		ns, theirs := penne.ParseLeafHash(p)
+		ours := s.records().LeavesUnder(sess.user, ns)
+		now := uint64(time.Now().Unix())
+		reply := penne.BuildLeafHashReply(ns, ours, uint32(len(ours)), now, now+penneSyncTTL)
+		log.Printf("[nx-baas] penne: LeafHash for %q from user=%s (theirs=%d, ours=%d); answering",
+			ns, sess.user, len(theirs), len(ours))
+		select {
+		case sess.send <- penneOutbound{frame: reply}:
+		default:
+			log.Printf("[nx-baas] penne: LeafHash reply for %q dropped, send queue full", ns)
+		}
+
 	case penne.TypeDAPresence:
 		// The console publishing its own presence, for any account signed in on
 		// it — not only the one this connection is bound to (penne_presence.go).

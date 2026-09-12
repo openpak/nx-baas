@@ -762,6 +762,70 @@ func buildRootPayload(b *Builder, entries []RootEntry) int {
 	return b.EndTable()
 }
 
+// ParseLeafHash reads the console's leaf-reconciliation request. Captured from
+// a live console [2026-09-12]:
+//
+//	LeafHash (0x07)
+//	  0: string  namespace  "c-appearance"
+//	  1: vector  the leaves IT holds under that namespace (empty in the capture)
+//
+// This is an offer, not a rejection: the console is listing its own leaves and
+// waiting for ours back. Left unanswered it gives up after about seventy
+// seconds, which is what every sync attempt did before this existed.
+func ParseLeafHash(p Table) (namespace string, leaves []RootEntry) {
+	namespace, _ = p.String(0)
+	n, ok := p.VectorLen(1)
+	if !ok {
+		return namespace, nil
+	}
+	for i := 0; i < n; i++ {
+		e, ok := p.VectorTable(1, i)
+		if !ok {
+			continue
+		}
+		name, _ := e.String(0)
+		digest, _ := e.Bytes(1)
+		leaves = append(leaves, RootEntry{Name: name, Digest: digest})
+	}
+	return namespace, leaves
+}
+
+// BuildLeafHashReply answers that request in the console's own shape: the
+// namespace it asked about, then the leaves THIS server holds under it. Note
+// the payload differs from RootHash's — a namespace string in slot 0 and the
+// vector in slot 1, rather than the bare vector RootHash uses.
+func BuildLeafHashReply(namespace string, leaves []RootEntry, count uint32, issued, expires uint64) []byte {
+	b := NewBuilder(128 + 64*len(leaves))
+
+	offs := make([]int, 0, len(leaves))
+	for i := len(leaves) - 1; i >= 0; i-- {
+		e := leaves[i]
+		name := b.CreateString(e.Name)
+		digest := b.CreateByteVector(e.Digest)
+		b.StartTable(2)
+		b.PrependUOffsetSlot(1, digest)
+		b.PrependUOffsetSlot(0, name)
+		offs = append([]int{b.EndTable()}, offs...)
+	}
+	vec := b.CreateOffsetVector(offs)
+	ns := b.CreateString(namespace)
+	b.StartTable(2)
+	b.PrependUOffsetSlot(1, vec)
+	b.PrependUOffsetSlot(0, ns)
+	payload := b.EndTable()
+
+	b.StartTable(5)
+	b.PrependU64Slot(4, expires)
+	b.PrependU64Slot(3, issued)
+	b.PrependU32Slot(2, count)
+	b.PrependUOffsetSlot(1, payload)
+	b.PrependU8Slot(0, TypeLeafHash)
+	root := b.EndTable()
+	b.prep(b.minalign, 4)
+	b.placeU32(uint32(b.Offset() + 4 - root))
+	return b.Bytes()
+}
+
 func buildHashMessage(kind byte, entries []RootEntry, count uint32, issued, expires uint64) []byte {
 	b := NewBuilder(128 + 64*len(entries))
 	payload := buildRootPayload(b, entries)

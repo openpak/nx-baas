@@ -16,6 +16,9 @@ package main
 
 import (
 	"crypto/sha1"
+	"nx-baas/internal/penne"
+	"sort"
+	"strings"
 	"sync"
 )
 
@@ -80,6 +83,25 @@ func (s *penneRecordStore) Digest(userID, name string) ([]byte, bool) {
 	}
 	sum := sha1.Sum(value)
 	return sum[:], true
+}
+
+// LeavesUnder lists the records this server holds under a namespace, with their
+// digests, in a stable order. A record is named for a topic and a topic is a
+// dotted path under a namespace, so "c-friends" owns "c-friends.inv.subsTypes"
+// -- and a record whose name IS the namespace counts as its own leaf.
+func (s *penneRecordStore) LeavesUnder(userID, namespace string) []penne.RootEntry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := []penne.RootEntry{}
+	for name, value := range s.byID[userID] {
+		if name != namespace && !strings.HasPrefix(name, namespace+".") {
+			continue
+		}
+		sum := sha1.Sum(value)
+		out = append(out, penne.RootEntry{Name: name, Digest: sum[:]})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }
 
 // records is the process-wide store; one per server, created on first use so a
