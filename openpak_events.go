@@ -22,11 +22,24 @@ func (s *server) followCoreEvents(b *openpakBackend) {
 	cursorPath := filepath.Join(filepath.Dir(b.proj.path), "core-events.cursor")
 	version, known := readCursor(cursorPath)
 	if !known {
-		// Start at the head: replaying history would only re-fetch lists that are already right.
-		if page, err := events.PollEvents(context.Background(), &accountv1.PollEventsRequest{SinceVersion: 1<<62 - 1, Limit: 1}); err == nil {
-			version = page.GetMaxVersion()
-			writeCursor(cursorPath, version)
-		}
+		// Start from the beginning, deliberately.
+		//
+		// This used to "start at the head" by polling with SinceVersion =
+		// 1<<62-1 and trusting the MaxVersion that came back. The core answers
+		// an empty page by echoing the request (`if resp.MaxVersion <
+		// sinceVersion { resp.MaxVersion = sinceVersion }`), so the probe was
+		// handed 4611686018427387903 straight back and wrote it as the cursor.
+		// Every poll after that asked for events above 2^62, matched nothing,
+		// logged nothing, and slept -- so no friend event was ever processed on
+		// this network. No list was ever invalidated and no notification was
+		// ever queued, for months, silently.
+		//
+		// Replaying from 0 is cheap and self-correcting: the handlers are
+		// idempotent (deliveries dedup on the event version, and
+		// projectionFriendsChanged only bumps timestamps), so the worst case is
+		// one burst of re-fetches on a fresh data directory. A cursor that can
+		// wedge itself forever is not worth avoiding that.
+		log.Printf("[nx-baas] core events: no cursor yet; replaying from the start")
 	}
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -37,6 +50,9 @@ func (s *server) followCoreEvents(b *openpakBackend) {
 			time.Sleep(10 * time.Second)
 			continue
 		}
+		// Only ever advance from an event that exists. MaxVersion is not a
+		// head marker -- it echoes the request when the page is empty -- so it
+		// must never reach the cursor.
 		for _, e := range page.GetEvents() {
 			switch e.GetType() {
 			case "friend_requested", "friend_accepted", "friend_removed":

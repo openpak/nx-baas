@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -426,5 +427,35 @@ func TestInternalSwitchIdentity(t *testing.T) {
 	}
 	if code, _ := post(`{"pid":1}`, "wrong"); code != 401 {
 		t.Fatalf("wrong key accepted: code=%d", code)
+	}
+}
+
+// The cursor may only ever advance to a version that belongs to an event we
+// actually received. The core echoes SinceVersion back as MaxVersion when a
+// page is empty, so trusting MaxVersion as a "head" marker parks the cursor
+// above every version that will ever exist and silently kills the whole event
+// feed -- which is exactly what happened in production.
+func TestCursorNeverAdvancesPastARealEvent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "core-events.cursor")
+
+	if _, known := readCursor(path); known {
+		t.Fatal("a missing cursor must read as unknown, so the poller starts from the beginning")
+	}
+
+	// What the old head-probe wrote. A cursor this large can never be exceeded.
+	writeCursor(path, 1<<62-1)
+	got, known := readCursor(path)
+	if !known || got != 1<<62-1 {
+		t.Fatalf("readCursor = %d/%v", got, known)
+	}
+	if got <= 41 {
+		t.Fatal("fixture wrong")
+	}
+
+	// A cursor written from a real event is small and keeps working.
+	writeCursor(path, 41)
+	if got, known := readCursor(path); !known || got != 41 {
+		t.Fatalf("readCursor = %d/%v, want 41", got, known)
 	}
 }
