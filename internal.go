@@ -126,6 +126,29 @@ func (s *server) switchFriendCode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"friend_code": code})
 }
 
+// switchAccountByFriendCode is the mirror of switchFriendCode, and the half
+// that was missing: "which account owns this friend code". The website's
+// add-a-friend form asked the core for a link whose subject matched the code,
+// but the core's "switch" subject is the BAAS user id -- so every Switch friend
+// code answered "no account found", always.
+func (s *server) switchAccountByFriendCode(w http.ResponseWriter, r *http.Request) {
+	if !s.internalOK(r) {
+		apiErr(w, http.StatusUnauthorized, "internal")
+		return
+	}
+	code := r.URL.Query().Get("friend_code")
+	if code == "" {
+		apiErr(w, http.StatusBadRequest, "friend_code required")
+		return
+	}
+	accountID, ok := s.acct.accountForFriendCode(code)
+	if !ok {
+		apiErr(w, http.StatusNotFound, "no account for that friend code")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"account_id": accountID})
+}
+
 // ---- the emulator surface ----
 //
 // An emulator has no console certificate and no BAAS device account; it signs in on the

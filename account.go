@@ -181,6 +181,7 @@ func (a *accountClient) nexSigningKey() []byte { return a.secret }
 // The legacy backend keeps no account-id projection: friend codes come from
 // the account server there, and nothing asks this path for one.
 func (a *accountClient) friendCodeForAccount(string) (string, bool) { return "", false }
+func (a *accountClient) accountForFriendCode(string) (string, bool) { return "", false }
 
 // Codes belong to the account server on this backend, which offers no way to
 // regenerate one. Saying so beats pretending it worked.

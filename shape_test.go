@@ -22,6 +22,7 @@ func (f fakeBackend) friendCodeForAccount(string) (string, bool) {
 	}
 	return f.id.FriendCode, true
 }
+func (f fakeBackend) accountForFriendCode(string) (string, bool) { return "", false }
 
 func (f fakeBackend) RegenerateFriendCode(uint64) error { return nil }
 

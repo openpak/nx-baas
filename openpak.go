@@ -257,6 +257,40 @@ func newFriendCode(p *projectionStore) (string, error) {
 	return "", errors.New("friend-code space exhausted")
 }
 
+// accountForFriendCode resolves a Switch friend code to the OpenPak account
+// that holds it. Codes are compared on their digits alone, so every way a
+// person can type one -- "SW-1000-0000-0001", "sw100000000001", with spaces --
+// finds the same account. The stored form keeps its dashes for display.
+func (b *openpakBackend) accountForFriendCode(code string) (string, bool) {
+	want := friendCodeDigits(code)
+	if want == "" {
+		return "", false
+	}
+	b.proj.mu.Lock()
+	defer b.proj.mu.Unlock()
+	for stored, accountID := range b.proj.ByCode {
+		if friendCodeDigits(stored) == want {
+			return accountID, true
+		}
+	}
+	return "", false
+}
+
+// friendCodeDigits reduces a friend code to the twelve digits that identify it:
+// the "SW" prefix, dashes and spacing are presentation.
+func friendCodeDigits(code string) string {
+	out := make([]rune, 0, 12)
+	for _, c := range code {
+		if c >= '0' && c <= '9' {
+			out = append(out, c)
+		}
+	}
+	if len(out) != 12 {
+		return ""
+	}
+	return string(out)
+}
+
 func (b *openpakBackend) friendCodeForAccount(accountID string) (string, bool) {
 	b.proj.mu.Lock()
 	defer b.proj.mu.Unlock()

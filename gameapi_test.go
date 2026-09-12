@@ -42,6 +42,7 @@ func (b *stubBackend) Block(uint64, uint64) error                      { return 
 func (b *stubBackend) Unblock(uint64, uint64) error                    { return nil }
 func (b *stubBackend) nexSigningKey() []byte                           { return b.key }
 func (b *stubBackend) friendCodeForAccount(string) (string, bool)      { return "SW-0000-0000-0000", true }
+func (b *stubBackend) accountForFriendCode(string) (string, bool)      { return "", false }
 func (b *stubBackend) nexToken(pid uint64, username string) string {
 	payload := fmt.Sprintf("%d.%s.%d", pid, username, time.Now().Add(time.Hour).Unix())
 	mac := hmac.New(sha256.New, b.key)

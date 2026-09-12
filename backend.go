@@ -55,6 +55,11 @@ type accountBackend interface {
 	// friendCodeForAccount answers the website, which mints no codes and holds
 	// none: the core knows an account is linked, not what its code is.
 	friendCodeForAccount(accountID string) (string, bool)
+
+	// accountForFriendCode is the reverse, and the one the website needs to
+	// add a friend by code. The core's "switch" link subject is the BAAS user
+	// id, never the friend code, so a lookup against the core can only miss.
+	accountForFriendCode(code string) (string, bool)
 	// RegenerateFriendCode mints a new code for a user who asked for one from
 	// the console (POST /1.0.0/users/<id>/generate_code).
 	RegenerateFriendCode(pid uint64) error
