@@ -649,6 +649,16 @@ func BuildSubscriptionUpdated(v uint64) []byte {
 	return b.FinishEnvelope(TypeSubscriptionUpdated, payload)
 }
 
+// BuildEmpty encodes an envelope whose payload table has no fields. Hi (0x20),
+// SyncComplete (0x08) and SubscriptionListRequest (0x1c) are logged by the
+// module with no payload fields, so this is their shape.
+func BuildEmpty(kind byte) []byte {
+	b := NewBuilder(32)
+	b.StartTable(0)
+	payload := b.EndTable()
+	return b.FinishEnvelope(kind, payload)
+}
+
 // BuildEvent encodes a delivered event: carrier slot MessageRequest with a
 // single string field holding the event's JSON body. Both the carrier slot and
 // the payload field are hypotheses pending a runtime capture -- they are the

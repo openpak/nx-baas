@@ -113,6 +113,18 @@ func (s *server) frontlineHeldOpen(w http.ResponseWriter, r *http.Request, rec *
 	defer cancel()
 	log.Printf("[nx-baas] penne frontline: open user=%s device=%s", rec.UserID, rec.DeviceID)
 
+	// The console opens the connection and then waits: in production it held
+	// one open for 65 seconds and sent nothing at all (frames_in 0). Hi (0x20)
+	// is the slot named for an opening message and the module logs it with no
+	// payload fields [firmware], so the server greets first and the client's
+	// answer — or continued silence — settles whether that is the handshake.
+	// [hypothesis, docs/penne-protocol.md §4]
+	if err := penne.WriteFrame(w, penne.BuildEmpty(penne.TypeHi)); err != nil {
+		return
+	}
+	fl.Flush()
+	s.notifStore().framesOut.Add(1)
+
 	// Reader: the request body carries the client's frames.
 	go s.penneRead(sess, r.Body)
 
@@ -208,6 +220,12 @@ func (s *server) frontlineStream(w http.ResponseWriter, r *http.Request, rec *pe
 		}
 		return brw.Writer.Flush()
 	}
+	// Same opening greeting as the finite-body path.
+	if err := writeChunk(penne.AppendFrame(nil, penne.BuildEmpty(penne.TypeHi))); err != nil {
+		return
+	}
+	s.notifStore().framesOut.Add(1)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -407,7 +425,9 @@ func (s *server) penneDispatch(sess *penneSession, frame []byte) {
 		}
 	case penne.TypeHi, penne.TypeIdle, penne.TypePowerState, penne.TypeSubscriptionListRequest:
 		// Recovered empty/near-empty client messages: noted, no answer defined
-		// by evidence.
+		// by evidence. Logged by name because the first one the console ever
+		// sends is what settles the opening handshake.
+		log.Printf("[nx-baas] penne: %s from user=%s device=%s", env.TypeName(), sess.user, sess.device)
 	default:
 		store.unknownType.Add(1)
 		log.Printf("[nx-baas] penne: frame type %s counted, no evidence-backed answer", env.TypeName())

@@ -137,6 +137,7 @@ firmware shows:
 | --- | --- | --- |
 | Pong (echoing Ping f0) | inbound Ping | shape [firmware]; echo [hypothesis] |
 | SubscriptionUpdated (unix second) | inbound SubscribeTopic | shape [firmware]; meaning of value + whether a reply is required within the 10 s deadline [hypothesis] |
+| Hi (0x20), no payload, on connect | connection accepted | **[hypothesis]** — the console held a production connection open for 65 s and sent nothing (frames_in 0, subscriptions 0), so the server greets first; Hi is the slot named for an opening message and the module logs it with no payload fields [firmware]. The client's first frame settles it |
 | Event (MessageRequest carrier, JSON string payload f0) | outbox delivery | **[hypothesis] end to end** — the carrier slot and payload field are candidates, chosen because the friends module's event parser demonstrably reads a JSON `type` field from somewhere in this path [firmware, friends module `0xA43B0`/`0xA15C0`], and MessageRequest/PublishRequest are the unplumbed slots |
 
 The five native event kinds the dispatcher recognizes [firmware]:
@@ -144,6 +145,29 @@ The five native event kinds the dispatcher recognizes [firmware]:
 `friend_request_authorized`, `friend_deleted`. The server never invents other
 kinds, never answers unknown slots, and never substitutes newline/JSON body
 bytes for frames.
+
+
+## 4a. Addressing: events must name a console account
+
+The friends module's dispatcher (`0xA15C0`) matches the five event names and
+calls one handler each. Every handler returns immediately unless the 128-bit
+account id it was handed is non-zero — `friend_request_authorized` at
+`0x1A1BB0`, `friend_deleted` at `0x1A1C60`, both guarded by
+`if (*p != 0 || p[1] != 0)` on two 64-bit words copied from the notification
+context at `+0x30`/`+0x38` [firmware, 2026-09-12]. The id arrives with the
+message from the NPNS layer, not from the JSON body.
+
+That id is the one the console itself puts in `/v1/accounts/%016llx%016llx/...`
+[npns `0x120f4b`]. The adapter records it against the registration that
+authenticated the call, and against a BAAS account when the same request proved
+one (`NoteAccount`); it is never derived from a device certificate, because one
+console holds several accounts and guessing which is which loses events.
+
+**Open:** which field of which carrier puts that id on the wire. Until the
+console subscribes to a topic — `subscriptions` is still 0 — the likeliest
+mechanism is the topic a message is published to rather than a field in the
+event frame, since the console's SubscribeTopic builder formats a topic as
+`%016llx` of a u64 [firmware `0xEAA10`].
 
 ## 5. Connection lifecycle (implemented)
 

@@ -64,6 +64,25 @@ func frontlineDial(t *testing.T, ts *httptest.Server, ticket string, hello []byt
 	return res, pw, penne.NewFrameReader(res.Body, penne.MaxFrameSize)
 }
 
+// expectGreeting consumes the frame the server sends as soon as the connection
+// is accepted. The console held a production connection open for 65 seconds and
+// sent nothing, so the server speaks first (penne_conn.go); every frontline test
+// starts by reading that greeting.
+func expectGreeting(t *testing.T, fr *penne.FrameReader) {
+	t.Helper()
+	frame, err := fr.Next()
+	if err != nil {
+		t.Fatalf("greeting: %v", err)
+	}
+	env, err := penne.DecodeEnvelope(frame)
+	if err != nil {
+		t.Fatalf("greeting malformed: %v", err)
+	}
+	if env.Type() != penne.TypeHi {
+		t.Fatalf("first frame = %s, want Hi", env.TypeName())
+	}
+}
+
 // The full ServeHTTP path must stream with the debug wrapper on AND off: the
 // audit reproduced the failure class (frontline answered non-streaming under
 // NX_DEBUG because the wrapper dropped http.Flusher). Both directions must
@@ -86,6 +105,7 @@ func TestFrontlineStreamsThroughServeHTTPDebugOnAndOff(t *testing.T) {
 			// Hello first (the console sends Hi/SubscribeTopic on connect):
 			// a Ping, whose Pong must come back.
 			res, _, fr := frontlineDial(t, ts, ticket, penne.AppendFrame(nil, penne.BuildPing(0xdeadbeef, 0, 0)))
+			expectGreeting(t, fr)
 			if res.StatusCode != 200 {
 				t.Fatalf("status = %d, want 200", res.StatusCode)
 			}
@@ -207,7 +227,9 @@ func TestFiniteFrontlineReplaysOfflineFriendChange(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("status: %d", res.StatusCode)
 	}
-	frame, err := penne.NewFrameReader(res.Body, penne.MaxFrameSize).Next()
+	fr := penne.NewFrameReader(res.Body, penne.MaxFrameSize)
+	expectGreeting(t, fr)
+	frame, err := fr.Next()
 	if err != nil {
 		t.Fatalf("offline change was not replayed: %v", err)
 	}
@@ -256,6 +278,7 @@ func TestFrontlineReconnectReplaysPendingOnce(t *testing.T) {
 	// Connect: the queued event is reconciled on connect (the hello Ping is
 	// answered with a Pong, so skip that frame first).
 	res, _, fr := frontlineDial(t, ts, ticket, penne.AppendFrame(nil, penne.BuildPing(1, 0, 0)))
+	expectGreeting(t, fr)
 	if res.StatusCode != 200 {
 		t.Fatalf("status = %d", res.StatusCode)
 	}
@@ -290,6 +313,7 @@ func TestFrontlineReconnectReplaysPendingOnce(t *testing.T) {
 
 	// The same id must not be replayed again on the next connection.
 	res2, _, fr2 := frontlineDial(t, ts, ticket, penne.AppendFrame(nil, penne.BuildPing(1, 0, 0)))
+	expectGreeting(t, fr2)
 	if res2.StatusCode != 200 {
 		t.Fatalf("reconnect status = %d", res2.StatusCode)
 	}

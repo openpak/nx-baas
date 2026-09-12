@@ -340,3 +340,38 @@ func TestConsoleCertificateBindsToTheAccountItSignsInAs(t *testing.T) {
 		t.Errorf("ResolveUser(account) = %s", got)
 	}
 }
+
+// The friends module discards an event that does not arrive addressed to a
+// console account id, so the id the console puts in its own Penne paths is
+// recorded rather than derived — one console can hold several accounts.
+func TestConsoleAccountIDsAreRecordedNotDerived(t *testing.T) {
+	if got := penneAccountID("/v1/accounts/1000000000a100010000000000000001/notification_tokens"); got != "1000000000a100010000000000000001" {
+		t.Errorf("account id = %q", got)
+	}
+	for _, p := range []string{"/v1/accounts//links", "/v1/accounts/short/links", "/v1/penne_ids", "/v1/accounts/zzzzbedda24cc7670000000000000001/links"} {
+		if got := penneAccountID(p); got != "" {
+			t.Errorf("penneAccountID(%q) = %q, want empty", p, got)
+		}
+	}
+
+	s := &server{}
+	store := s.notifStore()
+	id, _ := store.Register("device-a", "", "", time.Now())
+	const accountA, accountB = "1000000000a100010000000000000001", "1000000000b200020000000000000001"
+	store.NoteAccount(id, accountA, "aaaaaaaaaaaa0001")
+	store.NoteAccount(id, accountB, "aaaaaaaaaaaa0002")
+	store.NoteAccount(id, accountA, "aaaaaaaaaaaa0001") // repeats do not duplicate
+
+	if a := store.AssocByID(id); a == nil || len(a.AccountIDs) != 2 {
+		t.Fatalf("association accounts = %+v", a)
+	}
+	if got := store.AccountsFor("aaaaaaaaaaaa0001"); len(got) != 1 || got[0] != accountA {
+		t.Errorf("AccountsFor(A) = %v", got)
+	}
+	if got := store.AccountsFor("aaaaaaaaaaaa0002"); len(got) != 1 || got[0] != accountB {
+		t.Errorf("AccountsFor(B) = %v; two accounts on one console must not collapse", got)
+	}
+	if got := store.AccountsFor("nobody"); len(got) != 0 {
+		t.Errorf("AccountsFor(unknown) = %v", got)
+	}
+}

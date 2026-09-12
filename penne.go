@@ -28,12 +28,26 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 	now := time.Now()
 	store := s.notifStore()
 	deviceID := deviceIDFromUA(r.UserAgent())
-	userID := "" // bound when a request carries one of our own access tokens
+	// The console signs Penne calls with the token it has: on the frontline
+	// bootstrap that is the console's device token, whose subject is the device
+	// certificate and not an account. Keep the two apart — one names a console,
+	// the other an account the outbox is keyed by.
+	userID := ""
 	if s.key != nil {
 		if c := s.bearer(r); c != nil {
 			userID = str(c, "sub")
 		}
 	}
+	if s.key != nil && s.store != nil {
+		if u := s.bearerUser(r); u != nil {
+			userID = u.ID
+		}
+	}
+	// The 128-bit account id the console puts in the path: two 64-bit words,
+	// "%016llx%016llx" [firmware, npns 0x120f4b]. The friends module discards
+	// any event that does not arrive addressed to one of these, so it is
+	// recorded wherever the console shows it to us.
+	accountID := penneAccountID(p)
 	params := map[string]any{
 		// Horizon 22.5.0 validates every child before accepting this object.
 		// Defaults recovered from NPNS RVA 0xb82e0; omitting these fields
@@ -49,7 +63,7 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 		// Registration always mints; a supplied id alone authorizes nothing.
 		// With id+password both present it is a rotation: prove the pair,
 		// retire everything minted under it, mint fresh.
-		if id := str(in, "id"); id != "" {
+		if id := penneCred(in); id != "" {
 			if _, err := store.CheckAssoc(id, str(in, "password"), now); err != nil {
 				log.Printf("[nx-baas] penne: rotation denied for a supplied id (%v)", err)
 				writeJSON(w, 403, map[string]any{"status": 403, "title": "forbidden"})
@@ -63,6 +77,9 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 		writeJSON(w, 404, map[string]any{}) // nothing to migrate from legacy NPNS
 	case strings.HasPrefix(host, "god.") && strings.HasSuffix(p, "/notification_tokens"):
 		assoc, ok := s.penneAuthedAssoc(store, in, userID, deviceID, now)
+		if ok {
+			store.NoteAccount(assoc.ID, accountID, userID)
+		}
 		if !ok {
 			writeJSON(w, 401, map[string]any{"status": 401, "title": "authentication required"})
 			return
@@ -80,13 +97,14 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		if assoc, ok := s.penneAuthedAssoc(store, in, userID, deviceID, now); ok && nsa != "" {
 			store.LinkNSA(assoc.ID, nsa, now)
+			store.NoteAccount(assoc.ID, accountID, userID)
 		}
 		writeJSON(w, 200, map[string]any{"nsa_id": nsa})
 	case strings.HasPrefix(host, "god.") && r.Method == "DELETE":
 		// Revocation: the association being deleted must belong to the
 		// requesting device, or carry its own valid credentials.
 		revoked := 0
-		if id := str(in, "id"); id != "" {
+		if id := penneCred(in); id != "" {
 			if _, err := store.CheckAssoc(id, str(in, "password"), now); err == nil {
 				revoked = store.Revoke(id, now)
 			} else if a := store.AssocForDevice(deviceID); a != nil && a.ID == id {
@@ -112,6 +130,9 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 			return
 		}
 		_ = ticketRec
+		// The module knows this header by name [firmware, npns 0x1239cd]; it
+		// carries the lifetime the body already states.
+		w.Header().Set("X-LoginTicket-TTL", strconv.FormatInt(ticketRec.ExpiresAt-ticketRec.IssuedAt, 10))
 		writeJSON(w, 200, map[string]any{"expires_at": ticketRec.ExpiresAt, "frontline_fqdn": frontline, "issued_at": ticketRec.IssuedAt, "persistent_connection_params_simple": params, "ticket": ticket})
 	case strings.HasPrefix(host, "fro-"):
 		s.frontline(w, r)
@@ -135,13 +156,43 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 	log.Printf("[nx-baas] penne %s %s%s -> handled", r.Method, host, p)
 }
 
+// penneCred reads the Penne id out of a request body. The firmware carries two
+// spellings of the same credential — "id" on the login-ticket path and
+// "penne_id" on the account-scoped ones [firmware, npns request templates] —
+// and a call spelling it the second way authenticated as nobody here.
+func penneCred(in map[string]any) string {
+	if id := str(in, "id"); id != "" {
+		return id
+	}
+	return str(in, "penne_id")
+}
+
+// penneAccountID pulls the console's 128-bit account id out of an
+// /v1/accounts/<32 hex>/... path, and returns "" for any other shape.
+func penneAccountID(p string) string {
+	rest, ok := strings.CutPrefix(p, "/v1/accounts/")
+	if !ok {
+		return ""
+	}
+	id, _, _ := strings.Cut(rest, "/")
+	if len(id) != 32 {
+		return ""
+	}
+	for _, c := range id {
+		if !strings.ContainsRune("0123456789abcdefABCDEF", c) {
+			return ""
+		}
+	}
+	return id
+}
+
 // penneAuthedAssoc resolves the registration a Penne REST call acts on. The
 // order is: explicit id+password in the body (the one shape that authorizes a
 // supplied id), then the access token's account, then the device's newest
 // association. The last fallback keeps the console's bootstrap moving when its
 // request shape carries no credentials; it is recorded as provisional.
 func (s *server) penneAuthedAssoc(store *penneStore, in map[string]any, userID, deviceID string, now time.Time) (*penneAssoc, bool) {
-	if id := str(in, "id"); id != "" {
+	if id := penneCred(in); id != "" {
 		pw := str(in, "password")
 		if a, err := store.CheckAssoc(id, pw, now); err == nil {
 			return a, true

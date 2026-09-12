@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -31,13 +32,14 @@ import (
 // A supplied id never authorizes anything by itself; the password (and the
 // device/account binding) do.
 type penneAssoc struct {
-	ID           string `json:"id"`
-	PasswordHash string `json:"password_hash"` // sha256 hex of the minted password
-	UserID       string `json:"user_id"`       // BAAS user id ("" until linked)
-	DeviceID     string `json:"device_id"`     // console device id from its own report
-	NsaID        string `json:"nsa_id"`        // Nintendo Account id, when the link carried one
-	CreatedAt    int64  `json:"created_at"`
-	RevokedAt    int64  `json:"revoked_at,omitempty"`
+	AccountIDs   []string `json:"account_ids,omitempty"` // console account ids seen for this registration
+	ID           string   `json:"id"`
+	PasswordHash string   `json:"password_hash"` // sha256 hex of the minted password
+	UserID       string   `json:"user_id"`       // BAAS user id ("" until linked)
+	DeviceID     string   `json:"device_id"`     // console device id from its own report
+	NsaID        string   `json:"nsa_id"`        // Nintendo Account id, when the link carried one
+	CreatedAt    int64    `json:"created_at"`
+	RevokedAt    int64    `json:"revoked_at,omitempty"`
 }
 
 // penneTokenRec is a notification token handed out against a registration.
@@ -117,6 +119,7 @@ type penneData struct {
 	ByDevice     map[string]string           `json:"by_device"`     // device id -> newest penne id
 	ByUser       map[string]string           `json:"by_user"`       // BAAS user id -> newest penne id
 	ConsoleUsers map[string]string           `json:"console_users"` // device certificate -> BAAS user id
+	AccountUsers map[string]string           `json:"account_users"` // console account id (128-bit) -> BAAS user id
 	Tokens       map[string]*penneTokenRec   `json:"tokens"`        // token -> record
 	Tickets      map[string]*penneTicketRec  `json:"tickets"`       // ticket hash -> record
 	Subs         map[string][]*penneSubRec   `json:"subscriptions"` // user id -> subs
@@ -143,8 +146,8 @@ type penneStore struct {
 func newPenneStore(path string) *penneStore {
 	s := &penneStore{path: path, d: &penneData{
 		Assocs: map[string]*penneAssoc{}, ByDevice: map[string]string{}, ByUser: map[string]string{},
-		ConsoleUsers: map[string]string{},
-		Tokens:       map[string]*penneTokenRec{}, Tickets: map[string]*penneTicketRec{},
+		ConsoleUsers: map[string]string{}, AccountUsers: map[string]string{},
+		Tokens: map[string]*penneTokenRec{}, Tickets: map[string]*penneTicketRec{},
 		Subs: map[string][]*penneSubRec{}, PushChannels: map[string]*pennePushChan{},
 		Outbox: map[string][]*penneOutRec{}, Delivered: map[string]map[string]int64{},
 	}}
@@ -165,6 +168,9 @@ func newPenneStore(path string) *penneStore {
 		}
 		if s.d.ConsoleUsers == nil {
 			s.d.ConsoleUsers = map[string]string{}
+		}
+		if s.d.AccountUsers == nil {
+			s.d.AccountUsers = map[string]string{}
 		}
 		if s.d.ByUser == nil {
 			s.d.ByUser = map[string]string{}
@@ -240,6 +246,51 @@ func (s *penneStore) Register(deviceID, userID, nsaID string, now time.Time) (id
 	}
 	s.saveLocked()
 	return id, password
+}
+
+// NoteAccount records a console account id the console itself put in a Penne
+// path, against the registration it authenticated with — and against a BAAS
+// account when the same request proved one. The friends module drops any event
+// that does not arrive addressed to one of these ids [firmware: the dispatched
+// handlers return unless the 128-bit id is non-zero], so this is the address
+// deliveries need, and it is recorded rather than derived: several accounts
+// share one console, and guessing which is which loses events.
+func (s *penneStore) NoteAccount(assocID, accountID, userID string) {
+	if assocID == "" || accountID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.d.Assocs[assocID]
+	if a == nil {
+		return
+	}
+	changed := false
+	if !slices.Contains(a.AccountIDs, accountID) {
+		a.AccountIDs = append(a.AccountIDs, accountID)
+		changed = true
+	}
+	if userID != "" && s.d.AccountUsers[accountID] != userID {
+		s.d.AccountUsers[accountID] = userID
+		changed = true
+	}
+	if changed {
+		s.saveLocked()
+	}
+}
+
+// AccountsFor lists the console account ids an event for this BAAS account can
+// be addressed to. Empty means we have not been shown one yet.
+func (s *penneStore) AccountsFor(userID string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := []string{}
+	for account, user := range s.d.AccountUsers {
+		if user == userID {
+			out = append(out, account)
+		}
+	}
+	return out
 }
 
 // BindConsole records which account signed in on a console, keyed by the
