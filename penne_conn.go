@@ -361,7 +361,7 @@ func (s *server) sessionUser(rec *penneTicketRec) string {
 // of the client's own messages are what the spec still marks open, so the first
 // ones to arrive are worth keeping verbatim.
 func frameHex(frame []byte) string {
-	const max = 256
+	const max = 4096
 	if len(frame) <= max {
 		return fmt.Sprintf(" len=%d hex=%x", len(frame), frame)
 	}
