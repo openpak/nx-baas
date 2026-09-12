@@ -111,7 +111,8 @@ func (s *server) frontlineHeldOpen(w http.ResponseWriter, r *http.Request, rec *
 	s.penneHub.attach(sess)
 	defer s.penneHub.detach(sess)
 	defer cancel()
-	log.Printf("[nx-baas] penne frontline: open user=%s device=%s", rec.UserID, rec.DeviceID)
+	log.Printf("[nx-baas] penne frontline: open user=%s device=%s proto=%s te=%v len=%d",
+		sess.user, rec.DeviceID, r.Proto, r.TransferEncoding, r.ContentLength)
 
 	// The console reads exactly one message here, with a 70-second deadline,
 	// and accepts only HandoverResult or Reset (RVA 0xd9730): everything else
@@ -197,7 +198,8 @@ func (s *server) frontlineStream(w http.ResponseWriter, r *http.Request, rec *pe
 	}
 	s.penneHub.attach(sess)
 	defer s.penneHub.detach(sess)
-	log.Printf("[nx-baas] penne frontline: open (stream) user=%s device=%s", rec.UserID, rec.DeviceID)
+	log.Printf("[nx-baas] penne frontline: open (stream) user=%s device=%s proto=%s te=%v",
+		sess.user, rec.DeviceID, r.Proto, r.TransferEncoding)
 
 	// Reader: the client's frames arrive as chunked request-body bytes.
 	body := newChunkReader(brw.Reader)
@@ -360,16 +362,25 @@ func (s *server) sessionUser(rec *penneTicketRec) string {
 // allocation.
 func (s *server) penneRead(sess *penneSession, body io.Reader) {
 	fr := penne.NewFrameReader(body, penne.MaxFrameSize)
+	read := 0
 	for {
 		frame, err := fr.Next()
 		if err != nil {
-			if !errors.Is(err, io.EOF) && sess.ctx.Err() == nil {
+			if errors.Is(err, io.EOF) {
+				// Worth saying out loud: an immediate EOF means the request
+				// carried no readable body, so nothing the console sends on
+				// this connection can ever reach us.
+				log.Printf("[nx-baas] penne frontline: uplink ended after %d frame(s) (EOF)", read)
+				return
+			}
+			if sess.ctx.Err() == nil {
 				s.notifStore().malformed.Add(1)
 				log.Printf("[nx-baas] penne frontline: read ended (%v); closing", err)
 				sess.cancel()
 			}
 			return
 		}
+		read++
 		s.notifStore().framesIn.Add(1)
 		s.penneDispatch(sess, frame)
 	}
