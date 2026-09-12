@@ -518,3 +518,46 @@ application_id, sender_id}` — all sent (§15).
   our obligation ends at storing and returning those bytes unchanged, which is
   what the create/inbox path does. INV-04's "explicit join" gate is therefore a
   console-side test, not a server feature we are missing.
+
+---
+
+# 18. The shop applet's JavaScript bridge
+
+`offlineWeb` — the module behind `bugyo`, the shop applet host — exposes an API
+to the page it renders. The page *is* the storefront, so this is the contract a
+native OpenPak store has to drive, and none of it was written down before.
+
+Bridge roots: `window.nx.shop`, `window.nx.system`, `window.nx.footer`,
+`window.nx.imageViewer`, `window.nx.videoPlayer`, plus `window.nx.EventTarget`
+and `window.nx.dispatchEvent` for events.
+
+Methods, grouped by what they are for (255 bridge-shaped names in total; these
+are the ones that matter to us):
+
+| Group | Methods |
+| --- | --- |
+| Tokens | `requestNaIdToken`, `requestNaTokenForProfile`, `requestEdgeToken`, `requestUpdateNsaIdTokenCache`, `startToGetToken`, `setNsaIdTokenAvailableCallback`, `setDeviceAuthTokenAvailableCallback` |
+| Account | `getAccountNickname`, `getAccountCountry`, `getAccountBirthday`, `getNintendoAccountIdsOnDevice`, `getAccountIdentificationTiming`, `isPinCodeSetForAccountIdentification` |
+| Rights and devices | **`requestSyncRights`**, `requestLinkDevice`, `requestUnlinkDevice` |
+| Content and installs | `getApplicationContentMetaStatusArray`, `hasApplicationRecord`, `requestDownloadTaskListOnEnd`, `requestCleanupPreInstalledApplication`, `requestCleanupAllPreInstalledApplications`, `requestUpdateCheckInfo` |
+| Virtual game cards | `requestEnableVgcContents`, `requestDisableVgcContents`, `isVgcContentsDisabled` |
+| Storage | `getFreeSizeNand`, `getTotalSizeNand` |
+| Launching and joining | **`requestToPlay`**, **`requestToJoin`**, `requestToJoinInAdvance`, `requestToResume`, `requestToSuspend`, `requestWakeUp`, `isAnyApplicationRunning` |
+| Play activity | **`getFriendPlayLog`**, `getPlayLog` |
+
+Three of these change how open PRD gates should be read:
+
+- **`requestSyncRights`** is a *page* call, not a server one. SHP-03's "rights
+  sync pending hardware" is waiting on a storefront page that calls this — the
+  server side of it (dragons elicenses) is already answered.
+- **`requestToJoin` / `requestToPlay`** are how a page enters a title. The
+  invitation join path (INV-04) therefore also ends in the applet, not at an
+  endpoint we serve, which matches §17.
+- **`getFriendPlayLog`** is the consumer of the play-history document (§15,
+  F1). The console builds that JSON itself and hands it to the page, so a
+  friend's play log reaches the applet through the bridge — and the only way it
+  can reach the console from us is as a record.
+
+Nothing here is a server contract: it is the shape of the client we have to
+write against. Written down so the store workstream stops guessing what the
+page may call.

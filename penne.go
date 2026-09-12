@@ -48,6 +48,18 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 	// any event that does not arrive addressed to one of these, so it is
 	// recorded wherever the console shows it to us.
 	accountID := penneAccountID(p)
+	// The console reports its own last frontline attempt back to us on every
+	// Penne request: X-Fro-Result carries the result code it recorded,
+	// X-Login-Try how many times it has tried, X-Npc and X-Execution its own
+	// state counters [firmware header set, npns 0x1239e5 region]. That is the
+	// console telling us why it dropped the previous connection, which is the
+	// one diagnostic here that needs no guesswork — so it is logged whenever
+	// it is not the all-zero "nothing to report" value.
+	if fro := r.Header.Get("X-Fro-Result"); fro != "" && fro != "000-0000" {
+		log.Printf("[nx-baas] penne: console reports last frontline result %s (try %s, npc %s, exec %s) on %s",
+			fro, r.Header.Get("X-Login-Try"), r.Header.Get("X-Npc"),
+			r.Header.Get("X-Execution"), p)
+	}
 	params := map[string]any{
 		// Horizon 22.5.0 validates every child before accepting this object.
 		// Defaults recovered from NPNS RVA 0xb82e0; omitting these fields

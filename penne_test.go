@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -267,5 +270,35 @@ func TestVermillionDeviceIDIsUsableAsAPathSegment(t *testing.T) {
 	(&server{}).penne(w2, r2, nil)
 	if w2.Body.String() != w.Body.String() {
 		t.Errorf("device id is not stable: %s then %s", w.Body.String(), w2.Body.String())
+	}
+}
+
+// The console reports its previous frontline attempt on every Penne request.
+// An all-zero result is "nothing to report" and stays quiet; anything else is
+// the console telling us why it dropped the last connection, and it must reach
+// the log rather than be discarded.
+func TestConsoleReportedFrontlineResultIsLogged(t *testing.T) {
+	s := &server{}
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	call := func(fro string) {
+		r := httptest.NewRequest("GET", "https://val.hac.lp1.penne.srv.nintendo.net/v1/frontlines", nil)
+		r.Host = "val.hac.lp1.penne.srv.nintendo.net"
+		if fro != "" {
+			r.Header.Set("X-Fro-Result", fro)
+			r.Header.Set("X-Login-Try", "2")
+		}
+		s.penne(httptest.NewRecorder(), r, nil)
+	}
+
+	call("000-0000")
+	if strings.Contains(logged.String(), "console reports") {
+		t.Errorf("an all-zero result was logged as a failure: %s", logged.String())
+	}
+	call("2-ABCDE")
+	if !strings.Contains(logged.String(), "console reports last frontline result 2-ABCDE") {
+		t.Errorf("a reported failure did not reach the log: %s", logged.String())
 	}
 }
