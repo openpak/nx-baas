@@ -630,3 +630,42 @@ func invGroupID(t *testing.T, n int) string {
 	}
 	return ids[n]
 }
+
+// The console marks invitations read with a form, not a JSON patch:
+// PATCH /v1/invitations, "read=true&ids=<id>%2C<id>" [firmware, 0x1e24b0].
+func TestInvitationsAreMarkedReadWithTheConsolesForm(t *testing.T) {
+	s := fiveServer(t)
+	ids := []string{}
+	for i := 0; i < 2; i++ {
+		w := fiveDo(t, s, "POST", "/v2/invitation_groups", fiveToken(s, invSenderUID), createBody(invReceiverUID))
+		if w.Code != 200 {
+			t.Fatalf("create = %d %s", w.Code, w.Body)
+		}
+		var group struct {
+			Invitations []struct {
+				ID json.Number `json:"id"` // a 64-bit id: never through float64
+			} `json:"invitations"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &group); err != nil || len(group.Invitations) != 1 {
+			t.Fatalf("group: %v %s", err, w.Body)
+		}
+		ids = append(ids, group.Invitations[0].ID.String())
+	}
+
+	w := fiveDo(t, s, "PATCH", "/v1/invitations", fiveToken(s, invReceiverUID),
+		"read=true&ids="+ids[0]+"%2C"+ids[1])
+	if w.Code != 200 {
+		t.Fatalf("form mark-as-read = %d %s", w.Code, w.Body)
+	}
+
+	// Both are read, so the unread count the console polls is zero.
+	w = fiveDo(t, s, "GET", "/v2/users/"+invReceiverUID+"/invitations/inbox?fields=count&read=false&invitation_types=friend",
+		fiveToken(s, invReceiverUID), "")
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["count"] != float64(0) {
+		t.Errorf("unread after the form patch = %v, want 0", got["count"])
+	}
+}

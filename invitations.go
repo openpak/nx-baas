@@ -952,6 +952,28 @@ func (s *server) invitationPatch(w http.ResponseWriter, r *http.Request, body []
 		fiveError(w, r, http.StatusUnauthorized, "0006", "invalid_token")
 		return
 	}
+	// The console sends this form-encoded, not as a JSON patch: PATCH
+	// /v1/invitations with "read=true&ids=<id>%2C<id>…" [firmware, friends
+	// module 0x1e24b0 — the body prefix "read=true&ids=" is assembled inline
+	// and the ids are joined with an encoded comma]. The JSON-patch shape the
+	// wiki documents is still accepted, because both cost one branch.
+	if form, err := url.ParseQuery(string(body)); err == nil && form.Get("ids") != "" {
+		ids := map[string]bool{}
+		for _, id := range strings.Split(form.Get("ids"), ",") {
+			if id = strings.TrimSpace(id); id != "" {
+				ids[id] = true
+			}
+		}
+		if form.Get("read") == "false" {
+			// Nothing in the module ever sends this, and an unread flag is not
+			// a state this store can return to: say so rather than pretend.
+			log.Printf("[nx-baas] five: PATCH /v1/invitations asked to unread %d invitation(s); refused", len(ids))
+			fiveError(w, r, http.StatusBadRequest, "0002", "invalid_params")
+			return
+		}
+		s.applyRead(w, me.ID, ids)
+		return
+	}
 	var ops []struct {
 		Op    string `json:"op"`
 		Path  string `json:"path"`
