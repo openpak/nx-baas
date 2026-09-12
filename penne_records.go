@@ -19,12 +19,25 @@ import (
 	"sync"
 )
 
-// Record namespaces the console holds [runtime capture, 2026-09-12].
+// Record namespaces the console offers digests for [runtime capture,
+// 2026-09-12], and the topics that hang off them.
+//
+// A RootHash entry names a namespace; a record is named for the topic a module
+// subscribed to, which is a dotted path under one. The friends module makes
+// exactly one subscription in its whole init —
+// FUN_001eaa30("c-friends.inv.subsTypes", "friend", 6) at 0x17bd24 — so that
+// is the name a notification for it has to be written under. The namespace
+// digest covers whatever hangs below it, by an aggregation this server cannot
+// reproduce, which is why a sync still answers with the console's own digests.
 const (
-	recordFriends    = "c-friends"
-	recordAppearance = "c-appearance"
-	recordSettings   = "c-settings"
-	recordStorage    = "c-storage"
+	namespaceFriends    = "c-friends"
+	namespaceAppearance = "c-appearance"
+	namespaceSettings   = "c-settings"
+	namespaceStorage    = "c-storage"
+
+	// recordFriends is the topic the friends module subscribes to, and so the
+	// record a friend notification is written to [firmware, 0x17bd24].
+	recordFriends = "c-friends.inv.subsTypes"
 )
 
 // penneRecordStore holds what this server has written, per account. It is

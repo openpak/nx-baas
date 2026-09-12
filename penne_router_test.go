@@ -437,14 +437,16 @@ func TestEventIsDeliveredAsAFriendsRecord(t *testing.T) {
 		t.Fatal("delivery has no payload")
 	}
 	name, value, ok := penne.ParsePutRecord(payload)
-	if !ok || name != "c-friends" {
+	// The topic the friends module actually subscribes to, not the namespace
+	// its digest is reported under [firmware, 0x17bd24].
+	if !ok || name != "c-friends.inv.subsTypes" {
 		t.Fatalf("record name = %q (ok=%v)", name, ok)
 	}
 	if !strings.Contains(string(value), `"type":"friend_request_authorized"`) {
 		t.Errorf("record value = %s", value)
 	}
 	// The digest we now own is what a later sync must answer with.
-	digest, ok := s.records().Digest(userID, "c-friends")
+	digest, ok := s.records().Digest(userID, "c-friends.inv.subsTypes")
 	if !ok || len(digest) != 20 {
 		t.Fatalf("no digest kept for the record we wrote (ok=%v len=%d)", ok, len(digest))
 	}

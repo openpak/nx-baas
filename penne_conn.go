@@ -475,17 +475,12 @@ func (s *server) penneDispatch(sess *penneSession, frame []byte) {
 		// docs/penne-protocol.md §4e.
 		count, _ := env.Root().U32(2)
 		now := uint64(time.Now().Unix())
-		// Answer with our own digest for any record this server has written,
-		// and with the console's for the rest: it is authoritative for
-		// everything we have never touched (penne_records.go).
-		answer := make([]penne.RootEntry, len(entries))
-		copy(answer, entries)
-		for i, e := range answer {
-			if digest, ok := s.records().Digest(sess.user, e.Name); ok {
-				answer[i].Digest = digest
-			}
-		}
-		reply, shape := penneSyncReply(answer, count, now)
+		// A RootHash entry is a namespace digest, aggregated over the records
+		// below it by a function this server cannot reproduce — so even for a
+		// namespace we have written into, the console's own digest is the only
+		// value we can state honestly. What we write is recorded per topic
+		// (penne_records.go); what we claim here is what the console claims.
+		reply, shape := penneSyncReply(entries, count, now)
 		if reply == nil {
 			log.Printf("[nx-baas] penne: RootHash from user=%s [%s]; answering with silence (%s)", sess.user, strings.Join(names, " "), shape)
 			return
