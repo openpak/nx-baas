@@ -105,6 +105,7 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 		assoc, ok := s.penneAuthedAssoc(store, in, userID, deviceID, now)
 		if ok {
 			store.NoteAccount(assoc.ID, accountID, userID)
+			log.Printf("[nx-baas] penne: notification token for console account %s (registration %s, user %q)", accountID, assoc.ID, userID)
 		}
 		if !ok {
 			writeJSON(w, 401, map[string]any{"status": 401, "title": "authentication required"})
@@ -222,6 +223,25 @@ func (s *server) penneAuthedAssoc(store *penneStore, in map[string]any, userID, 
 		pw := str(in, "password")
 		if a, err := store.CheckAssoc(id, pw, now); err == nil {
 			return a, true
+		}
+		// The console names its registration WITHOUT a password on these
+		// routes. Captured from hardware, 2026-09-12:
+		//
+		//	POST /v1/accounts/<accountId>/notification_tokens
+		//	{"penne_id":"pzxi…","application_id":"0x010000000000003e"}
+		//	Authorization: Bearer <token this server minted>
+		//
+		// There is no password field to get wrong: the request is already
+		// authenticated by the bearer, and the penne_id selects which
+		// registration the call is about. Demanding a password here 401'd a
+		// console presenting its own live id, on every attempt, which is why
+		// account_users stayed empty and no delivery address was ever learned.
+		// One penne_id is shared by every user account on the console, so this
+		// cannot be narrowed to the account the bearer names either.
+		if pw == "" {
+			if a := store.AssocIfLive(id); a != nil {
+				return a, true
+			}
 		}
 		// An id this store never minted, from a console that registered against
 		// the old build: adopt it under the account the request already proved.

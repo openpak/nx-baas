@@ -360,3 +360,67 @@ func TestKnownPenneIdWithABadPasswordIsStillRefused(t *testing.T) {
 		t.Fatalf("status %d, want 403", w.Code)
 	}
 }
+
+// The console names its registration without a password when it asks for a
+// notification token, and the request is authenticated by its bearer instead.
+// Refusing it 401'd a console presenting its own live penne_id on every
+// attempt, so the console account id in the path -- the address the friends
+// module requires every event to carry -- was never recorded.
+// Captured from hardware 2026-09-12:
+//
+//	POST /v1/accounts/1000000000a100010000000000000001/notification_tokens
+//	{"penne_id":"pzxi…","application_id":"0x010000000000003e"}
+func TestNotificationTokenAcceptsAPasswordlessPenneId(t *testing.T) {
+	s, _ := liveServer(t)
+	store := s.notifStore()
+	id, _ := store.Register("", "user-1", "", time.Now())
+
+	const account = "1000000000a100010000000000000001"
+	body := `{"penne_id":"` + id + `","application_id":"0x010000000000003e"}`
+	r := httptest.NewRequest("POST",
+		"https://god.hac.lp1.penne.srv.nintendo.net/v1/accounts/"+account+"/notification_tokens",
+		strings.NewReader(body))
+	r.Host = "god.hac.lp1.penne.srv.nintendo.net"
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.penne(w, r, []byte(body))
+
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("not JSON: %v", err)
+	}
+	if tok, _ := got["notification_token"].(string); tok == "" {
+		t.Fatal("no notification_token in the reply")
+	}
+	// The point of the route: the console account id must now be on record
+	// against this registration. It is the address the friends module requires
+	// every event to carry, and the only place the console ever shows it to us.
+	a := store.AssocByID(id)
+	if a == nil || len(a.AccountIDs) == 0 || a.AccountIDs[0] != account {
+		t.Fatalf("registration records %v, want the console account from the path", a)
+	}
+}
+
+// A revoked registration is still refused, password or not.
+func TestPasswordlessPenneIdIsRefusedOnceRevoked(t *testing.T) {
+	s, _ := liveServer(t)
+	store := s.notifStore()
+	id, _ := store.Register("", "user-1", "", time.Now())
+	store.Revoke(id, time.Now())
+
+	body := `{"penne_id":"` + id + `"}`
+	r := httptest.NewRequest("POST",
+		"https://god.hac.lp1.penne.srv.nintendo.net/v1/accounts/1000000000a100010000000000000001/notification_tokens",
+		strings.NewReader(body))
+	r.Host = "god.hac.lp1.penne.srv.nintendo.net"
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.penne(w, r, []byte(body))
+
+	if w.Code != 401 {
+		t.Fatalf("status %d, want 401 for a revoked registration", w.Code)
+	}
+}

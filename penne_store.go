@@ -384,6 +384,21 @@ func (s *penneStore) KnowsAssoc(id string) bool {
 	return s.d.Assocs[id] != nil
 }
 
+// AssocIfLive returns a registration by id when it exists and has not been
+// revoked, for the routes where the console names its registration without a
+// password. It says nothing about credentials — the caller must already have
+// authenticated the request some other way.
+func (s *penneStore) AssocIfLive(id string) *penneAssoc {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.d.Assocs[id]
+	if a == nil || a.RevokedAt != 0 {
+		return nil
+	}
+	cp := *a
+	return &cp
+}
+
 // CheckAssoc verifies a penne id + password pair. A wrong password, unknown id
 // or revoked registration is an error naming nothing an attacker can use.
 func (s *penneStore) CheckAssoc(id, password string, now time.Time) (*penneAssoc, error) {
