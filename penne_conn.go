@@ -437,7 +437,7 @@ func (s *server) penneDispatch(sess *penneSession, frame []byte) {
 		// a bootstrap to reach the steady state, not a sync — see
 		// docs/penne-protocol.md §4e.
 		count, _ := env.Root().U32(2)
-		now := uint32(time.Now().Unix())
+		now := uint64(time.Now().Unix())
 		reply := penne.BuildRootHash(entries, count, now, now+penneSyncTTL)
 		select {
 		case sess.send <- penneOutbound{frame: reply}:

@@ -597,11 +597,16 @@ func (b *Builder) EndTable() int {
 	for used > 0 && b.vtable[used-1] == 0 {
 		used--
 	}
-	D := b.Offset()
-	aligned := (D + 1) & ^1
-	vsize := 4 + 2*used
-	pad := (-(aligned + vsize)) & 3
-	S := aligned + vsize + pad + 4 // doff the soffset (table start) will sit at
+	// Reserve the soffset first, so the vtable written after it lands at a
+	// LOWER address and the stored soffset is positive. The console's own
+	// frames are built that way (a captured RootHash has root 24 with its
+	// vtable at 10), and the reference builder does the same; a vtable sitting
+	// above its table is legal arithmetic but not a shape the firmware's
+	// verifier is ever handed.
+	b.prep(4, 0)
+	b.placeU32(0)
+	S := b.Offset() // doff of the table start (where the soffset sits)
+
 	for i := used - 1; i >= 0; i-- {
 		b.prep(2, 0)
 		off := uint16(0)
@@ -617,12 +622,14 @@ func (b *Builder) EndTable() int {
 	}
 	b.placeU16(uint16(tsize)) // table size
 	b.prep(2, 0)
-	b.placeU16(uint16(vsize)) // vtable size
-	vOff := b.Offset()        // doff of the vtable structure's first byte
-	b.prep(4, 0)
-	b.placeU32(uint32(int32(vOff - S))) // soffset: table - vtable
+	b.placeU16(uint16(4 + 2*used)) // vtable size
+	vOff := b.Offset()             // doff of the vtable's first byte
+
+	// Patch the reserved soffset: table start minus vtable, positive because
+	// the vtable was written later and therefore sits earlier in the buffer.
+	binary.LittleEndian.PutUint32(b.buf[len(b.buf)-S:], uint32(int32(vOff-S)))
 	b.vtable, b.fieldLow = nil, -1
-	return b.Offset()
+	return S
 }
 
 // FinishEnvelope writes the root envelope table (union slot + payload) and the
@@ -727,11 +734,13 @@ func ParseRootHash(payload Table) []RootEntry {
 	return out
 }
 
-// BuildRootHash encodes a RootHash the way the console encodes its own: an
-// envelope carrying the type, the payload, a count, and the issued/expiry
-// seconds; the payload is one vector of {name, 20-byte digest} tables
-// [runtime capture of the console's own message].
-func BuildRootHash(entries []RootEntry, count uint32, issued, expires uint32) []byte {
+// BuildRootHash encodes a RootHash the way the console encodes its own:
+// {0: u8 type, 1: payload, 2: u32 count, 3: u64 issued, 4: u64 expires}, the
+// payload being one vector of {name, 20-byte digest} tables. The widths come
+// from the captured frame's own table layout — slot 3 at +16 and slot 4 at +24
+// in a 32-byte table leaves eight bytes for each timestamp
+// [runtime capture of the console's own message, 2026-09-12].
+func BuildRootHash(entries []RootEntry, count uint32, issued, expires uint64) []byte {
 	b := NewBuilder(128 + 64*len(entries))
 	offs := make([]int, 0, len(entries))
 	for i := len(entries) - 1; i >= 0; i-- {
@@ -749,8 +758,8 @@ func BuildRootHash(entries []RootEntry, count uint32, issued, expires uint32) []
 	payload := b.EndTable()
 
 	b.StartTable(5)
-	b.PrependU32Slot(4, expires)
-	b.PrependU32Slot(3, issued)
+	b.PrependU64Slot(4, expires)
+	b.PrependU64Slot(3, issued)
 	b.PrependU32Slot(2, count)
 	b.PrependUOffsetSlot(1, payload)
 	b.PrependU8Slot(0, TypeRootHash)
