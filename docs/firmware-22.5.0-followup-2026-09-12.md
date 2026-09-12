@@ -610,3 +610,62 @@ the play-history JSON (§15), the shop/offline-web bridge exposes
 `getFriendPlayLog` to a page (§18), and the profile applet renders a friend's
 history from it. No HTTP endpoint appears anywhere in any of the three, which
 leaves the record sync as the only way a *friend's* log can reach the console.
+
+---
+
+# 20. The News channel, mapped
+
+## What the console actually asks for
+
+From production traffic and the news workstream's own 2026-09-07 capture
+(`news/docs/native-news-catchall.md`), the console's News surface is four
+routes across two hosts, with `nnNews`/`nnBcat` user agents:
+
+| Host | Path | Parameters |
+| --- | --- | --- |
+| `bcat-topics-lp1.cdn.nintendo.net` | `/api/nx/v1/topics/catalog` | `l=en-GB`, `c[]=GB` (twice) |
+| `bcat-topics-lp1.cdn.nintendo.net` | `/api/nx/v1/titles/<titleId>/topics` | `c[]=GB` |
+| `bcat-list-lp1.cdn.nintendo.net` | `/api/nx/v1/list/nx_news_<feed>` | — |
+| `bcat-list-lp1.cdn.nintendo.net` | `/api/nx/v1/list/nx_data_<titleId>` | — |
+
+Live in the last two days, the console asked for per-title topics for
+`0100000000001000` (the News applet itself) and `01008c9014694000` (a game's
+own channel).
+
+## Where those requests land today
+
+Traefik routes `bcat-topics-lp1` to the news service (`news-experiment`,
+priority 1000, TLS passthrough). That service logs
+**`unhandled news route … /api/nx/v1/titles/<id>/topics`** and the request
+falls through to nx-baas, which answers `{"topics":[]}`.
+
+So there is a **path mismatch**: the news service implements
+`/api/nx/v1/topics/{catalog,<channel>/detail,<channel>/icon,<id>/article}`,
+and the console asks for `/api/nx/v1/titles/<titleId>/topics` and
+`/api/nx/v1/list/…`. Nothing is broken — an empty topic list is a valid "no
+news" — but no news can reach a console through the routes we implement.
+
+## The part that needs a module we have not dumped
+
+Delivering an actual article is not a JSON problem. The console pulls content
+through the **BCAT delivery cache**, whose IPC surface `ns` merely proxies:
+`IBcatService`, `IServiceCreator`, `INotifierService`,
+`IDeliveryCacheStorageService`, `IDeliveryCacheDirectoryService`,
+`IDeliveryCacheFileService`, `IDeliveryCacheProgressService`,
+`IDeliveryTaskSuspensionService`. The container format and whatever signature
+it carries live in the **bcat sysmodule**, and the audit tree does not contain
+it: fifteen modules were dumped, and `bcat` (`0x010000000000000c`) and the News
+applet (`0x0100000000001000`) were not — **both are present in the firmware
+dump**, so this is an extraction away, not a research dead end.
+
+`ns` does carry the settings that gate it: `bcat_enabled`,
+`auto_update_policy_from_bcat_enabled`, `acceptable_application_delivery_protocol_version`,
+`system_delivery_info_id`, `delivery_info_platform`, `delivery_protocol_version`.
+
+**Next step for News:** extract `0x010000000000000c` and `0x0100000000001000`
+from `~/Downloads/Firmware.22.5.0` the way the other fifteen were (hactool then
+`~/REPOS/nx2elf`; neither hactool nor an equivalent is currently on this
+machine), then mine them for the delivery-cache container and the exact
+per-title topics document. Until then, serving `/api/nx/v1/titles/<id>/topics`
+with invented entries would only move the failure one step later, into a
+container we cannot yet build.

@@ -32,6 +32,13 @@ experiment is deployed and waiting) · **open** (nobody has started).
 | S3 | What does an ES-trusted eticket require? | blocked | NIM parses `cert_chain`, `common_key_generation`, `signing_key`, `payload`, `payload_key_iv`, `wrapped_payload_key`; we cannot mint one | unchanged: this is the native-install gate, and no server change moves it |
 | S4 | Which of the stubbed NIM routes does a real store journey actually touch? | open | §14 lists what each answers and why | watch the log during an acquisition on hardware; anything that appears is worth implementing properly |
 
+## News
+
+| # | Question | Status | Evidence | Next experiment |
+| --- | --- | --- | --- | --- |
+| W1 | What does `/api/nx/v1/titles/<titleId>/topics` return? | open 2026-09-12 | the console asks for it live; our news service implements a different path family and the request falls through to an empty list (§20) | dump the News applet (`0x0100000000001000`) and read its parser |
+| W2 | What is a BCAT delivery-cache container, and what does it verify? | **blocked** 2026-09-12 | only the IPC proxy names survive in `ns`; the logic is in the bcat sysmodule, which the audit never dumped although the firmware has it | extract `0x010000000000000c` (hactool + `nx2elf`, neither currently installed) and mine it. Serving topics without this only moves the failure later |
+
 ## Method
 
 The tooling that answers these lives in `tools/firmware/` with its own README.
