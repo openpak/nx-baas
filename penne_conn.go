@@ -27,7 +27,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"nx-baas/internal/penne"
@@ -370,17 +369,15 @@ func (s *server) sessionUser(rec *penneTicketRec) string {
 // default — production answers with the mirror.
 var penneSyncProbe = os.Getenv("NX_PENNE_SYNC_PROBE") != ""
 
-var penneSyncAttempt atomic.Uint64
-
 // penneSyncReply picks the answer and names it for the log.
-func penneSyncReply(entries []penne.RootEntry, count uint32, now uint64) ([]byte, string) {
+func (s *server) penneSyncReply(entries []penne.RootEntry, count uint32, now uint64) ([]byte, string) {
 	mirror := func() ([]byte, string) {
 		return penne.BuildRootHash(entries, count, now, now+penneSyncTTL), "RootHash mirror"
 	}
 	if !penneSyncProbe {
 		return mirror()
 	}
-	switch penneSyncAttempt.Add(1) % 6 {
+	switch s.notifStore().NextSyncProbe() % 6 {
 	case 1:
 		return mirror()
 	case 2:
@@ -480,7 +477,7 @@ func (s *server) penneDispatch(sess *penneSession, frame []byte) {
 		// namespace we have written into, the console's own digest is the only
 		// value we can state honestly. What we write is recorded per topic
 		// (penne_records.go); what we claim here is what the console claims.
-		reply, shape := penneSyncReply(entries, count, now)
+		reply, shape := s.penneSyncReply(entries, count, now)
 		if reply == nil {
 			log.Printf("[nx-baas] penne: RootHash from user=%s [%s]; answering with silence (%s)", sess.user, strings.Join(names, " "), shape)
 			return

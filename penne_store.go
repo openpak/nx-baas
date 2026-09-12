@@ -115,11 +115,15 @@ const (
 // ---------- store ----------
 
 type penneData struct {
-	Assocs       map[string]*penneAssoc      `json:"associations"`  // penne id -> assoc
-	ByDevice     map[string]string           `json:"by_device"`     // device id -> newest penne id
-	ByUser       map[string]string           `json:"by_user"`       // BAAS user id -> newest penne id
-	ConsoleUsers map[string]string           `json:"console_users"` // device certificate -> BAAS user id
-	AccountUsers map[string]string           `json:"account_users"` // console account id (128-bit) -> BAAS user id
+	Assocs       map[string]*penneAssoc `json:"associations"`  // penne id -> assoc
+	ByDevice     map[string]string      `json:"by_device"`     // device id -> newest penne id
+	ByUser       map[string]string      `json:"by_user"`       // BAAS user id -> newest penne id
+	ConsoleUsers map[string]string      `json:"console_users"` // device certificate -> BAAS user id
+	AccountUsers map[string]string      `json:"account_users"` // console account id (128-bit) -> BAAS user id
+	// SyncProbe counts the sync answers tried while NX_PENNE_SYNC_PROBE is
+	// set. It is durable because the rotation is worthless if a deploy sends
+	// it back to the first candidate every time.
+	SyncProbe    uint64                      `json:"sync_probe,omitempty"`
 	Tokens       map[string]*penneTokenRec   `json:"tokens"`        // token -> record
 	Tickets      map[string]*penneTicketRec  `json:"tickets"`       // ticket hash -> record
 	Subs         map[string][]*penneSubRec   `json:"subscriptions"` // user id -> subs
@@ -291,6 +295,15 @@ func (s *penneStore) AccountsFor(userID string) []string {
 		}
 	}
 	return out
+}
+
+// NextSyncProbe returns the next probe attempt number and remembers it.
+func (s *penneStore) NextSyncProbe() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.d.SyncProbe++
+	s.saveLocked()
+	return s.d.SyncProbe
 }
 
 // BindConsole records which account signed in on a console, keyed by the
