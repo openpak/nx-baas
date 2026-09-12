@@ -567,6 +567,14 @@ func (s *server) penneDispatch(sess *penneSession, frame []byte) {
 		// by evidence. Logged by name because the first one the console ever
 		// sends is what settles the opening handshake.
 		log.Printf("[nx-baas] penne: %s from user=%s device=%s%s", env.TypeName(), sess.user, sess.device, frameHex(frame))
+	case penne.TypeDAPresence:
+		// The console publishing its own presence, for any account signed in on
+		// it — not only the one this connection is bound to (penne_presence.go).
+		if p, ok := env.Payload(); ok && s.penneNotePresence(p) {
+			return
+		}
+		store.unknownType.Add(1)
+		log.Printf("[nx-baas] penne: DAPresence could not be read%s", frameHex(frame))
 	default:
 		store.unknownType.Add(1)
 		// With the bytes: the console's own messages are the only source for
