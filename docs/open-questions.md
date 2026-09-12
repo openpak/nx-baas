@@ -13,14 +13,14 @@ experiment is deployed and waiting) · **open** (nobody has started).
 | --- | --- | --- | --- | --- |
 | N1 | Which sync answer does the console accept? Ours is byte-structurally identical to its own RootHash and is still refused | **armed** 2026-09-12 | `docs/penne-protocol.md` §4e; two candidates eliminated (mirror, two-slot envelope) | `NX_PENNE_SYNC_PROBE=1` is set on prod and the counter is durable: the next console wake tries `count+1`, `LeafHash`, an empty vector, then silence. Read `podman logs … \| grep answered` |
 | N2 | Is `PutRecord{c-friends.inv.subsTypes, <event json>}` accepted, and does it wake the friends module? | blocked on N1 | record shape from `0x1dc430`; topic from `0x17bd24` | after N1, accept a friend request on one console and watch the other's list |
-| N3 | What is `presence.pf`? A one-byte enum stored at friend+`0x569`, never compared, never published by the console | open | §15 | capture a real Nintendo presence document, or find a reader of that byte in the friends IPC marshalling |
-| N4 | What are an invitation's `channels[*]` values? | open | read at `$.items[*].channels[0]`, never written by the module | as N3 — nothing local can settle it |
+| N3 | What is `presence.pf`? A one-byte enum stored at friend+`0x569` | **blocked** 2026-09-12 | probed: the module has string tables for presence states, channels and request states, and **none for a platform**. `pf` is written and never compared anywhere in the module | only a real capture can settle it. Do not hunt again — the negative result is the finding |
+| N4 | Which `channels[*]` value belongs on an invitation? | open 2026-09-12 | **the value set is recovered**: a string→int mapper at `0x1a7d80` over a `.rodata` table — `NX_FACED, FRIEND_CODE, IN_APP, NINTENDO_ACCOUNT, 3DS, NNID, FACEBOOK, TWITTER, WECHAT, CAMPUS`. Our friend requests already send `FRIEND_CODE`, which is in the set | which one an *invitation* carries is the open half. `IN_APP` is the candidate for a game-issued invite; a hardware capture of one real invitation settles it |
 
 ## Friends and presence
 
 | # | Question | Status | Evidence | Next experiment |
 | --- | --- | --- | --- | --- |
-| F1 | Which endpoint serves the play-history document (`firstPlayedAt`, `lastPlayedAt`, `totalPlayCount`, `totalPlayTime` per title)? | open | parsed only by the friends module; **no URL in its strings** | suspect it arrives as a record (`c-storage.summary` is the shape-alike); confirm by logging record topics once N1 is through |
+| F1 | How does the play-history document travel? | open 2026-09-12 | **the console builds it**, not just reads it: the module carries the format fragments `"firstPlayedAt":%lld,` `"lastPlayedAt":%lld` `"totalPlayCount":%u,` `"totalPlayTime":%u,` — so timestamps are signed 64-bit and the counters unsigned 32-bit. Still **no URL anywhere**, which leaves a record as the only carrier | log the topics and values the console writes once N1 is through; that also tells us whether it publishes to `c-friends.*` or `c-storage.summary` |
 | F2 | Does the friend list refresh from anything except a notification? | open | `cooldown_time_for_sync_friend_list` defaults to 30 s, so it is not throttling | after N2, leave two consoles idle and see whether a list ever self-corrects |
 
 ## eShop
@@ -28,7 +28,7 @@ experiment is deployed and waiting) · **open** (nobody has started).
 | # | Question | Status | Evidence | Next experiment |
 | --- | --- | --- | --- | --- |
 | S1 | What are `pearljam…/civil` and `/sugar`? | open | the only eShop hosts in NIM with no recovered contract | the handler dumps the full request; open the shop applet on hardware and read the log |
-| S2 | What does `/v1/a/<appId>/dv` return? | open | NIM's update check, built at `0x1ecbe0`; we answer 404 | decompile the response parser at `0x20e690`, or capture one from hardware |
+| S2 | What does `/v1/a/<appId>/dv` return? | open 2026-09-12 | probed and **ruled out**: NIM has no `version`/`required_version`/`format_version` JSON paths at all, and `0x20e690` parses headers (`"%s: %s"`), not a body. The `$.ttl`/`$.weights` and `$.individual`/`$.is_available` parsers belong to other calls | stop looking for JSON field names; capture one real response, or trace what the request function does with the body it receives |
 | S3 | What does an ES-trusted eticket require? | blocked | NIM parses `cert_chain`, `common_key_generation`, `signing_key`, `payload`, `payload_key_iv`, `wrapped_payload_key`; we cannot mint one | unchanged: this is the native-install gate, and no server change moves it |
 | S4 | Which of the stubbed NIM routes does a real store journey actually touch? | open | §14 lists what each answers and why | watch the log during an acquisition on hardware; anything that appears is worth implementing properly |
 
