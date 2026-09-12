@@ -919,3 +919,29 @@ infrastructure.
 `all/<titleid>/` holds `main.elf`, `exefs/` and `strings.txt`; `all/<name>` is a
 symlink to it, so `all/friends/strings.txt` works. `all/names.tsv` maps one to
 the other. Both scripts are idempotent.
+
+
+### 22e. Membership is asked three different ways
+
+Worth writing down, because answering one of them is not answering the others
+and the three do not have the same shape.
+
+| Where | Selector | Question |
+| --- | --- | --- |
+| `capi…/v1/users/<id>/memberships` | per item: `.user_id`, `.context`, `.membership.active` (`FUN_00213ed0`) | "which plans does this account hold" — a **list keyed by context** |
+| `capi…/v1/users/<id>/membership?application_id=<tid>` | `$.membership.active` (`FUN_00214130`) | "may this account play *this title* online" — a single object |
+| Nintendo Account event poll | `$.user.id`, `$.user.op2.membership.active`, `$.events[0]` (`FUN_00217500`) | "did the membership change" — carried beside the event list |
+
+`.context` is the plan discriminator, which is why the captured reply this
+server mirrors has two entries: `default` (active) and `ex` (inactive) — base
+NSO and the Expansion Pack. The console caches the result in
+`<save>/nas/<naId>_op2membership.dat` and re-reads it when an
+`op2.membership_right_committed` / `op2.membership_right_expired` event arrives.
+`membership_required` and `could_not_confirm_membership` are the two refusals it
+can raise; NIM adds `/v1/my/membership/free_trial_availability` on top.
+
+The third row is **not** a field to add to the login reply: it is nested under
+`$.user` in a document that also carries `$.events`, and the `/2.0.0/users/me`
+this server sends returns the user unwrapped, with no event array, and hardware
+accepts it. Nothing here emits `op2` anywhere and every membership-gated path
+works, so its absence is tolerated on every path we exercise.

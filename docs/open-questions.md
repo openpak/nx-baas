@@ -47,7 +47,7 @@ experiment is deployed and waiting) · **open** (nobody has started).
 | # | Question | Status | Evidence | Next experiment |
 | --- | --- | --- | --- | --- |
 | U1 | Which of the thirteen unrouted hosts does a console actually contact? | open 2026-09-12 | §22c lists each with its module; all resolve here already and land in the log as `!! UNHANDLED host` | read the log after a session that opens the album, the NSO app surfaces and parental controls |
-| U2 | Is `$.user.op2.membership.active` read off a response we send? | open 2026-09-12 | `nn.account` reads it, and we emit no `op2` anywhere. Adding it to `userObj` was not attempted: a login reply with one extra key was refused by the console once already | find which response carries `$.user` in the account module before adding a field to a working login |
+| U2 | Is `$.user.op2.membership.active` read off a response we send? | **answered** 2026-09-12 | No. It sits in one selector table with `$.user.id` and `$.events[0]` (`FUN_00217500`), i.e. a `{user:{…}, events:[…]}` document — the Nintendo Account **event poll**, not the login reply and not the `/2.0.0/users/me` we serve (which returns the user unwrapped and which hardware accepts). `op2.membership_right_committed` / `op2.membership_right_expired` are the event types that go in that array | nothing to change. If the event poll is ever implemented, membership changes belong in it |
 
 ## Method
 
