@@ -123,6 +123,7 @@ type penneData struct {
 	// SyncProbe counts the sync answers tried while NX_PENNE_SYNC_PROBE is
 	// set. It is durable because the rotation is worthless if a deploy sends
 	// it back to the first candidate every time.
+	RecordProbe  uint64                      `json:"record_probe"` // the record-shape probe's place in its rotation
 	SyncProbe    uint64                      `json:"sync_probe,omitempty"`
 	Tokens       map[string]*penneTokenRec   `json:"tokens"`        // token -> record
 	Tickets      map[string]*penneTicketRec  `json:"tickets"`       // ticket hash -> record
@@ -304,6 +305,17 @@ func (s *penneStore) NextSyncProbe() uint64 {
 	s.d.SyncProbe++
 	s.saveLocked()
 	return s.d.SyncProbe
+}
+
+// NextRecordProbe is the same durable counter for the record-shape probe, so a
+// deploy in the middle of a hardware session does not restart the rotation and
+// re-test a candidate that already failed.
+func (s *penneStore) NextRecordProbe() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.d.RecordProbe++
+	s.saveLocked()
+	return s.d.RecordProbe
 }
 
 // BindConsole records which account signed in on a console, keyed by the

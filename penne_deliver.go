@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"sync"
 	"time"
 
@@ -272,19 +273,101 @@ func (s *server) penneWake(userID string) {
 // is one of those. It goes away when deliveries become records.
 var penneSendEvents = false
 
-// penneRecordFrame writes one queued delivery as a record: PutRecord with the
-// account's c-friends name and the event JSON as its value. The shape comes
-// from the console's own handler, which reads {0: string name, 1: [ubyte]
-// value}, stores the pair and announces the name [firmware, 0x1dc430]. The
-// value we keep, so the next RootHash can answer with our own digest for this
-// record instead of the console's.
+// penneRecordFrame writes one queued delivery as a record: PutRecord with a
+// record name and the event JSON as its value. The shape comes from the
+// console's own handler, which reads {0: string name, 1: [ubyte] value},
+// stores the pair and announces the name [firmware, 0x1dc430].
+//
+// **Which name, though.** `c-friends.inv.subsTypes` is what the friends module
+// subscribes to at its own init [firmware, FUN_001eaa30], and records written
+// under it reach the wire and change nothing: on 2026-09-12 two presence
+// records were written to a live console and it neither refetched its friend
+// list nor showed the friend as online. The only topic that console has ever
+// announced to this server over Penne is `nx_data_<titleId>`. So the module's
+// internal subscription and the connection's announced subscriptions are two
+// different lists, and we have been writing to the one the console never
+// mentioned.
+//
+// Rather than guess again, NX_PENNE_RECORD_PROBE rotates the candidates one per
+// delivery and lets the console judge them — the same method that settled the
+// sync answer in three minutes of hardware time (penne_conn.go). The signal is
+// unambiguous and already in the log: an unsolicited
+// `GET /2.0.0/users/<id>/friends` a moment after a delivery.
+var penneRecordProbe = os.Getenv("NX_PENNE_RECORD_PROBE") != ""
+
 func (s *server) penneRecordFrame(e *penneOutRec) []byte {
-	value := []byte(penneEventJSON(PenneDelivery{
+	name, value, shape := s.penneRecordShape(e)
+	s.records().Put(e.UserID, name, value)
+	now := uint64(time.Now().Unix())
+	if penneRecordProbe {
+		log.Printf("[nx-baas] notify: record as %s (name=%q) for %s", shape, name, e.UserID)
+	}
+	return penne.BuildPutRecord(name, value, uint32(len(value)), now, now+penneSyncTTL)
+}
+
+// penneRecordShape picks the record name and value for one delivery.
+func (s *server) penneRecordShape(e *penneOutRec) (name string, value []byte, shape string) {
+	flat := []byte(penneEventJSON(PenneDelivery{
 		ID: e.ID, UserID: e.UserID, Kind: e.Kind, Payload: e.Payload,
 	}))
-	s.records().Put(e.UserID, recordFriends, value)
-	now := uint64(time.Now().Unix())
-	return penne.BuildPutRecord(recordFriends, value, uint32(len(value)), now, now+penneSyncTTL)
+	if !penneRecordProbe {
+		return recordFriends, flat, "friends topic, flat value"
+	}
+	// The topic this console actually announced, when it announced one.
+	announced := ""
+	for _, sub := range s.notifStore().Subscriptions(e.UserID) {
+		if sub.Topic != "" {
+			announced = sub.Topic
+			break
+		}
+	}
+	// The 128-bit console account ids the console showed us on its
+	// notification-token calls. The friends module drops an event that does
+	// not name one [firmware: the dispatched handlers return unless the
+	// 128-bit id is non-zero], so half the candidates carry it.
+	accounts := []string{}
+	if id := s.notifStore().AssocIDForUser(e.UserID); id != "" {
+		if a := s.notifStore().AssocByID(id); a != nil {
+			accounts = a.AccountIDs
+		}
+	}
+	wrapped := flat
+	if len(accounts) > 0 {
+		// {key:{...}, data:{...}} is how `ns` reads a record for at least some
+		// topics (docs/penne-protocol.md §4d), with the addressee in the key.
+		var body map[string]any
+		_ = json.Unmarshal(flat, &body)
+		if b, err := json.Marshal(map[string]any{
+			"key":  map[string]any{"id": e.ID, "type": e.Kind, "userNaId": accounts[0], "ownerNaId": accounts[0]},
+			"data": body,
+		}); err == nil {
+			wrapped = b
+		}
+	}
+	switch s.notifStore().NextRecordProbe() % 6 {
+	case 1:
+		if announced != "" {
+			return announced, flat, "announced topic, flat value"
+		}
+		return recordFriends, flat, "friends topic, flat value (no announced topic)"
+	case 2:
+		return namespaceFriends, flat, "bare namespace, flat value"
+	case 3:
+		return recordFriends, wrapped, "friends topic, key/data value"
+	case 4:
+		if announced != "" {
+			return announced, wrapped, "announced topic, key/data value"
+		}
+		return namespaceFriends, wrapped, "bare namespace, key/data value (no announced topic)"
+	case 5:
+		if len(accounts) > 0 {
+			return recordFriends + "." + accounts[0], flat, "friends topic suffixed with the account id"
+		}
+		return recordFriends, wrapped, "friends topic, key/data value (no account id)"
+	default:
+		// The control: what production has always written.
+		return recordFriends, flat, "friends topic, flat value (control)"
+	}
 }
 
 // penneEventFrame converts a queued delivery into its wire frame. The carrier

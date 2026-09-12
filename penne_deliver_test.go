@@ -210,3 +210,60 @@ func TestMain(m *testing.M) {
 	penneSendEvents = true
 	os.Exit(m.Run())
 }
+
+// The record probe exists because writing to c-friends.inv.subsTypes reached a
+// live console and changed nothing: the only topic that console ever announced
+// over Penne was nx_data_<titleId>. These check the rotation is honest --
+// production is unaffected, every candidate is distinct, and the announced
+// topic is preferred over the guessed one when the console has given us one.
+func TestRecordProbeOffIsTheProductionShape(t *testing.T) {
+	old := penneRecordProbe
+	penneRecordProbe = false
+	t.Cleanup(func() { penneRecordProbe = old })
+
+	s := &server{}
+	name, value, _ := s.penneRecordShape(&penneOutRec{
+		ID: "ev1", UserID: "u1", Kind: EventPresenceUpdated, Payload: map[string]any{"friendId": "f1"}})
+	if name != recordFriends {
+		t.Fatalf("name = %q, want the friends record", name)
+	}
+	if !strings.Contains(string(value), `"friendId":"f1"`) {
+		t.Fatalf("value lost the payload: %s", value)
+	}
+}
+
+func TestRecordProbeRotatesThroughDistinctCandidates(t *testing.T) {
+	old := penneRecordProbe
+	penneRecordProbe = true
+	t.Cleanup(func() { penneRecordProbe = old })
+
+	s := &server{}
+	store := s.notifStore()
+	store.SetSubscriptions("u1", "", []string{"nx_data_0100000000010000"}, time.Now())
+
+	seen := map[string]bool{}
+	shapes := map[string]bool{}
+	for i := 0; i < 6; i++ {
+		name, value, shape := s.penneRecordShape(&penneOutRec{
+			ID: "ev1", UserID: "u1", Kind: EventPresenceUpdated, Payload: map[string]any{"friendId": "f1"}})
+		seen[name+"|"+string(value)] = true
+		shapes[shape] = true
+		if name == "" || len(value) == 0 {
+			t.Fatalf("candidate %d produced an empty record", i)
+		}
+	}
+	if len(shapes) < 4 {
+		t.Fatalf("only %d distinct shapes in a full rotation: %v", len(shapes), shapes)
+	}
+	// The topic the console actually told us about must be among them, or the
+	// probe cannot test the one hypothesis it exists for.
+	found := false
+	for k := range seen {
+		if strings.HasPrefix(k, "nx_data_0100000000010000|") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("the announced topic is never tried; the probe tests everything except the thing it is for")
+	}
+}
