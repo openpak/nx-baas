@@ -116,6 +116,9 @@ func (s *server) frontlineHeldOpen(w http.ResponseWriter, r *http.Request, rec *
 	// Reader: the request body carries the client's frames.
 	go s.penneRead(sess, r.Body)
 
+	// Finite-body connections need the same offline replay as stream connections.
+	s.penneWake(rec.UserID)
+
 	ticker := time.NewTicker(frontlineKeepalive)
 	defer ticker.Stop()
 	for {

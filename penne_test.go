@@ -16,6 +16,56 @@ import (
 // login ticket: the console re-registers on a denial, so a denial must be fast
 // and honest. These tests drive s.penne (the routed entry point) the way the
 // console drives it after registration.
+// NPNS 22.5.0 requires the nested parameter descriptors to all report success
+// before its login routine returns success (RVA 0xbf100 and 0xb8b50). Values
+// below come from its constructor at RVA 0xb82e0, not from our renderer.
+func TestPenneBootstrapIncludesRequiredNativeConnectionParameters(t *testing.T) {
+	for _, path := range []string{"/v1/frontlines", "/v1/login_tickets"} {
+		t.Run(path, func(t *testing.T) {
+			s := &server{}
+			id, pw := s.notifStore().Register("console", "user", "", time.Now())
+			body, _ := json.Marshal(map[string]string{"id": id, "password": pw})
+			req := httptest.NewRequest(http.MethodPost, "https://val.hac.lp1.penne.srv.nintendo.net"+path, strings.NewReader(string(body)))
+			rr := httptest.NewRecorder()
+			s.penne(rr, req, body)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status: %d", rr.Code)
+			}
+			var reply map[string]any
+			if err := json.Unmarshal(rr.Body.Bytes(), &reply); err != nil {
+				t.Fatal(err)
+			}
+			params, ok := reply["persistent_connection_params_simple"].(map[string]any)
+			if !ok {
+				t.Fatal("missing connection parameters")
+			}
+			for key, want := range map[string]any{
+				"ignore_rst": true, "retry_count": float64(2), "wait_sec": float64(3600),
+				"wowl_timeout": float64(410), "rtt_max": float64(300),
+			} {
+				if got := params[key]; got != want {
+					t.Errorf("%s = %v, want native default %v", key, got, want)
+				}
+			}
+			for name, disabled := range map[string]bool{"awake": false, "sleep": true} {
+				mode, ok := params[name].(map[string]any)
+				if !ok {
+					t.Fatalf("missing %s parameters", name)
+				}
+				count := float64(2)
+				if name == "sleep" {
+					count = 1440
+				}
+				for key, want := range map[string]any{"idle": float64(60), "interval": float64(10), "count": count, "disable": disabled} {
+					if got := mode[key]; got != want {
+						t.Errorf("%s.%s = %v, want native default %v", name, key, got, want)
+					}
+				}
+			}
+		})
+	}
+}
+
 func frontlineServer(t *testing.T, deviceID string) (*server, string) {
 	t.Helper()
 	s := &server{}

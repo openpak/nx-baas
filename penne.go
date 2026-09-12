@@ -35,8 +35,13 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 	}
 	params := map[string]any{
-		"awake": map[string]any{"count": 2, "idle": 60, "interval": 10}, "ignore_rst": true, "retry_count": 2,
-		"sleep": map[string]any{"count": 1440, "idle": 60, "interval": 10}, "wait_sec": 3600,
+		// Horizon 22.5.0 validates every child before accepting this object.
+		// Defaults recovered from NPNS RVA 0xb82e0; omitting these fields
+		// leaves login incomplete even when the HTTP response is successful.
+		"awake":      map[string]any{"count": 2, "idle": 60, "interval": 10, "disable": false},
+		"sleep":      map[string]any{"count": 1440, "idle": 60, "interval": 10, "disable": true},
+		"ignore_rst": true, "retry_count": 2, "wait_sec": 3600,
+		"wowl_timeout": 410, "rtt_max": 300,
 	}
 	const frontline = "fro-3.hac.lp1.penne.srv.nintendo.net"
 	switch {
@@ -143,7 +148,7 @@ func (s *server) penneAuthedAssoc(store *penneStore, in map[string]any, userID, 
 		}
 		// An id this store never minted, from a console that registered against
 		// the old build: adopt it under the account the request already proved.
-		if a, ok := store.Adopt(id, pw, deviceID, userID, now); ok {
+		if a, ok := store.Adopt(id, pw, deviceID, store.ResolveUser(userID), now); ok {
 			log.Printf("[nx-baas] penne: adopted a pre-existing id for user %s device %s", userID, deviceID)
 			return a, true
 		}

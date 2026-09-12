@@ -116,6 +116,7 @@ type penneData struct {
 	Assocs       map[string]*penneAssoc      `json:"associations"`  // penne id -> assoc
 	ByDevice     map[string]string           `json:"by_device"`     // device id -> newest penne id
 	ByUser       map[string]string           `json:"by_user"`       // BAAS user id -> newest penne id
+	ConsoleUsers map[string]string           `json:"console_users"` // device certificate -> BAAS user id
 	Tokens       map[string]*penneTokenRec   `json:"tokens"`        // token -> record
 	Tickets      map[string]*penneTicketRec  `json:"tickets"`       // ticket hash -> record
 	Subs         map[string][]*penneSubRec   `json:"subscriptions"` // user id -> subs
@@ -142,7 +143,8 @@ type penneStore struct {
 func newPenneStore(path string) *penneStore {
 	s := &penneStore{path: path, d: &penneData{
 		Assocs: map[string]*penneAssoc{}, ByDevice: map[string]string{}, ByUser: map[string]string{},
-		Tokens: map[string]*penneTokenRec{}, Tickets: map[string]*penneTicketRec{},
+		ConsoleUsers: map[string]string{},
+		Tokens:       map[string]*penneTokenRec{}, Tickets: map[string]*penneTicketRec{},
 		Subs: map[string][]*penneSubRec{}, PushChannels: map[string]*pennePushChan{},
 		Outbox: map[string][]*penneOutRec{}, Delivered: map[string]map[string]int64{},
 	}}
@@ -160,6 +162,9 @@ func newPenneStore(path string) *penneStore {
 		}
 		if s.d.ByDevice == nil {
 			s.d.ByDevice = map[string]string{}
+		}
+		if s.d.ConsoleUsers == nil {
+			s.d.ConsoleUsers = map[string]string{}
 		}
 		if s.d.ByUser == nil {
 			s.d.ByUser = map[string]string{}
@@ -235,6 +240,47 @@ func (s *penneStore) Register(deviceID, userID, nsaID string, now time.Time) (id
 	}
 	s.saveLocked()
 	return id, password
+}
+
+// BindConsole records which account signed in on a console, keyed by the
+// device certificate. Penne only ever sees the console's device token — its
+// subject is the certificate, never the account — so without this the
+// registration is bound to something the outbox is not keyed by, and a
+// connected console is told there is nothing for it while its events expire.
+// Registrations and tickets minted before the account was known are healed.
+func (s *penneStore) BindConsole(certID, userID string) {
+	if certID == "" || userID == "" || certID == userID {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.d.ConsoleUsers[certID] == userID {
+		return
+	}
+	s.d.ConsoleUsers[certID] = userID
+	for _, a := range s.d.Assocs {
+		if a.UserID == certID {
+			a.UserID = userID
+			s.d.ByUser[userID] = a.ID
+		}
+	}
+	for _, t := range s.d.Tickets {
+		if t.UserID == certID {
+			t.UserID = userID
+		}
+	}
+	s.saveLocked()
+}
+
+// ResolveUser maps a device certificate onto the account signed in on it, and
+// leaves a real account id alone.
+func (s *penneStore) ResolveUser(id string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if u := s.d.ConsoleUsers[id]; u != "" {
+		return u
+	}
+	return id
 }
 
 // Adopt takes a credential pair the console already holds and makes it real,
@@ -750,8 +796,8 @@ func (s *penneStore) SeenRecently(userID, eventID string, now time.Time) bool {
 	return ok && now.Unix()-t < int64(deliveredRetention/time.Second)
 }
 
-// Sweep expires stale work and prunes retention. It returns the users whose
-// queues changed, so the caller can kick live connections (retry/backoff).
+// Sweep expires stale work and prunes retention. It also returns users with
+// due work so failed or deferred deliveries retry without another submission.
 func (s *penneStore) Sweep(now time.Time) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -760,6 +806,7 @@ func (s *penneStore) Sweep(now time.Time) []string {
 	for uid, queue := range s.d.Outbox {
 		kept := queue[:0]
 		changed := false
+		due := false
 		for _, e := range queue {
 			if e.ExpiresAt <= unix {
 				s.dropped.Add(1)
@@ -767,9 +814,14 @@ func (s *penneStore) Sweep(now time.Time) []string {
 				continue
 			}
 			kept = append(kept, e)
+			if e.NextAt <= unix {
+				due = true
+			}
 		}
 		if changed {
 			s.d.Outbox[uid] = kept
+		}
+		if changed || due {
 			kicked = append(kicked, uid)
 		}
 	}

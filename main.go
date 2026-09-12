@@ -725,6 +725,10 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		// (PRE-01/02). If the same device account was signed in as someone
 		// else a moment ago, that person's claim ends here — an account
 		// switch is a departure for whoever held the console before.
+		// Penne sees only the console's device token, whose subject is the
+		// certificate; this is where both halves are in hand, so the account
+		// behind the console is recorded for the notification channel.
+		s.notifStore().BindConsole(di, u.ID)
 		s.expireDeviceEverywhere(form.Get("id"), u.ID)
 		s.noteDevicePresence(u, form.Get("id"), "ONLINE", "", "", "")
 		s.reportOnline(r.Context(), u)

@@ -12,6 +12,25 @@ import (
 	"time"
 )
 
+func TestSweepWakesFailedDeliveryWhenRetryBecomesDue(t *testing.T) {
+	s := newPenneStore("")
+	now := time.Now()
+	res := s.Submit(PenneDelivery{ID: "retry-event", UserID: "u1", Kind: EventFriendDeleted}, now)
+	if !res.Accepted {
+		t.Fatalf("submit: %+v", res)
+	}
+	s.MarkFailed("u1", "retry-event", "connection lost", now)
+	if got := s.Sweep(now); len(got) != 0 {
+		t.Fatalf("retry woke before backoff elapsed: %v", got)
+	}
+	if got := s.Sweep(now.Add(retryBase)); len(got) != 1 || got[0] != "u1" {
+		t.Fatalf("due retry did not wake recipient: %v", got)
+	}
+	if got := s.ClaimDue("u1", "", now.Add(retryBase), 1); len(got) != 1 || got[0].ID != "retry-event" {
+		t.Fatalf("retry was not retained: %+v", got)
+	}
+}
+
 func TestRegistrationPersistsAcrossRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "penne.json")
 	s := newPenneStore(path)
@@ -275,5 +294,49 @@ func TestAdoptsAPreExistingIDOnlyForAProvenAccount(t *testing.T) {
 	}
 	if _, err := store.CheckAssoc(old["id"].(string), old["password"].(string), now); err != nil {
 		t.Errorf("the original credentials stopped working: %v", err)
+	}
+}
+
+// Penne only ever sees the console's device token, whose subject is the device
+// certificate — so a registration adopted from it is bound to something the
+// outbox is not keyed by, and the console is told there is nothing for it
+// while its events expire. The BAAS login knows both halves and binds them.
+func TestConsoleCertificateBindsToTheAccountItSignsInAs(t *testing.T) {
+	s := &server{}
+	store := s.notifStore()
+	now := time.Now()
+	const cert, user = "cert-dddddddddddd0001", "aaaaaaaaaaaa0001"
+
+	creds := map[string]any{"id": "pzxi59slaemjyhqvc6ecv6yyerka74wdc", "password": "4f37li22zp0e79vnzthn9ed195pug1bh"}
+	a, ok := s.penneAuthedAssoc(store, creds, cert, "device-a", now)
+	if !ok || a.UserID != cert {
+		t.Fatalf("adopted association = %+v, ok=%v", a, ok)
+	}
+	rec, _, err := store.IssueTicketFor(a, now, time.Hour)
+	if err != nil {
+		t.Fatalf("issue ticket: %v", err)
+	}
+	if rec.UserID != cert {
+		t.Fatalf("ticket bound to %s before the login", rec.UserID)
+	}
+
+	store.BindConsole(cert, user)
+
+	if got := store.ResolveUser(cert); got != user {
+		t.Errorf("ResolveUser(cert) = %s, want %s", got, user)
+	}
+	if got := store.AssocByID(a.ID); got == nil || got.UserID != user {
+		t.Errorf("association not healed: %+v", got)
+	}
+	// The ticket the console is already holding has to move with it, or the
+	// connection it opens next is still bound to the certificate.
+	for _, tk := range store.d.Tickets {
+		if tk.PenneID == a.ID && tk.UserID != user {
+			t.Errorf("ticket still bound to %s", tk.UserID)
+		}
+	}
+	// A real account id is left alone, and nothing binds a cert to itself.
+	if got := store.ResolveUser(user); got != user {
+		t.Errorf("ResolveUser(account) = %s", got)
 	}
 }

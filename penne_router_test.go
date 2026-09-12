@@ -176,6 +176,58 @@ func TestFrontlineClosesOnMalformedFrame(t *testing.T) {
 // Reconnect reconciliation (NTF-05): an event submitted while nobody is
 // connected is delivered on the next connection; a duplicate submission is not
 // delivered twice; presence converges to the latest payload.
+func TestFiniteFrontlineReplaysOfflineFriendChange(t *testing.T) {
+	s, ticket := liveServer(t)
+	ts := httptest.NewTLSServer(s)
+	defer ts.Close()
+	var userID string
+	for id := range s.store.Users {
+		userID = id
+	}
+	if res := s.SubmitNotification(PenneDelivery{
+		ID: "offline-removal", UserID: userID, Kind: EventFriendDeleted,
+		Payload: map[string]any{"friendId": "1111"},
+	}); !res.Accepted {
+		t.Fatalf("submit: %+v", res)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ts.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = "fro-3.hac.lp1.penne.srv.nintendo.net"
+	req.Header.Set("Authorization", "Bearer "+ticket)
+	req.Header.Set("User-Agent", "NintendoSDK Firmware/22.5.0 (platform:NX; did:"+frontlineDevice+"; eid:lp1)")
+	res, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d", res.StatusCode)
+	}
+	frame, err := penne.NewFrameReader(res.Body, penne.MaxFrameSize).Next()
+	if err != nil {
+		t.Fatalf("offline change was not replayed: %v", err)
+	}
+	env, err := penne.DecodeEnvelope(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env.Type() != penne.TypeMessageRequest {
+		t.Fatalf("unexpected frame: %s", env.TypeName())
+	}
+	payload, ok := env.Payload()
+	if !ok {
+		t.Fatal("missing event payload")
+	}
+	body, _ := payload.String(0)
+	if !strings.Contains(body, `"type":"friend_deleted"`) || !strings.Contains(body, `"id":"offline-removal"`) {
+		t.Fatalf("wrong replayed event: %s", body)
+	}
+}
+
 func TestFrontlineReconnectReplaysPendingOnce(t *testing.T) {
 	s, ticket := liveServer(t)
 	ts := httptest.NewTLSServer(s)

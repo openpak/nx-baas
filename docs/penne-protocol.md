@@ -35,9 +35,14 @@ order and fails loudly (empty replies, wrong keys) when they deviate.
 
 `persistent_connection_params_simple` [observed]:
 `awake/sleep: {count, idle, interval}`, `wait_sec`, `ignore_rst`, `retry_count`.
-The firmware's parameter descriptors also name `wowl_timeout`, `rtt_max` and a
-`disable` flag in the sleep settings [firmware]; **omitting them is not proven
-fatal**, so the server does not send them.
+The firmware also requires `wowl_timeout`, `rtt_max`, and a `disable` boolean in
+both awake and sleep settings [firmware, follow-up 2026-09-12]. NPNS RVA
+`0xBF100` combines all seven child validation flags; `0xB8B50` requires the
+result before accepting a login ticket. Omitting these fields fails validation.
+The server now includes the defaults recovered from constructor RVA `0xB82E0`:
+`wowl_timeout: 410`, `rtt_max: 300`, `awake.disable: false`, and
+`sleep.disable: true`. These values are firmware defaults, not measured operating
+limits. Hardware progression past login remains a separate verification gate.
 
 This adapter's server-side semantics (beyond the shapes): registrations are
 durable and device/account-bound; notification tokens and login tickets inherit
