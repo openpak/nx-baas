@@ -352,10 +352,15 @@ func TestFrontlineReconnectReplaysPendingOnce(t *testing.T) {
 	}
 }
 
-// The console opens the sync with a RootHash: one digest per record namespace.
-// Mirroring it is what gets the connection to the steady state, so the reply
-// has to come back as a RootHash carrying the same entries.
-func TestRootHashIsMirroredBack(t *testing.T) {
+// The sync answer, and the single fact the whole notification path rests on:
+// the console proceeds only when the entry vector is EMPTY. Mirroring its own
+// digests back claims this server holds records under those namespaces, and it
+// then asks for a leaf we cannot produce and reconnects forever. An empty
+// vector says "nothing here", which is true, and the console answers
+// SyncComplete and moves to the steady state
+// [runtime capture, 2026-09-12: four cycles, six candidates each, only this one
+// ever produced SyncComplete].
+func TestSyncIsAnsweredWithAnEmptyEntryVector(t *testing.T) {
 	s, ticket := liveServer(t)
 	ts := httptest.NewTLSServer(s)
 	defer ts.Close()
@@ -384,14 +389,9 @@ func TestRootHashIsMirroredBack(t *testing.T) {
 	if !ok {
 		t.Fatal("answer has no payload")
 	}
-	got := penne.ParseRootHash(payload)
-	if len(got) != len(entries) {
-		t.Fatalf("mirrored %d entries, want %d", len(got), len(entries))
-	}
-	for i := range entries {
-		if got[i].Name != entries[i].Name || !bytes.Equal(got[i].Digest, entries[i].Digest) {
-			t.Errorf("entry %d = %q/%x, want %q/%x", i, got[i].Name, got[i].Digest, entries[i].Name, entries[i].Digest)
-		}
+	if got := penne.ParseRootHash(payload); len(got) != 0 {
+		t.Fatalf("answered with %d entries (%q…), want none -- mirroring the "+
+			"console's digests is what kept it in the reconnect loop", len(got), got[0].Name)
 	}
 }
 

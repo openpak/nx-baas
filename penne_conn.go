@@ -363,23 +363,44 @@ func (s *server) sessionUser(rec *penneTicketRec) string {
 }
 
 // penneSyncProbe rotates the answer to the console's RootHash through the
-// candidate shapes when NX_PENNE_SYNC_PROBE is set. The console retries the
-// sync about once a second, so letting it judge each candidate in turn settles
-// in seconds what static reading has not: which reply it accepts. Off by
-// default — production answers with the mirror.
+// candidate shapes when NX_PENNE_SYNC_PROBE is set. It did its job on
+// 2026-09-12: four wake cycles, six candidates each, and exactly one of them
+// got the console past the sync every single time. It stays for the next
+// question of this shape.
 var penneSyncProbe = os.Getenv("NX_PENNE_SYNC_PROBE") != ""
 
 // penneSyncReply picks the answer and names it for the log.
+//
+// **An empty entry vector is the answer.** The console opens with a RootHash
+// naming four namespaces and their digests; answering with an empty vector --
+// this server holds no records under any of them -- makes it send SyncComplete
+// and move to the steady state, where it subscribes to its topics and publishes
+// its own presence. Every other shape tried leaves it in the reconnect loop
+// that blocked delivery for a month:
+//
+//	mirror (the console's own digests back)  -> nothing, reconnect in ~1s
+//	two-slot envelope                        -> LeafHash, a drill-down we
+//	                                            cannot answer; gives up in ~70s
+//	count+1                                  -> nothing
+//	LeafHash mirror                          -> nothing
+//	empty vector                             -> SyncComplete, then SubscribeTopic
+//	                                            and DAPresence
+//	no reply                                 -> nothing
+//
+// Reproduced on four consecutive cycles [runtime capture, 2026-09-12 16:50-16:53].
+// It reads as the honest answer too: mirroring the console's digests claimed we
+// held records we could not describe, and the console would not proceed on a
+// claim the server could not back with a leaf.
 func (s *server) penneSyncReply(entries []penne.RootEntry, count uint32, now uint64) ([]byte, string) {
-	mirror := func() ([]byte, string) {
-		return penne.BuildRootHash(entries, count, now, now+penneSyncTTL), "RootHash mirror"
+	empty := func() ([]byte, string) {
+		return penne.BuildRootHash(nil, count, now, now+penneSyncTTL), "RootHash, no entries"
 	}
 	if !penneSyncProbe {
-		return mirror()
+		return empty()
 	}
 	switch s.notifStore().NextSyncProbe() % 6 {
 	case 1:
-		return mirror()
+		return penne.BuildRootHash(entries, count, now, now+penneSyncTTL), "RootHash mirror"
 	case 2:
 		return penne.BuildRootHashMinimal(entries), "RootHash, two-slot envelope"
 	case 3:
@@ -387,7 +408,7 @@ func (s *server) penneSyncReply(entries []penne.RootEntry, count uint32, now uin
 	case 4:
 		return penne.BuildLeafHash(entries, count, now, now+penneSyncTTL), "LeafHash mirror"
 	case 5:
-		return penne.BuildRootHash(nil, count, now, now+penneSyncTTL), "RootHash, no entries"
+		return empty()
 	default:
 		// The control: if the console still drops the connection in about a
 		// second with nothing sent, the loop is not our reply's fault.
