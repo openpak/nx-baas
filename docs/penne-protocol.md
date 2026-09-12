@@ -279,12 +279,33 @@ travel in the record. **The connection is per account** — a ticket resolves to
 one BAAS user and the console's four records hang off it — so the id is
 implicit in which connection the record arrived on.
 
-**Implemented:** deliveries are written as `PutRecord` on the recipient's
-`c-friends` name with the event JSON as the value (`penne_records.go`,
-`penneRecordFrame`). The server keeps what it wrote per account and answers the
-next `RootHash` with **its own digest for records it has written** and the
-console's for the rest, which is the honest split: the console is authoritative
-for everything this server has never touched.
+### Topics, and the one the friends module listens on
+
+A `RootHash` entry names a **namespace**; a record is named for a **topic**,
+which is a dotted path under one. Topics seen as literals across the modules:
+
+| Topic | Module |
+| --- | --- |
+| `c-friends.inv.subsTypes` | friends |
+| `c-appearance.main`, `c-appearance.controller` | appearance (NIM reads these as `devices[*].appearance.*.payload`) |
+| `c-settings.LanguageCode` | settings |
+| `c-storage.summary` | ns (beside `topic.subscription` in npns) |
+
+The friends module makes **exactly one subscription in its entire init** —
+`FUN_001eaa30("c-friends.inv.subsTypes", "friend", 6)` at `0x17bd24` — so that
+is the name a notification for it must be written under, and all five event
+kinds arrive there to be routed by the `$.type` in the record's value.
+
+Record values are themselves documents: `ns` reads `$.key.{id,type,ownerNaId,
+userNaId}` and `$.data.{naId,applicationId,…}` out of a record, so a record is
+`{key: {...}, data: {...}}` for at least some topics.
+
+**Implemented:** deliveries are written as `PutRecord` on
+`c-friends.inv.subsTypes` with the event JSON as the value (`penne_records.go`,
+`penneRecordFrame`), and what was written is kept per account. A sync still
+answers with the **console's own digests**: a namespace digest aggregates the
+records below it by a function this server cannot reproduce, so its value is
+the only one we can state honestly.
 
 ## 4e. The sync message, captured from the console
 
