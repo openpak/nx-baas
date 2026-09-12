@@ -6,6 +6,7 @@ package main
 // recorder can hide a missing http.Flusher, a socket cannot.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -348,5 +349,48 @@ func TestFrontlineReconnectReplaysPendingOnce(t *testing.T) {
 	}
 	if replayed {
 		t.Fatal("delivered event was replayed after reconnect")
+	}
+}
+
+// The console opens the sync with a RootHash: one digest per record namespace.
+// Mirroring it is what gets the connection to the steady state, so the reply
+// has to come back as a RootHash carrying the same entries.
+func TestRootHashIsMirroredBack(t *testing.T) {
+	s, ticket := liveServer(t)
+	ts := httptest.NewTLSServer(s)
+	defer ts.Close()
+
+	entries := []penne.RootEntry{
+		{Name: "c-appearance", Digest: bytes.Repeat([]byte{0x11}, 20)},
+		{Name: "c-friends", Digest: bytes.Repeat([]byte{0x22}, 20)},
+	}
+	hello := penne.AppendFrame(nil, penne.BuildRootHash(entries, 20, 1789204471, 1789208071))
+	res, _, fr := frontlineDial(t, ts, ticket, hello)
+	defer res.Body.Close()
+	expectGreeting(t, fr)
+
+	frame, err := fr.Next()
+	if err != nil {
+		t.Fatalf("no answer to RootHash: %v", err)
+	}
+	env, err := penne.DecodeEnvelope(frame)
+	if err != nil {
+		t.Fatalf("answer malformed: %v", err)
+	}
+	if env.Type() != penne.TypeRootHash {
+		t.Fatalf("answer = %s, want RootHash", env.TypeName())
+	}
+	payload, ok := env.Payload()
+	if !ok {
+		t.Fatal("answer has no payload")
+	}
+	got := penne.ParseRootHash(payload)
+	if len(got) != len(entries) {
+		t.Fatalf("mirrored %d entries, want %d", len(got), len(entries))
+	}
+	for i := range entries {
+		if got[i].Name != entries[i].Name || !bytes.Equal(got[i].Digest, entries[i].Digest) {
+			t.Errorf("entry %d = %q/%x, want %q/%x", i, got[i].Name, got[i].Digest, entries[i].Name, entries[i].Digest)
+		}
 	}
 }

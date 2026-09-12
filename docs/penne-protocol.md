@@ -273,6 +273,29 @@ protocol in front of it (RootHash/LeafHash, Put/Delete, SyncComplete), and
 `BuildEvent`'s MessageRequest carrier is dead. Nothing in the current delivery
 path is reusable above the framing layer, which is now confirmed correct.
 
+## 4e. The sync message, captured from the console
+
+A live console opened the sync with this, one second after the handover
+[runtime capture, 2026-09-12, 320-byte frame]:
+
+- **Envelope** — richer than slots 0 and 1, which is all this adapter used to
+  write: `{0: u8 type, 1: payload table, 2: u32 count (20 as sent), 3: u32
+  issued (unix seconds), 4: u32 expiry (issued + 3600)}`.
+- **RootHash payload** — `{0: vector of entries}`, each entry
+  `{0: string name, 1: [ubyte] 20-byte digest}`.
+- The four names the console holds: **`c-appearance`, `c-friends`,
+  `c-settings`, `c-storage`**. `c-friends` is the namespace the friends module
+  reads, so a friend notification is a record written there.
+
+The reply this adapter sends is the **same entries mirrored back**, which the
+console reads as agreement and follows into the steady state
+(`0xdba50 → 0xdbe50 → 0xda010 → 0xdc9e0`). That is a deliberate bootstrap, not
+a sync: we hold no record store, and answering with empty digests would invite
+the console to delete what it holds. It gets us to where records are accepted;
+it does not make the two sides agree about anything real, and a real
+`PutRecord` will move the console's digest out from under us. The record store
+is the next piece of work.
+
 ## 5. Connection lifecycle (implemented)
 
 1. `POST https://<frontline>/` with `Authorization: Bearer <login ticket>`,

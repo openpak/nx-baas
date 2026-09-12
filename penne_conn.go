@@ -36,6 +36,10 @@ import (
 // without inventing frame content the protocol has not shown us.
 var frontlineKeepalive = 30 * time.Second
 
+// penneSyncTTL is the expiry the console puts on its own sync messages: it
+// sends issued and issued+3600 [runtime capture].
+const penneSyncTTL = 3600
+
 // isPenneFrontline names the hosts the persistent connection lands on
 // (fro-N.hac.lp1.penne.srv.nintendo.net).
 func isPenneFrontline(host string) bool { return strings.HasPrefix(host, "fro-") }
@@ -410,6 +414,38 @@ func (s *server) penneDispatch(sess *penneSession, frame []byte) {
 	}
 	store := s.notifStore()
 	switch env.Type() {
+	case penne.TypeRootHash: // 0x06 — the sync the console opens with
+		payload, ok := env.Payload()
+		if !ok {
+			store.unknownType.Add(1)
+			log.Printf("[nx-baas] penne: RootHash without a payload; counted")
+			return
+		}
+		entries := penne.ParseRootHash(payload)
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, fmt.Sprintf("%s=%x", e.Name, e.Digest))
+		}
+		// The console offers a digest per record namespace (c-appearance,
+		// c-friends, c-settings, c-storage) and waits for RootHash or
+		// LeafHash; on a match it goes straight to the steady state, where
+		// records are accepted (RVA 0xdba50 -> 0xdbe50 -> 0xda010 -> 0xdc9e0).
+		//
+		// We mirror what it offers: this adapter holds no record store yet, and
+		// answering "we agree with you" changes nothing on the console, while
+		// answering empty digests would invite it to delete what it has. It is
+		// a bootstrap to reach the steady state, not a sync — see
+		// docs/penne-protocol.md §4e.
+		count, _ := env.Root().U32(2)
+		now := uint32(time.Now().Unix())
+		reply := penne.BuildRootHash(entries, count, now, now+penneSyncTTL)
+		select {
+		case sess.send <- penneOutbound{frame: reply}:
+			log.Printf("[nx-baas] penne: RootHash from user=%s [%s]; mirrored", sess.user, strings.Join(names, " "))
+		default:
+			log.Printf("[nx-baas] penne: RootHash from user=%s dropped, send queue full", sess.user)
+		}
+
 	case penne.TypeSubscribeTopic: // 0x17, firmware-confirmed
 		payload, hasPayload := env.Payload()
 		var topic string

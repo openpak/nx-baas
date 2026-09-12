@@ -271,6 +271,19 @@ func (t Table) String(id int) (string, bool) {
 func (t Table) Table(id int) (Table, bool) { return t.table(id) }
 
 // VectorLen reads field id as a vector and returns its element count.
+// Bytes reads a [ubyte] vector field.
+func (t Table) Bytes(id int) ([]byte, bool) {
+	pos, ok := t.uoffset(id)
+	if !ok || pos+4 > len(t.buf) {
+		return nil, false
+	}
+	n := int(binary.LittleEndian.Uint32(t.buf[pos:]))
+	if n < 0 || pos+4+n > len(t.buf) {
+		return nil, false
+	}
+	return t.buf[pos+4 : pos+4+n], true
+}
+
 func (t Table) VectorLen(id int) (int, bool) {
 	pos, ok := t.uoffset(id)
 	if !ok || pos+4 > len(t.buf) {
@@ -480,6 +493,29 @@ func (b *Builder) CreateString(s string) int {
 	return b.Offset()
 }
 
+// CreateByteVector writes a [ubyte] vector and returns its offset.
+func (b *Builder) CreateByteVector(v []byte) int {
+	b.prep(4, len(v))
+	for i := len(v) - 1; i >= 0; i-- {
+		b.place(v[i])
+	}
+	b.placeU32(uint32(len(v)))
+	return b.Offset()
+}
+
+// CreateOffsetVector writes a vector of offsets (to tables or strings) and
+// returns its offset. Elements are written back to front, each as the distance
+// from its own position to the target, which is how a reader resolves them.
+func (b *Builder) CreateOffsetVector(offs []int) int {
+	b.prep(4, 4*len(offs))
+	for i := len(offs) - 1; i >= 0; i-- {
+		b.prep(4, 0)
+		b.placeU32(uint32(b.Offset() + 4 - offs[i]))
+	}
+	b.placeU32(uint32(len(offs)))
+	return b.Offset()
+}
+
 // StartTable begins a table; slot ids run 0..fields-1.
 func (b *Builder) StartTable(fields int) {
 	b.vtable = make([]int, fields)
@@ -662,6 +698,66 @@ func BuildHandoverResult(result byte) []byte {
 	b.PrependU8Slot(0, result)
 	payload := b.EndTable()
 	return b.FinishEnvelope(TypeHandoverResult, payload)
+}
+
+// RootEntry is one namespace digest in a RootHash: the console sends four
+// (c-appearance, c-friends, c-settings, c-storage), each with a 20-byte hash of
+// everything it holds under that name [runtime capture, 2026-09-12].
+type RootEntry struct {
+	Name   string
+	Digest []byte
+}
+
+// ParseRootHash reads the entries out of a RootHash payload table.
+func ParseRootHash(payload Table) []RootEntry {
+	n, ok := payload.VectorLen(0)
+	if !ok {
+		return nil
+	}
+	out := make([]RootEntry, 0, n)
+	for i := 0; i < n; i++ {
+		e, ok := payload.VectorTable(0, i)
+		if !ok {
+			continue
+		}
+		name, _ := e.String(0)
+		digest, _ := e.Bytes(1)
+		out = append(out, RootEntry{Name: name, Digest: digest})
+	}
+	return out
+}
+
+// BuildRootHash encodes a RootHash the way the console encodes its own: an
+// envelope carrying the type, the payload, a count, and the issued/expiry
+// seconds; the payload is one vector of {name, 20-byte digest} tables
+// [runtime capture of the console's own message].
+func BuildRootHash(entries []RootEntry, count uint32, issued, expires uint32) []byte {
+	b := NewBuilder(128 + 64*len(entries))
+	offs := make([]int, 0, len(entries))
+	for i := len(entries) - 1; i >= 0; i-- {
+		e := entries[i]
+		name := b.CreateString(e.Name)
+		digest := b.CreateByteVector(e.Digest)
+		b.StartTable(2)
+		b.PrependUOffsetSlot(1, digest)
+		b.PrependUOffsetSlot(0, name)
+		offs = append([]int{b.EndTable()}, offs...)
+	}
+	vec := b.CreateOffsetVector(offs)
+	b.StartTable(1)
+	b.PrependUOffsetSlot(0, vec)
+	payload := b.EndTable()
+
+	b.StartTable(5)
+	b.PrependU32Slot(4, expires)
+	b.PrependU32Slot(3, issued)
+	b.PrependU32Slot(2, count)
+	b.PrependUOffsetSlot(1, payload)
+	b.PrependU8Slot(0, TypeRootHash)
+	root := b.EndTable()
+	b.prep(b.minalign, 4)
+	b.placeU32(uint32(b.Offset() + 4 - root))
+	return b.Bytes()
 }
 
 // BuildEmpty encodes an envelope whose payload table has no fields. Hi (0x20),
