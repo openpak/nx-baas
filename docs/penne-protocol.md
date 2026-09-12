@@ -379,3 +379,43 @@ counted and never answered with invented schemas; outbound event frames are
 well-formed per §3 and marked experimental. A console that rejects them closes
 the connection — observable, recoverable, and exactly what the capture run
 needs to see.
+
+## 4f. The sync answer (settled on hardware, 2026-09-12)
+
+**Answer the opening `RootHash` with an empty entry vector.** That is the whole of it, and it
+cost a month.
+
+The console opens with a `RootHash` naming four namespaces and their digests
+(`c-appearance`, `c-friends`, `c-settings`, `c-storage`). Six candidate answers were armed
+behind `NX_PENNE_SYNC_PROBE` and rotated one per connection; a console judged each in turn over
+four cycles:
+
+| Answer | What the console did |
+| --- | --- |
+| `RootHash` mirror (its own digests back) | nothing; reconnected in about a second |
+| `RootHash`, two-slot envelope | replied `LeafHash` — a drill-down — then gave up after ~70 s |
+| `RootHash`, count+1 | nothing |
+| `LeafHash` mirror | nothing |
+| **`RootHash`, no entries** | **`SyncComplete`**, then `SubscribeTopic` and `DAPresence` |
+| no reply (control) | nothing |
+
+Reproduced on every cycle. It is also the honest answer: mirroring the console's digests claimed
+this server held records under those namespaces, and the console will not proceed on a claim the
+server cannot then back with a leaf. An empty vector says "nothing here", which is true.
+
+### What the console does once it is past the sync
+
+Two behaviours nothing had ever seen, both unanswered so far:
+
+- **`SubscribeTopic` on `nx_data_<titleId>`** — three in one session
+  (`nx_data_0100000000010000`, `nx_data_01006f8002326000`, `nx_data_0100d4f00dd02000`). That is
+  the exact name the `bcat` module formats for BCAT data (`nx_data_%016llx`,
+  `firmware-22.5.0-followup-2026-09-12.md` §21b), so **BCAT and News pushes ride Penne topics**.
+  Note what was *not* subscribed here: `c-friends.inv.subsTypes`. The friends module makes that
+  subscription at its own init, so it belongs to a different phase — worth pinning down before
+  assuming a friend event can be written to it on this connection.
+- **`DAPresence`** — the console publishing its own presence, carrying the extras document this
+  server already serves (`{"self":{},"favoriteFriends":{},"friends":{"appField":"{}",
+  "appInfo:appId":"...","appInfo:acdIndex":0,"appInfo:presenceGroupId":"..."},"foaf":{},
+  "everyone":{}}`) followed by two 16-hex ids. Presence is bidirectional, and this server has
+  only ever written it.
