@@ -75,13 +75,27 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 		// Registration always mints; a supplied id alone authorizes nothing.
 		// With id+password both present it is a rotation: prove the pair,
 		// retire everything minted under it, mint fresh.
+		//
+		// An id this store never minted is NOT a denial. A console keeps its
+		// registration in its own `npns:` save data and presents it forever, so
+		// a console that registered against a different server -- or against a
+		// store that has since been replaced -- arrives here with credentials
+		// nothing can verify. Answering 403 leaves it with an id we reject and
+		// no way to obtain one we accept: it never opens a frontline, and every
+		// notification for it is undeliverable for the life of the console.
+		// Minting a fresh pair is the recovery, and the console stores it.
+		// Only a KNOWN id with a wrong password is an attacker.
 		if id := penneCred(in); id != "" {
-			if _, err := store.CheckAssoc(id, str(in, "password"), now); err != nil {
-				log.Printf("[nx-baas] penne: rotation denied for a supplied id (%v)", err)
+			switch _, err := store.CheckAssoc(id, str(in, "password"), now); {
+			case err == nil:
+				store.Revoke(id, now)
+			case store.KnowsAssoc(id):
+				log.Printf("[nx-baas] penne: rotation denied for a known id (%v)", err)
 				writeJSON(w, 403, map[string]any{"status": 403, "title": "forbidden"})
 				return
+			default:
+				log.Printf("[nx-baas] penne: console presented an id this store never minted (device %s, user %s); minting a fresh registration", deviceID, userID)
 			}
-			store.Revoke(id, now)
 		}
 		id, password := store.Register(deviceID, userID, "", now)
 		writeJSON(w, 200, map[string]any{"id": id, "password": password})

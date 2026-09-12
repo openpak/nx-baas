@@ -373,6 +373,17 @@ func (s *penneStore) Adopt(id, password, deviceID, userID string, now time.Time)
 	return &cp, true
 }
 
+// KnowsAssoc says whether this store ever minted an id, without saying
+// anything about its password. Registration needs the distinction that
+// CheckAssoc deliberately hides: an id we never minted is not an attacker, it
+// is a console carrying credentials from somewhere else, and answering it with
+// a denial locks it out of notifications for good.
+func (s *penneStore) KnowsAssoc(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.d.Assocs[id] != nil
+}
+
 // CheckAssoc verifies a penne id + password pair. A wrong password, unknown id
 // or revoked registration is an error naming nothing an attacker can use.
 func (s *penneStore) CheckAssoc(id, password string, now time.Time) (*penneAssoc, error) {

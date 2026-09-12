@@ -302,3 +302,61 @@ func TestConsoleReportedFrontlineResultIsLogged(t *testing.T) {
 		t.Errorf("a reported failure did not reach the log: %s", logged.String())
 	}
 }
+
+// A console keeps its Penne registration in its own save data and presents it
+// forever. One that registered against a different server arrives with an id
+// this store never minted; answering 403 leaves it holding credentials we
+// reject with no way to get ones we accept, so it never opens a frontline again
+// and every notification for it is undeliverable for the life of the console.
+// That is what a real console looked like on 2026-09-12: active on BAAS all
+// evening, no Penne registration at all, no frontline connection ever.
+func TestUnknownPenneIdIsRegisteredNotRefused(t *testing.T) {
+	s, _ := liveServer(t)
+	store := s.notifStore()
+
+	body := `{"id":"pneverminted0000000000000000000","password":"whatever"}`
+	r := httptest.NewRequest("POST", "https://god.hac.lp1.penne.srv.nintendo.net/v1/penne_ids",
+		strings.NewReader(body))
+	r.Host = "god.hac.lp1.penne.srv.nintendo.net"
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.penne(w, r, []byte(body))
+
+	if w.Code != 200 {
+		t.Fatalf("status %d: a console with a foreign id must be able to register, not be locked out", w.Code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("not JSON: %v", err)
+	}
+	id, _ := got["id"].(string)
+	if id == "" || id == "pneverminted0000000000000000000" {
+		t.Fatalf("id = %q, want a freshly minted one", id)
+	}
+	if pw, _ := got["password"].(string); pw == "" {
+		t.Fatal("no password: the console cannot use the registration it was just given")
+	}
+	if !store.KnowsAssoc(id) {
+		t.Fatal("the minted id is not in the store")
+	}
+}
+
+// The other half: a known id with a wrong password is still a denial. Minting
+// on an unverifiable id must not become a way to take over one that exists.
+func TestKnownPenneIdWithABadPasswordIsStillRefused(t *testing.T) {
+	s, _ := liveServer(t)
+	store := s.notifStore()
+	id, _ := store.Register("dev-1", "user-1", "", time.Now())
+
+	body := `{"id":"` + id + `","password":"wrong"}`
+	r := httptest.NewRequest("POST", "https://god.hac.lp1.penne.srv.nintendo.net/v1/penne_ids",
+		strings.NewReader(body))
+	r.Host = "god.hac.lp1.penne.srv.nintendo.net"
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.penne(w, r, []byte(body))
+
+	if w.Code != 403 {
+		t.Fatalf("status %d, want 403", w.Code)
+	}
+}
