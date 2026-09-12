@@ -357,6 +357,17 @@ func (s *server) sessionUser(rec *penneTicketRec) string {
 	return rec.UserID
 }
 
+// frameHex renders a bounded hex dump for the protocol log. The payload shapes
+// of the client's own messages are what the spec still marks open, so the first
+// ones to arrive are worth keeping verbatim.
+func frameHex(frame []byte) string {
+	const max = 256
+	if len(frame) <= max {
+		return fmt.Sprintf(" len=%d hex=%x", len(frame), frame)
+	}
+	return fmt.Sprintf(" len=%d hex=%x…(truncated)", len(frame), frame[:max])
+}
+
 // penneRead decodes the client's frames until the connection ends. A malformed
 // or oversized stream terminates the session: never a panic, never unbounded
 // allocation.
@@ -454,10 +465,13 @@ func (s *server) penneDispatch(sess *penneSession, frame []byte) {
 		// Recovered empty/near-empty client messages: noted, no answer defined
 		// by evidence. Logged by name because the first one the console ever
 		// sends is what settles the opening handshake.
-		log.Printf("[nx-baas] penne: %s from user=%s device=%s", env.TypeName(), sess.user, sess.device)
+		log.Printf("[nx-baas] penne: %s from user=%s device=%s%s", env.TypeName(), sess.user, sess.device, frameHex(frame))
 	default:
 		store.unknownType.Add(1)
-		log.Printf("[nx-baas] penne: frame type %s counted, no evidence-backed answer", env.TypeName())
+		// With the bytes: the console's own messages are the only source for
+		// the payload shapes the spec still marks open, and they are cheap to
+		// keep once — bounded, and a frame carries no credential.
+		log.Printf("[nx-baas] penne: frame type %s counted, no evidence-backed answer%s", env.TypeName(), frameHex(frame))
 	}
 }
 
