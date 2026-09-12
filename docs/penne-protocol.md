@@ -83,10 +83,12 @@ fallback is provisional and a hardware capture should settle the real shapes.
   chunk-aware and a raw reader have a defensible stream. The response side goes
   through libcurl's WRITEFUNCTION (`0xb55b0`, paired with READFUNCTION
   `0xb5530`; the option table sits at `0x16b208`/`0x16b210`), which feeds a
-  consumer object hung off the transfer at `+0x28`. **Open:** that consumer's
-  class for the frontline transfer, which is what names the delimiter. The
-  setter is `0xb6ef0`; pinning its caller for this transfer closes the
-  question.
+  consumer object hung off the transfer at `+0x28`. **Open (static only):**
+  that consumer's class for the frontline transfer, which is what names the
+  delimiter; the setter is `0xb6ef0`. The behavioural half is settled
+  [runtime, 2026-09-12]: the console consumed our chunked stream — handover,
+  sync reply, everything — all the way into the steady state, so the length
+  prefix inside the chunks is confirmed end to end.
 - Heartbeats: **no content-bearing keepalive is sent.** The newline heartbeat
   this implementation replaced was unvalidated [observed shape, unvalidated
   content], and any stray byte desyncs a length-prefixed decoder. The client's
@@ -151,7 +153,9 @@ firmware shows:
   shapes only [firmware]; see the decoder's field readers in
   `internal/penne`.
 - Record-sync machinery (PutRecord/DeleteRecord/RootHash/LeafHash + vectors):
-  present with vector-of-table payloads [firmware]; not implemented server-side.
+  present with vector-of-table payloads [firmware]. RootHash and PutRecord are
+  implemented server-side (`BuildRootHash`, `BuildPutRecord`); DeleteRecord,
+  LeafHash and the leaf drill-down are not.
 
 ## 4. What the server sends today, and why
 
@@ -161,7 +165,7 @@ firmware shows:
 | SubscriptionUpdated (unix second) | inbound SubscribeTopic | shape [firmware]; meaning of value + whether a reply is required within the 10 s deadline [hypothesis] |
 | HandoverResult (0x0c), field 0 = 0, on connect | connection accepted | **[firmware]** — the console reads exactly this message before anything else (§4b) |
 | ~~Hi (0x20), no payload~~ | superseded | was a hypothesis; the console rejects it by name
-| Event (MessageRequest carrier, JSON string payload f0) | outbox delivery | **[hypothesis] end to end** — the carrier slot and payload field are candidates, chosen because the friends module's event parser demonstrably reads a JSON `type` field from somewhere in this path [firmware, friends module `0xA43B0`/`0xA15C0`], and MessageRequest/PublishRequest are the unplumbed slots |
+| PutRecord (`c-friends.inv.subsTypes`, event JSON as value) | outbox delivery | shape **[firmware]** — `{0: string name, 1: [ubyte] value}`, handler `0x1dc430` — and the steady state accepts the type by name [firmware, §4d]. The old MessageRequest carrier is **superseded**: the steady state rejects it on arrival. Whether the friends module wakes on one of our records is the live open question (N2) |
 
 The five native event kinds the dispatcher recognizes [firmware]:
 `presence_updated`, `friend_invitation_received`, `friend_request_received`,
@@ -230,10 +234,13 @@ else is a logged type error and a failed connection. Addresses are ELF virtual
 
 So this is a Merkle-style subscription sync, not a plain "subscribe and push":
 the console offers digests of what it holds, and the server answers with hashes
-until the two agree. **Step 3 is the next thing to implement**, and step 2's
-payload — which is what tells us the exact slot numbers — is the message the
-console will send us the moment its uplink reaches the handler. Unknown inbound
-frames are logged with their bytes for exactly this reason.
+until the two agree. Steps 1–3 are implemented and hardware-proven (§4f):
+HandoverResult, the console's opening RootHash, and the empty-vector reply that
+lands the connection in the steady state. Step 4's drill-down (LeafHash, a
+per-record listing) is not implemented and not needed while the server
+truthfully holds nothing. Step 2's payload arrived as the firmware predicted
+and its parser is `ParseRootHash` in `internal/penne`. Unknown inbound frames
+are logged with their bytes for exactly this reason.
 
 ## 4d. The steady state, and what a notification actually is
 
@@ -302,10 +309,10 @@ userNaId}` and `$.data.{naId,applicationId,…}` out of a record, so a record is
 
 **Implemented:** deliveries are written as `PutRecord` on
 `c-friends.inv.subsTypes` with the event JSON as the value (`penne_records.go`,
-`penneRecordFrame`), and what was written is kept per account. A sync still
-answers with the **console's own digests**: a namespace digest aggregates the
-records below it by a function this server cannot reproduce, so its value is
-the only one we can state honestly.
+`penneRecordFrame`), and what was written is kept per account. A sync answers
+with an **empty entry vector** (§4f) — the one reply the console accepts —
+because a partial or mismatched RootHash invites a leaf drill-down the server
+cannot answer yet, not because we hold nothing we could describe.
 
 ## 4e. The sync message, captured from the console
 
@@ -321,14 +328,19 @@ A live console opened the sync with this, one second after the handover
   `c-settings`, `c-storage`**. `c-friends` is the namespace the friends module
   reads, so a friend notification is a record written there.
 
-The reply this adapter sends is the **same entries mirrored back**, which the
-console reads as agreement and follows into the steady state
-(`0xdba50 → 0xdbe50 → 0xda010 → 0xdc9e0`). That is a deliberate bootstrap, not
-a sync: we hold no record store, and answering with empty digests would invite
-the console to delete what it holds. It gets us to where records are accepted;
-it does not make the two sides agree about anything real, and a real
-`PutRecord` will move the console's digest out from under us. The record store
-is the next piece of work.
+**The answer is an empty entry vector** — `RootHash` with the envelope filled
+and no entries — and it cost a month to find. The candidate rotation and the
+full elimination table are §4f; what matters for the state machine is what the
+console does with it: it answers SyncComplete and enters the steady state
+(`0xdba50 → 0xdbe50 → 0xda010 → 0xdc9e0`), and only then acts on its own
+behalf — subscribing to topics and publishing presence, both observed in §4f.
+
+A mismatched or partial RootHash is what triggers the console's LeafHash
+drill-down, and the leaf level is not implemented server-side — which is why
+the sync keeps answering empty even now that the record store
+(`penne_records.go`) holds digests for the records we do write. Upgrading the
+reply from "we hold nothing" to "we hold these records" waits on the console
+being proven to accept a pushed record (open question N2).
 
 ## 5. Connection lifecycle (implemented)
 
@@ -365,19 +377,23 @@ is the next piece of work.
 
 ## 7. Open questions and the next experiment
 
+Closed by the 2026-09-12 capture, findings folded into the sections above:
+server→client framing (§2 — symmetric length prefixes inside a chunked stream,
+consumed end to end) and the event carrier (§4d — a record written with
+`PutRecord`, not a message; the receive-side-parser hunt it motivated is dead
+weight and is gone with it).
+
 | # | Question | Blocking | Next reproducible experiment |
 | --- | --- | --- | --- |
-| 1 | Server→client framing (symmetric length prefixes? chunked? raw?) | native event delivery acceptance | One live capture: connect a 22.5.0 console to this server, log every response byte with SNI+timing; the client's decoder behavior on malformed input will also pin its tolerance |
-| 2 | Event carrier slot (MessageRequest vs PublishRequest vs dedicated) and payload field | event envelope correctness | Same capture, plus Ghidra xref on the friends module's event parser entry to find where its input buffer originates |
-| 3 | Ack correlation (what the client's Ack field references) | at-least-once → at-most-once tightening | Capture; alternatively server-side experiment: echo candidate ids and observe Acks |
-| 4 | SubscribeTopic payload slots; whether SubscriptionUpdated is the expected confirmation inside 10 s | subscription lifecycle | Capture of one natural subscription; log and compare |
-| 5 | REST request shapes (§1 open items) | strict authentication of registration | Capture of one clean bootstrap with the current server |
-| 6 | Receive-side parser location in the NPNS module (would settle #1/#2 statically) | all of the above | Ghidra session: xref the `LeafHash/RootHash expected` format string (rodata RVA `0x12221e`) to the response-body decoder |
+| 1 | Ack correlation (what the client's Ack field references) | at-least-once → at-most-once tightening | Capture; alternatively server-side experiment: echo candidate ids and observe Acks |
+| 2 | SubscribeTopic payload slots; whether SubscriptionUpdated is the expected confirmation inside 10 s | subscription lifecycle | The console subscribes right after SyncComplete [runtime, §4f]; log the next one's bytes and compare against the dispatch's slot heuristic |
+| 3 | REST request shapes (§1 open items) | strict authentication of registration | Capture of one clean bootstrap with the current server |
+| 4 | Leaf-level record listing (what a LeafHash drill-down asks for) | a truthful sync answer ("we hold these records") once record acceptance is proven | Implement per-namespace listing over `penne_records.go`, answer one drill-down, and watch what the console asks to put or delete |
 
-Failure posture until #1–#3 close: malformed or unknown inbound frames are
-counted and never answered with invented schemas; outbound event frames are
-well-formed per §3 and marked experimental. A console that rejects them closes
-the connection — observable, recoverable, and exactly what the capture run
+Failure posture while the table above has open rows: malformed or unknown
+inbound frames are counted and never answered with invented schemas; outbound
+record writes are well-formed per §4d. A console that rejects them closes the
+connection — observable, recoverable, and exactly what the next capture run
 needs to see.
 
 ## 4f. The sync answer (settled on hardware, 2026-09-12)

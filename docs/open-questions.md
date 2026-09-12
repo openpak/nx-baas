@@ -5,14 +5,16 @@ experiment** — not a wish list. Close a row by deleting it and writing what wa
 found into the spec it belongs to. Dates are when the row was last touched.
 
 Status: **blocked** (needs something we cannot do yet) · **armed** (an
-experiment is deployed and waiting) · **open** (nobody has started).
+experiment is deployed and waiting) · **open** (nobody has started) ·
+**answered** (settled; the row stays only until its finding has a home in a
+spec, then it is deleted — N1's home is `docs/penne-protocol.md` §4f).
 
 ## Notifications
 
 | # | Question | Status | Evidence | Next experiment |
 | --- | --- | --- | --- | --- |
 | N1 | What sync answer does the console accept? | **ANSWERED** 2026-09-12 | An **empty entry vector**. Four wake cycles on hardware, six candidates each: mirroring the console's own digests, a two-slot envelope, count+1, a LeafHash mirror and silence all leave it reconnecting; only `RootHash` with no entries produces `SyncComplete`, every time. Live in production from v0.12.29 | — |
-| N2 | Is `PutRecord{c-friends.inv.subsTypes, <event json>}` accepted, and does it wake the friends module? | blocked on N1 | record shape from `0x1dc430`; topic from `0x17bd24` | after N1, accept a friend request on one console and watch the other's list |
+| N2 | Is `PutRecord{c-friends.inv.subsTypes, <event json>}` accepted, and does it wake the friends module? | **open** 2026-09-12 | record shape from `0x1dc430`; topic from `0x17bd24`. The sync gate above it is closed (N1; `docs/penne-protocol.md` §4f). Caveat from §4f: the observed connection subscribed only `nx_data_<titleId>` topics — `c-friends.inv.subsTypes` belongs to the friends module's own init, so first confirm the subscription shows up (opening the friend list is the natural trigger) before judging delivery | with both consoles registered (the unknown-id mint keeps the second one unlocked), send a friend request from one to the other: `podman logs … \| grep -e subscribed -e ack=` and does the receiving list refresh without a reboot |
 | N3 | What is `presence.pf`? A one-byte enum stored at friend+`0x569` | **blocked** 2026-09-12 | probed: the module has string tables for presence states, channels and request states, and **none for a platform**. `pf` is written and never compared anywhere in the module | only a real capture can settle it. Do not hunt again — the negative result is the finding |
 | N4 | Which `channels[*]` value belongs on an invitation? | open 2026-09-12 | **the value set is recovered**: a string→int mapper at `0x1a7d80` over a `.rodata` table — `NX_FACED, FRIEND_CODE, IN_APP, NINTENDO_ACCOUNT, 3DS, NNID, FACEBOOK, TWITTER, WECHAT, CAMPUS`. Our friend requests already send `FRIEND_CODE`, which is in the set | which one an *invitation* carries is the open half. `IN_APP` is the candidate for a game-issued invite; a hardware capture of one real invitation settles it |
 
@@ -20,7 +22,7 @@ experiment is deployed and waiting) · **open** (nobody has started).
 
 | # | Question | Status | Evidence | Next experiment |
 | --- | --- | --- | --- | --- |
-| F1 | How does the play-history document travel? | open 2026-09-12 | **the console builds it**, not just reads it: the module carries the format fragments `"firstPlayedAt":%lld,` `"lastPlayedAt":%lld` `"totalPlayCount":%u,` `"totalPlayTime":%u,` — so timestamps are signed 64-bit and the counters unsigned 32-bit. Still **no URL anywhere**, which leaves a record as the only carrier | log the topics and values the console writes once N1 is through; that also tells us whether it publishes to `c-friends.*` or `c-storage.summary` |
+| F1 | How does the play-history document travel? | open 2026-09-12 | **the console builds it**, not just reads it: the module carries the format fragments `"firstPlayedAt":%lld,` `"lastPlayedAt":%lld` `"totalPlayCount":%u,` `"totalPlayTime":%u,` — so timestamps are signed 64-bit and the counters unsigned 32-bit. Still **no URL anywhere**, which leaves a record as the only carrier | log the topics and values the console writes now that connections reach the steady state (`docs/penne-protocol.md` §4f); that also tells us whether it publishes to `c-friends.*` or `c-storage.summary` |
 | F2 | Does the friend list refresh from anything except a notification? | open | `cooldown_time_for_sync_friend_list` defaults to 30 s, so it is not throttling | after N2, leave two consoles idle and see whether a list ever self-corrects |
 
 ## eShop
@@ -39,7 +41,7 @@ experiment is deployed and waiting) · **open** (nobody has started).
 | W1 | What does `/api/nx/v1/titles/<titleId>/topics` return? | **answered** 2026-09-12 | the `bcat` sysmodule is dumped; `FUN_00215590` reads `$.topic_id`, `$.na_required`, `$.test_distribution`, `$.service_status`, `$.directories[0].data_list[]` out of a **msgpack** document (§21d). Implemented in `bcat.go` | — |
 | W2 | What is a BCAT delivery-cache container, and what does it verify? | **partly answered** 2026-09-12 | the list document names every file by `url` + `size` + `digest`, and the module fetches each with a plain conditional GET (§21c). What the on-disk delivery cache does with them (the `bafmeta` sidecar, the per-title `passphrase.bin`) is still unread | read `nn.bcat.Downloader` / `nn.bcat.NaCacheUpdater` in `~/openpak-firmware-audit-22.5.0/bcat`; only needed the day OpenPak publishes a container |
 | W3 | What does `POST fw-api.<env>.nso.nintendo.net/v1/events` send and return? | open 2026-09-12 | URL, method, `Authorization: Bearer <token>` and `Content-Type: application/json` are confirmed (`FUN_001c5190`, `FUN_001c3050`); the body is built by a serializer with no string literals and the reply is read by a streaming SAX handler, so no field names fall out of the module | capture it on hardware — it is a JSON POST, so the log line is the answer. Unimplemented until then: a guessed shape would read as a working feature |
-| W4 | Which Penne carrier delivers a `news` / `news_pickup` push? | open 2026-09-12 | `bcat` reads pushes from `npns:s` and switches on `$.type` (§21e); it subscribes to no `c-*` topic, unlike friends | settle N1 first — the same connection carries both. Then write a `news_pickup` push and watch for a `/api/nx/v1/list/` request |
+| W4 | Which Penne carrier delivers a `news` / `news_pickup` push? | open 2026-09-12 | `bcat` reads pushes from `npns:s` and switches on `$.type` (§21e); it subscribes to no `c-*` topic, unlike friends | the frontline reaches the steady state since the sync answer (`docs/penne-protocol.md` §4f) — write a `news_pickup` push to an `nx_data_<titleId>` topic the console already subscribes to, and watch for a `/api/nx/v1/list/` request |
 | W5 | Is `{"ip": …}` the key `nn::netdiag` reads? | open 2026-09-12 | prepo and the connection test are implemented (`netdiag.go`); the `/v1/ip` key name comes from public research, not from the module — `ExtractIpAddress` parses with a SAX handler whose member comparison did not fall out of the binary | run the connection test on hardware: it either shows a global IP or does not |
 
 ## Unserved hosts (§22c)
