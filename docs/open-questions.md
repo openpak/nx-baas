@@ -42,6 +42,13 @@ experiment is deployed and waiting) · **open** (nobody has started).
 | W4 | Which Penne carrier delivers a `news` / `news_pickup` push? | open 2026-09-12 | `bcat` reads pushes from `npns:s` and switches on `$.type` (§21e); it subscribes to no `c-*` topic, unlike friends | settle N1 first — the same connection carries both. Then write a `news_pickup` push and watch for a `/api/nx/v1/list/` request |
 | W5 | Is `{"ip": …}` the key `nn::netdiag` reads? | open 2026-09-12 | prepo and the connection test are implemented (`netdiag.go`); the `/v1/ip` key name comes from public research, not from the module — `ExtractIpAddress` parses with a SAX handler whose member comparison did not fall out of the binary | run the connection test on hardware: it either shows a global IP or does not |
 
+## Unserved hosts (§22c)
+
+| # | Question | Status | Evidence | Next experiment |
+| --- | --- | --- | --- | --- |
+| U1 | Which of the thirteen unrouted hosts does a console actually contact? | open 2026-09-12 | §22c lists each with its module; all resolve here already and land in the log as `!! UNHANDLED host` | read the log after a session that opens the album, the NSO app surfaces and parental controls |
+| U2 | Is `$.user.op2.membership.active` read off a response we send? | open 2026-09-12 | `nn.account` reads it, and we emit no `op2` anywhere. Adding it to `userObj` was not attempted: a login reply with one extra key was refused by the console once already | find which response carries `$.user` in the account module before adding a field to a working login |
+
 ## Method
 
 The tooling that answers these lives in `tools/firmware/` with its own README.

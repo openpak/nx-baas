@@ -838,3 +838,84 @@ demand, which is the lesson from 2123-0013.
 `fw-api…/v1/events` is deliberately **not** implemented (W3): the URL, method
 and auth are known, the body and reply are not, and a guessed shape would read
 as a working feature.
+
+## 22. The whole firmware, dumped and probed
+
+Fifteen modules were dumped by hand; then two more for News. The rest were
+still guesses. `scripts/dump-all.sh` now extracts **every** Program NCA in
+22.5.0 — 75 modules, named from their own NPDM — and `scripts/probe-all.sh`
+sweeps all of them for the six things that decide whether a server answers:
+hostnames, URL templates, `$.` selectors, HTTP headers, NPNS topics and service
+ports. Output lands in `~/openpak-firmware-audit-22.5.0/all/probe/*.tsv`, one
+line per `<module>\t<hit>`, regenerable in about a minute.
+
+The modules: usb, htc.stub, boot2.ProdBoot, settings, Bus, bluetooth.autog,
+bcat, friends, nifm, ptm, bsdsocket, hid, audio, LogManager.Prod, wlan.autogen,
+ldn, nvservices, pcv, capmtp, nvnflinger, pcie, account, ns, nfc, psc, capsrv,
+am, ssl, nim, btm, erpt, vi, pctl, npns, eupld, glue, eclct, es, fatal, grc,
+creport, ro, sdb, migration, jit, jpegdec, safemode, olsc, pgl, omm, eth, ngc,
+qlaunch, auth, cabinet, controller, dataErase, error, netConnect, playerSelect,
+swkbd, miiEdit, LibAppletWeb, LibAppletShop, overlayDisp, photoViewer,
+LibAppletOff, LibAppletLns, LibAppletAuth, starter, myPage, maintenance,
+systemWeb, openWeb, splay.
+
+### 22a. What the sweep settled immediately
+
+- **The topic list is complete.** Across all 75 modules the only NPNS topics are
+  `c-friends.inv.subsTypes` (friends), `c-appearance.main`,
+  `c-appearance.controller`, `c-settings.LanguageCode` and `c-storage.summary`
+  (npns, ns). There is no news topic, no invitation topic and no presence topic
+  — which is why §21e's news pushes have to arrive on the generic `npns:s`
+  stream, and it removes a whole class of "maybe we are writing to the wrong
+  name" guesses.
+- **The friends route list is exactly what we serve**, including
+  `filter.id.$in=`, `filter.links.friendCode.id.$in=`, `generate_code`, the
+  inbox/outbox sorts and both invitation API versions.
+
+### 22b. Four gaps the sweep found, now closed
+
+| Found | Was | Now |
+| --- | --- | --- |
+| `nifm` probes `http://ctest.cdn.nintendo.net/` and reads one header | unrouted; my `ctest-` prefix did not even match this name | 200 with `X-Organization: Nintendo` — the header a captive portal cannot fake, and the difference between "connected" and "check your connection" |
+| `nim` reads the clock from `api.hac.<env>.ctest…/v1/time` | unrouted | the body is one bare JSON number in **milliseconds**, which NIM divides by 1000 into a 63-byte buffer (`FUN_00292400`/`FUN_00292560`) |
+| `nn.account` asks `/v1/users/<id>/membership?application_id=<tid>` and reads `$.membership.active` | only the **plural** `/memberships` was answered; the per-title check hit the catch-all 404 | answered |
+| `eupld` posts crash reports to `receive.hac.<env>.er.srv…/` (multipart/mixed, `X-Nintendo-Error-Report-Share-Permission`) | unrouted | accepted and discarded, same as prepo — OpenPak keeps neither, and refusing only makes erpt retry |
+
+And one routing bug the sweep exposed: `migration.<env>.scsi.srv.nintendo.net`
+is the **console-to-console user transfer** (`account_migrations/gen_key`,
+`get_key`, with `transfer.hac.<env>.banco.srv.nintendo.net` beside it), not save
+data. It matched the `scsi.srv.nintendo.net` test and was being forwarded into
+the saves service, which can only 404 it. It now answers 501 and says so.
+
+### 22c. Hosts the firmware names that nothing here answers
+
+Every one of these already resolves to this server (catch-all DNS) and gets an
+on-demand certificate, so each is one handler away — none needs new
+infrastructure.
+
+| Host | Module | What it is |
+| --- | --- | --- |
+| `fw-api.<env>.nso.nintendo.net/v1/events` | bcat | NSO events / overlay feed (W3) |
+| `api.sect.srv.nintendo.net/v1/setting` | bsdsocket | socket tuning delivered from the network |
+| `pegasus.hac.<env>.pegasus.srv.nintendo.net` | olsc | — |
+| `permission.hac.<env>.sata…`, `storage.hac.<env>.sata…`, `pp.<env>.sata…` | olsc, qlaunch | album/share permission, storage and the privacy policy pages |
+| `policy.hac.<env>.scsi…` | olsc | save-sync policy (the `/application_policy/` answer already covers what we have seen) |
+| `<env>.sprofile.srv.nintendo.net/v1/device/metadata` | olsc | device metadata, UA `libcurl (nnSprofile; …)` |
+| `hac.<env>.savanna.srv.nintendo.net` | systemWeb, openWeb | eShop web, on the web applet's allowlist |
+| `web-<env>.share.srv.nintendo.net/`, `/settings/` | systemWeb | album sharing |
+| `web-<env>.znc.srv.nintendo.net/`, `/lobby/` | systemWeb | the NSO app's web surfaces |
+| `mii-secure-<env>.cdn.nintendo.net/<param>_normal_face.png` | myPage | a friend's Mii face. Dormant: the URL is built from a `MiiImageUrlParam` our friends service never mints |
+| `nemo.srv.nintendo.net` | qlaunch | — |
+| `parentalcontrols-movie-<env>.cdn.nintendo.net/default/switchpc_en.mp4` | qlaunch | the parental-controls explainer video |
+| `nncs1-<env>.n.n.srv.nintendo.net`, `nncs2-…` | qlaunch | NAT type check — not HTTP; `nn-nncs` implements the same pair for Wii U |
+
+### 22d. Running it again
+
+```sh
+~/openpak-firmware-audit-22.5.0/scripts/dump-all.sh    # 75 modules, ~2 min
+~/openpak-firmware-audit-22.5.0/scripts/probe-all.sh   # six facets, ~1 min
+```
+
+`all/<titleid>/` holds `main.elf`, `exefs/` and `strings.txt`; `all/<name>` is a
+symlink to it, so `all/friends/strings.txt` works. `all/names.tsv` maps one to
+the other. Both scripts are idempotent.

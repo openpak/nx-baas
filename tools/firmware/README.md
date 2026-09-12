@@ -5,6 +5,17 @@ the invitation surface (`docs/firmware-22.5.0-followup-2026-09-12.md`,
 `docs/penne-protocol.md`). Keeping it here so the next question costs an hour
 rather than a day.
 
+## Dump and probe everything first
+
+```sh
+./dump-all.sh    # every Program NCA in 22.5.0 -> ~/openpak-firmware-audit-22.5.0/all/, 75 modules
+./probe-all.sh   # hosts, URLs, $. selectors, headers, topics, ports -> all/probe/*.tsv
+```
+
+That is the cheap first move for any new question: `grep <thing> all/probe/*.tsv`
+answers "which module cares about this" before a single decompile. `all/<name>`
+is a symlink to `all/<titleid>`, so `all/friends/strings.txt` works.
+
 ## Where the modules are
 
 `~/openpak-firmware-audit-22.5.0/<module>/main.elf` — npns, friends, nim, ns,

@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
 )
 
 func TestDownloadProbeServesExactlyItsAdvertisedSize(t *testing.T) {
@@ -81,12 +82,52 @@ func TestGlobalIPProbeReportsTheForwardedAddress(t *testing.T) {
 	}
 }
 
-func TestPrepoAcceptsAReportAndRefusesAnUnmappedRoute(t *testing.T) {
+// NIM reads the whole body as one number and divides by 1000. Anything that is
+// not a bare integer -- an object, a quoted string, a trailing newline in the
+// wrong place -- sets the clock wrong or not at all.
+func TestNetworkClockIsABareMillisecondNumber(t *testing.T) {
+	s := &server{}
+	r := httptest.NewRequest("GET", "https://api.hac.lp1.ctest.srv.nintendo.net/v1/time", nil)
+	r.Host = "api.hac.lp1.ctest.srv.nintendo.net"
+	w := httptest.NewRecorder()
+	s.netdiag(w, r)
+
+	body := w.Body.String()
+	ms, err := strconv.ParseInt(body, 10, 64)
+	if err != nil {
+		t.Fatalf("body %q is not a bare integer: %v", body, err)
+	}
+	if delta := ms/1000 - time.Now().Unix(); delta > 5 || delta < -5 {
+		t.Fatalf("clock is %ds off -- the body must be milliseconds, not seconds", delta)
+	}
+	if w.Body.Len() > 63 {
+		t.Fatalf("body is %d bytes; NIM reads at most 63", w.Body.Len())
+	}
+}
+
+// nifm decides "connected" from one header. A 200 without it reads as a captive
+// portal, which is the "check your connection" screen.
+func TestReachabilityProbeCarriesTheOrganizationHeader(t *testing.T) {
+	s := &server{}
+	r := httptest.NewRequest("GET", "http://ctest.cdn.nintendo.net/", nil)
+	r.Host = "ctest.cdn.nintendo.net"
+	w := httptest.NewRecorder()
+	s.netdiag(w, r)
+
+	if w.Code != 200 {
+		t.Fatalf("status %d", w.Code)
+	}
+	if got := w.Header().Get("X-Organization"); got != "Nintendo" {
+		t.Fatalf("X-Organization = %q, want Nintendo", got)
+	}
+}
+
+func TestTelemetryAcceptsAReportAndRefusesAnUnmappedRoute(t *testing.T) {
 	s := &server{}
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("POST", "https://receive-lp1.dg.srv.nintendo.net/post", nil)
 	r.Host = "receive-lp1.dg.srv.nintendo.net"
-	s.prepo(w, r, []byte{0x80})
+	s.telemetry(w, r, []byte{0x80})
 	if w.Code != 200 {
 		t.Fatalf("a play report was refused (%d); the console will keep retrying it", w.Code)
 	}
@@ -94,7 +135,7 @@ func TestPrepoAcceptsAReportAndRefusesAnUnmappedRoute(t *testing.T) {
 	w = httptest.NewRecorder()
 	r = httptest.NewRequest("POST", "https://receive-lp1.dg.srv.nintendo.net/elsewhere", nil)
 	r.Host = "receive-lp1.dg.srv.nintendo.net"
-	s.prepo(w, r, nil)
+	s.telemetry(w, r, nil)
 	if w.Code != 404 {
 		t.Fatalf("unmapped prepo route answered %d, want 404", w.Code)
 	}
@@ -116,4 +157,17 @@ func (z *zeroLimit) Read(p []byte) (int, error) {
 	}
 	z.n -= len(p)
 	return len(p), nil
+}
+
+// eupld posts a crash report to the root of its own host. It shares nothing
+// with prepo's routes, so the handler must not judge it by prepo's path list.
+func TestErrorReportUploadIsAccepted(t *testing.T) {
+	s := &server{}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "https://receive.hac.lp1.er.srv.nintendo.net/", nil)
+	r.Host = "receive.hac.lp1.er.srv.nintendo.net"
+	s.telemetry(w, r, []byte("--boundary"))
+	if w.Code != 200 {
+		t.Fatalf("a crash report was refused (%d); erpt will keep retrying it", w.Code)
+	}
 }

@@ -1923,6 +1923,18 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.friendsAppCatalog(w, r) {
 		return
 	}
+	// migration.<env>.scsi.srv.nintendo.net is not save data: it is the
+	// console-to-console user transfer (`/api/nx/v1/account_migrations/gen_key`
+	// and `get_key`, with transfer.hac.<env>.banco.srv.nintendo.net alongside)
+	// [firmware, migration module]. It shares the scsi domain, so without this
+	// it was being forwarded into the saves service, which can only 404 it.
+	// OpenPak does not implement transfer; say so in the log rather than hide
+	// it inside somebody else's 404.
+	if strings.HasPrefix(host, "migration.") || strings.HasPrefix(host, "transfer.") {
+		log.Printf("[nx-baas] user transfer is not implemented: %s %s%s", r.Method, host, r.URL.Path)
+		http.Error(w, "user transfer is not implemented by OpenPak", 501)
+		return
+	}
 	if s.saves != nil && strings.Contains(host, "scsi.srv.nintendo.net") {
 		// Before the body is read: a save can be hundreds of MB and streams through.
 		s.savesProxy(w, r)
@@ -1988,6 +2000,14 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasSuffix(host, ".five.nintendo.net"):
 		// Native online-play invitations (the friends sysmodule's invite UI).
 		s.five(w, r, body)
+	case strings.HasPrefix(host, "capi.") && strings.HasSuffix(r.URL.Path, "/membership"):
+		// The per-title check, beside the list below: nn.account asks
+		// `/v1/users/<id>/membership?application_id=<tid>` and reads
+		// `$.membership.active` [firmware, account strings]. Answering only the
+		// plural left this one on the catch-all 404.
+		writeJSON(w, 200, map[string]any{"membership": map[string]any{
+			"active": true, "expires_at": time.Now().Unix() + 365*86400,
+		}})
 	case strings.HasPrefix(host, "capi.") && strings.HasSuffix(r.URL.Path, "/memberships"):
 		// NSO membership check (VPS parity): every account has an active "default" membership.
 		seg := strings.Split(r.URL.Path, "/")
@@ -2001,10 +2021,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(host, "bcat-"):
 		// BCAT and the News channel: msgpack, two routes (bcat.go).
 		s.bcat(w, r, body)
-	case strings.HasSuffix(host, ".dg.srv.nintendo.net"):
-		// prepo, the play-report uploader (netdiag.go).
-		s.prepo(w, r, body)
-	case strings.HasPrefix(host, "ctest-") || strings.Contains(host, ".ctest.srv.nintendo.net"):
+	case strings.HasSuffix(host, ".dg.srv.nintendo.net"), strings.Contains(host, ".er.srv.nintendo.net"):
+		// prepo's play reports and eupld's error reports (netdiag.go).
+		s.telemetry(w, r, body)
+	case strings.HasPrefix(host, "ctest") || strings.Contains(host, ".ctest.srv.nintendo.net"):
 		// The Internet connection test in System Settings (netdiag.go).
 		s.netdiag(w, r)
 	case strings.Contains(host, "scsi.srv.nintendo.net"):
@@ -2137,7 +2157,8 @@ func main() {
 		// ctest-dl/ctest-ul probes are plain HTTP and need no name here.
 		"bcat-list-lp1.cdn.nintendo.net", "bcat-topics-lp1.cdn.nintendo.net",
 		"api.hac.lp1.ctest.srv.nintendo.net", "fw-api.lp1.nso.nintendo.net",
-		"receive-lp1.dg.srv.nintendo.net", "realtime-receive-lp1.dg.srv.nintendo.net"}, getenv("NX_CA_DIR", "/data/ca"))
+		"receive-lp1.dg.srv.nintendo.net", "realtime-receive-lp1.dg.srv.nintendo.net",
+		"receive.hac.lp1.er.srv.nintendo.net"}, getenv("NX_CA_DIR", "/data/ca"))
 	var handler http.Handler = s
 	if up := os.Getenv("NX_UPSTREAM"); up != "" {
 		log.Printf("[nx-baas] CAPTURE MODE: forwarding everything to %s and logging bodies", up)

@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // ctestPayload is the download probe's size. The console asks for
@@ -24,12 +25,20 @@ import (
 // promise; the upload probe posts 1 MiB the other way.
 const ctestPayload = 30 << 20
 
-// netdiag serves the connection test. `/v1/ip` tells the console the address
-// this server sees it from -- the one measurement only the server can make --
-// and the two cdn hosts are the throughput probes.
+// netdiag serves the connection test, the network clock and nifm's reachability
+// check. `/v1/ip` tells the console the address this server sees it from -- the
+// one measurement only the server can make -- the two cdn hosts are the
+// throughput probes, and `/v1/time` is where NIM corrects the system clock.
 func (s *server) netdiag(w http.ResponseWriter, r *http.Request) {
 	host := hostOf(r)
 	switch {
+	// nifm's reachability probe, and the reason a console says "connected"
+	// rather than "check your connection". It reads one header off the reply
+	// and nothing else: a captive portal answering 200 has no X-Organization
+	// [firmware, nifm strings, beside connection_test_timeout].
+	case host == "ctest.cdn.nintendo.net":
+		w.Header().Set("X-Organization", "Nintendo")
+		w.WriteHeader(200)
 	case strings.HasPrefix(host, "ctest-dl-"):
 		// A fixed-size body the console times. Range is honored because the
 		// probe may resume, and Content-Length must be exact or the measurement
@@ -39,6 +48,14 @@ func (s *server) netdiag(w http.ResponseWriter, r *http.Request) {
 		n, _ := io.Copy(io.Discard, r.Body)
 		log.Printf("[netdiag] upload probe: %d bytes", n)
 		w.WriteHeader(200)
+	case r.URL.Path == "/v1/time":
+		// NIM reads the whole body as one JSON number and divides by 1000
+		// [firmware, nim FUN_00292400 / FUN_00292560, 63-byte buffer], so this
+		// is Unix milliseconds and nothing else -- no object, no wrapper.
+		ms := time.Now().UnixMilli()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		w.Write([]byte(strconv.FormatInt(ms, 10)))
 	case r.URL.Path == "/v1/ip":
 		ip := clientIP(r)
 		log.Printf("[netdiag] global IP probe -> %s", ip)
@@ -53,18 +70,26 @@ func (s *server) netdiag(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// prepo accepts a play report and drops it. OpenPak keeps no telemetry, and a
-// console whose upload is refused keeps the report in `prepo-sys:` and retries;
-// accepting it is what actually clears the spool. The count is logged so an
-// operator can see the surface is live, never the contents.
-func (s *server) prepo(w http.ResponseWriter, r *http.Request, body []byte) {
-	p := r.URL.Path
-	if p != "/post" && p != "/api/v1/realtime_reports" {
-		log.Printf("[prepo] UNMAPPED %s %s%s", r.Method, hostOf(r), p)
-		http.Error(w, "no such prepo route", 404)
+// telemetry accepts an upload and drops it: play reports from prepo
+// (`receive-<env>.dg…/post`, `…/api/v1/realtime_reports`, msgpack) and crash
+// reports from eupld (`receive.hac.<env>.er…/`, multipart/mixed with
+// X-Nintendo-Error-Report-Share-Permission). OpenPak keeps neither, and a
+// console whose upload is refused keeps the report in `prepo-sys:` / `erpt` and
+// retries; accepting it is what actually clears the spool. The size is logged
+// so an operator can see the surface is live, never the contents.
+func (s *server) telemetry(w http.ResponseWriter, r *http.Request, body []byte) {
+	host, p := hostOf(r), r.URL.Path
+	kind := "play report"
+	ok := p == "/post" || p == "/api/v1/realtime_reports"
+	if strings.Contains(host, ".er.srv.nintendo.net") {
+		kind, ok = "error report", p == "/"
+	}
+	if !ok {
+		log.Printf("[telemetry] UNMAPPED %s %s%s", r.Method, host, p)
+		http.Error(w, "no such route", 404)
 		return
 	}
-	log.Printf("[prepo] %s %d bytes discarded (OpenPak collects no play reports)", p, len(body))
+	log.Printf("[telemetry] %s %d bytes discarded (OpenPak collects no %ss)", p, len(body), kind)
 	w.WriteHeader(200)
 }
 

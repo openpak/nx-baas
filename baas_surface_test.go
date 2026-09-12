@@ -470,3 +470,51 @@ func TestOldFriendListCacheIsInvalidatedOnce(t *testing.T) {
 		t.Errorf("friendsUpdatedAt = %d, want %d", got, friendListFormatEpoch+5)
 	}
 }
+
+// nn.account asks two different questions about NSO: "is this account a
+// member" (plural, a list) and "may this account play this title" (singular,
+// with application_id). Only the plural was answered, so the per-title check
+// fell through to the catch-all 404 [firmware, account strings:
+// `/v1/users/%016llx/membership?application_id=%016llx` -> `$.membership.active`].
+func TestPerTitleMembershipCheckIsAnswered(t *testing.T) {
+	s := dauthServer(t)
+	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+
+	const host = "capi.lp1.op2.nintendo.net"
+	r := httptest.NewRequest("GET", "https://"+host+
+		"/v1/users/0123456789abcdef/membership?application_id=0100000000010000", nil)
+	r.Host = host
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("%d: %s", w.Code, w.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("not JSON: %v", err)
+	}
+	m, _ := got["membership"].(map[string]any)
+	if active, _ := m["active"].(bool); !active {
+		t.Fatalf("$.membership.active is not true: %s", w.Body.String())
+	}
+}
+
+// The console-to-console user transfer shares the scsi domain with cloud saves.
+// Forwarding it into the saves service turned "not implemented" into somebody
+// else's 404.
+func TestUserTransferIsNotForwardedIntoTheSavesService(t *testing.T) {
+	s := dauthServer(t)
+	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	s.saves = newSavesProxy("http://saves.invalid")
+
+	const host = "migration.lp1.scsi.srv.nintendo.net"
+	r := httptest.NewRequest("POST", "https://"+host+"/api/nx/v1/account_migrations/gen_key", nil)
+	r.Host = host
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+
+	if w.Code != http.StatusNotImplemented {
+		t.Fatalf("status %d, want 501 (it must not reach the saves proxy)", w.Code)
+	}
+}
