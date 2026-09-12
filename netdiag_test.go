@@ -1,0 +1,119 @@
+package main
+
+// The connection test is a measurement, so the only things worth asserting are
+// the ones a wrong answer would corrupt: the byte count, the range arithmetic
+// and which address gets reported back.
+
+import (
+	"encoding/json"
+	"io"
+	"net/http/httptest"
+	"strconv"
+	"testing"
+)
+
+func TestDownloadProbeServesExactlyItsAdvertisedSize(t *testing.T) {
+	s := &server{}
+	r := httptest.NewRequest("GET", "http://ctest-dl-lp1.cdn.nintendo.net/30m", nil)
+	r.Host = "ctest-dl-lp1.cdn.nintendo.net"
+	w := httptest.NewRecorder()
+	s.netdiag(w, r)
+
+	if w.Code != 200 {
+		t.Fatalf("status %d", w.Code)
+	}
+	if got := w.Header().Get("Content-Length"); got != strconv.Itoa(ctestPayload) {
+		t.Fatalf("Content-Length %q, want %d", got, ctestPayload)
+	}
+	if got := w.Body.Len(); got != ctestPayload {
+		t.Fatalf("wrote %d bytes, want %d -- a short body measures as a slow link", got, ctestPayload)
+	}
+}
+
+func TestDownloadProbeResumes(t *testing.T) {
+	s := &server{}
+	r := httptest.NewRequest("GET", "http://ctest-dl-lp1.cdn.nintendo.net/30m", nil)
+	r.Host = "ctest-dl-lp1.cdn.nintendo.net"
+	r.Header.Set("Range", "bytes=1000-1999")
+	w := httptest.NewRecorder()
+	s.netdiag(w, r)
+
+	if w.Code != 206 {
+		t.Fatalf("status %d, want 206", w.Code)
+	}
+	if got := w.Body.Len(); got != 1000 {
+		t.Fatalf("range served %d bytes, want 1000", got)
+	}
+	want := "bytes 1000-1999/" + strconv.Itoa(ctestPayload)
+	if got := w.Header().Get("Content-Range"); got != want {
+		t.Fatalf("Content-Range %q, want %q", got, want)
+	}
+}
+
+func TestUploadProbeAcceptsTheBody(t *testing.T) {
+	s := &server{}
+	r := httptest.NewRequest("POST", "http://ctest-ul-lp1.cdn.nintendo.net/1m", zeroBody(1<<20))
+	r.Host = "ctest-ul-lp1.cdn.nintendo.net"
+	w := httptest.NewRecorder()
+	s.netdiag(w, r)
+	if w.Code != 200 {
+		t.Fatalf("status %d", w.Code)
+	}
+}
+
+// The console is behind Traefik here, so RemoteAddr is the proxy: reporting it
+// would tell every console its own network's address is the proxy's.
+func TestGlobalIPProbeReportsTheForwardedAddress(t *testing.T) {
+	s := &server{}
+	r := httptest.NewRequest("GET", "https://api.hac.lp1.ctest.srv.nintendo.net/v1/ip", nil)
+	r.Host = "api.hac.lp1.ctest.srv.nintendo.net"
+	r.RemoteAddr = "10.0.0.1:5000"
+	r.Header.Set("X-Forwarded-For", "203.0.113.7, 10.0.0.1")
+	w := httptest.NewRecorder()
+	s.netdiag(w, r)
+
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("not JSON: %v", err)
+	}
+	if got["ip"] != "203.0.113.7" {
+		t.Fatalf("ip = %v, want the forwarded client address", got["ip"])
+	}
+}
+
+func TestPrepoAcceptsAReportAndRefusesAnUnmappedRoute(t *testing.T) {
+	s := &server{}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "https://receive-lp1.dg.srv.nintendo.net/post", nil)
+	r.Host = "receive-lp1.dg.srv.nintendo.net"
+	s.prepo(w, r, []byte{0x80})
+	if w.Code != 200 {
+		t.Fatalf("a play report was refused (%d); the console will keep retrying it", w.Code)
+	}
+
+	w = httptest.NewRecorder()
+	r = httptest.NewRequest("POST", "https://receive-lp1.dg.srv.nintendo.net/elsewhere", nil)
+	r.Host = "receive-lp1.dg.srv.nintendo.net"
+	s.prepo(w, r, nil)
+	if w.Code != 404 {
+		t.Fatalf("unmapped prepo route answered %d, want 404", w.Code)
+	}
+}
+
+func zeroBody(n int) *zeroLimit { return &zeroLimit{n: n} }
+
+type zeroLimit struct{ n int }
+
+func (z *zeroLimit) Read(p []byte) (int, error) {
+	if z.n == 0 {
+		return 0, io.EOF
+	}
+	if len(p) > z.n {
+		p = p[:z.n]
+	}
+	for i := range p {
+		p[i] = 0
+	}
+	z.n -= len(p)
+	return len(p), nil
+}

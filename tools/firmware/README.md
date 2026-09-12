@@ -8,7 +8,14 @@ rather than a day.
 ## Where the modules are
 
 `~/openpak-firmware-audit-22.5.0/<module>/main.elf` — npns, friends, nim, ns,
-account, am, shop and others, each with a `strings.txt`. These are local
+account, am, shop, bcat, news and others, each with a `strings.txt`.
+
+Two were added on 2026-09-12 and the recipe is worth keeping: the ProdKeys file
+had `master_kek_source_*` / `mariko_master_kek_source_*` lines whose values are
+34 hex digits, and hactool 1.4.0 aborts the whole keyset on the first one. Drop
+those lines (`awk -F\' *= *\' \'NF==2 && length($2)!=34\'`) and it loads. Then
+`hactool -k prod.keys --intype=nca --exefsdir=<d>/exefs <nca>` and
+`~/REPOS/nx2elf/build/nx2elf <d>/exefs/main --export-elf <d>/main.elf`. These are local
 research inputs, not repository assets, and nothing from them is copied into
 OpenPak: what lands in the code is the observable contract (field names, types,
 message shapes), never firmware code.

@@ -1,14 +1,14 @@
 package main
 
-// The other console services, per kinnay's server list: news (BCAT) and online
-// save storage (OLSC/SCSI). Both were reaching this server and being answered
-// with a 404 and an empty object, which is what a console shows as an error
-// rather than as "there is nothing here".
+// The other console services, per kinnay's server list: online save storage
+// (OLSC/SCSI), friend recommendations and the per-title service status. Each was
+// reaching this server and being answered with a 404 and an empty object, which
+// is what a console shows as an error rather than as "there is nothing here".
 //
-// Neither stores anything yet. An empty, correctly shaped answer is a true
-// statement -- this network has no news and no cloud saves -- and it lets the
-// console finish the screen instead of failing it. The saves PRD replaces the
-// second one; the news PRD the first.
+// An empty, correctly shaped answer is a true statement -- this network has no
+// cloud saves -- and it lets the console finish the screen instead of failing
+// it. The saves PRD replaces the first one. BCAT and the News channel moved to
+// bcat.go once the module showed they speak msgpack, not JSON.
 
 import (
 	"log"
@@ -16,25 +16,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
-	"time"
 )
-
-// bcat serves the news service. The console asks per title and expects a
-// content container; an empty topic list is "no news for this game".
-func (s *server) bcat(w http.ResponseWriter, r *http.Request, body []byte) {
-	p := r.URL.Path
-	switch {
-	case strings.HasSuffix(p, "/topics"):
-		writeJSON(w, 200, map[string]any{"topics": []any{}})
-	case strings.HasSuffix(p, "/catalog"):
-		writeJSON(w, 200, map[string]any{"topics": []any{}, "updatedAt": time.Now().Unix()})
-	case strings.Contains(p, "/latest_news/"), strings.Contains(p, "/online_archives"):
-		writeJSON(w, 200, map[string]any{"news": []any{}})
-	default:
-		dump(r, body, "!! UNHANDLED bcat")
-		writeJSON(w, 200, map[string]any{})
-	}
-}
 
 // olsc is the answer when no saves service is configured (SAVES_URL empty):
 // nothing is stored, so every list is empty and every upload is refused

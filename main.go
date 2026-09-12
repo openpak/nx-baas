@@ -1999,7 +1999,14 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.Contains(host, "frs.srv.nintendo.net"):
 		s.frs(w, r, body)
 	case strings.HasPrefix(host, "bcat-"):
+		// BCAT and the News channel: msgpack, two routes (bcat.go).
 		s.bcat(w, r, body)
+	case strings.HasSuffix(host, ".dg.srv.nintendo.net"):
+		// prepo, the play-report uploader (netdiag.go).
+		s.prepo(w, r, body)
+	case strings.HasPrefix(host, "ctest-") || strings.Contains(host, ".ctest.srv.nintendo.net"):
+		// The Internet connection test in System Settings (netdiag.go).
+		s.netdiag(w, r)
 	case strings.Contains(host, "scsi.srv.nintendo.net"):
 		s.olsc(w, r, body)
 	case strings.Contains(host, "pctl.srv.nintendo.net") || strings.HasPrefix(host, "app.lp1.srv"):
@@ -2125,7 +2132,12 @@ func main() {
 		// rejects an on-demand cert on the names it authenticates against (2123-0013).
 		"dauth-lp1.ndas.srv.nintendo.net", "dcert-lp1.ndas.srv.nintendo.net", "acert-lp1.ndas.srv.nintendo.net",
 		"aauth-lp1.ndas.srv.nintendo.net", "aauth.hac.lp1.ndas.srv.nintendo.net",
-		"dragons.hac.lp1.dragons.nintendo.net", "dragonst.hac.lp1.dragons.nintendo.net"}, getenv("NX_CA_DIR", "/data/ca"))
+		"dragons.hac.lp1.dragons.nintendo.net", "dragonst.hac.lp1.dragons.nintendo.net",
+		// BCAT/News, prepo and the connection test (bcat.go, netdiag.go). The
+		// ctest-dl/ctest-ul probes are plain HTTP and need no name here.
+		"bcat-list-lp1.cdn.nintendo.net", "bcat-topics-lp1.cdn.nintendo.net",
+		"api.hac.lp1.ctest.srv.nintendo.net", "fw-api.lp1.nso.nintendo.net",
+		"receive-lp1.dg.srv.nintendo.net", "realtime-receive-lp1.dg.srv.nintendo.net"}, getenv("NX_CA_DIR", "/data/ca"))
 	var handler http.Handler = s
 	if up := os.Getenv("NX_UPSTREAM"); up != "" {
 		log.Printf("[nx-baas] CAPTURE MODE: forwarding everything to %s and logging bodies", up)

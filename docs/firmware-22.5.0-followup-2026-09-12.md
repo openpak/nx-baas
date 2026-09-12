@@ -653,19 +653,188 @@ through the **BCAT delivery cache**, whose IPC surface `ns` merely proxies:
 `IDeliveryCacheStorageService`, `IDeliveryCacheDirectoryService`,
 `IDeliveryCacheFileService`, `IDeliveryCacheProgressService`,
 `IDeliveryTaskSuspensionService`. The container format and whatever signature
-it carries live in the **bcat sysmodule**, and the audit tree does not contain
-it: fifteen modules were dumped, and `bcat` (`0x010000000000000c`) and the News
-applet (`0x0100000000001000`) were not — **both are present in the firmware
-dump**, so this is an extraction away, not a research dead end.
+it carries live in the **bcat sysmodule**, and the audit tree did not contain
+it when this was written: fifteen modules were dumped, and `bcat`
+(`0x010000000000000c`) and the News applet (`0x0100000000001000`) were not. Both
+are dumped now — §21.
 
 `ns` does carry the settings that gate it: `bcat_enabled`,
 `auto_update_policy_from_bcat_enabled`, `acceptable_application_delivery_protocol_version`,
 `system_delivery_info_id`, `delivery_info_platform`, `delivery_protocol_version`.
 
-**Next step for News:** extract `0x010000000000000c` and `0x0100000000001000`
-from `~/Downloads/Firmware.22.5.0` the way the other fifteen were (hactool then
-`~/REPOS/nx2elf`; neither hactool nor an equivalent is currently on this
-machine), then mine them for the delivery-cache container and the exact
-per-title topics document. Until then, serving `/api/nx/v1/titles/<id>/topics`
-with invented entries would only move the failure one step later, into a
-container we cannot yet build.
+**Done:** both modules are extracted and mined — see §21, which answers this.
+The delivery-cache container is still unbuilt, but it turns out not to be on the
+path to "there is no news": the list document says that on its own.
+
+## 21. News and BCAT, from the modules themselves
+
+Both missing modules are dumped now (`hactool` + `~/REPOS/nx2elf`, the way the
+other fifteen were), and they answer W1 and W2 outright:
+
+| Title | Module | What it holds |
+| --- | --- | --- |
+| `0x010000000000000c` | `bcat` sysmodule | the whole network contract: BCAT **and** the News channel, one binary, `nn.bcat.*` and `nn.news.*` |
+| `0x0100000000001000` | qlaunch (Home Menu) | the News **UI** only — no news hosts of its own; it reaches the sysmodule over IPC |
+
+The News channel is not a separate service. It is BCAT with a different mount
+prefix (`news-dl:` / `news-sys:` instead of `bcat-dl:` / `bcat-sys:`) and an
+sqlite database on top.
+
+### 21a. The four hosts
+
+`%` in a firmware hostname is the environment identifier the module substitutes
+(`lp1` on retail), the same convention as `api.hac.%.ctest…`.
+
+| Host | Used for |
+| --- | --- |
+| `bcat-list-%.cdn.nintendo.net` | the data list, per title and for news |
+| `bcat-topics-%.cdn.nintendo.net` | the per-title topic document |
+| `fw-api.%.nso.nintendo.net` | `/v1/events` — the NSO event/overlay feed |
+| `receive-%.dg.srv.nintendo.net`, `realtime-receive-%.dg.srv.nintendo.net` | prepo (play reports), same binary, see §21f |
+
+All of them already resolve here: the console DNS is a catch-all for
+`.nintendo.net` (`nn-sssl-dns`), and unrouted SNIs get an on-demand
+certificate. What was missing was the server, not the name.
+
+### 21b. The three routes
+
+```
+GET https://bcat-topics-<env>.cdn.nintendo.net/api/nx/v1/titles/<tid:%016llx>/topics[?l=<lang>&c[]=<country>]
+GET https://bcat-list-<env>.cdn.nintendo.net/api/nx/v1/list/nx_data_<tid:%016llx>[?u=<uuid>&i=<40 hex>]
+GET https://<host from the push>/api/nx/v1/list/<key>[?l=<lang>[&<news id>]]
+```
+
+- The list path segment is **not** the raw title id: `FUN_0019f390` formats it
+  as `nx_data_%016llx`.
+- The query is assembled piecewise — `"?"` is only prepended when the query is
+  non-empty (`FUN_00214ed0`, `FUN_00216e80`), so a bare URL with no `?` is a
+  normal request, not a truncated one.
+- `u=` is a UUID printed `%02x%02x%02x%02x-%02x%02x-…`; `i=` is a 20-byte
+  digest printed as 40 hex characters (`FUN_00197fc0`, buffer `0x29`). Both
+  appear only when the module is in one particular mode
+  (`local_1e0 == 2 && (flags & 1)`), so their absence is expected on retail.
+- The topics query shape is confirmed by a hardware capture from 2026-09-08:
+  `?l=en-GB&c%5b%5d=GB` — `l=<language>` and `c[]=<country>`.
+
+### 21c. The request
+
+`FUN_001914d0` builds every BCAT/News HTTP request, and it is a plain
+conditional GET:
+
+| Header | Source |
+| --- | --- |
+| `If-None-Match: <etag>` | the etag stored in `<mount>:/etag.bin` |
+| `If-Range: <etag>` + `Range: bytes=<n>-` | resuming an interrupted file |
+| `X-Nintendo-DenebEdgeToken: <token>` | only when one is held |
+| `X-Nintendo-Serial-Number: <serial>` | always |
+| User-Agent | `libcurl (nnBcat; 789f928b-138e-4b2f-afeb-1acae821d897; SDK 22.2.0.0)` |
+
+There is **no `Authorization` header**. `news-sys:/passphrase.bin` and
+`<mount>:/passphrase.bin` are not HTTP credentials — the curl Digest/Basic
+strings in the binary are libcurl's own, unreferenced by this path.
+
+Answers are **msgpack** (`Content-Type: application/x-msgpack`), stored as
+`bcat-dl:/applications/%016llx/list.msgpack` and `news-dl:/list.msgpack`, each
+beside a `.bafmeta` / `.meta` sidecar.
+
+### 21d. The two documents
+
+**Topic document** (`FUN_00215590` reads): `$.topic_id`, `$.na_required`,
+`$.test_distribution`, `$.service_status`, `$.directories[0].data_list[]`.
+
+**Data list** (`FUN_0019a010` reads): `$.required_application_version`,
+`$.directories[*].{name,mode,digest}`, and per entry
+`$.directories[*].data_list[*].{filename,url,size,digest,data_id}`. The News
+variant addresses `$.directories[0]` explicitly and adds per-entry
+`news_id`, `default_language`, `publishing_time`, `deletion_priority`,
+`conditions.serial[*]`, `version.{format,semantics}` and
+`languages[*].{language,url,size,data_id,overwrite}`.
+
+`$.service_status` is a string: **`in_service`** is the only accepted value;
+anything starting `exp…` (expired) reads as out of service.
+
+**News item** (`FUN_00208450` reads, one msgpack document per article):
+`news_id`, `topic_id`, `language`, `application_ids[*]`, `published_at`,
+`expire_at`, `pickup_limit`, `essential_pickup.{pickup_limit,priority_after}`,
+`priority`, `deletion_priority`, `age_limit`, `age_limits[*].ratings[*].{age,name}`,
+`decoration.type`, `version.{format,semantics}`. It lands in
+`news-sys:/news.v3.db` — a real sqlite database whose schema the module carries
+verbatim, including the read/newly/displayed/feedback/reputation flags the UI
+toggles.
+
+### 21e. How a refresh is triggered — and why this is a Penne question
+
+`bcat` opens **`npns:s`** (the NPNS system port) and runs
+`nn.bcat.EventWatcher`. It does not subscribe to a `c-*` topic of its own —
+`c-friends.inv.subsTypes`, `c-appearance.*`, `c-settings.LanguageCode` and
+`c-storage.summary` are the only topic literals in any dumped module. It reads
+pushes and switches on `$.type`:
+
+| `$.type` | Payload | Effect |
+| --- | --- | --- |
+| `news` | `$.topic_id`, `$.revision`, `$.wait_range`, `$.ha_wait_range_min`, `$.ha_wait_range_max` | refresh that topic, jittered inside the wait range |
+| `news_pickup` | `$.url` (≤256), `$.date` (≤20), `$.one2one` | fetch that list URL at that time; `one2one` routes it to a single user |
+
+A third push shape (`FUN_001bd1b0`) is the on-screen overlay:
+`$.notification_type`, `$.version`, `$.ovl_type`, `$.event_data_id`,
+`$.nsa_id`, `$.application_id`, `$.expires_at`, `$.text` (≤150),
+`$.text_scale`, `$.speech` (≤200), `$.jump_to`.
+
+So **the News channel is downstream of the same Penne connection the friends
+work is blocked on**: nothing can be delivered until a push reaches the
+console. The route work in §21b is the second half, not the first.
+
+### 21f. prepo, found in the same binary
+
+The play-report uploader lives here too and is entirely unserved:
+
+```
+POST https://receive-<env>.dg.srv.nintendo.net/post
+POST https://realtime-receive-<env>.dg.srv.nintendo.net/api/v1/realtime_reports
+```
+
+`Content-Type: application/x-msgpack`, headers `X-Nintendo-Nsa-Id-Token`,
+`X-Nintendo-Device-Authentication-Token`, `X-Nintendo-Product-Model`,
+`X-Nintendo-Environment`, UA `libcurl (nnPrepo; …; SDK 22.2.0.0; Add-on 22.2.0.0)`.
+State in `prepo-sys:/{id,statistics,statistics_srepo,is_user_agreement_check_enabled}.bin`.
+
+### 21g. The connection test, also unserved
+
+`qlaunch`'s `nn::netdiag` names the whole Internet-connection-test surface:
+
+```
+GET  https://api.hac.<env>.ctest.srv.nintendo.net/v1/ip     (global IP)
+GET  http://ctest-dl-<env>.cdn.nintendo.net/30m             (download speed)
+POST http://ctest-ul-<env>.cdn.nintendo.net/1m              (upload speed)
+     nncs1-<env>.n.n.srv.nintendo.net, nncs2-<env>.n.n.srv.nintendo.net  (NAT type)
+```
+
+The Switch NAT-check hosts are the same pair of services `nn-nncs` already
+implements for Wii U, under different names.
+
+### What is implemented now
+
+`nx-baas/bcat.go` replaces the JSON guess with the real contract: both routes,
+msgpack documents, `in_service`, empty directories, and an ETag so the second
+poll is a 304. That is a true statement about this network — no BCAT container
+is published and no article exists — in the encoding the module parses. The
+delivery-cache container (W2) does not have to be built to say "nothing to
+fetch"; it has to be built the day something is.
+
+`nx-baas/netdiag.go` answers the other two surfaces §21f and §21g named:
+
+- `/v1/ip` reports the address this server sees the console from (the forwarded
+  one, since Traefik terminates). The JSON key is the one public research uses;
+  the module's SAX handler did not yield it.
+- `ctest-dl-…/30m` serves exactly 30 MiB with Range support, `ctest-ul-…/1m`
+  accepts the upload. Both are plain HTTP, so they only work where port 80
+  reaches this server.
+- prepo accepts a play report and discards it. OpenPak keeps no telemetry, and
+  refusing the upload only makes the console spool it and retry.
+
+All six HTTPS names are on the fixed certificate now rather than minted on
+demand, which is the lesson from 2123-0013.
+
+`fw-api…/v1/events` is deliberately **not** implemented (W3): the URL, method
+and auth are known, the body and reply are not, and a guessed shape would read
+as a working feature.
