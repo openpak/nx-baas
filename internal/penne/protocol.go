@@ -741,7 +741,11 @@ func ParseRootHash(payload Table) []RootEntry {
 // in a 32-byte table leaves eight bytes for each timestamp
 // [runtime capture of the console's own message, 2026-09-12].
 func BuildRootHash(entries []RootEntry, count uint32, issued, expires uint64) []byte {
-	b := NewBuilder(128 + 64*len(entries))
+	return buildHashMessage(TypeRootHash, entries, count, issued, expires)
+}
+
+// buildRootPayload writes the {vector of {name, digest}} payload table.
+func buildRootPayload(b *Builder, entries []RootEntry) int {
 	offs := make([]int, 0, len(entries))
 	for i := len(entries) - 1; i >= 0; i-- {
 		e := entries[i]
@@ -755,18 +759,44 @@ func BuildRootHash(entries []RootEntry, count uint32, issued, expires uint64) []
 	vec := b.CreateOffsetVector(offs)
 	b.StartTable(1)
 	b.PrependUOffsetSlot(0, vec)
-	payload := b.EndTable()
+	return b.EndTable()
+}
 
+func buildHashMessage(kind byte, entries []RootEntry, count uint32, issued, expires uint64) []byte {
+	b := NewBuilder(128 + 64*len(entries))
+	payload := buildRootPayload(b, entries)
 	b.StartTable(5)
 	b.PrependU64Slot(4, expires)
 	b.PrependU64Slot(3, issued)
 	b.PrependU32Slot(2, count)
+	b.PrependUOffsetSlot(1, payload)
+	b.PrependU8Slot(0, kind)
+	root := b.EndTable()
+	b.prep(b.minalign, 4)
+	b.placeU32(uint32(b.Offset() + 4 - root))
+	return b.Bytes()
+}
+
+// BuildRootHashMinimal encodes a RootHash with the two-slot envelope the
+// handover uses (type and payload only). The console accepts that envelope for
+// HandoverResult, so it is one of the candidates when a five-slot RootHash is
+// refused.
+func BuildRootHashMinimal(entries []RootEntry) []byte {
+	b := NewBuilder(128 + 64*len(entries))
+	payload := buildRootPayload(b, entries)
+	b.StartTable(2)
 	b.PrependUOffsetSlot(1, payload)
 	b.PrependU8Slot(0, TypeRootHash)
 	root := b.EndTable()
 	b.prep(b.minalign, 4)
 	b.placeU32(uint32(b.Offset() + 4 - root))
 	return b.Bytes()
+}
+
+// BuildLeafHash encodes the same entry vector under the LeafHash slot: the
+// state that waits for the sync accepts either type.
+func BuildLeafHash(entries []RootEntry, count uint32, issued, expires uint64) []byte {
+	return buildHashMessage(TypeLeafHash, entries, count, issued, expires)
 }
 
 // BuildEmpty encodes an envelope whose payload table has no fields. Hi (0x20),

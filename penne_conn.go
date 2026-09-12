@@ -24,8 +24,10 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"nx-baas/internal/penne"
@@ -361,6 +363,41 @@ func (s *server) sessionUser(rec *penneTicketRec) string {
 	return rec.UserID
 }
 
+// penneSyncProbe rotates the answer to the console's RootHash through the
+// candidate shapes when NX_PENNE_SYNC_PROBE is set. The console retries the
+// sync about once a second, so letting it judge each candidate in turn settles
+// in seconds what static reading has not: which reply it accepts. Off by
+// default — production answers with the mirror.
+var penneSyncProbe = os.Getenv("NX_PENNE_SYNC_PROBE") != ""
+
+var penneSyncAttempt atomic.Uint64
+
+// penneSyncReply picks the answer and names it for the log.
+func penneSyncReply(entries []penne.RootEntry, count uint32, now uint64) ([]byte, string) {
+	mirror := func() ([]byte, string) {
+		return penne.BuildRootHash(entries, count, now, now+penneSyncTTL), "RootHash mirror"
+	}
+	if !penneSyncProbe {
+		return mirror()
+	}
+	switch penneSyncAttempt.Add(1) % 6 {
+	case 1:
+		return mirror()
+	case 2:
+		return penne.BuildRootHashMinimal(entries), "RootHash, two-slot envelope"
+	case 3:
+		return penne.BuildRootHash(entries, count+1, now, now+penneSyncTTL), "RootHash, count+1"
+	case 4:
+		return penne.BuildLeafHash(entries, count, now, now+penneSyncTTL), "LeafHash mirror"
+	case 5:
+		return penne.BuildRootHash(nil, count, now, now+penneSyncTTL), "RootHash, no entries"
+	default:
+		// The control: if the console still drops the connection in about a
+		// second with nothing sent, the loop is not our reply's fault.
+		return nil, "no reply (control)"
+	}
+}
+
 // frameHex renders a bounded hex dump for the protocol log. The payload shapes
 // of the client's own messages are what the spec still marks open, so the first
 // ones to arrive are worth keeping verbatim.
@@ -438,10 +475,14 @@ func (s *server) penneDispatch(sess *penneSession, frame []byte) {
 		// docs/penne-protocol.md §4e.
 		count, _ := env.Root().U32(2)
 		now := uint64(time.Now().Unix())
-		reply := penne.BuildRootHash(entries, count, now, now+penneSyncTTL)
+		reply, shape := penneSyncReply(entries, count, now)
+		if reply == nil {
+			log.Printf("[nx-baas] penne: RootHash from user=%s [%s]; answering with silence (%s)", sess.user, strings.Join(names, " "), shape)
+			return
+		}
 		select {
 		case sess.send <- penneOutbound{frame: reply}:
-			log.Printf("[nx-baas] penne: RootHash from user=%s [%s]; mirrored", sess.user, strings.Join(names, " "))
+			log.Printf("[nx-baas] penne: RootHash from user=%s [%s]; answered %s", sess.user, strings.Join(names, " "), shape)
 		default:
 			log.Printf("[nx-baas] penne: RootHash from user=%s dropped, send queue full", sess.user)
 		}
