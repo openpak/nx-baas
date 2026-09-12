@@ -160,6 +160,14 @@ func (s *server) SubmitNotification(d PenneDelivery) PenneSubmission {
 	return res
 }
 
+// NOTE (firmware, 2026-09-12): the steady state at RVA 0xdc9e0 accepts only
+// PutRecord, DeleteRecord, Ack, Reset, Ping, Pong, Idle, Nack,
+// SubscriptionList, SubscriptionUpdated and Hi — a MessageRequest carrier is
+// answered with "Unexpected command ... received in steady state" and the
+// connection fails. A notification is a record written under the recipient's
+// key, not a message (docs/penne-protocol.md §4d). This body is still the
+// right JSON; what carries it is not.
+//
 // penneEventJSON renders the event body carried inside a wire envelope: the
 // firmware-recognized type string plus the semantic payload. The envelope's
 // outer shape is the marked hypothesis in internal/penne; this JSON shape is

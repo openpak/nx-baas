@@ -225,7 +225,8 @@ else is a logged type error and a failed connection. Addresses are ELF virtual
 | 2 | console | a vector of up to 100 entries, each a **string name plus a 20-byte digest**, followed by a two-byte string and two timestamps (`now`, `now + 3600`) | builder `0x1eb310` (entry stride 0x34: 0x20 name + 0x14 hash), source list `0xb1c40`, sent through `0xd4010` from state `0xda1a0` |
 | 3 | server | `RootHash` (0x06) **or** `LeafHash` (0x07) — or `Reset` (0x0d) | state `0xda2f0`: *"LeafHash/RootHash expected, but \"%s\"(%d) received."* |
 | 4 | both | record reconciliation: the `RootHash` handler (`0x1dab90`) parses a vector of entries carrying string names, then state `0xdba50` merges two sorted sets of **32-byte keys** — the client's records against the server's — which is what `PutRecord` (0x04), `DeleteRecord` (0x05) and `SyncComplete` (0x08) are for. `LeafHash` takes the parallel path (`0x1da490` → `0xdb120`). |
-| 5 | server | events, once the set is in sync | carrier still **[hypothesis]** |
+| 5 | server | `PutRecord` (0x04) / `DeleteRecord` (0x05) until the sets agree, then the steady state | `0xdbf20`: *"PutRecord/DeleteRecord expected, but ...received."*; handlers `0x1dc0b0`/`0x1dc290` loop back to it |
+| 6 | steady state (`0xdc9e0`) | see §4d | *"Unexpected command \"%s\"(%d) received in steady state."* |
 
 So this is a Merkle-style subscription sync, not a plain "subscribe and push":
 the console offers digests of what it holds, and the server answers with hashes
@@ -233,6 +234,44 @@ until the two agree. **Step 3 is the next thing to implement**, and step 2's
 payload — which is what tells us the exact slot numbers — is the message the
 console will send us the moment its uplink reaches the handler. Unknown inbound
 frames are logged with their bytes for exactly this reason.
+
+## 4d. The steady state, and what a notification actually is
+
+The steady state (`0xdc9e0`) polls for a message with no wait and accepts
+**exactly** these types [firmware]:
+
+| Slot | Name | | Slot | Name |
+| --- | --- | --- | --- | --- |
+| 0x04 | PutRecord | | 0x14 | Idle |
+| 0x05 | DeleteRecord | | 0x18 | Nack |
+| 0x09 | Ack | | 0x19 | SubscriptionList |
+| 0x0d | Reset | | 0x1f | SubscriptionUpdated |
+| 0x10 | Ping | | 0x20 | Hi (accepted, ignored) |
+| 0x11 | Pong | | | |
+
+Everything else is *"Unexpected command \"%s\"(%d) received in steady state."*
+and the connection fails.
+
+**`MessageRequest` (0x01) and `PublishRequest` (0x02) are not in that set.**
+The carrier this adapter uses for an event would therefore be rejected on
+arrival — those two slots are things the *client* sends, not things it accepts.
+
+A notification is a **record**. `PutRecord` carries a name and a payload:
+`0x1dfbb0` unpacks it, `0x1dc430` stores it into the same record store the sync
+uses (`0x1b0040(store, name, nameLen, payload, payloadLen, 1)`) and then calls
+`0x1d0840`, which is what wakes the subscriber — the friends module. That is
+also where its 128-bit account id comes from: the record namespace, not a field
+inside the event body (§4a). Keys are compared as up to 32 bytes, which is the
+width of the account id the console writes as `%016llx%016llx`.
+
+So delivery is not "push a frame". It is: complete the sync, then write a
+record under the recipient's key and let the console's record store hand it to
+the friends module.
+
+**What this costs us:** the outbox needs to become a record store with the sync
+protocol in front of it (RootHash/LeafHash, Put/Delete, SyncComplete), and
+`BuildEvent`'s MessageRequest carrier is dead. Nothing in the current delivery
+path is reusable above the framing layer, which is now confirmed correct.
 
 ## 5. Connection lifecycle (implemented)
 
