@@ -16,11 +16,10 @@
 package main
 
 import (
-	"bytes"
-	"image"
-	"image/png"
+	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 )
 
@@ -110,12 +109,27 @@ func (s *server) nimUnserved(w http.ResponseWriter, r *http.Request, body []byte
 		w.WriteHeader(http.StatusOK)
 		return true
 
-	// The eShop's own catalogue search [nim: /v1/acds/search]. The response
-	// shape is an ACD list whose fields we have not recovered; an empty result
-	// is honest and lets the applet render "nothing found" instead of hanging.
+	// The eShop's own catalogue search [nim: /v1/acds/search]. Answered from
+	// the shop catalog rather than with an empty list: the console is asking
+	// what this store has, and this store knows. The entry shape mirrors the
+	// applet's own listing (shop.go) — the ACD document's native field names
+	// are not recovered, so what is served is our catalog's own vocabulary.
 	case strings.HasPrefix(p, "/v1/acds/search"):
-		dump(r, body, "!! ESHOP acds/search (result shape unrecovered)")
-		writeJSON(w, 200, map[string]any{"acds": []any{}, "count": 0, "original_count": 0})
+		q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+		items := []any{}
+		for _, t := range s.shopTitles() {
+			name, _ := shopTitleText(t)
+			if q != "" && !strings.Contains(strings.ToLower(name), q) && !strings.Contains(strings.ToLower(t.TitleID), q) {
+				continue
+			}
+			items = append(items, map[string]any{
+				"application_id": t.TitleID, "name": name, "publisher": t.Publisher,
+				"size_bytes": t.SizeBytes, "version": t.Version, "version_label": t.VersionLabel,
+				"icon": "/ashigaru/icon/" + t.TitleID,
+			})
+		}
+		log.Printf("[shop] nim %s %s q=%q -> %d title(s)", r.Method, p, q, len(items))
+		writeJSON(w, 200, map[string]any{"acds": items, "count": len(items), "original_count": len(items)})
 		return true
 	}
 	return false
@@ -140,31 +154,101 @@ func (s *server) friendsAppCatalog(w http.ResponseWriter, r *http.Request) bool 
 	if !ok || appID == "" {
 		return false
 	}
+	// The friends module asks by 128-bit application id; our catalog is keyed
+	// by the 64-bit title id, which is its upper half.
+	title := s.shopTitleByAppID(appID)
 	switch {
 	case file == "catalog.json":
-		log.Printf("[nx-baas] friends app catalog for %s (placeholder: the document's fields are unrecovered)", appID)
-		writeJSON(w, 200, map[string]any{
-			"application_id":    appID,
-			"application_names": map[string]any{},
-		})
+		doc := map[string]any{"application_id": appID, "application_names": map[string]any{}}
+		if title != nil {
+			name, names := shopTitleText(title)
+			doc["application_names"] = names
+			doc["name"] = name
+			doc["publisher"] = title.Publisher
+			doc["version"] = title.Version
+			log.Printf("[nx-baas] friends app catalog for %s -> %q", appID, name)
+		} else {
+			// A title this server does not carry: the console asked about
+			// something a friend is playing that we have never seen. An empty
+			// name map is the honest answer, and it renders as "unknown".
+			log.Printf("[nx-baas] friends app catalog for %s -> not in the catalog", appID)
+		}
+		writeJSON(w, 200, doc)
 		return true
-	case strings.HasSuffix(file, ".jpg"):
-		log.Printf("[nx-baas] friends app art %s/%s (placeholder pixel)", appID, file)
-		w.Header().Set("Content-Type", "image/png")
+	case strings.HasSuffix(file, ".jpg"), strings.HasSuffix(file, ".png"):
+		if title != nil && title.IconPath != "" {
+			if b, err := os.ReadFile(s.shop.dir + "/" + title.IconPath); err == nil {
+				w.Header().Set("Content-Type", "image/jpeg")
+				w.Header().Set("Cache-Control", "public, max-age=3600")
+				w.Write(b)
+				log.Printf("[nx-baas] friends app art %s/%s -> catalog icon", appID, file)
+				return true
+			}
+		}
+		// No art for this title: the same neutral mark the shop grid uses,
+		// rather than a 404 the console has to render around.
+		log.Printf("[nx-baas] friends app art %s/%s -> placeholder", appID, file)
+		w.Header().Set("Content-Type", "image/svg+xml")
 		w.Header().Set("Cache-Control", "public, max-age=3600")
-		w.Write(placeholderPixel)
+		fmt.Fprint(w, shopPlaceholderIcon)
 		return true
 	}
 	return false
 }
 
-// placeholderPixel is a 1x1 transparent PNG, encoded once at startup: the
-// smallest thing that is a valid image, for art we do not have.
-var placeholderPixel = func() []byte {
-	var buf bytes.Buffer
-	img := image.NewNRGBA(image.Rect(0, 0, 1, 1))
-	if err := png.Encode(&buf, img); err != nil {
+// shopTitles lists the catalog under its lock.
+func (s *server) shopTitles() []*ShopTitle {
+	if s.shop == nil {
 		return nil
 	}
-	return buf.Bytes()
-}()
+	s.shop.mu.Lock()
+	defer s.shop.mu.Unlock()
+	out := make([]*ShopTitle, 0, len(s.shop.Catalog))
+	for _, t := range s.shop.Catalog {
+		out = append(out, t)
+	}
+	return out
+}
+
+// shopTitleByAppID resolves the friends module's 128-bit application id against
+// the catalog's 64-bit title ids: the title id is the id's upper half, and an
+// exact 16-digit id is accepted as-is.
+func (s *server) shopTitleByAppID(appID string) *ShopTitle {
+	if s.shop == nil {
+		return nil
+	}
+	id := strings.ToLower(appID)
+	if len(id) >= 16 {
+		id = id[:16]
+	}
+	s.shop.mu.Lock()
+	defer s.shop.mu.Unlock()
+	return s.shop.Catalog[id]
+}
+
+// shopTitleText picks the display name and the localized name map for a title.
+func shopTitleText(t *ShopTitle) (string, map[string]any) {
+	names := map[string]any{}
+	for lang, text := range t.Localized {
+		if text.Name != "" {
+			names[lang] = text.Name
+		}
+	}
+	name := ""
+	if text, ok := t.Localized[t.DefaultLang]; ok {
+		name = text.Name
+	}
+	if name == "" {
+		for _, text := range t.Localized {
+			if text.Name != "" {
+				name = text.Name
+				break
+			}
+		}
+	}
+	return name, names
+}
+
+// shopPlaceholderIcon is the neutral mark the shop grid falls back to; kept
+// here so the friends art route and the shop agree on what "no icon" looks like.
+const shopPlaceholderIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"><rect width="128" height="128" rx="16" fill="#4338ca"/><circle cx="64" cy="64" r="34" fill="none" stroke="#fff" stroke-width="8" opacity=".9"/><circle cx="64" cy="64" r="10" fill="#fff" opacity=".95"/></svg>`

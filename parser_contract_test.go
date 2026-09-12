@@ -10,9 +10,7 @@ package main
 // false-stays-false rule.
 
 import (
-	"bytes"
 	"encoding/json"
-	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -418,18 +416,62 @@ func TestUnservedModuleRoutesAnswer(t *testing.T) {
 	}
 }
 
-// The art route answers with a real image: a console that cannot decode what it
-// gets renders worse than one that gets a transparent pixel.
-func TestFriendAppArtIsAValidImage(t *testing.T) {
-	s := &server{store: loadStore(t.TempDir() + "/baas.json")}
-	r := httptest.NewRequest("GET", "https://frs.srv.nintendo.net/v1/apps/0100abcd00001000/icon.jpg", nil)
-	r.Host = "frs.srv.nintendo.net"
-	w := httptest.NewRecorder()
-	s.ServeHTTP(w, r)
-	if w.Code != 200 {
-		t.Fatalf("art = %d", w.Code)
+// The friends module asks about the title a friend is playing by its 128-bit
+// application id; the catalog is keyed by the 64-bit title id, which is that
+// id's upper half. A title we carry answers with its real name and icon.
+func TestFriendAppCatalogAnswersFromTheShopCatalog(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(dir+"/icon.jpg", []byte("\xff\xd8\xff-not-really-a-jpeg"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := png.Decode(bytes.NewReader(w.Body.Bytes())); err != nil {
-		t.Errorf("placeholder is not a decodable image: %v", err)
+	s := &server{store: loadStore(dir + "/baas.json"), shop: newShopState(dir)}
+	s.shop.Catalog["0100abcd00001000"] = &ShopTitle{
+		TitleID: "0100abcd00001000", Publisher: "OpenPak", IconPath: "icon.jpg",
+		DefaultLang: "en-GB", Localized: map[string]ShopText{"en-GB": {Name: "Test Title"}},
+	}
+
+	get := func(path string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("GET", "https://frs.srv.nintendo.net"+path, nil)
+		r.Host = "frs.srv.nintendo.net"
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, r)
+		return w
+	}
+
+	w := get("/v1/apps/0100abcd000010000000000000000000/catalog.json")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "Test Title") {
+		t.Errorf("catalog = %d %s", w.Code, w.Body.String())
+	}
+	if w := get("/v1/apps/0100abcd000010000000000000000000/icon.jpg"); w.Code != 200 || !strings.Contains(w.Body.String(), "not-really-a-jpeg") {
+		t.Errorf("art did not come from the catalog: %d %q", w.Code, w.Body.String())
+	}
+	// A title this server does not carry still answers, so the console renders
+	// "unknown" instead of failing.
+	if w := get("/v1/apps/dead000000000000dead000000000000/catalog.json"); w.Code != 200 {
+		t.Errorf("unknown title = %d", w.Code)
+	}
+	if w := get("/v1/apps/dead000000000000dead000000000000/icon.jpg"); w.Code != 200 || !strings.Contains(w.Body.String(), "<svg") {
+		t.Errorf("unknown art = %d", w.Code)
+	}
+}
+
+// The catalogue search answers from the shop catalog, not with an empty list.
+func TestAcdSearchFindsCatalogTitles(t *testing.T) {
+	dir := t.TempDir()
+	s := &server{store: loadStore(dir + "/baas.json"), shop: newShopState(dir)}
+	s.shop.Catalog["0100abcd00001000"] = &ShopTitle{
+		TitleID: "0100abcd00001000", DefaultLang: "en-GB",
+		Localized: map[string]ShopText{"en-GB": {Name: "Test Title"}},
+	}
+	for _, tc := range []struct{ query, want string }{
+		{"", "Test Title"}, {"?q=test", "Test Title"}, {"?q=nothing", `"count":0`},
+	} {
+		r := httptest.NewRequest("GET", "https://api.hac.lp1.nim.nintendo.net/v1/acds/search"+tc.query, nil)
+		r.Host = "api.hac.lp1.nim.nintendo.net"
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, r)
+		if w.Code != 200 || !strings.Contains(w.Body.String(), tc.want) {
+			t.Errorf("search%q = %d %s; want %s", tc.query, w.Code, w.Body.String(), tc.want)
+		}
 	}
 }
