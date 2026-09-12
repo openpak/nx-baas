@@ -101,8 +101,14 @@ func TestPresenceChangeNotifiesFriendsOnceAndOnlyOnChange(t *testing.T) {
 	if got, _ := queue[0].Payload["friendId"].(string); got != subject.ID {
 		t.Fatalf("presence names %q, want the subject %q", got, subject.ID)
 	}
-	if got, _ := queue[0].Payload["state"].(string); got != "ONLINE" {
-		t.Fatalf("state %q, want ONLINE", got)
+	// The state lives under $.value, which is where the console's parser
+	// reads it; friendId stays at the top for our own surfaces.
+	value, _ := queue[0].Payload["value"].(map[string]any)
+	if got, _ := value["state"].(string); got != "ONLINE" {
+		t.Fatalf("state %q, want ONLINE (payload %v)", got, queue[0].Payload)
+	}
+	if got, _ := value["userId"].(string); got != subject.ID {
+		t.Fatalf("value.userId = %q, want %q", got, subject.ID)
 	}
 
 	// A renewal at the same state changes nothing the friend needs told.
@@ -117,8 +123,14 @@ func TestPresenceChangeNotifiesFriendsOnceAndOnlyOnChange(t *testing.T) {
 	if len(queue) != 1 {
 		t.Fatalf("presence updates did not coalesce: %d pending", len(queue))
 	}
-	if got, _ := queue[0].Payload["state"].(string); got != "PLAYING" {
+	value, _ = queue[0].Payload["value"].(map[string]any)
+	if got, _ := value["state"].(string); got != "PLAYING" {
 		t.Fatalf("coalesced state %q, want the latest (PLAYING)", got)
+	}
+	extras, _ := value["extras"].(map[string]any)
+	friends, _ := extras["friends"].(map[string]any)
+	if got, _ := friends["appInfo:appId"].(string); got != "0100000000010000" {
+		t.Errorf("the title the friend started is not in the event: %v", friends)
 	}
 }
 
@@ -194,4 +206,23 @@ func TestInvitationNotifyWithoutWiringIsHarmless(t *testing.T) {
 	invitationNotify = nil
 	notifyCommitted(InvitationEvent{EventID: "invitation:1", ReceiverID: "nobody"})
 	_ = time.Now()
+}
+
+// The presence event's shape is the parser's, not ours: the presence nests
+// under $.value with the friend's id inside it, the event's own stamp is
+// $.createdAt, and the app fields keep the types the console publishes them in
+// [firmware, friends module 0xa7510].
+func TestPresenceEventCarriesTheParsersShape(t *testing.T) {
+	p := Presence{State: "PLAYING", AppID: "0100000000010000", AppField: "AA==",
+		PresenceGroupID: "0100000000010000", ACDIndex: 3, UpdatedAt: 100, LogoutAt: 0}
+	extras := presenceEventExtras(p)
+	if extras["appInfo:appId"] != "0100000000010000" || extras["appInfo:acdIndex"] != 3 {
+		t.Errorf("extras = %v", extras)
+	}
+	// Nothing published means nothing sent, rather than zero values that read
+	// as "index 0" and "title 0000000000000000".
+	empty := presenceEventExtras(Presence{State: "ONLINE", ACDIndex: -1})
+	if len(empty) != 0 {
+		t.Errorf("extras for a bare ONLINE = %v, want empty", empty)
+	}
 }

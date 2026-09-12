@@ -128,12 +128,47 @@ func (s *server) notifyPresenceIfChanged(userID, before string) {
 			ID:     fmt.Sprintf("presence:%s:%s:%d:%s", u.ID, viewer.ID, agg.UpdatedAt, after),
 			UserID: viewer.ID,
 			Kind:   EventPresenceUpdated,
+			// The parser's own paths, recovered from the module: the presence
+			// nests under $.value with the friend's id inside it, and the
+			// event's own timestamp is $.createdAt (camelCase here, while an
+			// invitation event uses $.created_at — each follows its own REST
+			// surface). Numbers stay numbers: pf and acdIndex are read as
+			// bytes, the timestamps as 64-bit
+			// [firmware, friends module 0xa7510].
 			Payload: map[string]any{
-				"friendId": u.ID,
-				"state":    agg.State,
+				"friendId":  u.ID, // kept: our own surfaces read it
+				"createdAt": agg.UpdatedAt,
+				"value": map[string]any{
+					"userId":    u.ID,
+					"state":     agg.State,
+					"updatedAt": agg.UpdatedAt,
+					"logoutAt":  agg.LogoutAt,
+					"extras":    map[string]any{"friends": presenceEventExtras(agg)},
+				},
 			},
 		})
 	}
+}
+
+// presenceEventExtras renders the app fields a presence event carries, with the
+// types the console publishes them in: the ids as quoted 16-hex strings, the
+// catalog index as a number, and nothing at all when the console published
+// nothing (docs/switch/firmware-22.5.0-followup-2026-09-12.md §15).
+func presenceEventExtras(p Presence) map[string]any {
+	out := map[string]any{}
+	if p.AppField != "" {
+		out["appField"] = p.AppField
+	}
+	if p.AppID != "" {
+		out["appInfo:appId"] = p.AppID
+	}
+	if p.PresenceGroupID != "" {
+		out["appInfo:presenceGroupId"] = p.PresenceGroupID
+	}
+	if p.ACDIndex >= 0 {
+		out["appInfo:acdIndex"] = p.ACDIndex
+	}
+	return out
 }
 
 // ---------- invitations (C's seam) ----------
@@ -159,6 +194,9 @@ func (s *server) wireInvitationNotifications() {
 					"invitation_group_id": ev.GroupID,
 				},
 				"unread_count": ev.UnreadCount,
+				// Read by the invitation event's numeric parser beside the
+				// invitation itself [firmware, 0xa9870].
+				"created_at": time.Now().Unix(),
 			},
 		})
 	}
