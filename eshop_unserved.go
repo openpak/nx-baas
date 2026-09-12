@@ -109,6 +109,17 @@ func (s *server) nimUnserved(w http.ResponseWriter, r *http.Request, body []byte
 		w.WriteHeader(http.StatusOK)
 		return true
 
+	// "What is the newest version of this application?" — NIM's update check
+	// [nim: /v1/a/%016llx/dv, built at 0x1ecbe0]. The response document's
+	// field names are not recovered, and a version record is exactly the kind
+	// of answer that must not be invented: a wrong version number starts a
+	// download of something that does not exist. 404 is how a server says it
+	// knows of no update, which is true here, and the request is recorded.
+	case strings.HasPrefix(p, "/v1/a/") && strings.HasSuffix(p, "/dv"):
+		dump(r, body, "!! ESHOP version lookup (response shape unrecovered)")
+		writeJSON(w, 404, map[string]any{"status": 404, "title": "no version record"})
+		return true
+
 	// The eShop's own catalogue search [nim: /v1/acds/search]. Answered from
 	// the shop catalog rather than with an empty list: the console is asking
 	// what this store has, and this store knows. The entry shape mirrors the

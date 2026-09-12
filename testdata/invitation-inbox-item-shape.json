@@ -8,8 +8,16 @@
  "application_data": "str",
  "application_id_match": "bool",
  "acd_index": "int",
- "messages": {"en-US": "str"},
+ "messages": {
+  "en-US": "str"
+ },
  "read": "bool",
  "created_at": "int",
- "updated_at": "int"
+ "updated_at": "int",
+ "receiver_id": "str",
+ "extras": {
+  "receiver": {
+   "read": "bool"
+  }
+ }
 }

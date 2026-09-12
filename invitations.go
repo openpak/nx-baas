@@ -899,6 +899,13 @@ func invitationInboxItem(inv *invitationRecord) map[string]any {
 	if len(inv.Messages) > 0 {
 		obj["messages"] = inv.Messages
 	}
+	// Two more the friends module reads off an inbox item [firmware,
+	// $.items[*].receiver_id and $.items[*].extras.receiver.read]: the
+	// recipient it is addressed to, and the same read state it already has at
+	// the top level, where the module looks for it a second time. Both are
+	// facts we hold — neither is a guess.
+	obj["receiver_id"] = inv.ReceiverID
+	obj["extras"] = map[string]any{"receiver": map[string]any{"read": inv.Read}}
 	return obj
 }
 
