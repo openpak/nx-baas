@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -199,4 +200,13 @@ func TestOnlineNotificationPreferenceGatesOnlyPresence(t *testing.T) {
 	if !seen["ev-req"] {
 		t.Fatalf("social event not delivered: %v", seen)
 	}
+}
+
+// The delivery pipeline's tests still drive the old MessageRequest carrier:
+// they check queueing, policy, retry, dedup and replay, which are carrier
+// independent. Production holds events instead, because a console in the
+// steady state drops the connection on a type it does not accept.
+func TestMain(m *testing.M) {
+	penneSendEvents = true
+	os.Exit(m.Run())
 }

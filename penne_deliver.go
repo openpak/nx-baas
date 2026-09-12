@@ -240,10 +240,26 @@ func (s *server) penneWake(userID string) {
 			if !h.allowed(PenneDelivery{ID: e.ID, UserID: e.UserID, Kind: e.Kind, Payload: e.Payload}, now) {
 				continue
 			}
+			if !penneSendEvents {
+				// The carrier is known wrong: the steady state accepts
+				// PutRecord and nine other types and answers anything else
+				// with "Unexpected command ... received in steady state" by
+				// dropping the connection, so sending on the MessageRequest
+				// carrier would cost us the channel. The event stays queued
+				// for the record store (docs/penne-protocol.md §4d).
+				log.Printf("[nx-baas] penne: %s for user=%s held: no record carrier yet (event %s)", e.Kind, e.UserID, e.ID)
+				continue
+			}
 			sess.offer(e.ID, penneEventFrame(e))
 		}
 	}
 }
+
+// penneSendEvents gates delivery on the old MessageRequest carrier. It is off
+// everywhere but the pipeline's own tests: a console in the steady state drops
+// the connection when it receives a type it does not accept, and MessageRequest
+// is one of those. It goes away when deliveries become records.
+var penneSendEvents = false
 
 // penneEventFrame converts a queued delivery into its wire frame. The carrier
 // slot and payload field are the marked hypotheses (docs/penne-protocol.md);
