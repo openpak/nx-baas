@@ -1,4 +1,7 @@
 {
- "count": "int",
- "items": ["<object>"]
+  "count": "int",
+  "items": [
+    "<object>"
+  ],
+  "original_count": "int"
 }

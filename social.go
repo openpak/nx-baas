@@ -74,12 +74,19 @@ func (s *server) relationshipObj(viewer *User, f Friend, now int64) map[string]a
 	if pref != nil && pref.UpdatedAt > updatedAt {
 		updatedAt = pref.UpdatedAt
 	}
+	note := ""
+	if pref != nil {
+		note = pref.Note
+	}
 	return map[string]any{
 		"friendId":   f.BaasUserID,
 		"friend":     user,
 		"isFavorite": pref != nil && pref.Favorite,
 		"createdAt":  created,
 		"updatedAt":  updatedAt,
+		// The list parser reads a note per entry [firmware,
+		// $.items[*].friendNote]; unset is the empty string, not an absent key.
+		"friendNote": note,
 		"extras": map[string]any{
 			"self": map[string]any{
 				"isConfirmed":          pref != nil && pref.Confirmed,

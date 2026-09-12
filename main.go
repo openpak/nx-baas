@@ -1435,6 +1435,12 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			"isFriend": false, "isFavoriteFriend": false, "isBlocking": false,
 			"sentFriendRequestIds": []string{},
 		}
+		// The console renders the person, not just the verdict: it reads
+		// targetUser.nickname and targetUser.thumbnailUrl off this reply
+		// [firmware, friends module]. Resolving costs one core lookup.
+		if f := s.resolveFriend(seg[3]); f != nil {
+			rel["targetUser"] = s.friendObj(*f, now)
+		}
 		for _, b := range me.Blocks {
 			if b == seg[3] {
 				rel["isBlocking"] = true
@@ -1630,7 +1636,11 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			},
 			"analyticsOptedIn": false, "analyticsOptedInUpdatedAt": int64(1524557701),
 			"analyticsPermissions": map[string]any{"dataCollection": perm(false), "internalAnalysis": perm(true), "targetMarketing": perm(false)},
-			"birthday":             birthday, "clientFriendsOptedIn": true, "clientFriendsOptedInUpdatedAt": int64(1524557701),
+			// nn.account reads $.summary.nintendo.hasMembership here
+			// [firmware, account module 0x18000a]; capi answers the same
+			// question on /memberships and must not disagree with it.
+			"summary":  map[string]any{"nintendo": map[string]any{"hasMembership": true}},
+			"birthday": birthday, "clientFriendsOptedIn": true, "clientFriendsOptedInUpdatedAt": int64(1524557701),
 			"country": country, "createdAt": int64(1524557701),
 			"eachEmailOptedIn": map[string]any{"deals": map[string]any{"optedIn": false, "updatedAt": int64(1524557701)}, "survey": map[string]any{"optedIn": false, "updatedAt": int64(1524557701)}},
 			"email":            "legacy@example.com", "emailOptedIn": false, "emailOptedInUpdatedAt": int64(1524557701), "emailVerified": true,

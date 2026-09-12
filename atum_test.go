@@ -150,14 +150,14 @@ func TestAtumHashManifestMatchesTheCatalog(t *testing.T) {
 		t.Fatalf("manifest = %d", rec.Code)
 	}
 	var m struct {
-		Hashes []string `json:"hashes"`
-		Size   int64    `json:"size"`
+		Hashes []string `json:"partitioned_content_hashes"`
+		Size   int64    `json:"content_size"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &m); err != nil {
 		t.Fatalf("manifest is not JSON: %v", err)
 	}
 	if len(m.Hashes) != 1 || m.Hashes[0] != sha256Hex(content) {
-		t.Errorf("manifest hashes %v, want the catalog's pin", m.Hashes)
+		t.Errorf("partitioned_content_hashes %v, want the catalog's pin", m.Hashes)
 	}
 	if m.Size != int64(len(content)) {
 		t.Errorf("manifest size %d, want %d", m.Size, len(content))

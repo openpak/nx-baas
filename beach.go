@@ -462,13 +462,13 @@ func (s *server) dragons(w http.ResponseWriter, r *http.Request, body []byte) {
 			tid := titleIDForRights(rid)
 			available := false
 			reason := "no_rights"
-			etype := ""
+			etype, matched := "", ""
 			for _, account := range accounts {
 				e := s.shop.entitlementFor(account, tid)
 				if e == nil {
 					continue
 				}
-				etype = e.ELicenseType
+				etype, matched = e.ELicenseType, account
 				if e.Status == "active" {
 					available = true
 					reason = ""
@@ -478,8 +478,13 @@ func (s *server) dragons(w http.ResponseWriter, r *http.Request, body []byte) {
 				}
 				break
 			}
+			// NIM also reads account_id and come_back_after off each entry
+			// [firmware, $.available_elicenses[%u].*]; eticket_id and
+			// release_date are read too but we have no defensible value for
+			// either until an eticket can be minted, so they stay absent.
 			items = append(items, map[string]any{
 				"rights_id": rid, "is_available": available, "reason": reason, "elicense_type": etype,
+				"account_id": matched, "come_back_after": 0,
 			})
 		}
 		writeJSON(w, 200, map[string]any{"available_elicenses": items})

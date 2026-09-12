@@ -349,3 +349,42 @@ func itoa(n int) string {
 	}
 	return digits
 }
+
+// Fields the 22.5.0 modules parse that this adapter used to leave out. Each is
+// named by a firmware string, not by inference: the friend list reads a note
+// per entry, the relationship reply is rendered as a person, and nn.account
+// reads its membership summary off users/me.
+func TestFieldsTheModulesParseArePresent(t *testing.T) {
+	s, _, users := socialServer(t)
+	a, b := users[0], users[1]
+	_, req := postRequest(t, s, a, `{"receiverId":"`+b.ID+`"}`)
+	if code, _ := answerRequest(t, s, b, "PATCH", req["id"].(string),
+		`[{"op":"replace","path":"/state","value":"AUTHORIZED"}]`); code != http.StatusOK {
+		t.Fatal("accept failed")
+	}
+
+	r := authed("GET", "/2.0.0/users/"+b.ID+"/friends", "", b, s)
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+	var list struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil || len(list.Items) != 1 {
+		t.Fatalf("friend list: %v %s", err, w.Body)
+	}
+	if _, ok := list.Items[0]["friendNote"]; !ok {
+		t.Error("list entry has no friendNote")
+	}
+
+	r = authed("GET", "/2.0.0/users/"+b.ID+"/relationships/"+a.ID, "", b, s)
+	w = httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+	var rel map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &rel); err != nil {
+		t.Fatalf("relationship: %v", err)
+	}
+	target, ok := rel["targetUser"].(map[string]any)
+	if !ok || target["nickname"] == "" || target["thumbnailUrl"] == "" {
+		t.Errorf("relationship reply has no renderable targetUser: %v", rel["targetUser"])
+	}
+}

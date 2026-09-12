@@ -127,13 +127,19 @@ func (s *server) atum(w http.ResponseWriter, r *http.Request, body []byte) {
 	s.serveContentRange(w, r, path, c, titleID, device)
 }
 
-// atumHashes answers the /d route. The wiki names the route ("JSON object containing
-// content hashes") but not the field names; this shape carries the sha256 the catalog
-// vouches for. Field names are a named hypothesis: a hardware capture settles them.
+// atumHashes answers the /d route with the field names NIM's own parser reads
+// [firmware, nim strings]. The wiki names the route ("JSON object containing
+// content hashes") but not its fields; these come from the module.
 func (s *server) atumHashes(w http.ResponseWriter, titleID, contentID string, c ShopContent) {
 	writeJSON(w, 200, map[string]any{
+		// Names from NIM's own parser [firmware, nim strings]: content_size,
+		// partitioned_content_hashes[%d] and partitioning_size. "size" and
+		// "hashes" were this file's own guesses and NIM reads neither.
+		// digest_algorithm_for_partitioned_content is read too; its value
+		// space is not recovered, so it is left out rather than invented.
 		"content_id": contentID, "title_id": titleID,
-		"size": c.Size, "hashes": []string{c.SHA256},
+		"content_size": c.Size, "partitioning_size": c.Size,
+		"partitioned_content_hashes": []string{c.SHA256},
 	})
 }
 

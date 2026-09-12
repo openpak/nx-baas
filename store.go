@@ -52,7 +52,10 @@ type FriendPreference struct {
 	Favorite           bool  `json:"favorite"`
 	Confirmed          bool  `json:"confirmed"`
 	OnlineNotification *bool `json:"onlineNotification,omitempty"`
-	UpdatedAt          int64 `json:"updatedAt"`
+	// Note is the viewer's own note on this friend; the list parser reads one
+	// per entry [firmware, $.items[*].friendNote]. Nothing sets it yet.
+	Note      string `json:"note,omitempty"`
+	UpdatedAt int64  `json:"updatedAt"`
 }
 
 // FriendRequestRecord is the durable identity of one friend request (SOC-03):

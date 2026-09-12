@@ -863,10 +863,13 @@ func (s *server) invitationInbox(w http.ResponseWriter, r *http.Request, uid str
 	st.mu.Unlock()
 
 	if countOnly {
-		writeJSON(w, 200, map[string]any{"count": count})
+		writeJSON(w, 200, map[string]any{"count": count, "original_count": count})
 		return
 	}
-	writeJSON(w, 200, map[string]any{"count": count, "items": list})
+	// The console reads $.original_count beside $.count [firmware, friends
+	// module]: the total before this page's slice, which is the same number
+	// here because the inbox is answered whole.
+	writeJSON(w, 200, map[string]any{"count": count, "original_count": count, "items": list})
 }
 
 func invitationInboxItem(inv *invitationRecord) map[string]any {
