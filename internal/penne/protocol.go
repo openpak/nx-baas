@@ -649,6 +649,21 @@ func BuildSubscriptionUpdated(v uint64) []byte {
 	return b.FinishEnvelope(TypeSubscriptionUpdated, payload)
 }
 
+// BuildHandoverResult encodes the message the console waits for as soon as the
+// frontline response opens. Its state machine at RVA 0xd9730 reads exactly one
+// message with a 70-second deadline and accepts only HandoverResult (0x0c) or
+// Reset (0x0d); anything else is logged as
+// "HandoverResult expected, but \"%s\"(%d) received." and fails the connection.
+// The payload is a table whose field 0 is a byte: zero continues to normal
+// operation, non-zero sends the console down the retry path [firmware].
+func BuildHandoverResult(result byte) []byte {
+	b := NewBuilder(32)
+	b.StartTable(1)
+	b.PrependU8Slot(0, result)
+	payload := b.EndTable()
+	return b.FinishEnvelope(TypeHandoverResult, payload)
+}
+
 // BuildEmpty encodes an envelope whose payload table has no fields. Hi (0x20),
 // SyncComplete (0x08) and SubscriptionListRequest (0x1c) are logged by the
 // module with no payload fields, so this is their shape.

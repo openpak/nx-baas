@@ -113,13 +113,13 @@ func (s *server) frontlineHeldOpen(w http.ResponseWriter, r *http.Request, rec *
 	defer cancel()
 	log.Printf("[nx-baas] penne frontline: open user=%s device=%s", rec.UserID, rec.DeviceID)
 
-	// The console opens the connection and then waits: in production it held
-	// one open for 65 seconds and sent nothing at all (frames_in 0). Hi (0x20)
-	// is the slot named for an opening message and the module logs it with no
-	// payload fields [firmware], so the server greets first and the client's
-	// answer — or continued silence — settles whether that is the handshake.
-	// [hypothesis, docs/penne-protocol.md §4]
-	if err := penne.WriteFrame(w, penne.BuildEmpty(penne.TypeHi)); err != nil {
+	// The console reads exactly one message here, with a 70-second deadline,
+	// and accepts only HandoverResult or Reset (RVA 0xd9730): everything else
+	// is "HandoverResult expected, but ...received" and the connection fails.
+	// A zero result continues to normal operation, where it sends its
+	// subscription list. This is why a connection held open in silence closed
+	// itself after ~65 seconds having sent nothing [firmware, 2026-09-12].
+	if err := penne.WriteFrame(w, penne.BuildHandoverResult(0)); err != nil {
 		return
 	}
 	fl.Flush()
@@ -220,8 +220,8 @@ func (s *server) frontlineStream(w http.ResponseWriter, r *http.Request, rec *pe
 		}
 		return brw.Writer.Flush()
 	}
-	// Same opening greeting as the finite-body path.
-	if err := writeChunk(penne.AppendFrame(nil, penne.BuildEmpty(penne.TypeHi))); err != nil {
+	// Same handover as the finite-body path.
+	if err := writeChunk(penne.AppendFrame(nil, penne.BuildHandoverResult(0))); err != nil {
 		return
 	}
 	s.notifStore().framesOut.Add(1)

@@ -69,8 +69,14 @@ fallback is provisional and a hardware capture should settle the real shapes.
   on a live connection is therefore the designed behaviour, not a symptom** —
   the console's own messages must travel as separate requests, and waiting for
   uplink frames on the held-open POST waits forever.
-- **Server → client:** symmetric length-prefix framing is the working
-  hypothesis [hypothesis]. The response is held open and streamed; whether the
+- **Server → client: four-byte little-endian length, then exactly that many
+  bytes** [firmware, 2026-09-12 — confirmed, no longer a hypothesis]. The
+  decoder is fed one byte at a time at RVA `0x1e8d70`: it collects four bytes,
+  reads them as a `uint32` length, rejects a **zero length** (error `0x703`)
+  and a length past its buffer (`0x303`), then collects exactly that many bytes
+  and marks the message complete. `0x1e8d50` initialises it (header mode on),
+  `0x1e8e00` reports completeness. The send direction is the same shape, so the
+  framing is symmetric after all. The response is held open and streamed; whether the
   console's parser expects chunked transfer encoding around those frames is
   part of the same open question. The implementation sends
   `Transfer-Encoding: chunked` (hand-written after hijack) so both a
@@ -153,7 +159,8 @@ firmware shows:
 | --- | --- | --- |
 | Pong (echoing Ping f0) | inbound Ping | shape [firmware]; echo [hypothesis] |
 | SubscriptionUpdated (unix second) | inbound SubscribeTopic | shape [firmware]; meaning of value + whether a reply is required within the 10 s deadline [hypothesis] |
-| Hi (0x20), no payload, on connect | connection accepted | **[hypothesis]** — the console held a production connection open for 65 s and sent nothing (frames_in 0, subscriptions 0), so the server greets first; Hi is the slot named for an opening message and the module logs it with no payload fields [firmware]. The client's first frame settles it |
+| HandoverResult (0x0c), field 0 = 0, on connect | connection accepted | **[firmware]** — the console reads exactly this message before anything else (§4b) |
+| ~~Hi (0x20), no payload~~ | superseded | was a hypothesis; the console rejects it by name
 | Event (MessageRequest carrier, JSON string payload f0) | outbox delivery | **[hypothesis] end to end** — the carrier slot and payload field are candidates, chosen because the friends module's event parser demonstrably reads a JSON `type` field from somewhere in this path [firmware, friends module `0xA43B0`/`0xA15C0`], and MessageRequest/PublishRequest are the unplumbed slots |
 
 The five native event kinds the dispatcher recognizes [firmware]:
@@ -184,6 +191,27 @@ console subscribes to a topic — `subscriptions` is still 0 — the likeliest
 mechanism is the topic a message is published to rather than a field in the
 event frame, since the console's SubscribeTopic builder formats a topic as
 `%016llx` of a u64 [firmware `0xEAA10`].
+
+## 4b. The opening handshake: HandoverResult, not silence
+
+The state the console enters once the frontline response opens (RVA `0xd9730`)
+reads **exactly one message** with a 70-second deadline (`0xd2100`, timeout
+`70000000000` ns) and accepts only two types:
+
+- `HandoverResult` (0x0c) — its payload table's **field 0 is a byte**: zero
+  continues to normal operation, non-zero sends the console down the retry path
+  at `0xda010`. An absent field reads as zero.
+- `Reset` (0x0d) — `0xd9b30`.
+
+Anything else is logged as *"HandoverResult expected, but \"%s\"(%d)
+received."* and fails the connection. That is what a console holding a silent
+connection for ~65 seconds was doing: waiting out its 70-second deadline for a
+handover that never came, then reconnecting.
+
+On a zero result the console proceeds to `0xda1a0`, which **sends** — it builds
+a list of up to 100 items (`0xb1c40`) and serialises it through the send path
+(`0xd4010`). That is the subscription sync we have never seen arrive: it comes
+after the handover, not before it.
 
 ## 5. Connection lifecycle (implemented)
 

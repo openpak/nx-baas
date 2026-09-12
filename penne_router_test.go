@@ -65,9 +65,9 @@ func frontlineDial(t *testing.T, ts *httptest.Server, ticket string, hello []byt
 }
 
 // expectGreeting consumes the frame the server sends as soon as the connection
-// is accepted. The console held a production connection open for 65 seconds and
-// sent nothing, so the server speaks first (penne_conn.go); every frontline test
-// starts by reading that greeting.
+// is accepted: the console's state machine reads exactly one message with a
+// 70-second deadline and accepts only HandoverResult or Reset, so every
+// frontline test starts by reading that handover.
 func expectGreeting(t *testing.T, fr *penne.FrameReader) {
 	t.Helper()
 	frame, err := fr.Next()
@@ -78,8 +78,16 @@ func expectGreeting(t *testing.T, fr *penne.FrameReader) {
 	if err != nil {
 		t.Fatalf("greeting malformed: %v", err)
 	}
-	if env.Type() != penne.TypeHi {
-		t.Fatalf("first frame = %s, want Hi", env.TypeName())
+	if env.Type() != penne.TypeHandoverResult {
+		t.Fatalf("first frame = %s, want HandoverResult", env.TypeName())
+	}
+	// Field 0 is the byte the console tests: zero continues, non-zero retries.
+	payload, ok := env.Payload()
+	if !ok {
+		t.Fatal("handover has no payload table")
+	}
+	if v, ok := payload.U8(0); !ok || v != 0 {
+		t.Fatalf("handover result = %d (present=%v), want 0", v, ok)
 	}
 }
 
