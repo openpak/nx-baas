@@ -213,6 +213,27 @@ a list of up to 100 items (`0xb1c40`) and serialises it through the send path
 (`0xd4010`). That is the subscription sync we have never seen arrive: it comes
 after the handover, not before it.
 
+## 4c. The rest of the opening sequence, as the firmware runs it
+
+Each state reads one message and accepts only the types it names; everything
+else is a logged type error and a failed connection. Addresses are ELF virtual
+(Ghidra +0x100000).
+
+| Step | Who | Message | Evidence |
+| --- | --- | --- | --- |
+| 1 | server | `HandoverResult` (0x0c), field 0 = 0 | state `0xd9730`, §4b |
+| 2 | console | a vector of up to 100 entries, each a **string name plus a 20-byte digest**, followed by a two-byte string and two timestamps (`now`, `now + 3600`) | builder `0x1eb310` (entry stride 0x34: 0x20 name + 0x14 hash), source list `0xb1c40`, sent through `0xd4010` from state `0xda1a0` |
+| 3 | server | `RootHash` (0x06) **or** `LeafHash` (0x07) — or `Reset` (0x0d) | state `0xda2f0`: *"LeafHash/RootHash expected, but \"%s\"(%d) received."* |
+| 4 | both | record reconciliation: the `RootHash` handler (`0x1dab90`) parses a vector of entries carrying string names, then state `0xdba50` merges two sorted sets of **32-byte keys** — the client's records against the server's — which is what `PutRecord` (0x04), `DeleteRecord` (0x05) and `SyncComplete` (0x08) are for. `LeafHash` takes the parallel path (`0x1da490` → `0xdb120`). |
+| 5 | server | events, once the set is in sync | carrier still **[hypothesis]** |
+
+So this is a Merkle-style subscription sync, not a plain "subscribe and push":
+the console offers digests of what it holds, and the server answers with hashes
+until the two agree. **Step 3 is the next thing to implement**, and step 2's
+payload — which is what tells us the exact slot numbers — is the message the
+console will send us the moment its uplink reaches the handler. Unknown inbound
+frames are logged with their bytes for exactly this reason.
+
 ## 5. Connection lifecycle (implemented)
 
 1. `POST https://<frontline>/` with `Authorization: Bearer <login ticket>`,
