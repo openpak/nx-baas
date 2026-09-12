@@ -375,3 +375,24 @@ func TestConsoleAccountIDsAreRecordedNotDerived(t *testing.T) {
 		t.Errorf("AccountsFor(unknown) = %v", got)
 	}
 }
+
+// A ticket minted before the console signed in to BAAS names the device
+// certificate; once the login records which account is on that console, a
+// connection opened with the old ticket must still deliver to the account.
+func TestSessionResolvesACertificateTicketToItsAccount(t *testing.T) {
+	s := &server{}
+	store := s.notifStore()
+	const cert, user = "cert-dddddddddddd0001", "aaaaaaaaaaaa0001"
+	rec := &penneTicketRec{PenneID: "p1", UserID: cert, DeviceID: "device-a"}
+
+	if got := s.sessionUser(rec); got != cert {
+		t.Errorf("before the login the session is the ticket's own subject, got %s", got)
+	}
+	store.BindConsole(cert, user)
+	if got := s.sessionUser(rec); got != user {
+		t.Errorf("session user = %s, want the account %s", got, user)
+	}
+	if got := s.sessionUser(&penneTicketRec{UserID: user}); got != user {
+		t.Errorf("an account ticket must be left alone, got %s", got)
+	}
+}

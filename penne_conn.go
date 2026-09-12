@@ -104,7 +104,7 @@ func (s *server) frontlineHeldOpen(w http.ResponseWriter, r *http.Request, rec *
 
 	ctx, cancel := context.WithCancel(r.Context())
 	sess := &penneSession{
-		user: rec.UserID, device: rec.DeviceID, penneID: rec.PenneID,
+		user: s.sessionUser(rec), device: rec.DeviceID, penneID: rec.PenneID,
 		ctx: ctx, cancel: cancel, send: make(chan penneOutbound, penneSendQueue),
 		done: make(chan struct{}),
 	}
@@ -129,7 +129,7 @@ func (s *server) frontlineHeldOpen(w http.ResponseWriter, r *http.Request, rec *
 	go s.penneRead(sess, r.Body)
 
 	// Finite-body connections need the same offline replay as stream connections.
-	s.penneWake(rec.UserID)
+	s.penneWake(sess.user)
 
 	ticker := time.NewTicker(frontlineKeepalive)
 	defer ticker.Stop()
@@ -191,7 +191,7 @@ func (s *server) frontlineStream(w http.ResponseWriter, r *http.Request, rec *pe
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	sess := &penneSession{
-		user: rec.UserID, device: rec.DeviceID, penneID: rec.PenneID,
+		user: s.sessionUser(rec), device: rec.DeviceID, penneID: rec.PenneID,
 		ctx: ctx, cancel: cancel, send: make(chan penneOutbound, penneSendQueue),
 		done: make(chan struct{}),
 	}
@@ -205,7 +205,7 @@ func (s *server) frontlineStream(w http.ResponseWriter, r *http.Request, rec *pe
 
 	// Reconciliation first: anything the outbox owes this account goes out
 	// before new work (NTF-05 reconnect behavior).
-	s.penneWake(rec.UserID)
+	s.penneWake(sess.user)
 
 	writeChunk := func(frame []byte) error {
 		if _, err := fmt.Fprintf(brw.Writer, "%x\r\n", len(frame)); err != nil {
@@ -337,6 +337,22 @@ func (sess *penneSession) offer(id string, frame []byte) {
 	case sess.send <- penneOutbound{id: id, frame: frame}:
 	default:
 	}
+}
+
+// sessionUser is the account a live connection delivers for. A ticket minted
+// before its console signed in to BAAS carries the device certificate as its
+// subject, and the outbox is keyed by accounts — so the certificate is resolved
+// through what the login recorded. Without this a console reconnecting on an
+// old ticket is told there is nothing for it while its events expire.
+func (s *server) sessionUser(rec *penneTicketRec) string {
+	if rec == nil {
+		return ""
+	}
+	if u := s.notifStore().ResolveUser(rec.UserID); u != "" && u != rec.UserID {
+		log.Printf("[nx-baas] penne frontline: ticket names console %s; delivering for account %s", rec.UserID, u)
+		return u
+	}
+	return rec.UserID
 }
 
 // penneRead decodes the client's frames until the connection ends. A malformed
