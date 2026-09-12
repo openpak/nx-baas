@@ -155,7 +155,7 @@ func (s *server) photonRoom(w http.ResponseWriter, r *http.Request) {
 	// and not one request longer than the lease if the game never reports
 	// the departure.
 	s.noteDevicePresence(u, "photon:"+in.Identity, "PLAYING", in.AppID,
-		base64.StdEncoding.EncodeToString(appParam), in.AppID)
+		base64.StdEncoding.EncodeToString(appParam), in.AppID, -1)
 	log.Printf("[nx-baas] photon-room pid=%d app=%s room=%s", pid, in.AppID, in.Room)
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
@@ -182,7 +182,7 @@ func (s *server) photonRoomLeave(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, http.StatusBadRequest, "unknown identity")
 		return
 	}
-	s.noteDevicePresence(u, "photon:"+in.Identity, "OFFLINE", "", "", "")
+	s.noteDevicePresence(u, "photon:"+in.Identity, "OFFLINE", "", "", "", -1)
 	log.Printf("[nx-baas] photon-room-leave pid=%d", pid)
 	writeJSON(w, 200, map[string]any{"ok": true})
 }

@@ -16,8 +16,11 @@ type DeviceAccount struct {
 }
 
 type Presence struct {
-	State           string `json:"state"` // OFFLINE, INACTIVE, ONLINE, PLAYING
-	AppField        string `json:"appField"`
+	State    string `json:"state"` // OFFLINE, INACTIVE, ONLINE, PLAYING
+	AppField string `json:"appField"`
+	// ACDIndex is the catalog index the console publishes beside the title id;
+	// -1 means the console did not send one. Stored as sent, echoed as sent.
+	ACDIndex        int    `json:"acdIndex,omitempty"`
 	AppID           string `json:"appId"`
 	PresenceGroupID string `json:"presenceGroupId"`
 	UpdatedAt       int64  `json:"updatedAt"`
@@ -37,6 +40,7 @@ type DevicePresence struct {
 	State           string `json:"state"`    // OFFLINE, ONLINE, PLAYING
 	AppID           string `json:"appId,omitempty"`
 	AppField        string `json:"appField,omitempty"`
+	ACDIndex        int    `json:"acdIndex,omitempty"`
 	PresenceGroupID string `json:"presenceGroupId,omitempty"`
 	UpdatedAt       int64  `json:"updatedAt"` // last state change (never moved by a render)
 	ExpiresAt       int64  `json:"expiresAt"` // lease deadline; 0 = not leased (explicit offline)

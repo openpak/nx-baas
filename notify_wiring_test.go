@@ -90,7 +90,7 @@ func TestPresenceChangeNotifiesFriendsOnceAndOnlyOnChange(t *testing.T) {
 	s, _, users := socialServer(t)
 	viewer, subject := users[0], users[1]
 
-	s.noteDevicePresence(subject, "dev-1", "ONLINE", "", "", "")
+	s.noteDevicePresence(subject, "dev-1", "ONLINE", "", "", "", -1)
 	queue := outboxOf(s, viewer.ID)
 	if len(queue) != 1 {
 		t.Fatalf("going online produced %d deliveries, want 1", len(queue))
@@ -106,13 +106,13 @@ func TestPresenceChangeNotifiesFriendsOnceAndOnlyOnChange(t *testing.T) {
 	}
 
 	// A renewal at the same state changes nothing the friend needs told.
-	s.noteDevicePresence(s.store.User(subject.ID), "dev-1", "ONLINE", "", "", "")
+	s.noteDevicePresence(s.store.User(subject.ID), "dev-1", "ONLINE", "", "", "", -1)
 	if got := len(outboxOf(s, viewer.ID)); got != 1 {
 		t.Fatalf("a heartbeat queued another delivery (%d total)", got)
 	}
 
 	// Starting a title is a change, and coalescing keeps one entry per subject.
-	s.noteDevicePresence(s.store.User(subject.ID), "dev-1", "PLAYING", "0100000000010000", "", "")
+	s.noteDevicePresence(s.store.User(subject.ID), "dev-1", "PLAYING", "0100000000010000", "", "", -1)
 	queue = outboxOf(s, viewer.ID)
 	if len(queue) != 1 {
 		t.Fatalf("presence updates did not coalesce: %d pending", len(queue))
@@ -129,7 +129,7 @@ func TestBlockedViewerIsNotToldAboutPresence(t *testing.T) {
 	viewer, subject := users[0], users[1]
 	s.store.Update(viewer, func(u *User) { u.Blocks = append(u.Blocks, subject.ID) })
 
-	s.noteDevicePresence(s.store.User(subject.ID), "dev-1", "ONLINE", "", "", "")
+	s.noteDevicePresence(s.store.User(subject.ID), "dev-1", "ONLINE", "", "", "", -1)
 
 	if got := len(outboxOf(s, viewer.ID)); got != 0 {
 		t.Fatalf("a blocked viewer was queued %d presence deliveries", got)

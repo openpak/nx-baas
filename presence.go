@@ -123,7 +123,7 @@ func aggregatePresence(u *User, now int64, lease time.Duration) Presence {
 	if len(u.DevicePresence) == 0 && u.Presence.State != "" && stateRank(u.Presence.State) > 0 {
 		consider(&DevicePresence{DeviceID: "legacy", State: u.Presence.State, AppID: u.Presence.AppID,
 			AppField: u.Presence.AppField, PresenceGroupID: u.Presence.PresenceGroupID,
-			UpdatedAt: u.Presence.UpdatedAt, ExpiresAt: 0})
+			ACDIndex: u.Presence.ACDIndex, UpdatedAt: u.Presence.UpdatedAt, ExpiresAt: 0})
 	}
 	if best == nil {
 		if out.UpdatedAt == 0 && u.CreatedAt > 0 {
@@ -132,7 +132,8 @@ func aggregatePresence(u *User, now int64, lease time.Duration) Presence {
 		return out
 	}
 	return Presence{State: best.State, AppID: best.AppID, AppField: best.AppField,
-		PresenceGroupID: best.PresenceGroupID, UpdatedAt: best.UpdatedAt, LogoutAt: out.LogoutAt}
+		PresenceGroupID: best.PresenceGroupID, ACDIndex: best.ACDIndex,
+		UpdatedAt: best.UpdatedAt, LogoutAt: out.LogoutAt}
 }
 
 // devicePresenceWins picks between two live claims: higher rank first, then
@@ -149,7 +150,7 @@ func devicePresenceWins(a, b *DevicePresence) bool {
 // noteDevicePresence records one device's claim. state OFFLINE ends the
 // device's live claim (kept as remembered departure evidence, not as a live
 // one). Whether the account as a whole is anywhere is the aggregate's call.
-func (s *server) noteDevicePresence(u *User, deviceID, state, appID, appField, groupID string) {
+func (s *server) noteDevicePresence(u *User, deviceID, state, appID, appField, groupID string, acdIndex int) {
 	now := time.Now().Unix()
 	lease := int64(presenceLease().Seconds())
 	before := s.presenceSnapshot(u.ID)
@@ -163,7 +164,7 @@ func (s *server) noteDevicePresence(u *User, deviceID, state, appID, appField, g
 				UpdatedAt: now, LogoutAt: now}
 		} else {
 			u.DevicePresence[deviceID] = &DevicePresence{DeviceID: deviceID, State: strings.ToUpper(state),
-				AppID: appID, AppField: appField, PresenceGroupID: groupID,
+				AppID: appID, AppField: appField, PresenceGroupID: groupID, ACDIndex: acdIndex,
 				UpdatedAt: now, ExpiresAt: now + lease}
 		}
 		// Shadow the old field for anything that still reads it (rollback
@@ -174,6 +175,7 @@ func (s *server) noteDevicePresence(u *User, deviceID, state, appID, appField, g
 			u.Presence.LogoutAt = now
 		} else {
 			u.Presence.AppID, u.Presence.AppField, u.Presence.PresenceGroupID = appID, appField, groupID
+			u.Presence.ACDIndex = acdIndex
 		}
 	})
 }

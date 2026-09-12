@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
@@ -265,7 +266,7 @@ func TestAccountSwitchEndsPreviousClaim(t *testing.T) {
 	// B signs in on the same device: the login handler expires the device's
 	// claim everywhere before writing B's.
 	s.expireDeviceEverywhere(device, b.ID)
-	s.noteDevicePresence(b, device, "ONLINE", "", "", "")
+	s.noteDevicePresence(b, device, "ONLINE", "", "", "", -1)
 
 	lease := presenceLease()
 	now := time.Now().Unix()
@@ -341,4 +342,59 @@ func TestReconcilerAgreesWithTheCore(t *testing.T) {
 		t.Error("reconciler did not re-establish the session after a core restart")
 	}
 	_ = a
+}
+
+// The console publishes its own catalog index beside the title id, as a number
+// [firmware: the publish format is "appInfo:acdIndex":%d next to two
+// "%016llx" strings], and its friends read it back off the list
+// [$.items[*].friend.presence.extras.friends.appInfo:acdIndex]. So it is
+// stored as sent and echoed as sent; a console that sends none gets none back.
+func TestPresenceCarriesTheConsolesOwnACDIndex(t *testing.T) {
+	s, _, users := socialServer(t)
+	a, b := users[0], users[1]
+	_, req := postRequest(t, s, a, `{"receiverId":"`+b.ID+`"}`)
+	if code, _ := answerRequest(t, s, b, "PATCH", req["id"].(string),
+		`[{"op":"replace","path":"/state","value":"AUTHORIZED"}]`); code != http.StatusOK {
+		t.Fatal("accept failed")
+	}
+
+	patch := func(body string) int {
+		r := authed("PATCH", "/1.0.0/users/"+a.ID+"/device_accounts/"+a.DeviceAccounts[0], body, a, s)
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, r)
+		return w.Code
+	}
+	friendsOf := func(u *User) map[string]any {
+		r := authed("GET", "/2.0.0/users/"+u.ID+"/friends", "", u, s)
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, r)
+		var list struct {
+			Items []map[string]any `json:"items"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil || len(list.Items) != 1 {
+			t.Fatalf("friend list: %v %s", err, w.Body)
+		}
+		friend, _ := list.Items[0]["friend"].(map[string]any)
+		presence, _ := friend["presence"].(map[string]any)
+		extras, _ := presence["extras"].(map[string]any)
+		got, _ := extras["friends"].(map[string]any)
+		return got
+	}
+
+	if code := patch(`[{"op":"replace","path":"/presence/state","value":"PLAYING"},
+		{"op":"replace","path":"/presence/extras/friends/appInfo:appId","value":"0100000000010000"},
+		{"op":"replace","path":"/presence/extras/friends/appInfo:acdIndex","value":7}]`); code != http.StatusOK {
+		t.Fatalf("presence patch = %d", code)
+	}
+	if got := friendsOf(b)["appInfo:acdIndex"]; got != float64(7) {
+		t.Errorf("acdIndex = %v (%T), want 7", got, got)
+	}
+
+	// A console that publishes no index must not be given one.
+	if code := patch(`[{"op":"replace","path":"/presence/state","value":"ONLINE"}]`); code != http.StatusOK {
+		t.Fatalf("second patch = %d", code)
+	}
+	if got, present := friendsOf(b)["appInfo:acdIndex"]; present {
+		t.Errorf("acdIndex invented when the console sent none: %v", got)
+	}
 }

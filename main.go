@@ -322,7 +322,13 @@ func extras() map[string]any {
 func presenceObj(p Presence) map[string]any {
 	ex := extras()
 	if p.AppID != "" {
-		ex["friends"] = map[string]any{"appField": p.AppField, "appInfo:appId": p.AppID, "appInfo:presenceGroupId": p.PresenceGroupID}
+		friends := map[string]any{"appField": p.AppField, "appInfo:appId": p.AppID, "appInfo:presenceGroupId": p.PresenceGroupID}
+		if p.ACDIndex >= 0 {
+			// Read back by the friend list's numeric parser
+			// [firmware, $.items[*].friend.presence.extras.friends.appInfo:acdIndex].
+			friends["appInfo:acdIndex"] = p.ACDIndex
+		}
+		ex["friends"] = friends
 	}
 	return map[string]any{"state": p.State, "extras": ex, "updatedAt": p.UpdatedAt, "logoutAt": p.LogoutAt}
 }
@@ -734,7 +740,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		// behind the console is recorded for the notification channel.
 		s.notifStore().BindConsole(di, u.ID)
 		s.expireDeviceEverywhere(form.Get("id"), u.ID)
-		s.noteDevicePresence(u, form.Get("id"), "ONLINE", "", "", "")
+		s.noteDevicePresence(u, form.Get("id"), "ONLINE", "", "", "", -1)
 		s.reportOnline(r.Context(), u)
 		res := map[string]any{
 			"expiresIn": 10800, "user": s.userObj(u, id, ""), "idToken": s.idToken(u, id, username, app),
@@ -946,6 +952,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			}
 			json.Unmarshal(body, &ops)
 			state, appID, appField, groupID := "", "", "", ""
+			acdIndex := -1
 			for _, o := range ops {
 				v, _ := o.Value.(string)
 				switch o.Path {
@@ -957,13 +964,23 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 					appID = v
 				case "/presence/extras/friends/appInfo:presenceGroupId":
 					groupID = v
+				case "/presence/extras/friends/appInfo:acdIndex":
+					// The console writes this one as a number, not a string
+					// [firmware: the publish format is "appInfo:acdIndex":%d
+					// beside two "%016llx" strings]. It is the catalog index
+					// its friends read back, so it is stored as sent and
+					// echoed as sent — nothing here needs to know what it
+					// indexes.
+					if n, ok := o.Value.(float64); ok {
+						acdIndex = int(n)
+					}
 				}
 			}
 			if state == "" {
 				baasErr(w, r, 400, "invalid_params", "Invalid Params", "no presence state in patch")
 				return
 			}
-			s.noteDevicePresence(u, device, state, appID, appField, groupID)
+			s.noteDevicePresence(u, device, state, appID, appField, groupID, acdIndex)
 			// This is what keeps someone counted as online: the lease the core holds is short,
 			// and a client that has gone away stops renewing it.
 			if state == "OFFLINE" {
