@@ -10,7 +10,9 @@ package main
 // false-stays-false rule.
 
 import (
+	"bytes"
 	"encoding/json"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -386,5 +388,48 @@ func TestFieldsTheModulesParseArePresent(t *testing.T) {
 	target, ok := rel["targetUser"].(map[string]any)
 	if !ok || target["nickname"] == "" || target["thumbnailUrl"] == "" {
 		t.Errorf("relationship reply has no renderable targetUser: %v", rel["targetUser"])
+	}
+}
+
+// Routes the modules reach that had no handler: answered with the smallest
+// defensible shape rather than a 404 the console has to interpret.
+func TestUnservedModuleRoutesAnswer(t *testing.T) {
+	s := &server{store: loadStore(t.TempDir() + "/baas.json")}
+	for _, tc := range []struct {
+		host, path string
+		want       int
+		contains   string
+	}{
+		{"api.hac.lp1.nim.nintendo.net", "/v1/accounts/vphyms", 200, `"vphyms":[]`},
+		{"api.hac.lp1.nim.nintendo.net", "/v1/accounts/in-same-family?accountIds=1", 200, `"inSameFamily":false`},
+		{"api.hac.lp1.nim.nintendo.net", "/v1/nearness-checks", 200, `"nearnessChecks":[]`},
+		{"api.hac.lp1.nim.nintendo.net", "/v1/system_update_meta?device_id=x", 200, `"system_update_metas":[]`},
+		{"api.hac.lp1.nim.nintendo.net", "/v1/acds/search", 200, `"acds":[]`},
+		{"frs.srv.nintendo.net", "/v1/apps/0100abcd00001000/catalog.json", 200, `"application_id":"0100abcd00001000"`},
+		{"pearljam.hac.lp1.eshop.nintendo.net", "/civil", 404, "not implemented"},
+	} {
+		r := httptest.NewRequest("GET", "https://"+tc.host+tc.path, nil)
+		r.Host = tc.host
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, r)
+		if w.Code != tc.want || !strings.Contains(w.Body.String(), tc.contains) {
+			t.Errorf("%s%s = %d %s; want %d containing %s", tc.host, tc.path, w.Code, w.Body.String(), tc.want, tc.contains)
+		}
+	}
+}
+
+// The art route answers with a real image: a console that cannot decode what it
+// gets renders worse than one that gets a transparent pixel.
+func TestFriendAppArtIsAValidImage(t *testing.T) {
+	s := &server{store: loadStore(t.TempDir() + "/baas.json")}
+	r := httptest.NewRequest("GET", "https://frs.srv.nintendo.net/v1/apps/0100abcd00001000/icon.jpg", nil)
+	r.Host = "frs.srv.nintendo.net"
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatalf("art = %d", w.Code)
+	}
+	if _, err := png.Decode(bytes.NewReader(w.Body.Bytes())); err != nil {
+		t.Errorf("placeholder is not a decodable image: %v", err)
 	}
 }

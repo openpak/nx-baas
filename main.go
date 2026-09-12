@@ -1866,6 +1866,12 @@ var minimal = os.Getenv("NX_MINIMAL") != "" // bisecting 2124-0292: only the NA 
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	host := hostOf(r)
 	log.Printf("[nx-baas] %s %s%s ua=%q", r.Method, host, r.URL.RequestURI(), r.UserAgent())
+	// The friends module fetches its app catalog and art from a configured
+	// host, so this matches on the path before host routing claims it
+	// (eshop_unserved.go). It declines anything that is not /v1/apps/<id>/.
+	if s.friendsAppCatalog(w, r) {
+		return
+	}
 	if s.saves != nil && strings.Contains(host, "scsi.srv.nintendo.net") {
 		// Before the body is read: a save can be hundreds of MB and streams through.
 		s.savesProxy(w, r)
@@ -1906,6 +1912,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// dragons answers (console link, 2124-3121) and this only takes the store rights
 	// routes. Beach moved from penne's `{}` placeholder to a real handler; the extraction
 	// keeps penne's own cases untouched.
+	case strings.HasPrefix(host, "pearljam."):
+		// The eShop host NIM names beside dragons and tigers; its two paths
+		// are recorded, not implemented (eshop_unserved.go).
+		s.pearljam(w, r, body)
 	case strings.HasPrefix(host, "bugyo."):
 		s.shopHandler(w, r, body)
 	case strings.Contains(host, ".d4c.nintendo.net"):
@@ -1943,6 +1953,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.olsc(w, r, body)
 	case strings.Contains(host, "pctl.srv.nintendo.net") || strings.HasPrefix(host, "app.lp1.srv"):
 		s.serviceStatus(w, r, body)
+	// Answered by path rather than host, and only after every host-specific
+	// handler above has declined: the NIM surfaces that had no handler
+	// (eshop_unserved.go). It returns false when the path is not one of them.
+	case s.nimUnserved(w, r, body):
 	case !strings.Contains(host, "baas.nintendo.com"):
 		dump(r, body, "!! UNHANDLED host (catch-all)")
 		writeJSON(w, 404, map[string]any{})
@@ -2053,6 +2067,9 @@ func main() {
 		// dragons/dragonst are already above. The ashigaru page may reference further eshop
 		// names (samurai/sun) — unrouted SNIs still get on-demand certs below.
 		"bugyo.hac.lp1.eshop.nintendo.net", "atum.hac.lp1.d4c.nintendo.net", "tigers.hac.lp1.dragons.nintendo.net",
+		// NIM names this one too; without it on the fixed cert the console
+		// gets an on-demand cert for a host it may authenticate strictly.
+		"pearljam.hac.lp1.eshop.nintendo.net",
 		// Device auth: these must be on the fixed cert, not minted on demand — the console
 		// rejects an on-demand cert on the names it authenticates against (2123-0013).
 		"dauth-lp1.ndas.srv.nintendo.net", "dcert-lp1.ndas.srv.nintendo.net", "acert-lp1.ndas.srv.nintendo.net",
