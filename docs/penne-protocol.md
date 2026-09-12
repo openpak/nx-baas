@@ -59,12 +59,28 @@ fallback is provisional and a hardware capture should settle the real shapes.
 - **Client → server:** the message routine passes a body reader of
   *four-byte little-endian length, then that many bytes of buffer* to the HTTP
   transport [firmware, send path around RVA `0xD4010`].
+- **The frontline connection is downlink-only** [firmware + runtime,
+  2026-09-12]. The request body's producer object is constructed with an empty
+  segment list at connect (`0xd9250` builds the sink on its own stack with
+  base, length and index all zero; the producer's copy-out method is `0xb9560`,
+  its "finished" predicate `0xb9630`), so the console streams nothing up on
+  this request. Production traffic agrees: every frontline POST arrives with no
+  Content-Length, no Transfer-Encoding and a zero-byte body. **`frames_in: 0`
+  on a live connection is therefore the designed behaviour, not a symptom** —
+  the console's own messages must travel as separate requests, and waiting for
+  uplink frames on the held-open POST waits forever.
 - **Server → client:** symmetric length-prefix framing is the working
   hypothesis [hypothesis]. The response is held open and streamed; whether the
   console's parser expects chunked transfer encoding around those frames is
   part of the same open question. The implementation sends
   `Transfer-Encoding: chunked` (hand-written after hijack) so both a
-  chunk-aware and a raw reader have a defensible stream.
+  chunk-aware and a raw reader have a defensible stream. The response side goes
+  through libcurl's WRITEFUNCTION (`0xb55b0`, paired with READFUNCTION
+  `0xb5530`; the option table sits at `0x16b208`/`0x16b210`), which feeds a
+  consumer object hung off the transfer at `+0x28`. **Open:** that consumer's
+  class for the frontline transfer, which is what names the delimiter. The
+  setter is `0xb6ef0`; pinning its caller for this transfer closes the
+  question.
 - Heartbeats: **no content-bearing keepalive is sent.** The newline heartbeat
   this implementation replaced was unvalidated [observed shape, unvalidated
   content], and any stray byte desyncs a length-prefixed decoder. The client's
