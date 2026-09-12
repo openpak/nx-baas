@@ -186,12 +186,38 @@ func (s *server) validBearer(r *http.Request) map[string]any {
 }
 
 // bearerUser resolves the user an authenticated request acts as, or nil.
+//
+// Says WHY when it refuses. Every rejection here used to be the same opaque
+// 401, and telling "no header" from "the wrong one of two tokens this server
+// itself minted" cost a debugging round trip with a client author on
+// 2026-09-12: the application token from /1.0.0/application/token and the
+// access token from /1.0.0/login both carry typ "token" and the same issuer,
+// but the first has the DEVICE id as its subject and the second the BAAS user
+// id. Only the second can act as a user.
 func (s *server) bearerUser(r *http.Request) *User {
 	c := s.validBearer(r)
 	if c == nil {
+		if a := r.Header.Get("Authorization"); !strings.HasPrefix(a, "Bearer ") {
+			log.Printf("[nx-baas] auth: %s %s carries no bearer", r.Method, r.URL.Path)
+		} else if raw := s.bearer(r); raw == nil {
+			log.Printf("[nx-baas] auth: %s %s bearer does not verify against this server's key", r.Method, r.URL.Path)
+		} else if str(raw, "typ") != "token" || str(raw, "iss") != baasIssuer {
+			log.Printf("[nx-baas] auth: %s %s bearer is typ=%q iss=%q, want typ=token from this issuer",
+				r.Method, r.URL.Path, str(raw, "typ"), str(raw, "iss"))
+		} else {
+			log.Printf("[nx-baas] auth: %s %s bearer has expired", r.Method, r.URL.Path)
+		}
 		return nil
 	}
-	return s.store.User(str(c, "sub"))
+	sub := str(c, "sub")
+	u := s.store.User(sub)
+	if u == nil {
+		// The give-away: an application token's subject is the device id.
+		log.Printf("[nx-baas] auth: %s %s bearer names sub=%q, which is not a user "+
+			"(an application token from /1.0.0/application/token has the DEVICE id as its subject; "+
+			"a user-scoped call needs the accessToken from /1.0.0/login)", r.Method, r.URL.Path, sub)
+	}
+	return u
 }
 
 // requireCaller enforces the principal binding on a user-scoped path: the
