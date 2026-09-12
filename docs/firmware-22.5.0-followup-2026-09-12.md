@@ -561,3 +561,52 @@ Three of these change how open PRD gates should be read:
 Nothing here is a server contract: it is the shape of the client we have to
 write against. Written down so the store workstream stops guessing what the
 page may call.
+
+---
+
+# 19. Account setup, records, and where a play log is rendered
+
+## Three account routes the console calls and we 404'd
+
+From the account module's own URL table:
+
+| Route | Evidence | Now |
+| --- | --- | --- |
+| `/connect/1.0.0/term_confirm` (also `/1.0.0/…`) | `0x181077`, form-encoded with `id_token`, `idToken`, `userId` | **answered 200** — there are no terms to accept on a private network, and `users/me` already reports the EULA and privacy policy agreed, so confirming is what keeps account setup moving |
+| `/connect/1.0.0/api/term_agreement_token` | `0x181580`, with `$.challenge_src` and `$.errorCode` read nearby | recorded and refused: the document it returns is not recovered, and a token is not a thing to invent |
+| `/…/api/transfer_na_tokens[_inherit|/<id>]` | `0x17d920` | refused plainly — this server has no transfer flow, and half-answering one risks an account that exists in two places |
+
+The account module's error vocabulary is also worth having when we need to
+answer a failure the console will recognise: `invalid_device_account`,
+`invalid_device_certificate`, `account_id_required`, `consent_required`,
+`interaction_required`, `id_token_hint_invalid`, `could_not_confirm_membership`,
+`edge_token_not_grantable`, `invalid_eticket_template`.
+
+## A record's document shape, confirmed
+
+`ns` reads, right beside the literal `c-storage.summary`:
+
+```jsonc
+{ "key":  { "id": …, "type": …, "ownerNaId": …, "userNaId": … },
+  "data": { "naId": …, "applicationId": …, "applicationIdList": …,
+            "borrowerNaId": …, "ownerNaId": …, "stateUpdates": …,
+            "quickResponse": …, "reason": …, "error": …, "errorInfoList": … } }
+```
+
+So a record's value is a `{key, data}` document **for the storage topics** —
+the `ownerNaId`/`borrowerNaId` pair is virtual-game-card lending. The friends
+topic is different: its dispatcher reads `$.type` at the document root, which
+is what we write. Worth knowing that the value shape is per topic rather than
+universal.
+
+## Where a friend's play log is rendered
+
+`mypage` — the profile applet — carries the UI for it: `SceneFrdCntPlayHistoryList`,
+`FrdPlayHistory`, `RecentlyPlayed`, plus the owner's own controls
+(`ChangePlayLogPermission`, `ClearPlayLog`, `PlayLogStartDay/Hour/Minute`).
+
+That closes the chain for F1 without a capture: the friends module **builds**
+the play-history JSON (§15), the shop/offline-web bridge exposes
+`getFriendPlayLog` to a page (§18), and the profile applet renders a friend's
+history from it. No HTTP endpoint appears anywhere in any of the three, which
+leaves the record sync as the only way a *friend's* log can reach the console.

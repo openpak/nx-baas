@@ -1509,6 +1509,36 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		writeJSON(w, 200, map[string]any{"exp": exp, "param": param, "userId": naID})
 		return
 
+	case p == "/connect/1.0.0/term_confirm" || p == "/1.0.0/term_confirm":
+		// The console confirms the account's terms here, form-encoded with
+		// id_token/idToken/userId [firmware, account module 0x181077]. There
+		// are no terms to accept on a private network, and users/me already
+		// reports the EULA and privacy policy as agreed — so this confirms
+		// rather than 404s, which is what keeps account setup moving.
+		log.Printf("[nx-baas] NA term_confirm for user=%s", form.Get("userId"))
+		writeJSON(w, 200, map[string]any{"status": 200})
+		return
+
+	case strings.HasPrefix(p, "/connect/1.0.0/api/term_agreement_token") ||
+		strings.HasPrefix(p, "/1.0.0/api/term_agreement_token"):
+		// Asked for when the terms themselves change. The document it returns
+		// is not recovered (the module reads $.challenge_src and $.errorCode
+		// near this call), and a token is not a thing to invent, so the
+		// request is recorded and refused.
+		dump(r, body, "!! NA term_agreement_token (document shape unrecovered)")
+		writeJSON(w, 404, map[string]any{"status": 404, "errorCode": "not_found",
+			"detail": "no term agreement is issued on this network"})
+		return
+
+	case strings.Contains(p, "/api/transfer_na_tokens"):
+		// Moving an account between consoles [account module 0x17d920]. This
+		// server has no transfer flow, and half-answering one risks an account
+		// that exists in two places: refuse plainly and record the attempt.
+		dump(r, body, "!! NA transfer_na_tokens (account transfer is not supported)")
+		writeJSON(w, 400, map[string]any{"status": 400, "errorCode": "invalid_request",
+			"detail": "account transfer is not supported on this network"})
+		return
+
 	case p == "/connect/1.0.0/authorize" && r.Method == "POST" && form.Get("prompt") == "none":
 		// SSO for system applets (e-license etc.): identified by our NA access token, no UI.
 		cl, err := parseJWT(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), &s.key.PublicKey)

@@ -475,3 +475,27 @@ func TestAcdSearchFindsCatalogTitles(t *testing.T) {
 		}
 	}
 }
+
+// Account-setup routes the console calls that this server used to 404: terms
+// confirmation is answered (there are no terms here), while a term-agreement
+// token and an account transfer are refused plainly rather than faked.
+func TestAccountSetupRoutesAnswer(t *testing.T) {
+	s := &server{store: loadStore(t.TempDir() + "/baas.json")}
+	post := func(path, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", "https://accounts.nintendo.com"+path, strings.NewReader(body))
+		r.Host = "accounts.nintendo.com"
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, r)
+		return w
+	}
+	if w := post("/connect/1.0.0/term_confirm", "userId=bbbbbbbbbbbb0001&id_token=x"); w.Code != 200 {
+		t.Errorf("term_confirm = %d %s", w.Code, w.Body)
+	}
+	if w := post("/connect/1.0.0/api/term_agreement_token", ""); w.Code != 404 {
+		t.Errorf("term_agreement_token = %d, want a plain 404", w.Code)
+	}
+	if w := post("/connect/1.0.0/api/transfer_na_tokens", ""); w.Code != 400 {
+		t.Errorf("transfer_na_tokens = %d, want a plain refusal", w.Code)
+	}
+}
