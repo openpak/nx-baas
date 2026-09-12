@@ -268,10 +268,23 @@ So delivery is not "push a frame". It is: complete the sync, then write a
 record under the recipient's key and let the console's record store hand it to
 the friends module.
 
-**What this costs us:** the outbox needs to become a record store with the sync
-protocol in front of it (RootHash/LeafHash, Put/Delete, SyncComplete), and
-`BuildEvent`'s MessageRequest carrier is dead. Nothing in the current delivery
-path is reusable above the framing layer, which is now confirmed correct.
+The record write's own shape is recovered too: `0x1dc430` follows slot 0 as a
+string and slot 1 as a byte vector, stores the pair with
+`FUN_001b0040(store, name, nameLen, value, valueLen, 1)` and announces the name
+through `0x1d0840`. So a `PutRecord` payload is **`{0: string name, 1: [ubyte]
+value}`** — the same shape as a `RootHash` entry, minus the digest.
+
+Which also settles §4a: the account id the friends module is handed does not
+travel in the record. **The connection is per account** — a ticket resolves to
+one BAAS user and the console's four records hang off it — so the id is
+implicit in which connection the record arrived on.
+
+**Implemented:** deliveries are written as `PutRecord` on the recipient's
+`c-friends` name with the event JSON as the value (`penne_records.go`,
+`penneRecordFrame`). The server keeps what it wrote per account and answers the
+next `RootHash` with **its own digest for records it has written** and the
+console's for the rest, which is the honest split: the console is authoritative
+for everything this server has never touched.
 
 ## 4e. The sync message, captured from the console
 

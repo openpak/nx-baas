@@ -95,6 +95,10 @@ type server struct {
 	// shopUI holds the storefront's in-memory diagnostics ring.
 	shop   *shopState
 	shopUI *shopUI
+	// Penne record store: what this server has written to each account's
+	// records, and its digests (penne_records.go).
+	recordStore *penneRecordStore
+	recordsOnce sync.Once
 }
 
 type naCode struct {

@@ -394,3 +394,58 @@ func TestRootHashIsMirroredBack(t *testing.T) {
 		}
 	}
 }
+
+// A notification is a record: the event goes out as PutRecord on the account's
+// c-friends name, carrying the event JSON, and the server then answers the next
+// sync with its own digest for that record instead of the console's.
+func TestEventIsDeliveredAsAFriendsRecord(t *testing.T) {
+	old := penneSendEvents
+	penneSendEvents = false
+	t.Cleanup(func() { penneSendEvents = old })
+
+	s, ticket := liveServer(t)
+	ts := httptest.NewTLSServer(s)
+	defer ts.Close()
+	var userID string
+	for id := range s.store.Users {
+		userID = id
+	}
+	if res := s.SubmitNotification(PenneDelivery{
+		ID: "record-1", UserID: userID, Kind: EventFriendRequestAuthorized,
+		Payload: map[string]any{"friendId": "aaaaaaaaaaaa0002"},
+	}); !res.Accepted {
+		t.Fatalf("submit: %+v", res)
+	}
+
+	res, _, fr := frontlineDial(t, ts, ticket, nil)
+	defer res.Body.Close()
+	expectGreeting(t, fr)
+
+	frame, err := fr.Next()
+	if err != nil {
+		t.Fatalf("no delivery: %v", err)
+	}
+	env, err := penne.DecodeEnvelope(frame)
+	if err != nil {
+		t.Fatalf("delivery malformed: %v", err)
+	}
+	if env.Type() != penne.TypePutRecord {
+		t.Fatalf("delivery = %s, want PutRecord", env.TypeName())
+	}
+	payload, ok := env.Payload()
+	if !ok {
+		t.Fatal("delivery has no payload")
+	}
+	name, value, ok := penne.ParsePutRecord(payload)
+	if !ok || name != "c-friends" {
+		t.Fatalf("record name = %q (ok=%v)", name, ok)
+	}
+	if !strings.Contains(string(value), `"type":"friend_request_authorized"`) {
+		t.Errorf("record value = %s", value)
+	}
+	// The digest we now own is what a later sync must answer with.
+	digest, ok := s.records().Digest(userID, "c-friends")
+	if !ok || len(digest) != 20 {
+		t.Fatalf("no digest kept for the record we wrote (ok=%v len=%d)", ok, len(digest))
+	}
+}

@@ -799,6 +799,49 @@ func BuildLeafHash(entries []RootEntry, count uint32, issued, expires uint64) []
 	return buildHashMessage(TypeLeafHash, entries, count, issued, expires)
 }
 
+// BuildPutRecord encodes a record write. The console's handler reads the
+// payload as {0: string name, 1: [ubyte] value} — it follows slot 0 as a
+// string, slot 1 as a byte vector, stores the pair and announces the name to
+// whichever module subscribes to it [firmware, RVA 0x1dc430:
+// FUN_001b0040(store, name, nameLen, value, valueLen, 1) then 0x1d0840].
+//
+// The name is a record namespace as the console spells it — c-appearance,
+// c-friends, c-settings, c-storage — and the value is that record's contents.
+func BuildPutRecord(name string, value []byte, count uint32, issued, expires uint64) []byte {
+	b := NewBuilder(128 + len(name) + len(value))
+	n := b.CreateString(name)
+	v := b.CreateByteVector(value)
+	b.StartTable(2)
+	b.PrependUOffsetSlot(1, v)
+	b.PrependUOffsetSlot(0, n)
+	payload := b.EndTable()
+
+	b.StartTable(5)
+	b.PrependU64Slot(4, expires)
+	b.PrependU64Slot(3, issued)
+	b.PrependU32Slot(2, count)
+	b.PrependUOffsetSlot(1, payload)
+	b.PrependU8Slot(0, TypePutRecord)
+	root := b.EndTable()
+	b.prep(b.minalign, 4)
+	b.placeU32(uint32(b.Offset() + 4 - root))
+	return b.Bytes()
+}
+
+// ParsePutRecord reads a record write back out, for tests and for a server that
+// is handed one.
+func ParsePutRecord(payload Table) (string, []byte, bool) {
+	name, ok := payload.String(0)
+	if !ok {
+		return "", nil, false
+	}
+	value, ok := payload.Bytes(1)
+	if !ok {
+		return name, nil, false
+	}
+	return name, value, true
+}
+
 // BuildEmpty encodes an envelope whose payload table has no fields. Hi (0x20),
 // SyncComplete (0x08) and SubscriptionListRequest (0x1c) are logged by the
 // module with no payload fields, so this is their shape.

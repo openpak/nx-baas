@@ -240,17 +240,16 @@ func (s *server) penneWake(userID string) {
 			if !h.allowed(PenneDelivery{ID: e.ID, UserID: e.UserID, Kind: e.Kind, Payload: e.Payload}, now) {
 				continue
 			}
-			if !penneSendEvents {
-				// The carrier is known wrong: the steady state accepts
-				// PutRecord and nine other types and answers anything else
-				// with "Unexpected command ... received in steady state" by
-				// dropping the connection, so sending on the MessageRequest
-				// carrier would cost us the channel. The event stays queued
-				// for the record store (docs/penne-protocol.md §4d).
-				log.Printf("[nx-baas] penne: %s for user=%s held: no record carrier yet (event %s)", e.Kind, e.UserID, e.ID)
+			if penneSendEvents {
+				// The pipeline's own tests drive the old MessageRequest
+				// carrier; a console never sees it (penneSendEvents).
+				sess.offer(e.ID, penneEventFrame(e))
 				continue
 			}
-			sess.offer(e.ID, penneEventFrame(e))
+			// A notification is a record: the event body is written to the
+			// account's c-friends record, which the console stores and then
+			// announces to its friends module (docs/penne-protocol.md §4d).
+			sess.offer(e.ID, s.penneRecordFrame(e))
 		}
 	}
 }
@@ -260,6 +259,21 @@ func (s *server) penneWake(userID string) {
 // the connection when it receives a type it does not accept, and MessageRequest
 // is one of those. It goes away when deliveries become records.
 var penneSendEvents = false
+
+// penneRecordFrame writes one queued delivery as a record: PutRecord with the
+// account's c-friends name and the event JSON as its value. The shape comes
+// from the console's own handler, which reads {0: string name, 1: [ubyte]
+// value}, stores the pair and announces the name [firmware, 0x1dc430]. The
+// value we keep, so the next RootHash can answer with our own digest for this
+// record instead of the console's.
+func (s *server) penneRecordFrame(e *penneOutRec) []byte {
+	value := []byte(penneEventJSON(PenneDelivery{
+		ID: e.ID, UserID: e.UserID, Kind: e.Kind, Payload: e.Payload,
+	}))
+	s.records().Put(e.UserID, recordFriends, value)
+	now := uint64(time.Now().Unix())
+	return penne.BuildPutRecord(recordFriends, value, uint32(len(value)), now, now+penneSyncTTL)
+}
 
 // penneEventFrame converts a queued delivery into its wire frame. The carrier
 // slot and payload field are the marked hypotheses (docs/penne-protocol.md);
