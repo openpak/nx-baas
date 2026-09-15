@@ -1,8 +1,8 @@
 # Native OpenPak store — implementation notes and review handoff (workstream D)
 
-Implements `prds/native-switch-store-prd.md` (SHP-01–05, journey J8) against the shared
-rules in `prds/native-switch-social-eshop-prd.md` and the coordination plan
-`prds/native-switch-parallel-plan.md`.
+Implements `../prds/native-switch-store-prd.md` (SHP-01–05, journey J8) against the shared
+rules in `../prds/native-switch-social-eshop-prd.md` and the coordination plan
+`../prds/native-switch-parallel-plan.md`.
 
 - Branch: `agent-d-native-store`, based on `nx-baas` `main` at `e8b7afc` (clean).
 - Verification: `go vet ./...` clean; `go test -race -count=1 .` passes (existing suite +

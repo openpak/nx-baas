@@ -1,6 +1,6 @@
 # Native online-play invitations (`app.lp1.five.nintendo.net`)
 
-Workstream C of [../../prds/native-switch-parallel-plan.md](../../prds/native-switch-parallel-plan.md)
+Workstream C of [../prds/native-switch-parallel-plan.md](../prds/native-switch-parallel-plan.md)
 (INV-01..04). This file is the invitation lifecycle contract for workstreams A
 and B, the evidence ledger with provenance, and the operator notes.
 

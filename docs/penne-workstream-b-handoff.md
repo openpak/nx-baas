@@ -1,7 +1,7 @@
 # Workstream B review handoff: Penne transport and native notifications
 
 Status: code complete on branch `penne-notifications`, base `a-friends-presence`
-(07ba967). Date: 2026-09-11. Implements `prds/native-switch-penne-notifications-prd.md`
+(07ba967). Date: 2026-09-11. Implements `../prds/native-switch-penne-notifications-prd.md`
 (NTF-01..06, notification/recovery portions of J1/J4/J5) against the shared
 parent PRD and the coordination plan.
 

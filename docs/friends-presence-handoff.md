@@ -1,7 +1,7 @@
 # Workstream A review package: friends, profiles and presence
 
-Workstream: A of `prds/native-switch-parallel-plan.md`; PRD:
-`prds/native-switch-friends-presence-prd.md`. Date: 2026-09-11.
+Workstream: A of `../prds/native-switch-parallel-plan.md`; PRD:
+`../prds/native-switch-friends-presence-prd.md`. Date: 2026-09-11.
 
 - Repository: `nx-baas`, branch **`a-friends-presence`**.
 - Base commit: `e8b7afcd62f69ed0c9bb6f63901b4301dce28ef9` (clean at kickoff).
