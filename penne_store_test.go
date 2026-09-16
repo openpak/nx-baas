@@ -376,6 +376,32 @@ func TestConsoleAccountIDsAreRecordedNotDerived(t *testing.T) {
 	}
 }
 
+// Deliveries are addressed through AccountsFor, which matches on the BAAS
+// account the outbox is keyed by. An address recorded while only the device
+// certificate was known (the console's own token subject) is keyed by that
+// certificate and no delivery can ever find it — so the bind has to move
+// those too, including on a login where the console was already bound.
+func TestBindConsoleHealsAccountAddressesRecordedUnderTheCertificate(t *testing.T) {
+	s := &server{}
+	store := s.notifStore()
+	now := time.Now()
+	const cert, user = "cert-dddddddddddd0001", "aaaaaaaaaaaa0002"
+	const account = "1000000000a100010000000000000001"
+
+	id, _ := store.Register("device-a", cert, "", now)
+	store.NoteAccount(id, account, cert) // recorded from the device token alone
+	if got := store.AccountsFor(user); len(got) != 0 {
+		t.Fatalf("AccountsFor(%s) = %v before the bind, want nothing", user, got)
+	}
+
+	store.BindConsole(cert, user)
+	store.BindConsole(cert, user) // already bound: the heal must still have happened
+
+	if got := store.AccountsFor(user); len(got) != 1 || got[0] != account {
+		t.Fatalf("AccountsFor(%s) = %v after the bind, want [%s]", user, got, account)
+	}
+}
+
 // A ticket minted before the console signed in to BAAS names the device
 // certificate; once the login records which account is on that console, a
 // connection opened with the old ticket must still deliver to the account.

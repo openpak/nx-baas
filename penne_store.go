@@ -312,28 +312,40 @@ func (s *penneStore) NextSyncProbe() uint64 {
 // registration is bound to something the outbox is not keyed by, and a
 // connected console is told there is nothing for it while its events expire.
 // Registrations and tickets minted before the account was known are healed.
+// Account addresses recorded under the certificate are healed too — including
+// on a login where the console was already bound, which is the ordinary case
+// for a console that has been signed in for days.
 func (s *penneStore) BindConsole(certID, userID string) {
 	if certID == "" || userID == "" || certID == userID {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.d.ConsoleUsers[certID] == userID {
-		return
-	}
-	s.d.ConsoleUsers[certID] = userID
-	for _, a := range s.d.Assocs {
-		if a.UserID == certID {
-			a.UserID = userID
-			s.d.ByUser[userID] = a.ID
+	changed := false
+	if s.d.ConsoleUsers[certID] != userID {
+		s.d.ConsoleUsers[certID] = userID
+		changed = true
+		for _, a := range s.d.Assocs {
+			if a.UserID == certID {
+				a.UserID = userID
+				s.d.ByUser[userID] = a.ID
+			}
+		}
+		for _, t := range s.d.Tickets {
+			if t.UserID == certID {
+				t.UserID = userID
+			}
 		}
 	}
-	for _, t := range s.d.Tickets {
-		if t.UserID == certID {
-			t.UserID = userID
+	for account, u := range s.d.AccountUsers {
+		if u == certID {
+			s.d.AccountUsers[account] = userID
+			changed = true
 		}
 	}
-	s.saveLocked()
+	if changed {
+		s.saveLocked()
+	}
 }
 
 // ResolveUser maps a device certificate onto the account signed in on it, and

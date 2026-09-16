@@ -104,8 +104,12 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 	case strings.HasPrefix(host, "god.") && strings.HasSuffix(p, "/notification_tokens"):
 		assoc, ok := s.penneAuthedAssoc(store, in, userID, deviceID, now)
 		if ok {
-			store.NoteAccount(assoc.ID, accountID, userID)
-			log.Printf("[nx-baas] penne: notification token for console account %s (registration %s, user %q)", accountID, assoc.ID, userID)
+			// ResolveUser: the bearer here is usually the console's device
+			// token, whose subject is the certificate, and AccountUsers is
+			// keyed by the BAAS account the outbox delivers to. Recorded as a
+			// cert it is an address no delivery can ever find.
+			store.NoteAccount(assoc.ID, accountID, store.ResolveUser(userID))
+			log.Printf("[nx-baas] penne: notification token for console account %s (registration %s, user %q)", accountID, assoc.ID, store.ResolveUser(userID))
 		}
 		if !ok {
 			writeJSON(w, 401, map[string]any{"status": 401, "title": "authentication required"})
@@ -124,7 +128,7 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		if assoc, ok := s.penneAuthedAssoc(store, in, userID, deviceID, now); ok && nsa != "" {
 			store.LinkNSA(assoc.ID, nsa, now)
-			store.NoteAccount(assoc.ID, accountID, userID)
+			store.NoteAccount(assoc.ID, accountID, store.ResolveUser(userID))
 		}
 		writeJSON(w, 200, map[string]any{"nsa_id": nsa})
 	case strings.HasPrefix(host, "god.") && r.Method == "DELETE":
