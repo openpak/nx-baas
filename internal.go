@@ -206,6 +206,44 @@ func (s *server) switchEmulator(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// switchEmulatorLinkToken answers GET /internal/switch/emulator/link-token?account_id=…
+// with {"id_token": …}: the Nintendo-Account id_token that /1.0.0/federation binds a device
+// account with. A console gets this by typing the e-mail and password into the link page; an
+// emulator whose person already signed in to the website has proved the same thing, so the
+// website asks here on their behalf and nobody types the password twice.
+func (s *server) switchEmulatorLinkToken(w http.ResponseWriter, r *http.Request) {
+	if !s.internalOK(r) {
+		apiErr(w, http.StatusUnauthorized, "internal")
+		return
+	}
+	accountID := r.URL.Query().Get("account_id")
+	if accountID == "" {
+		apiErr(w, http.StatusBadRequest, "account_id required")
+		return
+	}
+	b, ok := s.acct.(*openpakBackend)
+	if !ok {
+		apiErr(w, http.StatusNotImplemented, "openpak backend only")
+		return
+	}
+	pr, err := b.ensure(r.Context(), accountID)
+	if err != nil {
+		logErr("emulator link ensure", err)
+		apiErr(w, http.StatusBadGateway, "identity unavailable")
+		return
+	}
+	id, err := s.acct.Identity(pr.PID)
+	if err != nil {
+		logErr("emulator link identity", err)
+		apiErr(w, http.StatusNotFound, "unknown account")
+		return
+	}
+	// The same bookkeeping the authorize page does: link() resolves the token's sub through it.
+	s.store.RememberNA(id.NaID, pr.PID)
+	c := naCode{PID: pr.PID, Username: id.Nickname, ClientID: r.URL.Query().Get("client_id"), NaID: id.NaID}
+	writeJSON(w, http.StatusOK, map[string]any{"id_token": s.naIDToken(c, "")})
+}
+
 // switchEmulatorFriend answers POST /internal/switch/emulator/friend
 // {"account_id":…, "action":"request"|"accept"|"decline", "pid":…, "friend_code":…}
 func (s *server) switchEmulatorFriend(w http.ResponseWriter, r *http.Request) {
