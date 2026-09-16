@@ -3,6 +3,24 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.12.40 — 2026-09-16
+
+- Deliveries addressed to the BAAS account, not the certificate the console presents: the Penne bearer on `god.*` routes is the device token (subject = certificate), so `NoteAccount` keyed console account ids by a cert that `AccountsFor` could never match and every frame left unaddressed — the friends module drops a zero uid by design; `ResolveUser` at the record sites, `BindConsole` heals cert-keyed entries including on an already-bound login. Found live on prod: a natural presence write reached a connected console with no reconnect (the shape failure is gone) but unaddressed [6d8fe42]
+
+## v0.12.39 — 2026-09-16
+
+- docs: say plainly that prod is two commits behind the carrier fix [680f033]
+- N5 answered from the friends module's own init: it registers its own program id (`0x010000000000000e`) as an npns listen key (u64 Listen, proxy slot 5) and starts its `nn.friends.EventWatcher` thread only if Listen succeeds [4009ab2]
+- Penne notification carried as the kind-1 message it is: envelope slot 2 string `"NX"`, `PutRecord{[Entry], u8 1}` → `Entry{kind 1 → Message{name, u16, Meta{receivers, 32-hex account id}, body, deliverAt}}`; `BuildMessage`/`ParseMessage`, one frame per account from `AccountsFor`; the six-way `NX_PENNE_RECORD_PROBE` rotation, the refuted PutRecord shape and the record-name constants deleted [522fbe2]
+- docs: recover the PutRecord message shape from 22.5.0; close N2, open N5 [4908cdb]
+- docs: correct the friend-list branch's fate on origin [4b26bcc]
+- docs: record the worktree prune and the retired friend-list branch [56319da]
+- docs: move PRDs in-house; scaffold next-session, changelog and shared docs [1e873f3]
+
+## v0.12.38 — 2026-09-12
+
+- Answer the console's LeafHash (0x07): decode the leaf listing and reply in the console's shape behind `NX_PENNE_RECONCILE`; unanswered, the console abandons the sync after the measured ~70 s [481388d]
+
 ## v0.12.37 — 2026-09-12
 
 
