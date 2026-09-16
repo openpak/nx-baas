@@ -303,6 +303,21 @@ func (s *server) naAccessToken(c naCode) string {
 	}, s.key)
 }
 
+// bindNotificationChannel records which BAAS account is signed in on the console a
+// device authentication token names — the same bind the /1.0.0/login handler performs
+// (BindConsole at the login case). It belongs on the NA token paths as well because an
+// awake console's steady state is the refresh, not a login: sleep/wake and days-long
+// play sessions reuse the Nintendo-Account session, so /1.0.0/login may not recur for
+// a very long time, and an unbound console is one no notification can be addressed to.
+func (s *server) bindNotificationChannel(deviceAuthenticationToken, baasUserID string) {
+	if baasUserID == "" {
+		return
+	}
+	if dt, err := parseJWT(deviceAuthenticationToken, &s.key.PublicKey); err == nil {
+		s.notifStore().BindConsole(str(dt, "sub"), baasUserID)
+	}
+}
+
 func (s *server) naIDToken(c naCode, accessToken string) string {
 	now := time.Now().Unix()
 	sum := sha256.Sum256([]byte(accessToken))
@@ -1649,6 +1664,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 				if pid := s.store.PIDForNA(str(cl, "sub")); pid != 0 {
 					if id, err := s.acct.Identity(pid); err == nil {
 						c, ok = naCode{PID: pid, Username: id.Nickname, ClientID: form.Get("client_id"), NaID: id.NaID}, true
+						s.bindNotificationChannel(form.Get("device_authentication_token"), id.BaasUserID)
 					}
 				}
 			}
@@ -1660,6 +1676,9 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		if p == "/connect/1.0.0/api/session_token" {
 			writeJSON(w, 200, map[string]any{"session_token": code, "code": code})
 			return
+		}
+		if id, err := s.acct.Identity(c.PID); err == nil {
+			s.bindNotificationChannel(form.Get("device_authentication_token"), id.BaasUserID)
 		}
 		at := s.naAccessToken(c)
 		writeJSON(w, 200, map[string]any{

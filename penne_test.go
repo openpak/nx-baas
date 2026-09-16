@@ -3,13 +3,17 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -416,7 +420,6 @@ func TestPasswordlessPenneIdIsRefusedOnceRevoked(t *testing.T) {
 		"https://god.hac.lp1.penne.srv.nintendo.net/v1/accounts/1000000000a100010000000000000001/notification_tokens",
 		strings.NewReader(body))
 	r.Host = "god.hac.lp1.penne.srv.nintendo.net"
-	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	s.penne(w, r, []byte(body))
 
@@ -424,3 +427,49 @@ func TestPasswordlessPenneIdIsRefusedOnceRevoked(t *testing.T) {
 		t.Fatalf("status %d, want 401 for a revoked registration", w.Code)
 	}
 }
+
+// The console's steady state is the NA token refresh, not /1.0.0/login: sleep/wake and
+// days-long play sessions reuse the Nintendo-Account session, so the login may not recur
+// for a very long time. The refresh request carries both halves — the device token names
+// the console, the refresh token's account resolves to the BAAS user — so the bind, and
+// the heal of addresses recorded under the certificate, must happen there too.
+func TestNARefreshBindsTheConsoleAndHealsItsAddresses(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const pid = uint64(1900000002)
+	s := &server{
+		store: loadStore(filepath.Join(t.TempDir(), "baas.json")),
+		acct:  fakeBackend{id: &Identity{PID: pid, BaasUserID: "aaaaaaaaaaaa0002", NaID: "bbbbbbbbbbbb0002", Nickname: "Leia"}},
+		key:   key,
+	}
+	store := s.notifStore()
+
+	const cert, account = "cert-dddddddddddd0001", "1000000000a100010000000000000001"
+	penneID, _ := store.Register("device-a", cert, "", time.Now())
+	store.NoteAccount(penneID, account, cert) // recorded while only the certificate was known
+	s.store.RememberNA("bbbbbbbbbbbb0002", pid)
+
+	form := url.Values{
+		"refresh_token":                {s.naRefreshToken(naCode{PID: pid, Username: "Leia", ClientID: "6ffd70c434d303c8", NaID: "bbbbbbbbbbbb0002"})},
+		"device_authentication_token":  {s.deviceToken(cert, "81333c548b2e876d")},
+		"client_id":                    {"6ffd70c434d303c8"},
+		"scope":                        {"user"},
+	}
+	r := httptest.NewRequest("POST", "https://accounts.nintendo.com/connect/1.0.0/api/token", strings.NewReader(form.Encode()))
+	r.Host = "accounts.nintendo.com"
+	w := httptest.NewRecorder()
+	s.na(w, r, []byte(form.Encode()))
+
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	if got := store.AccountsFor("aaaaaaaaaaaa0002"); len(got) != 1 || got[0] != account {
+		t.Fatalf("after the refresh, AccountsFor(leia) = %v, want [%s]", got, account)
+	}
+	if got := store.ResolveUser(cert); got != "aaaaaaaaaaaa0002" {
+		t.Fatalf("after the refresh, ResolveUser(cert) = %q", got)
+	}
+}
+
