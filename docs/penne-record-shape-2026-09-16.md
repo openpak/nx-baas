@@ -53,16 +53,68 @@ Meta(1)    {1: string receivers, 2: string accountId, 4: string (≤39)}
   buffer, so keep events under 1 KiB.
 - `DeleteRecord` payload is `{0: [string name]}` (`FUN_001e01f0`).
 
-## 3. Still open: the receiver token the friends module listens under
+## 3. ANSWERED (2026-09-16, later): the receiver token is `0x010000000000000e`
 
-The friends module never calls any Listen command (slots 5/10/14/25) on its
-npns proxy; the only commands it issues are Receive, GetReceiveEvent, GetState,
-three event getters, the record write above, and a presence-publish
-(cmd 55). How its session acquires a listen key is not visible statically.
-Best candidate for `Meta.f1`: the friends program id, `0x010000000000000e`.
-Hardware settles it in one delivery: send a kind-1 message with that token,
-the recipient's 32-hex account id, and `{"type":"friend_request_authorized"}`,
-and watch for the unsolicited `GET /2.0.0/users/<id>/friends`.
+The earlier pass here concluded the friends module "never calls any Listen
+command" and left `Meta.f1` a guess. That was wrong, and wrong for a specific
+reason worth recording: friends reaches npns through **two** proxy getters
+(`FUN_001eae60`, which requires the newer interface, and `FUN_001eae30`, which
+takes any), and only the first was enumerated. The Listen call is on the second.
+
+Friends' init does this, at `0x17bd38` — fourteen bytes after the
+`c-friends.inv.subsTypes` record write that anchored the whole earlier reading:
+
+```c
+void FUN_001a0d20(void) {            // friends init
+  ...
+  local_4 = FUN_001eab80(0x10000000000000e);   // npns proxy vtable +0x28, slot 5
+  if (local_4 == 0) {
+    FUN_00129700(&DAT_0047b110, ...);          // and only then:
+    FUN_00129770(&DAT_0047b110, "nn.friends.EventWatcher");
+    FUN_00129750(&DAT_0047b110);               // start the event-watcher thread
+  }
+}
+```
+
+It registers its own program id as a listen key and **gates the event-watcher
+thread on the registration succeeding**. That thread is what dispatches the five
+event kinds. So `Meta.f1` = `0x010000000000000e`, hex u64 form, parsed by
+`FUN_001af4f0` into the same `{tag 0, u64}` token the router matches.
+
+### How routing actually works, end to end
+
+- **Registration.** `Listen(u64)` → `FUN_0019b3f0`/`FUN_0019f060`, `Listen(name)`
+  → `FUN_0019b410`/`FUN_0019f170` (name truncated to 31 chars), both into
+  `FUN_001a03b0` → `FUN_001a03e0`: append a 40-byte `{tag, value|name}` token to
+  the session's key set. **Maximum eight keys per session**; a ninth fails with
+  `0xa9a`.
+- **Matching.** `FUN_001a09a0(hub, token, msg)` walks the circular list of
+  sessions and stops at the first whose key set contains the token. The string
+  the function builds along the way (`"0x%016llx"` for a u64) is for the log
+  line only — matching is on the token struct.
+- **Fallback.** `FUN_001a0560` tries the message's own token, then retries with
+  a fixed `{tag 0, value 0}` token (`PTR_DAT_0026afe8`). A session that
+  registered `0` is a wildcard listener and gets everything unclaimed.
+- **Nothing matched is not lost.** The message is parked on the hub's
+  undelivered queue, and a *later* `Listen` drains it: `FUN_0019fd40` moves the
+  parked messages whose token equals the newly registered one, `FUN_0019fc60`
+  (the `{0,0}` case) moves all of them. So a wrong token would have been
+  delivered late rather than dropped — which is worth knowing before reading any
+  hardware run that shows a delayed refresh.
+- **Queue depth is seven.** `FUN_0019f4c0` allocates a `0x10b0` node, copies
+  `0x10a0` bytes of the message into it (the struct the friends module reads),
+  appends, and **evicts the oldest once the list passes seven**, flagging the
+  overflow. Eight probe messages in a row would silently lose the first.
+
+### The working precedent
+
+`bcat` does the same thing by name: `FUN_0019f390` formats `nx_data_%016llx`
+into a 32-byte buffer and passes it to slot 26, the name-Listen. That is the
+same string the console announces as a wire topic, and BCAT/News demonstrably
+work — so receiver tokens and wire topics are spelled alike, and the friends
+case is the u64 variant of the identical mechanism.
+
+Static only; no console has seen a kind-1 message from this server yet.
 
 ## 4. What to change (in order)
 

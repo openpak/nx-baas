@@ -317,10 +317,17 @@ func (s *server) penneMessageFrames(e *penneOutRec) [][]byte {
 }
 
 // penneReceiverToken is Meta.f1, the routing token npns matches against its IPC
-// clients' listen keys. Which token the friends module listens under is not
-// visible statically (open question N5); the friends program id is the
-// candidate, and NX_PENNE_RECEIVER tries another without a rebuild. The signal
-// either way is an unsolicited GET /2.0.0/users/<id>/friends a moment later.
+// clients' listen keys. The friends module registers its own program id as that
+// key -- its init calls the u64 Listen with 0x010000000000000e and starts the
+// nn.friends.EventWatcher thread only if the call succeeds [firmware,
+// FUN_001a0d20 at 0x17bd38] -- so this is the address, not a guess
+// (docs/penne-record-shape-2026-09-16.md §3, open question N5).
+//
+// NX_PENNE_RECEIVER overrides it without a rebuild, which is worth keeping for
+// the reachability question the static read cannot settle: whether npns routes
+// our message to that key at all. Note if you use it to probe: unmatched
+// messages park on a seven-deep queue and the oldest is evicted, so probe in
+// batches under seven.
 var penneReceiverToken = func() string {
 	if v := os.Getenv("NX_PENNE_RECEIVER"); v != "" {
 		return v
