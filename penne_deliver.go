@@ -170,8 +170,8 @@ func (s *server) SubmitNotification(d PenneDelivery) PenneSubmission {
 // PutRecord, DeleteRecord, Ack, Reset, Ping, Pong, Idle, Nack,
 // SubscriptionList, SubscriptionUpdated and Hi — a MessageRequest carrier is
 // answered with "Unexpected command ... received in steady state" and the
-// connection fails. A notification is a record written under the recipient's
-// key, not a message (docs/penne-protocol.md §4d). This body is still the
+// connection fails. A notification is a kind-1 message carried inside a
+// PutRecord (docs/penne-record-shape-2026-09-16.md §2). This body is still the
 // right JSON; what carries it is not.
 //
 // penneEventJSON renders the event body carried inside a wire envelope: the
@@ -258,11 +258,13 @@ func (s *server) penneWake(userID string) {
 				sess.offer(e.ID, penneEventFrame(e))
 				continue
 			}
-			// A notification is a record: the event body is written to the
-			// account's c-friends record, which the console stores and then
-			// announces to its friends module (docs/penne-protocol.md §4d).
+			// A notification is a kind-1 message inside a PutRecord, routed
+			// by its Meta to the recipient's console account
+			// (docs/penne-record-shape-2026-09-16.md).
 			log.Printf("[nx-baas] notify: writing %s to the wire for %s (id=%s, device=%q)", e.Kind, e.UserID, e.ID, sess.device)
-			sess.offer(e.ID, s.penneRecordFrame(e))
+			for _, frame := range s.penneMessageFrames(e) {
+				sess.offer(e.ID, frame)
+			}
 		}
 	}
 }
@@ -273,102 +275,58 @@ func (s *server) penneWake(userID string) {
 // is one of those. It goes away when deliveries become records.
 var penneSendEvents = false
 
-// penneRecordFrame writes one queued delivery as a record: PutRecord with a
-// record name and the event JSON as its value. The shape comes from the
-// console's own handler, which reads {0: string name, 1: [ubyte] value},
-// stores the pair and announces the name [firmware, 0x1dc430].
+// penneMessageFrames renders one queued delivery as the frames to put on the
+// wire: a kind-1 message inside a PutRecord, one per console account the
+// recipient is known by (docs/penne-record-shape-2026-09-16.md).
 //
-// **Which name, though.** `c-friends.inv.subsTypes` is what the friends module
-// subscribes to at its own init [firmware, FUN_001eaa30], and records written
-// under it reach the wire and change nothing: on 2026-09-12 two presence
-// records were written to a live console and it neither refetched its friend
-// list nor showed the friend as online. The only topic that console has ever
-// announced to this server over Penne is `nx_data_<titleId>`. So the module's
-// internal subscription and the connection's announced subscriptions are two
-// different lists, and we have been writing to the one the console never
-// mentioned.
-//
-// Rather than guess again, NX_PENNE_RECORD_PROBE rotates the candidates one per
-// delivery and lets the console judge them — the same method that settled the
-// sync answer in three minutes of hardware time (penne_conn.go). The signal is
-// unambiguous and already in the log: an unsolicited
-// `GET /2.0.0/users/<id>/friends` a moment after a delivery.
-var penneRecordProbe = os.Getenv("NX_PENNE_RECORD_PROBE") != ""
-
-func (s *server) penneRecordFrame(e *penneOutRec) []byte {
-	name, value, shape := s.penneRecordShape(e)
-	s.records().Put(e.UserID, name, value)
-	now := uint64(time.Now().Unix())
-	if penneRecordProbe {
-		log.Printf("[nx-baas] notify: record as %s (name=%q) for %s", shape, name, e.UserID)
-	}
-	return penne.BuildPutRecord(name, value, uint32(len(value)), now, now+penneSyncTTL)
-}
-
-// penneRecordShape picks the record name and value for one delivery.
-func (s *server) penneRecordShape(e *penneOutRec) (name string, value []byte, shape string) {
-	flat := []byte(penneEventJSON(PenneDelivery{
+// The record write we used to send here was the wrong shape twice over. Our
+// PutRecord payload was {name, value} where the parser reads a vector of
+// entries -- it aborted on slot 0 and the console opened a fresh connection
+// after every write -- and `c-friends.inv.subsTypes` is a record the console
+// *writes*, not one it listens to, so even a well-formed store would have
+// changed nothing. A notification is a message, routed by Meta.
+func (s *server) penneMessageFrames(e *penneOutRec) [][]byte {
+	body := penneEventJSON(PenneDelivery{
 		ID: e.ID, UserID: e.UserID, Kind: e.Kind, Payload: e.Payload,
-	}))
-	if !penneRecordProbe {
-		return recordFriends, flat, "friends topic, flat value"
+	})
+	accounts := s.notifStore().AccountsFor(e.UserID)
+	if len(accounts) == 0 {
+		// Addressed to nobody: the friends module drops an event whose uid is
+		// zero, so this will not land. It still goes out, because a frame on
+		// the wire is visible in a capture and a silent drop is not.
+		log.Printf("[nx-baas] notify: no console account id known for %s; sending %s unaddressed", e.UserID, e.Kind)
+		accounts = []string{""}
 	}
-	// The topic this console actually announced, when it announced one.
-	announced := ""
-	for _, sub := range s.notifStore().Subscriptions(e.UserID) {
-		if sub.Topic != "" {
-			announced = sub.Topic
-			break
+	now := uint64(time.Now().Unix())
+	frames := make([][]byte, 0, len(accounts))
+	for _, account := range accounts {
+		m := penne.Message{
+			Name:      e.Kind,
+			Type:      1,
+			Receivers: penneReceiverToken,
+			AccountID: account,
+			Body:      body,
 		}
+		if m.TooLong() {
+			log.Printf("[nx-baas] notify: %s for %s exceeds the parser's bounds; dropped", e.Kind, e.UserID)
+			continue
+		}
+		frames = append(frames, penne.BuildMessage(m, now, now+penneSyncTTL))
 	}
-	// The 128-bit console account ids the console showed us on its
-	// notification-token calls. The friends module drops an event that does
-	// not name one [firmware: the dispatched handlers return unless the
-	// 128-bit id is non-zero], so half the candidates carry it.
-	accounts := []string{}
-	if id := s.notifStore().AssocIDForUser(e.UserID); id != "" {
-		if a := s.notifStore().AssocByID(id); a != nil {
-			accounts = a.AccountIDs
-		}
-	}
-	wrapped := flat
-	if len(accounts) > 0 {
-		// {key:{...}, data:{...}} is how `ns` reads a record for at least some
-		// topics (docs/penne-protocol.md §4d), with the addressee in the key.
-		var body map[string]any
-		_ = json.Unmarshal(flat, &body)
-		if b, err := json.Marshal(map[string]any{
-			"key":  map[string]any{"id": e.ID, "type": e.Kind, "userNaId": accounts[0], "ownerNaId": accounts[0]},
-			"data": body,
-		}); err == nil {
-			wrapped = b
-		}
-	}
-	switch s.notifStore().NextRecordProbe() % 6 {
-	case 1:
-		if announced != "" {
-			return announced, flat, "announced topic, flat value"
-		}
-		return recordFriends, flat, "friends topic, flat value (no announced topic)"
-	case 2:
-		return namespaceFriends, flat, "bare namespace, flat value"
-	case 3:
-		return recordFriends, wrapped, "friends topic, key/data value"
-	case 4:
-		if announced != "" {
-			return announced, wrapped, "announced topic, key/data value"
-		}
-		return namespaceFriends, wrapped, "bare namespace, key/data value (no announced topic)"
-	case 5:
-		if len(accounts) > 0 {
-			return recordFriends + "." + accounts[0], flat, "friends topic suffixed with the account id"
-		}
-		return recordFriends, wrapped, "friends topic, key/data value (no account id)"
-	default:
-		// The control: what production has always written.
-		return recordFriends, flat, "friends topic, flat value (control)"
-	}
+	return frames
 }
+
+// penneReceiverToken is Meta.f1, the routing token npns matches against its IPC
+// clients' listen keys. Which token the friends module listens under is not
+// visible statically (open question N5); the friends program id is the
+// candidate, and NX_PENNE_RECEIVER tries another without a rebuild. The signal
+// either way is an unsolicited GET /2.0.0/users/<id>/friends a moment later.
+var penneReceiverToken = func() string {
+	if v := os.Getenv("NX_PENNE_RECEIVER"); v != "" {
+		return v
+	}
+	return "0x010000000000000e"
+}()
 
 // penneEventFrame converts a queued delivery into its wire frame. The carrier
 // slot and payload field are the marked hypotheses (docs/penne-protocol.md);

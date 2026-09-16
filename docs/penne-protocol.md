@@ -165,7 +165,7 @@ firmware shows:
 | SubscriptionUpdated (unix second) | inbound SubscribeTopic | shape [firmware]; meaning of value + whether a reply is required within the 10 s deadline [hypothesis] |
 | HandoverResult (0x0c), field 0 = 0, on connect | connection accepted | **[firmware]** — the console reads exactly this message before anything else (§4b) |
 | ~~Hi (0x20), no payload~~ | superseded | was a hypothesis; the console rejects it by name
-| PutRecord (`c-friends.inv.subsTypes`, event JSON as value) | outbox delivery | shape **[firmware]** — `{0: string name, 1: [ubyte] value}`, handler `0x1dc430` — and the steady state accepts the type by name [firmware, §4d]. The old MessageRequest carrier is **superseded**: the steady state rejects it on arrival. Whether the friends module wakes on one of our records is the live open question (N2) |
+| PutRecord carrying a **kind-1 message** | outbox delivery | shape **[firmware, 2026-09-16]** — the payload is a vector of kind-tagged entries, not `{name, value}`; a notification is a message routed by its `Meta`, not a stored record (`docs/penne-record-shape-2026-09-16.md`, §4d below). The old MessageRequest carrier is **superseded**: the steady state rejects it on arrival. Open half: the receiver token (N5) |
 
 The five native event kinds the dispatcher recognizes [firmware]:
 `presence_updated`, `friend_invitation_received`, `friend_request_received`,
@@ -275,16 +275,21 @@ So delivery is not "push a frame". It is: complete the sync, then write a
 record under the recipient's key and let the console's record store hand it to
 the friends module.
 
-The record write's own shape is recovered too: `0x1dc430` follows slot 0 as a
-string and slot 1 as a byte vector, stores the pair with
-`FUN_001b0040(store, name, nameLen, value, valueLen, 1)` and announces the name
-through `0x1d0840`. So a `PutRecord` payload is **`{0: string name, 1: [ubyte]
-value}`** — the same shape as a `RootHash` entry, minus the digest.
+**Superseded 2026-09-16.** The paragraph above read `0x1dc430` (the kind-2
+handler) as if it were the whole of `PutRecord`. The parser above it
+(`0x1dfbb0`) reads the payload as `{0: [Entry], 1: u8 1}`, each entry tagged
+with a kind: kind 2 stores a record, kind 1 is a **message** that `0x1dc510`
+queues by `deliverAt` and hands to the IPC layer as the struct the friends
+module reads. A notification is the message. Full shape, including the `Meta`
+that addresses it and the `"NX"` in envelope slot 2:
+`docs/penne-record-shape-2026-09-16.md` §2.
 
-Which also settles §4a: the account id the friends module is handed does not
-travel in the record. **The connection is per account** — a ticket resolves to
-one BAAS user and the console's four records hang off it — so the id is
-implicit in which connection the record arrived on.
+Which also settles §4a, though not the way this read at first: the account id
+does travel with the message, in `Meta.accountId`, as the 32 hex chars
+`0x1e9000` parses. An empty one leaves the uid zero and the friends handlers
+drop the event, so the server addresses each delivery from `AccountsFor` —
+the accounts the console itself named on its notification-token calls — rather
+than relying on the connection being per account.
 
 ### Topics, and the one the friends module listens on
 
@@ -299,17 +304,23 @@ which is a dotted path under one. Topics seen as literals across the modules:
 | `c-storage.summary` | ns (beside `topic.subscription` in npns) |
 
 The friends module makes **exactly one subscription in its entire init** —
-`FUN_001eaa30("c-friends.inv.subsTypes", "friend", 6)` at `0x17bd24` — so that
-is the name a notification for it must be written under, and all five event
-kinds arrive there to be routed by the `$.type` in the record's value.
+`FUN_001eaa30("c-friends.inv.subsTypes", "friend", 6)` at `0x17bd24` — and that
+looked like the name a notification had to be written under. It is not: the
+call is a proxy write on `npns:s` slot 49, so the console *uploads* that pair
+rather than listening for it (`docs/penne-record-shape-2026-09-16.md` §1).
+Writing it from the server is a no-op for the friends module. That is
+open question N2, answered **no**.
 
 Record values are themselves documents: `ns` reads `$.key.{id,type,ownerNaId,
 userNaId}` and `$.data.{naId,applicationId,…}` out of a record, so a record is
 `{key: {...}, data: {...}}` for at least some topics.
 
-**Implemented:** deliveries are written as `PutRecord` on
-`c-friends.inv.subsTypes` with the event JSON as the value (`penne_records.go`,
-`penneRecordFrame`), and what was written is kept per account. A sync answers
+**Implemented:** deliveries go out as a kind-1 message inside `PutRecord`,
+addressed by `Meta.accountId` to the recipient's console account and routed by
+`Meta.receivers` (`penne_deliver.go`, `penneMessageFrames`;
+`internal/penne.BuildMessage`). The record store is no longer on that path and
+nothing writes to it today; it stays because the leaf half of the sync reads
+it. A sync answers
 with an **empty entry vector** (§4f) — the one reply the console accepts —
 because a partial or mismatched RootHash invites a leaf drill-down the server
 cannot answer yet, not because we hold nothing we could describe.

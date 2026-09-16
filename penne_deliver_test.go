@@ -211,59 +211,49 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// The record probe exists because writing to c-friends.inv.subsTypes reached a
-// live console and changed nothing: the only topic that console ever announced
-// over Penne was nx_data_<titleId>. These check the rotation is honest --
-// production is unaffected, every candidate is distinct, and the announced
-// topic is preferred over the guessed one when the console has given us one.
-func TestRecordProbeOffIsTheProductionShape(t *testing.T) {
-	old := penneRecordProbe
-	penneRecordProbe = false
-	t.Cleanup(func() { penneRecordProbe = old })
-
+// Delivery addressing: the frame has to name the console account the friends
+// module checks, and it has to name the account mapped to THIS user rather than
+// whatever account happened to register the console first.
+func TestMessageFramesAddressTheRecipientsAccount(t *testing.T) {
 	s := &server{}
-	name, value, _ := s.penneRecordShape(&penneOutRec{
-		ID: "ev1", UserID: "u1", Kind: EventPresenceUpdated, Payload: map[string]any{"friendId": "f1"}})
-	if name != recordFriends {
-		t.Fatalf("name = %q, want the friends record", name)
+	store := s.notifStore()
+	store.Register("dev1", "u1", "", time.Now())
+	assoc := store.AssocIDForUser("u1")
+	store.NoteAccount(assoc, "e1c0f4a2b3d4e5f60718293a4b5c6d7e", "u1")
+	store.NoteAccount(assoc, "00000000000000000000000000000002", "u2")
+
+	frames := s.penneMessageFrames(&penneOutRec{
+		ID: "ev1", UserID: "u1", Kind: EventFriendRequestAuthorized,
+		Payload: map[string]any{"friendId": "f1"}})
+	if len(frames) != 1 {
+		t.Fatalf("%d frames, want one per account of u1", len(frames))
 	}
-	if !strings.Contains(string(value), `"friendId":"f1"`) {
-		t.Fatalf("value lost the payload: %s", value)
+	env, err := penne.DecodeEnvelope(frames[0])
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	payload, _ := env.Payload()
+	m, ok := penne.ParseMessage(payload)
+	if !ok {
+		t.Fatal("not a kind-1 message")
+	}
+	if m.AccountID != "e1c0f4a2b3d4e5f60718293a4b5c6d7e" {
+		t.Errorf("addressed to %q; u2's account shares the console and must not be picked", m.AccountID)
+	}
+	if m.Receivers == "" {
+		t.Error("empty receiver list; npns has nothing to route by")
+	}
+	if !strings.Contains(m.Body, `"friendId":"f1"`) {
+		t.Errorf("body lost the payload: %s", m.Body)
 	}
 }
 
-func TestRecordProbeRotatesThroughDistinctCandidates(t *testing.T) {
-	old := penneRecordProbe
-	penneRecordProbe = true
-	t.Cleanup(func() { penneRecordProbe = old })
-
+// An unaddressed frame will not land -- the friends handlers drop a zero uid --
+// but it still goes on the wire, because a frame in a capture is evidence and a
+// silent drop is not.
+func TestMessageFramesStillSendWithoutAKnownAccount(t *testing.T) {
 	s := &server{}
-	store := s.notifStore()
-	store.SetSubscriptions("u1", "", []string{"nx_data_0100000000010000"}, time.Now())
-
-	seen := map[string]bool{}
-	shapes := map[string]bool{}
-	for i := 0; i < 6; i++ {
-		name, value, shape := s.penneRecordShape(&penneOutRec{
-			ID: "ev1", UserID: "u1", Kind: EventPresenceUpdated, Payload: map[string]any{"friendId": "f1"}})
-		seen[name+"|"+string(value)] = true
-		shapes[shape] = true
-		if name == "" || len(value) == 0 {
-			t.Fatalf("candidate %d produced an empty record", i)
-		}
-	}
-	if len(shapes) < 4 {
-		t.Fatalf("only %d distinct shapes in a full rotation: %v", len(shapes), shapes)
-	}
-	// The topic the console actually told us about must be among them, or the
-	// probe cannot test the one hypothesis it exists for.
-	found := false
-	for k := range seen {
-		if strings.HasPrefix(k, "nx_data_0100000000010000|") {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatal("the announced topic is never tried; the probe tests everything except the thing it is for")
+	if got := len(s.penneMessageFrames(&penneOutRec{ID: "ev1", UserID: "u1", Kind: EventPresenceUpdated})); got != 1 {
+		t.Fatalf("%d frames for an unknown account, want one unaddressed", got)
 	}
 }

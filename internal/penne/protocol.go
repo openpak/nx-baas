@@ -863,49 +863,6 @@ func BuildLeafHash(entries []RootEntry, count uint32, issued, expires uint64) []
 	return buildHashMessage(TypeLeafHash, entries, count, issued, expires)
 }
 
-// BuildPutRecord encodes a record write. The console's handler reads the
-// payload as {0: string name, 1: [ubyte] value} — it follows slot 0 as a
-// string, slot 1 as a byte vector, stores the pair and announces the name to
-// whichever module subscribes to it [firmware, RVA 0x1dc430:
-// FUN_001b0040(store, name, nameLen, value, valueLen, 1) then 0x1d0840].
-//
-// The name is a record namespace as the console spells it — c-appearance,
-// c-friends, c-settings, c-storage — and the value is that record's contents.
-func BuildPutRecord(name string, value []byte, count uint32, issued, expires uint64) []byte {
-	b := NewBuilder(128 + len(name) + len(value))
-	n := b.CreateString(name)
-	v := b.CreateByteVector(value)
-	b.StartTable(2)
-	b.PrependUOffsetSlot(1, v)
-	b.PrependUOffsetSlot(0, n)
-	payload := b.EndTable()
-
-	b.StartTable(5)
-	b.PrependU64Slot(4, expires)
-	b.PrependU64Slot(3, issued)
-	b.PrependU32Slot(2, count)
-	b.PrependUOffsetSlot(1, payload)
-	b.PrependU8Slot(0, TypePutRecord)
-	root := b.EndTable()
-	b.prep(b.minalign, 4)
-	b.placeU32(uint32(b.Offset() + 4 - root))
-	return b.Bytes()
-}
-
-// ParsePutRecord reads a record write back out, for tests and for a server that
-// is handed one.
-func ParsePutRecord(payload Table) (string, []byte, bool) {
-	name, ok := payload.String(0)
-	if !ok {
-		return "", nil, false
-	}
-	value, ok := payload.Bytes(1)
-	if !ok {
-		return name, nil, false
-	}
-	return name, value, true
-}
-
 // BuildEmpty encodes an envelope whose payload table has no fields. Hi (0x20),
 // SyncComplete (0x08) and SubscriptionListRequest (0x1c) are logged by the
 // module with no payload fields, so this is their shape.
@@ -928,4 +885,132 @@ func BuildEvent(jsonBody string) []byte {
 	b.PrependUOffsetSlot(0, str)
 	payload := b.EndTable()
 	return b.FinishEnvelope(TypeMessageRequest, payload)
+}
+
+// ---------- kind-1 messages: the notification carrier ----------
+//
+// Recovered 2026-09-16 (docs/penne-record-shape-2026-09-16.md) from the
+// console's own PutRecord frame and its parser at RVA 0x1dfbb0. A PutRecord
+// payload is not {name, value}: it is a vector of entries, each tagged with a
+// kind. Kind 2 is a stored record; kind 1 is a *message*, which is what a
+// notification is — 0x1dc510 parses it, queues it by deliverAt and hands it to
+// the IPC layer as the struct the friends module reads.
+//
+//	Envelope   {0: u8 type=4, 1: →PutRecord, 2: string "NX", 3: u64 issued, 4: u64 expires}
+//	PutRecord  {0: [Entry] (exactly one element), 1: u8 = 1}
+//	Entry      {0: u8 kind, 1: →Message}
+//	Message(1) {0: string name, 1: u16 type, 2: →Meta, 4: string body, 5: u64 deliverAt}
+//	Meta       {1: string receivers, 2: string accountId, 4: string (≤39)}
+
+const (
+	// EntryKindMessage tags an entry the console delivers to a module rather
+	// than storing; EntryKindRecord is the stored-record half.
+	EntryKindMessage = 1
+	EntryKindRecord  = 2
+
+	// envelopeTag is what envelope slot 2 carries in the console's own frames:
+	// the string "NX", not the u32 the hash builders above write there. The
+	// RootHash answer keeps its u32 because that shape is hardware-proven; a
+	// verifier-checked message is not the place to re-bet it.
+	envelopeTag = "NX"
+
+	// maxMessageName and maxMessageBody are the parser's own bounds; longer
+	// values fail verification rather than being truncated on the console.
+	maxMessageName = 47
+	maxMessageBody = 4095
+)
+
+// Message is one kind-1 notification.
+//
+// Receivers is a comma-separated list of routing tokens, each a hex u64
+// ("0x…", 16 digits) or a name; it must be non-empty or npns has nothing to
+// route by. AccountID is the recipient's 128-bit console account as 32 hex
+// chars — empty leaves the uid zero and the friends handlers drop the event.
+// Type is the u16 in slot 1, whose meaning is not recovered.
+type Message struct {
+	Name      string
+	Type      uint16
+	Receivers string
+	AccountID string
+	Body      string
+	DeliverAt uint64 // absent (0) means deliver now
+}
+
+// BuildMessage encodes one kind-1 message inside a PutRecord envelope.
+func BuildMessage(m Message, issued, expires uint64) []byte {
+	b := NewBuilder(256 + len(m.Body))
+
+	recv := b.CreateString(m.Receivers)
+	acct := b.CreateString(m.AccountID)
+	b.StartTable(3)
+	b.PrependUOffsetSlot(2, acct)
+	b.PrependUOffsetSlot(1, recv)
+	meta := b.EndTable()
+
+	name := b.CreateString(m.Name)
+	body := b.CreateString(m.Body)
+	b.StartTable(6)
+	if m.DeliverAt != 0 {
+		b.PrependU64Slot(5, m.DeliverAt)
+	}
+	b.PrependUOffsetSlot(4, body)
+	b.PrependUOffsetSlot(2, meta)
+	b.PrependU16Slot(1, m.Type)
+	b.PrependUOffsetSlot(0, name)
+	msg := b.EndTable()
+
+	b.StartTable(2)
+	b.PrependUOffsetSlot(1, msg)
+	b.PrependU8Slot(0, EntryKindMessage)
+	entry := b.EndTable()
+
+	vec := b.CreateOffsetVector([]int{entry})
+	b.StartTable(2)
+	b.PrependU8Slot(1, 1)
+	b.PrependUOffsetSlot(0, vec)
+	payload := b.EndTable()
+
+	tag := b.CreateString(envelopeTag)
+	b.StartTable(5)
+	b.PrependU64Slot(4, expires)
+	b.PrependU64Slot(3, issued)
+	b.PrependUOffsetSlot(2, tag)
+	b.PrependUOffsetSlot(1, payload)
+	b.PrependU8Slot(0, TypePutRecord)
+	root := b.EndTable()
+	b.prep(b.minalign, 4)
+	b.placeU32(uint32(b.Offset() + 4 - root))
+	return b.Bytes()
+}
+
+// MessageTooLong reports a message the console's parser would refuse on
+// length alone, so a caller finds out here instead of by a dropped connection.
+func (m Message) TooLong() bool {
+	return len(m.Name) > maxMessageName || len(m.Body) > maxMessageBody
+}
+
+// ParseMessage reads the first kind-1 message out of a PutRecord payload.
+// ok is false for an empty vector or an entry of another kind.
+func ParseMessage(payload Table) (Message, bool) {
+	entry, ok := payload.VectorTable(0, 0)
+	if !ok {
+		return Message{}, false
+	}
+	if kind, _ := entry.U8(0); kind != EntryKindMessage {
+		return Message{}, false
+	}
+	t, ok := entry.Table(1)
+	if !ok {
+		return Message{}, false
+	}
+	var m Message
+	m.Name, _ = t.String(0)
+	m.Type, _ = t.U16(1)
+	m.Body, _ = t.String(4)
+	m.DeliverAt, _ = t.U64(5)
+	if meta, ok := t.Table(2); ok {
+		m.Receivers, _ = meta.String(1)
+		m.AccountID, _ = meta.String(2)
+	}
+	return m, true
 }

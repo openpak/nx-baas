@@ -395,10 +395,10 @@ func TestSyncIsAnsweredWithAnEmptyEntryVector(t *testing.T) {
 	}
 }
 
-// A notification is a record: the event goes out as PutRecord on the account's
-// c-friends name, carrying the event JSON, and the server then answers the next
-// sync with its own digest for that record instead of the console's.
-func TestEventIsDeliveredAsAFriendsRecord(t *testing.T) {
+// A notification goes out as a kind-1 message inside a PutRecord, addressed by
+// its Meta to the recipient's console account
+// (docs/penne-record-shape-2026-09-16.md).
+func TestEventIsDeliveredAsAKindOneMessage(t *testing.T) {
 	old := penneSendEvents
 	penneSendEvents = false
 	t.Cleanup(func() { penneSendEvents = old })
@@ -436,18 +436,19 @@ func TestEventIsDeliveredAsAFriendsRecord(t *testing.T) {
 	if !ok {
 		t.Fatal("delivery has no payload")
 	}
-	name, value, ok := penne.ParsePutRecord(payload)
-	// The topic the friends module actually subscribes to, not the namespace
-	// its digest is reported under [firmware, 0x17bd24].
-	if !ok || name != "c-friends.inv.subsTypes" {
-		t.Fatalf("record name = %q (ok=%v)", name, ok)
+	// Exactly one entry: the parser reads slot 0 as a vector length and aborts
+	// on anything else, which is what our old {name, value} payload did.
+	if n, ok := payload.VectorLen(0); !ok || n != 1 {
+		t.Fatalf("entry vector = %d (ok=%v), want one", n, ok)
 	}
-	if !strings.Contains(string(value), `"type":"friend_request_authorized"`) {
-		t.Errorf("record value = %s", value)
+	m, ok := penne.ParseMessage(payload)
+	if !ok {
+		t.Fatal("the entry is not a kind-1 message")
 	}
-	// The digest we now own is what a later sync must answer with.
-	digest, ok := s.records().Digest(userID, "c-friends.inv.subsTypes")
-	if !ok || len(digest) != 20 {
-		t.Fatalf("no digest kept for the record we wrote (ok=%v len=%d)", ok, len(digest))
+	if !strings.Contains(m.Body, `"type":"friend_request_authorized"`) {
+		t.Errorf("message body = %s", m.Body)
+	}
+	if m.Receivers == "" {
+		t.Error("empty receiver list; npns has nothing to route by")
 	}
 }

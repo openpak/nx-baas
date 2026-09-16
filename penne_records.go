@@ -1,17 +1,16 @@
-// The record store behind Penne delivery.
+// The record store the sync answers from.
 //
-// A notification on 22.5.0 is not a message, it is a record. The console keeps
-// four of them per account — c-appearance, c-friends, c-settings, c-storage —
-// opens every connection by offering a SHA-1 digest of each (RootHash), and
-// accepts changes as PutRecord{name, value}, storing the pair and announcing
-// the name to whichever sysmodule subscribes to it. For c-friends that
-// subscriber is the friends module, which is what makes a console refetch its
-// friend list (docs/penne-protocol.md §4d, §4e).
+// The console keeps four record namespaces per account — c-appearance,
+// c-friends, c-settings, c-storage — and opens every connection by offering a
+// SHA-1 digest of each (RootHash). This holds what THIS server has written
+// under them, so a LeafHash reply can answer truthfully about records we own
+// instead of mirroring the console's digests back at it
+// (docs/penne-protocol.md §4d, §4e).
 //
-// So this is the delivery mechanism: write the account's c-friends record and
-// the console reacts. What we keep here is the last value we wrote per account
-// and its digest, so the next sync can answer truthfully about the records we
-// do own instead of mirroring the console's back at it.
+// It is no longer the delivery path: a notification turned out to be a kind-1
+// message routed by its Meta, not a record write
+// (docs/penne-record-shape-2026-09-16.md). Nothing writes here today; the
+// store stays because the leaf half of the sync reads it.
 package main
 
 import (
@@ -20,27 +19,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-)
-
-// Record namespaces the console offers digests for [runtime capture,
-// 2026-09-12], and the topics that hang off them.
-//
-// A RootHash entry names a namespace; a record is named for the topic a module
-// subscribed to, which is a dotted path under one. The friends module makes
-// exactly one subscription in its whole init —
-// FUN_001eaa30("c-friends.inv.subsTypes", "friend", 6) at 0x17bd24 — so that
-// is the name a notification for it has to be written under. The namespace
-// digest covers whatever hangs below it, by an aggregation this server cannot
-// reproduce, which is why a sync still answers with the console's own digests.
-const (
-	namespaceFriends    = "c-friends"
-	namespaceAppearance = "c-appearance"
-	namespaceSettings   = "c-settings"
-	namespaceStorage    = "c-storage"
-
-	// recordFriends is the topic the friends module subscribes to, and so the
-	// record a friend notification is written to [firmware, 0x17bd24].
-	recordFriends = "c-friends.inv.subsTypes"
 )
 
 // penneRecordStore holds what this server has written, per account. It is
