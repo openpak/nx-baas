@@ -301,10 +301,23 @@ func listEnvelopeWith(items []any, etag string, perPage int) map[string]any {
 	return map[string]any{"count": len(items), "etag": etag, "items": items, "itemsPerPage": perPage}
 }
 
+// requestState spells a request state the console's way. Its state table is
+// PENDING, CANCELED, AUTHORIZED, REJECTED, EXPIRED, and 30202 cancels with
+// "CANCELED", one L [friends-contract-22.5.0 §A.4.4]. The double-L spelling
+// this server used to insist on is still read, and still stored in records
+// settled before this, so both mean the same answer.
+func requestState(v string) string {
+	v = strings.ToUpper(v)
+	if v == "CANCELLED" {
+		return "CANCELED"
+	}
+	return v
+}
+
 // patchedState reads the state a console set on a friend request. Its own
-// words: AUTHORIZED to become friends, REJECTED to refuse. Answering with a
-// different word for the same thing is how a working accept reported itself
-// as a communication error.
+// words: AUTHORIZED to become friends, REJECTED to refuse, CANCELED to
+// withdraw. Answering with a different word for the same thing is how a
+// working accept reported itself as a communication error.
 func patchedState(body []byte) string {
 	var ops []struct {
 		Op, Path string
@@ -314,7 +327,7 @@ func patchedState(body []byte) string {
 		for _, o := range ops {
 			if strings.HasSuffix(o.Path, "/state") {
 				if v, ok := o.Value.(string); ok && v != "" {
-					return strings.ToUpper(v)
+					return requestState(v)
 				}
 			}
 		}

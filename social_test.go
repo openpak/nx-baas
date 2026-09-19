@@ -245,6 +245,96 @@ func TestRejectCancelRemoveCommitOrError(t *testing.T) {
 	}
 }
 
+// requestReplyGaps returns the fields the 22.5.0 request parser requires and
+// this reply lacks, in the mode the console reads it: sender mode (send,
+// cancel) wants receiverId and receiver.*, receiver mode (accept, reject)
+// wants senderId and sender.* [friends-contract-22.5.0 §A.4.1, §A.4.4].
+func requestReplyGaps(reply map[string]any, other *User, senderMode bool) []string {
+	var gaps []string
+	if v, _ := reply["id"].(string); v == "" {
+		gaps = append(gaps, "id")
+	}
+	if ch, _ := reply["channels"].([]any); len(ch) == 0 {
+		gaps = append(gaps, "channels[0]")
+	} else if v, _ := ch[0].(string); v == "" {
+		gaps = append(gaps, "channels[0]")
+	}
+	if v, _ := reply["state"].(string); v == "" {
+		gaps = append(gaps, "state")
+	}
+	party := "sender"
+	if senderMode {
+		party = "receiver"
+	}
+	if reply[party+"Id"] != other.ID {
+		gaps = append(gaps, party+"Id")
+	}
+	obj, _ := reply[party].(map[string]any)
+	if _, ok := obj["nickname"].(string); !ok {
+		gaps = append(gaps, party+".nickname")
+	}
+	if v, _ := obj["thumbnailUrl"].(string); v == "" {
+		gaps = append(gaps, party+".thumbnailUrl")
+	}
+	return gaps
+}
+
+// 30202 cancels with "CANCELED", one L. The server only knew "CANCELLED", so
+// every console cancel was 400 invalid_params (2121-2001) and a sender could
+// never withdraw a request [friends-contract-22.5.0 §A.4.4, C1]. The reply is
+// read in sender mode; accept and reject are read in receiver mode.
+func TestCancelUsesTheConsolesSpellingAndEveryReplyIsTheFullRequest(t *testing.T) {
+	s, f, users := socialServer(t)
+	a, b := users[0], users[1]
+	f.friends, f.incoming, f.outgoing = map[string][]string{}, map[string][]string{}, map[string][]string{}
+
+	code, sent := postRequest(t, s, a, `{"channels":["FRIEND_CODE"],"senderId":"`+a.ID+`","receiverId":"`+b.ID+`","extras":{"sender":{"route:sender":"me"}}}`)
+	if code >= 300 {
+		t.Fatalf("send: %d %v", code, sent)
+	}
+	if gaps := requestReplyGaps(sent, b, true); gaps != nil {
+		t.Errorf("send reply lacks %v: %v", gaps, sent)
+	}
+	code, canceled := answerRequest(t, s, a, "PATCH", sent["id"].(string), `[{"op":"replace","path":"/state","value":"CANCELED"}]`)
+	if code != http.StatusOK || canceled["state"] != "CANCELED" {
+		t.Fatalf("cancel: %d %v", code, canceled)
+	}
+	if gaps := requestReplyGaps(canceled, b, true); gaps != nil {
+		t.Errorf("cancel reply lacks %v: %v", gaps, canceled)
+	}
+	if id, _ := s.acct.Identity(a.PID); len(id.SentRequests) != 0 {
+		t.Errorf("canceled request still in the outbox: %+v", id.SentRequests)
+	}
+	// The console repeats a PATCH; the repeat answers the same.
+	if code, again := answerRequest(t, s, a, "PATCH", sent["id"].(string), `[{"op":"replace","path":"/state","value":"CANCELED"}]`); code != http.StatusOK || again["state"] != "CANCELED" {
+		t.Errorf("repeat cancel: %d %v", code, again)
+	}
+
+	// The old spelling still cancels.
+	_, sent = postRequest(t, s, a, `{"receiverId":"`+b.ID+`"}`)
+	if code, _ := answerRequest(t, s, a, "PATCH", sent["id"].(string), `[{"op":"replace","path":"/state","value":"CANCELLED"}]`); code != http.StatusOK {
+		t.Errorf("CANCELLED no longer cancels: %d", code)
+	}
+
+	// Reject and accept are read in receiver mode.
+	_, sent = postRequest(t, s, a, `{"receiverId":"`+b.ID+`"}`)
+	code, rejected := answerRequest(t, s, b, "PATCH", sent["id"].(string), `[{"op":"replace","path":"/state","value":"REJECTED"}]`)
+	if code != http.StatusOK {
+		t.Fatalf("reject: %d %v", code, rejected)
+	}
+	if gaps := requestReplyGaps(rejected, a, false); gaps != nil {
+		t.Errorf("reject reply lacks %v: %v", gaps, rejected)
+	}
+	_, sent = postRequest(t, s, a, `{"receiverId":"`+b.ID+`"}`)
+	code, accepted := answerRequest(t, s, b, "PATCH", sent["id"].(string), `[{"op":"replace","path":"/state","value":"AUTHORIZED"}]`)
+	if code != http.StatusOK {
+		t.Fatalf("accept: %d %v", code, accepted)
+	}
+	if gaps := requestReplyGaps(accepted, a, false); gaps != nil {
+		t.Errorf("accept reply lacks %v: %v", gaps, accepted)
+	}
+}
+
 // A second answer to a settled request is refused: the record is dropped
 // after its lifecycle ends, and the core refuses what the cache shows.
 // The console answers the same request twice — once from the request box and

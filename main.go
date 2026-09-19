@@ -1384,7 +1384,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		}
 		state := patchedState(body)
 		if r.Method == "DELETE" {
-			state = "CANCELLED"
+			state = "CANCELED"
 		}
 		record, other := s.friendRequestByRef(seg[1])
 		if state == "" {
@@ -1408,7 +1408,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			}
 			reply := s.friendRequestReply(me, myID, target, seg[1], incoming, nil, now)
 			if record != nil && record.State != "" {
-				reply["state"] = record.State
+				reply["state"] = requestState(record.State)
 			}
 			reply["extras"] = map[string]any{"receiver": map[string]any{"read": true}}
 			writeJSON(w, 200, reply)
@@ -1422,7 +1422,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			// second one reads as "this invitation is no longer valid" even
 			// though the friendship went through. Same answer, no second
 			// commit; a different answer is genuinely gone.
-			if record.State != state {
+			if requestState(record.State) != state {
 				baasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 				return
 			}
@@ -1434,7 +1434,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 				err = s.settleRequest(me, record, true)
 			case "REJECTED":
 				err = s.settleRequest(me, record, false)
-			case "CANCELLED":
+			case "CANCELED":
 				err = s.cancelRequest(me, record)
 			default:
 				baasErr(w, r, 400, "invalid_params", "Invalid Params", "unknown request state")
@@ -1447,7 +1447,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			// A bare user id: a request box cached by an older build of this
 			// server. The core enforces the direction — accepting a request
 			// that does not address this caller fails there.
-			if state == "CANCELLED" {
+			if state == "CANCELED" {
 				err = s.acct.RemoveFriend(me.PID, other.PID)
 			} else {
 				err = s.acct.FriendAccept(me.PID, other.PID, state == "AUTHORIZED")
@@ -1497,7 +1497,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		meObj := s.userObj(me, myID, "")
 		senderObj, receiverObj := any(otherObj), any(meObj)
 		senderID, receiverID := otherBaas, me.ID
-		if state == "CANCELLED" || (record != nil && record.FromPID == me.PID) {
+		if state == "CANCELED" || (record != nil && record.FromPID == me.PID) {
 			// A cancellation answers the request the caller sent.
 			senderObj, receiverObj = receiverObj, senderObj
 			senderID, receiverID = receiverID, senderID
