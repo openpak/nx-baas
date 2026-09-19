@@ -363,7 +363,7 @@ func extras() map[string]any {
 func presenceObj(p Presence) map[string]any {
 	ex := extras()
 	if p.AppID != "" {
-		friends := map[string]any{"appField": p.AppField, "appInfo:appId": p.AppID, "appInfo:presenceGroupId": p.PresenceGroupID}
+		friends := map[string]any{"appField": appFieldOrEmpty(p.AppField), "appInfo:appId": p.AppID, "appInfo:presenceGroupId": p.PresenceGroupID}
 		if p.ACDIndex >= 0 {
 			// Read back by the friend list's numeric parser
 			// [firmware, $.items[*].friend.presence.extras.friends.appInfo:acdIndex].

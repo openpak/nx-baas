@@ -58,7 +58,7 @@ func TestCapturedDAPresenceParses(t *testing.T) {
 	}
 
 	// Idle on Home: online, and deliberately NOT "playing title 0000000000000000".
-	state, appID, _, _, acd := presenceFromExtras(doc, true)
+	state, appID, _, _, acd := presenceFromExtras(doc, 1)
 	if state != "ONLINE" {
 		t.Errorf("state = %q, want ONLINE", state)
 	}
@@ -75,9 +75,13 @@ func TestCapturedDAPresenceParses(t *testing.T) {
 func TestPresenceFromExtrasReadsTheTitle(t *testing.T) {
 	doc := `{"self":{},"friends":{"appField":"AA==","appInfo:appId":"0100e65002bb8000",` +
 		`"appInfo:acdIndex":3,"appInfo:presenceGroupId":"0100e65002bb8000"},"everyone":{}}`
-	state, appID, appField, group, acd := presenceFromExtras(doc, true)
+	state, appID, appField, group, acd := presenceFromExtras(doc, 3)
 	if state != "PLAYING" {
 		t.Errorf("state = %q, want PLAYING", state)
+	}
+	// In the same game with no session open: online, not joinable.
+	if st, _, _, _, _ := presenceFromExtras(doc, 2); st != "ONLINE" {
+		t.Errorf("state byte 2 = %q, want ONLINE", st)
 	}
 	if appID != "0100e65002bb8000" || group != "0100e65002bb8000" {
 		t.Errorf("appID=%q group=%q", appID, group)
@@ -94,7 +98,7 @@ func TestPresenceFromExtrasReadsTheTitle(t *testing.T) {
 // byte clear; it must not read as online.
 func TestPresenceFromExtrasHonoursTheLiveByte(t *testing.T) {
 	doc := `{"friends":{"appInfo:appId":"0100e65002bb8000"}}`
-	if state, _, _, _, _ := presenceFromExtras(doc, false); state != "OFFLINE" {
+	if state, _, _, _, _ := presenceFromExtras(doc, 0); state != "OFFLINE" {
 		t.Errorf("state = %q, want OFFLINE", state)
 	}
 }

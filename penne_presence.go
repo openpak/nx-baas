@@ -16,7 +16,9 @@ package main
 //	  0: string  device account id   "cccccccccccc0001"
 //	  1: string  BAAS user id        "aaaaaaaaaaaa0001"
 //	  2: table
-//	       0: u8      state (1 = online)
+//	       0: u8      state: 1 INACTIVE (no game), 2 ONLINE (in a game, no
+//	                  session), 3 PLAYING (online-play session open)
+//	                  [firmware, friends 0x1bfe80; docs/switch/friends-presence-firmware-2026-09-19.md]
 //	       1: string  the extras document, the same shape this server serves
 //	       2: u8      flags
 //
@@ -44,7 +46,7 @@ func (s *server) penneNotePresence(p penne.Table) bool {
 	if !ok || userID == "" {
 		return false
 	}
-	live, _ := inner.U8(0)
+	stateByte, _ := inner.U8(0)
 	doc, _ := inner.String(1)
 
 	u := s.store.User(userID)
@@ -53,19 +55,27 @@ func (s *server) penneNotePresence(p penne.Table) bool {
 		return false
 	}
 
-	state, appID, appField, groupID, acdIndex := presenceFromExtras(doc, live != 0)
+	state, appID, appField, groupID, acdIndex := presenceFromExtras(doc, stateByte)
 	s.noteDevicePresence(u, device, state, appID, appField, groupID, acdIndex)
-	log.Printf("[nx-baas] penne: presence user=%s device=%s %s app=%s", userID, device, state, appID)
+	log.Printf("[nx-baas] penne: presence user=%s device=%s byte=%d %s app=%s field=%q", userID, device, stateByte, state, appID, appField)
 	return true
 }
 
 // presenceFromExtras reads the console's own extras document. The console
 // publishes the same shape this server serves back to it, so the field names
 // are already known [firmware, friends module 0xa7510].
-func presenceFromExtras(doc string, live bool) (state, appID, appField, groupID string, acdIndex int) {
+//
+// Only the state byte says PLAYING, never the title alone: PLAYING is an open
+// online-play session, and a friend's game reads it as "joinable". INACTIVE
+// (on Home) is served as ONLINE — the reading side maps INACTIVE to offline.
+func presenceFromExtras(doc string, stateByte uint8) (state, appID, appField, groupID string, acdIndex int) {
 	acdIndex = -1
-	state = "OFFLINE"
-	if live {
+	switch stateByte {
+	case 0:
+		state = "OFFLINE"
+	case 3:
+		state = "PLAYING"
+	default:
 		state = "ONLINE"
 	}
 	var extras struct {
@@ -84,9 +94,6 @@ func presenceFromExtras(doc string, live bool) (state, appID, appField, groupID 
 	// An all-zero title id is "not in a game", not a game whose id is zero.
 	if f.AppID != "" && strings.Trim(f.AppID, "0") != "" {
 		appID = f.AppID
-		if live {
-			state = "PLAYING"
-		}
 	}
 	if f.AppField != "" && f.AppField != "{}" {
 		appField = f.AppField
