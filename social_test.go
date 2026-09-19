@@ -804,6 +804,61 @@ func TestPlayLogIsKeptAndShownToWhoMaySeeIt(t *testing.T) {
 	}
 }
 
+// 30130 ChangeFriendNote PATCHes replace /friendNote (at most 20
+// characters) and the reply is the full relationship object carrying it.
+// We answered 400, which the console tolerates by dropping the pending
+// note, so notes never persisted [friends-contract-22.5.0 §A.2, C6].
+func TestFriendNotePersistsAndProjects(t *testing.T) {
+	s, _, users := socialServer(t)
+	a, b := users[0], users[1]
+
+	patch := func(body string) (int, map[string]any) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, authed("PATCH", "/2.0.0/users/"+a.ID+"/friends/"+b.ID, body, a, s))
+		var out map[string]any
+		_ = json.Unmarshal(w.Body.Bytes(), &out)
+		return w.Code, out
+	}
+	entryOf := func() map[string]any {
+		t.Helper()
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, authed("GET", "/2.0.0/users/"+a.ID+"/friends?count=300", "", a, s))
+		var list map[string]any
+		_ = json.Unmarshal(w.Body.Bytes(), &list)
+		for _, it := range list["items"].([]any) {
+			if it.(map[string]any)["friendId"] == b.ID {
+				return it.(map[string]any)
+			}
+		}
+		t.Fatal("B is not in A's list")
+		return nil
+	}
+
+	if code, reply := patch(`[{"op":"replace","path":"/friendNote","value":"raids tue"}]`); code != http.StatusOK {
+		t.Fatalf("PATCH friendNote: %d %v", code, reply)
+	} else if reply["friendNote"] != "raids tue" {
+		t.Errorf("PATCH reply friendNote = %v", reply["friendNote"])
+	}
+	if got := entryOf()["friendNote"]; got != "raids tue" {
+		t.Errorf("list friendNote = %v", got)
+	}
+
+	// Longer than 20 characters is invalid_params, which the console
+	// tolerates by dropping the pending note; the kept note is untouched.
+	if code, _ := patch(`[{"op":"replace","path":"/friendNote","value":"this note is far too long for the field"}]`); code != 400 {
+		t.Errorf("overlong friendNote status = %d, want 400", code)
+	}
+	if got := entryOf()["friendNote"]; got != "raids tue" {
+		t.Errorf("list friendNote after overlong PATCH = %v", got)
+	}
+
+	s.store = loadStore(s.store.path)
+	if got := entryOf()["friendNote"]; got != "raids tue" {
+		t.Errorf("list friendNote after restart = %v", got)
+	}
+}
+
 // The emulator's add-by-code path speaks the same Resolve contract as the
 // console (SOC-04): "code", not a key nothing matched.
 func TestEmulatorFriendCodeLookup(t *testing.T) {

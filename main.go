@@ -1311,6 +1311,16 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 						p.UpdatedAt = now
 						changed = true
 					}
+				case strings.HasSuffix(o.Path, "friendNote"):
+					// 30130 ChangeFriendNote: replace /friendNote, at most
+					// 20 characters. Longer is invalid_params, which the
+					// console tolerates by dropping the pending note
+					// [friends-contract-22.5.0 §A.2].
+					if note, ok := o.Value.(string); ok && len([]rune(note)) <= 20 {
+						p.Note = note
+						p.UpdatedAt = now
+						changed = true
+					}
 				}
 			}
 		})
