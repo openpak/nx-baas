@@ -104,6 +104,41 @@ func TestFriendCodeRegeneratesOncePerDay(t *testing.T) {
 	}
 }
 
+// The advertised next-issuable time is the enforced one: the code was just
+// issued, so regenerableAt is 24 h out and regenerable is false — not +30 d
+// and true [friends-contract-22.5.0 §A.6, C11].
+func TestFriendCodeAdvertisesTheEnforcedCooldown(t *testing.T) {
+	s := dauthServer(t)
+	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	u, _ := s.store.NewUser()
+	s.store.Update(u, func(u *User) { u.PID, u.Nickname = 1, "tester" })
+	s.acct = fakeBackend{id: &Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
+		FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did"}}
+
+	r := httptest.NewRequest("POST", "https://"+baasHost+"/1.0.0/users/"+u.ID+"/generate_code",
+		strings.NewReader("type=NX"))
+	r.Host = baasHost
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("generate_code = %d: %s", w.Code, w.Body.String())
+	}
+	var reply map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &reply); err != nil {
+		t.Fatalf("reply is not JSON: %s", w.Body.String())
+	}
+	fc, _ := reply["links"].(map[string]any)["friendCode"].(map[string]any)
+	wantAt := float64(s.store.User(u.ID).CodeGeneratedAt + 24*3600)
+	if fc["regenerableAt"] != wantAt {
+		t.Errorf("regenerableAt = %v, want %v (issue + 24h)", fc["regenerableAt"], wantAt)
+	}
+	if fc["regenerable"] != false {
+		t.Errorf("regenerable = %v, want false until the cooldown passes", fc["regenerable"])
+	}
+}
+
 // The other services the console reaches here. Each of these was answered with
 // 404 {} tonight, which a console reports as an error rather than as "nothing
 // to show" — the exact requests are from the log, hosts included.

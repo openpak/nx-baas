@@ -357,6 +357,20 @@ func avatarURL(pid uint64, b64 string, updatedAt int64) string {
 // friendCodeID: BAAS friend codes are "1234-5678-9012"; OpenPak displays them as "SW-...".
 func friendCodeID(fc string) string { return strings.TrimPrefix(fc, "SW-") }
 
+// codeRegen reports the friend-code regeneration state the console shows:
+// regenerableAt is the "next issuable" time and regenerable whether a new
+// code may be issued now. A new code is allowed once a day from the last
+// issue — generate_code enforces the same 24 h — so advertising +30 d showed
+// a date the enforcement never kept [friends-contract-22.5.0 §A.6, C11].
+// A code that was never issued is issuable now.
+func codeRegen(codeGeneratedAt, fallback int64) (regenerableAt int64, regenerable bool) {
+	if codeGeneratedAt <= 0 {
+		return fallback, true
+	}
+	at := codeGeneratedAt + 24*3600
+	return at, time.Now().Unix() >= at
+}
+
 func extras() map[string]any {
 	return map[string]any{"self": map[string]any{}, "favoriteFriends": map[string]any{}, "friends": map[string]any{}, "foaf": map[string]any{}, "everyone": map[string]any{}}
 }
@@ -416,7 +430,8 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 		nickname = id.Nickname
 		links["nintendoAccount"] = map[string]any{"id": id.NaID, "createdAt": u.CreatedAt, "updatedAt": u.CreatedAt}
 		if !minimal {
-			links["friendCode"] = map[string]any{"id": friendCodeID(id.FriendCode), "createdAt": u.CreatedAt, "updatedAt": u.CreatedAt, "regenerableAt": u.CreatedAt + 30*86400, "regenerable": true}
+			regenAt, regen := codeRegen(u.CodeGeneratedAt, u.CreatedAt)
+			links["friendCode"] = map[string]any{"id": friendCodeID(id.FriendCode), "createdAt": u.CreatedAt, "updatedAt": u.CreatedAt, "regenerableAt": regenAt, "regenerable": regen}
 			if pl, ok := id.PlayLog.(string); ok && pl != "" && pl != "null" && u.PlayLog == nil {
 				friendsEx["playLog"], everyone["playLog"] = pl, pl
 			}
@@ -503,7 +518,8 @@ func (s *server) friendObj(f Friend, now int64) map[string]any {
 	// one — a lookup-time constant is not a state change.
 	updatedAt := created
 	country, devices := f.Country, []map[string]any{}
-	if local := s.store.User(f.BaasUserID); local != nil {
+	local := s.store.User(f.BaasUserID)
+	if local != nil {
 		if local.Country != "" {
 			country = local.Country
 		}
@@ -517,6 +533,13 @@ func (s *server) friendObj(f Friend, now int64) map[string]any {
 			devices = append(devices, map[string]any{"id": local.DeviceAccounts[n-1]})
 		}
 	}
+	// The next-issuable time of their code, when this server knows when it
+	// was issued; otherwise the same 24 h rule from what the lookup carried.
+	var codeGen int64
+	if local != nil {
+		codeGen = local.CodeGeneratedAt
+	}
+	regenAt, regen := codeRegen(codeGen, created)
 	obj := map[string]any{
 		"id":        f.BaasUserID,
 		"nickname":  f.Nickname,
@@ -541,7 +564,7 @@ func (s *server) friendObj(f Friend, now int64) map[string]any {
 		"links": map[string]any{
 			"friendCode": map[string]any{
 				"id": friendCodeID(f.FriendCode), "createdAt": created, "updatedAt": created,
-				"regenerable": true, "regenerableAt": created + 30*86400,
+				"regenerable": regen, "regenerableAt": regenAt,
 			},
 			"nintendoAccount": map[string]any{"id": f.NaID, "createdAt": created, "updatedAt": created},
 		},
