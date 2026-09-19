@@ -434,6 +434,18 @@ func (s *Store) SettleRequest(id, state string) {
 	s.save()
 }
 
+// OpenRequest reports whether an unanswered request from -> to exists.
+func (s *Store) OpenRequest(fromPID, toPID uint64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, r := range s.Requests {
+		if r.State == "" && r.FromPID == fromPID && r.ToPID == toPID {
+			return true
+		}
+	}
+	return false
+}
+
 // LiveUsers snapshots the users for the presence reconciler: the reconciler
 // runs on its own goroutine, so it must not walk the live map while handlers
 // mutate it. Entry structs are copied; their DevicePresence maps are copied

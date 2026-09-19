@@ -884,12 +884,31 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 							}
 							u.PlayLog[strings.TrimSuffix(strings.TrimPrefix(o.Path, "/extras/"), "/playLog")] = v
 						}
+					case "/permissions/presence":
+						// 30810 ChangePresencePermission: only SELF,
+						// FAVORITE_FRIENDS and FRIENDS exist; anything else,
+						// including EVERYONE, is what the console reads as
+						// SELF, so that is what is kept
+						// [friends-contract-22.5.0 §A.6, C10].
+						if u.Permissions == nil {
+							u.Permissions = map[string]any{}
+						}
+						u.Permissions["presence"] = normalizePresencePermission(o.Value)
+					case "/permissions/friendRequestReception":
+						// 30811 ChangeFriendRequestReception: a bool. Anything
+						// else is not a switch position and is ignored [C10].
+						if b, ok := o.Value.(bool); ok {
+							if u.Permissions == nil {
+								u.Permissions = map[string]any{}
+							}
+							u.Permissions["friendRequestReception"] = b
+						}
 					case "/permissions/personalAnalytics", "/permissions/personalNotification",
-						"/permissions/friendRequestReception", "/permissions/friends",
-						"/permissions/presence":
-						// The privacy switches. Documented as patchable and
-						// silently dropped here until now, so turning one off
-						// on the console lasted until the next reply.
+						"/permissions/friends":
+						// The remaining privacy switches. Documented as
+						// patchable and silently dropped here until now, so
+						// turning one off on the console lasted until the next
+						// reply.
 						if u.Permissions == nil {
 							u.Permissions = map[string]any{}
 						}
@@ -1496,6 +1515,15 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		}
 		if err != nil || target == nil {
 			baasErr(w, r, 400, "invalid_friend_code_format", "Invalid friend code", "no such user")
+			return
+		}
+		// 30811 ChangeFriendRequestReception: a receiver who turned requests
+		// off refuses new ones [friends-contract-22.5.0 §A.6, C10]. A crossed
+		// send is not new: the receiver already asked, and answering completes
+		// the friendship they initiated.
+		if receiver := s.store.User(target.BaasUserID); !acceptsFriendRequests(receiver) &&
+			!s.store.OpenRequest(target.PID, me.PID) {
+			baasErr(w, r, 400, "could_not_send_request", "Could Not Send Request", "not accepting friend requests")
 			return
 		}
 		created, authorized, reqID, err := s.commitFriendRequest(me, target)

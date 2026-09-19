@@ -859,6 +859,87 @@ func TestFriendNotePersistsAndProjects(t *testing.T) {
 	}
 }
 
+// 30810/30811 write the values the console reads: presence normalizes to
+// SELF/FAVORITE_FRIENDS/FRIENDS (anything else, including EVERYONE, is SELF
+// to the console), and friendRequestReception takes only a bool
+// [friends-contract-22.5.0 §A.6, C10].
+func TestPermissionPatchesKeepWhatTheConsoleReads(t *testing.T) {
+	s, _, users := socialServer(t)
+	a := users[0]
+
+	do := func(method, path, body string) map[string]any {
+		t.Helper()
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, authed(method, path, body, a, s))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s %s: %d %s", method, path, w.Code, w.Body.String())
+		}
+		var out map[string]any
+		_ = json.Unmarshal(w.Body.Bytes(), &out)
+		return out
+	}
+	perms := func() map[string]any {
+		return do("GET", "/1.0.0/users/"+a.ID, "")["permissions"].(map[string]any)
+	}
+
+	do("PATCH", "/1.0.0/users/"+a.ID, `[{"op":"replace","path":"/permissions/presence","value":"EVERYONE"}]`)
+	if got := perms()["presence"]; got != "SELF" {
+		t.Errorf("presence EVERYONE kept as %v, console reads SELF", got)
+	}
+	do("PATCH", "/1.0.0/users/"+a.ID, `[{"op":"replace","path":"/permissions/presence","value":"FAVORITE_FRIENDS"}]`)
+	if got := perms()["presence"]; got != "FAVORITE_FRIENDS" {
+		t.Errorf("presence = %v, want FAVORITE_FRIENDS", got)
+	}
+	// Not a switch position: ignored, the previous value stands.
+	do("PATCH", "/1.0.0/users/"+a.ID, `[{"op":"replace","path":"/permissions/friendRequestReception","value":"yes"}]`)
+	if got := perms()["friendRequestReception"]; got != true {
+		t.Errorf("reception after non-bool PATCH = %v, want true", got)
+	}
+	do("PATCH", "/1.0.0/users/"+a.ID, `[{"op":"replace","path":"/permissions/friendRequestReception","value":false}]`)
+	if got := perms()["friendRequestReception"]; got != false {
+		t.Errorf("reception = %v, want false", got)
+	}
+}
+
+// A receiver who turned requests off refuses new sends, and a crossed send
+// still completes the friendship the receiver asked for [§A.6, C10].
+func TestSendToReceiverWithReceptionOffFails(t *testing.T) {
+	s, f, users := socialServer(t)
+	a, b := users[0], users[1] // already friends
+	f.addAccount("acc-c@example.com", "PlayerC", "pw-c-ccccccccccc")
+	c := newUserFor(t, s, "acc-c@example.com", "pw-c-ccccccccccc")
+
+	if code, _ := postRequest(t, s, c, `{"channels":["FRIEND_CODE"],"senderId":"`+c.ID+`","receiverId":"`+a.ID+`"}`); code != 201 {
+		t.Fatalf("C->A send = %d, want 201", code)
+	}
+	off := func() map[string]any {
+		t.Helper()
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, authed("PATCH", "/1.0.0/users/"+a.ID,
+			`[{"op":"replace","path":"/permissions/friendRequestReception","value":false}]`, a, s))
+		if w.Code != http.StatusOK {
+			t.Fatalf("reception off: %d %s", w.Code, w.Body.String())
+		}
+		var out map[string]any
+		_ = json.Unmarshal(w.Body.Bytes(), &out)
+		return out
+	}
+	off()
+
+	// Not crossed (B and A are already friends): the gate refuses first.
+	if code, reply := postRequest(t, s, b, `{"channels":["FRIEND_CODE"],"senderId":"`+b.ID+`","receiverId":"`+a.ID+`"}`); code != 400 {
+		t.Errorf("B->A send with reception off = %d %v, want 400", code, reply)
+	} else if reply["errorCode"] != "could_not_send_request" {
+		t.Errorf("B->A error = %v, want could_not_send_request", reply["errorCode"])
+	}
+	// Crossed (C asked A first): A's send answers the friendship, AUTHORIZED.
+	if code, reply := postRequest(t, s, a, `{"channels":["FRIEND_CODE"],"senderId":"`+a.ID+`","receiverId":"`+c.ID+`"}`); code != 200 && code != 201 {
+		t.Fatalf("A->C crossed send = %d %v", code, reply)
+	} else if reply["state"] != "AUTHORIZED" {
+		t.Errorf("A->C crossed state = %v, want AUTHORIZED", reply["state"])
+	}
+}
+
 // The emulator's add-by-code path speaks the same Resolve contract as the
 // console (SOC-04): "code", not a key nothing matched.
 func TestEmulatorFriendCodeLookup(t *testing.T) {

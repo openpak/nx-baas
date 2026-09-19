@@ -254,8 +254,16 @@ func presenceVisible(viewer, subject *User, areFriends bool) bool {
 		return viewer.ID == subject.ID
 	case "FAVORITE_FRIENDS":
 		return viewer.ID == subject.ID || (areFriends && subject.pref(viewer.ID).Favorite)
-	default: // "" and FRIENDS: friends see presence
+	case "FRIENDS":
 		return viewer.ID == subject.ID || areFriends
+	default:
+		// Unset is the documented default (open to friends). Anything else
+		// is a stored-raw relic the console reads as SELF, so nobody else
+		// sees it [friends-contract-22.5.0 §A.6, C10].
+		if perm == "" {
+			return viewer.ID == subject.ID || areFriends
+		}
+		return viewer.ID == subject.ID
 	}
 }
 

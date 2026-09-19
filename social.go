@@ -170,6 +170,34 @@ func setPlayLog(user map[string]any, group, pl string) {
 	g["playLog"] = pl
 }
 
+// normalizePresencePermission is the firmware's own reading of a presence
+// permission value: SELF, FAVORITE_FRIENDS or FRIENDS, and anything else —
+// including EVERYONE — becomes SELF [friends-contract-22.5.0 §A.6]. Stored
+// normalized, the server and the console always agree on what was set [C10].
+func normalizePresencePermission(v any) string {
+	switch v {
+	case "SELF", "FAVORITE_FRIENDS", "FRIENDS":
+		return v.(string)
+	default:
+		return "SELF"
+	}
+}
+
+// acceptsFriendRequests reports the receiver's 30811 switch: unset is the
+// documented default (on), and only an explicit false refuses. Anything that
+// is not a bool is a stored-raw relic, not a switch position [C10].
+func acceptsFriendRequests(u *User) bool {
+	if u == nil {
+		return true
+	}
+	if v, ok := u.Permissions["friendRequestReception"]; ok {
+		if b, ok := v.(bool); ok {
+			return b
+		}
+	}
+	return true
+}
+
 // prefOf reads the viewer's preference record for one friend. Empty records
 // are never created by a read: a preference that was never set stays unset.
 func (s *server) prefOf(viewer *User, friendBaasID string) *FriendPreference {

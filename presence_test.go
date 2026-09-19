@@ -398,3 +398,21 @@ func TestPresenceCarriesTheConsolesOwnACDIndex(t *testing.T) {
 		t.Errorf("acdIndex invented when the console sent none: %v", got)
 	}
 }
+
+// A stored-raw presence permission is what the console reads it as: anything
+// but the three known values is SELF, so nobody else sees it. Unset stays the
+// documented default (open to friends) [friends-contract-22.5.0 §A.6, C10].
+func TestPresenceVisibleTreatsJunkPermissionAsSelf(t *testing.T) {
+	viewer := &User{ID: "viewer-1"}
+	junk := &User{ID: "subject-1", Permissions: map[string]any{"presence": "EVERYONE"}}
+	if presenceVisible(viewer, junk, true) {
+		t.Error("junk presence permission is visible to a friend; console reads SELF")
+	}
+	if !presenceVisible(junk, junk, true) {
+		t.Error("own presence hidden from self")
+	}
+	unset := &User{ID: "subject-2"}
+	if !presenceVisible(viewer, unset, true) {
+		t.Error("unset presence permission hidden from a friend; default is open")
+	}
+}
