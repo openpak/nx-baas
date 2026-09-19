@@ -430,8 +430,9 @@ func TestBecomingFriendsMovesFriendsUpdatedAt(t *testing.T) {
 	}
 }
 
-// The friends applet calls the recommendation service when it opens, and a
-// working server answers 200 with an empty grpc body. We answered 404 {}.
+// The friends applet calls the recommendation service when it opens, and the
+// module parses the reply as JSON: $.items[*], errors in $.errors[0].
+// The honest empty answer is {"items":[]} [friends-contract-22.5.0 §A.9, C18].
 func TestFriendRecommendationsAnswerLikeTheReferenceDoes(t *testing.T) {
 	s := dauthServer(t)
 	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
@@ -445,11 +446,16 @@ func TestFriendRecommendationsAnswerLikeTheReferenceDoes(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("frs = %d, want 200: %s", w.Code, w.Body.String())
 	}
-	if ct := w.Header().Get("Content-Type"); ct != "application/grpc" {
-		t.Errorf("content-type = %q, want application/grpc", ct)
+	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("content-type = %q, want application/json", ct)
 	}
-	if w.Body.Len() != 0 {
-		t.Errorf("body = %q, want empty", w.Body.String())
+	var doc map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("frs body is not JSON: %s", w.Body.String())
+	}
+	items, ok := doc["items"].([]any)
+	if !ok || len(items) != 0 {
+		t.Errorf("frs items = %v, want empty []", doc["items"])
 	}
 }
 

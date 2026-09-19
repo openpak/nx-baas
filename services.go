@@ -47,22 +47,25 @@ func (s *server) olsc(w http.ResponseWriter, r *http.Request, body []byte) {
 }
 
 // frs is the friend recommendation service the friends applet calls when it
-// opens. Captured from a working server on 2026-09-08: 200, content-type
-// application/grpc, empty body. We answered 404 {} and the applet had a
-// failure in the middle of the screen that shows friends.
+// opens. The module parses the reply as JSON (auth kind 1: none): $.items[*]
+// with required requestedClientFriendId, clientFriend.nickname and createdAt,
+// and errors in $.errors[0].{code,message}. An empty gRPC body left the parse
+// without its items[] close, so 20300 failed; the honest empty answer is
+// {"items":[]} [friends-contract-22.5.0 §A.9, C18].
 //
-// Only that one operation is evidenced. Everything else FRS could serve is
-// answered with an explicit gRPC UNIMPLEMENTED and a NOTICE log (SOC-04):
-// an undocumented operation that pretends to succeed with an empty body is
-// indistinguishable from a working one, which is exactly how unsupported
-// operations stay broken and invisible. A console trace naming another
-// operation is the evidence that promotes it to a documented answer.
+// Only the recommendations operation is evidenced. Everything else FRS could
+// serve is answered with an explicit gRPC UNIMPLEMENTED and a NOTICE log
+// (SOC-04): an undocumented operation that pretends to succeed with an empty
+// body is indistinguishable from a working one, which is exactly how
+// unsupported operations stay broken and invisible. A console trace naming
+// another operation is the evidence that promotes it to a documented answer.
 func (s *server) frs(w http.ResponseWriter, r *http.Request, _ []byte) {
 	const knownGood = "/v1/friend_recommendations"
 	if strings.HasPrefix(r.URL.Path, knownGood) {
 		log.Printf("[nx-baas] frs %s", r.URL.Path)
-		w.Header().Set("Content-Type", "application/grpc")
-		w.WriteHeader(http.StatusOK)
+		// No recommendations of any kind: nintendo_account, nintendo_3ds
+		// and nintendo_network_id all read the same $.items[].
+		writeJSON(w, 200, map[string]any{"items": []any{}})
 		return
 	}
 	log.Printf("[nx-baas] frs UNSUPPORTED %s %s (answered grpc-status 12)", r.Method, r.URL.Path)
