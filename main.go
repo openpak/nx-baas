@@ -1398,7 +1398,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			baasErr(w, r, 400, "invalid_friend_code_format", "Invalid friend code", "no such user")
 			return
 		}
-		created, incoming, reqID, err := s.commitFriendRequest(me, target)
+		created, authorized, reqID, err := s.commitFriendRequest(me, target)
 		if err != nil {
 			// The request did not commit, so this is an error, never a
 			// success with a timestamp (the old code logged the failure and
@@ -1408,7 +1408,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			baasErr(w, r, status, code, title, detail)
 			return
 		}
-		if created && !incoming {
+		if created {
 			s.noteRequestRoute(reqID, body)
 		}
 		s.friendGraphChanged(me, target.BaasUserID)
@@ -1417,10 +1417,16 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		// PATCHes /2.0.0/friend_requests/<id> to cancel, and an id that is
 		// really somebody's user id is not a request it can act on.
 		code := 200
-		if created && !incoming {
+		if created {
 			code = 201
 		}
-		writeJSON(w, code, s.friendRequestReply(me, myID, target, reqID, incoming, body, now))
+		reply := s.friendRequestReply(me, myID, target, reqID, false, body, now)
+		if authorized {
+			// Sender mode still: the caller asked, the target is the
+			// receiver, and the answer is that they are now friends.
+			reply["state"] = "AUTHORIZED"
+		}
+		writeJSON(w, code, reply)
 		return
 
 	case len(seg) == 2 && seg[0] == "friend_requests" && (r.Method == "PATCH" || r.Method == "DELETE"):

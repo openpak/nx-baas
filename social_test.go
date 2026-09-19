@@ -152,8 +152,10 @@ func TestMarkingARequestReadDoesNotAcceptIt(t *testing.T) {
 }
 
 // Both sides of an acceptance (J1): A requests, B accepts, both lists show
-// the relationship. Also: duplicates are idempotent and a reverse request
-// resolves truthfully to the request that already exists.
+// the relationship. Also: duplicates are idempotent, and crossed requests are
+// an acceptance: B asking A while A's request is pending answers AUTHORIZED,
+// which is what makes B's console sync its list at once
+// [friends-contract-22.5.0 §A.4.1, C4].
 func TestRequestAcceptAndTheReverseCase(t *testing.T) {
 	s, f, users := socialServer(t)
 	a, b := users[0], users[1]
@@ -167,25 +169,32 @@ func TestRequestAcceptAndTheReverseCase(t *testing.T) {
 	if r1["id"] != r2["id"] {
 		t.Errorf("duplicate requests got ids %v and %v; a retry must not mint a second request", r1["id"], r2["id"])
 	}
-	// Reverse: B asks A while A's request is pending. The truthful answer
-	// describes the pending incoming request, so B's console can accept it.
+	// Crossed: B asks A while A's request is pending. They both want it, so
+	// it is accepted, and the reply is still read in sender mode: A is the
+	// receiver B asked.
 	code3, r3 := postRequest(t, s, b, `{"receiverId":"`+a.ID+`"}`)
 	if code3 != http.StatusOK {
 		t.Fatalf("reverse request: %d %v", code3, r3)
 	}
-	if r3["senderId"] != a.ID || r3["receiverId"] != b.ID || r3["state"] != "PENDING" {
-		t.Errorf("reverse request reply is not the truth: %v", r3)
+	if r3["state"] != "AUTHORIZED" || r3["id"] != r1["id"] {
+		t.Errorf("crossed request did not answer the accepted request: %v", r3)
+	}
+	if gaps := requestReplyGaps(r3, a, true); gaps != nil {
+		t.Errorf("crossed reply lacks %v", gaps)
 	}
 
-	// B accepts; both lists become current with one mutual friend.
+	// The console may still answer the request it saw in its inbox; the
+	// repeat replies the same and commits nothing.
 	if code, reply := answerRequest(t, s, b, "PATCH", r3["id"].(string),
 		`[{"op":"replace","path":"/state","value":"AUTHORIZED"}]`); code != http.StatusOK || reply["state"] != "AUTHORIZED" {
 		t.Fatalf("accept: %d %v", code, reply)
 	}
+	// Both lists are current with one mutual friend, and neither box holds
+	// the request any more.
 	for i, u := range []*User{a, b} {
 		id, err := s.acct.Identity(u.PID)
-		if err != nil || len(id.Friends) != 1 {
-			t.Fatalf("user %d friends after accept: %+v %v", i, id, err)
+		if err != nil || len(id.Friends) != 1 || len(id.FriendRequests)+len(id.SentRequests) != 0 {
+			t.Fatalf("user %d after the crossed request: %+v %v", i, id, err)
 		}
 	}
 }

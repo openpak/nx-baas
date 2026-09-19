@@ -183,15 +183,21 @@ func baasFailure(err error) (int, string, string, string) {
 }
 
 // commitFriendRequest commits a request through the core and resolves the
-// durable id of the request that exists afterwards — whichever direction it
-// points in. Duplicate posts and retries are idempotent (the core keeps one
-// pending row per pair/direction); a reverse request resolves to the request
-// that already exists, with incoming=true, so the reply can describe the
-// truth instead of failing a friendship the two of them clearly want.
-func (s *server) commitFriendRequest(me *User, target *Friend) (created, incoming bool, reqID string, err error) {
+// durable id of the request that exists afterwards. Duplicate posts and
+// retries are idempotent (the core keeps one pending row per pair/direction).
+// Crossed requests — the person we are asking has already asked us — are the
+// two of them agreeing: the pending request is accepted, and authorized says
+// so. The console expects exactly that: a send answered with state
+// AUTHORIZED is the case "the receiver had already asked the sender", and it
+// syncs its friend list at once [friends-contract-22.5.0 §A.4.1, C4].
+func (s *server) commitFriendRequest(me *User, target *Friend) (created, authorized bool, reqID string, err error) {
 	if err := s.acct.FriendRequest(me.PID, target.PID); err != nil {
 		if errors.Is(err, errReversePending) {
 			id, _ := s.store.EnsureRequest(target.PID, me.PID)
+			if err := s.acct.FriendAccept(me.PID, target.PID, true); err != nil {
+				return false, false, "", err
+			}
+			s.store.SettleRequest(id, "AUTHORIZED")
 			return false, true, id, nil
 		}
 		return false, false, "", err
