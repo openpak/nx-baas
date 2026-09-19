@@ -182,11 +182,16 @@ func TestCommittedInvitationReachesTheOutbox(t *testing.T) {
 		t.Fatal("payload carries no $.invitation object")
 	}
 	for k, want := range map[string]string{
-		"id": "1234", "sender_id": users[1].ID,
-		"application_id": "0100000000010000", "invitation_group_id": "99",
+		"sender_id": users[1].ID, "application_id": "0100000000010000",
 	} {
 		if got, _ := inv[k].(string); got != want {
 			t.Fatalf("$.invitation.%s = %q, want %q", k, got, want)
+		}
+	}
+	// The ids are JSON integers: the console drops the whole event otherwise.
+	for k, want := range map[string]uint64{"id": 1234, "invitation_group_id": 99} {
+		if got, ok := inv[k].(uint64); !ok || got != want {
+			t.Fatalf("$.invitation.%s = %#v, want the integer %d", k, inv[k], want)
 		}
 	}
 
@@ -221,8 +226,9 @@ func TestPresenceEventCarriesTheParsersShape(t *testing.T) {
 	}
 	// Nothing published means nothing sent, rather than zero values that read
 	// as "index 0" and "title 0000000000000000".
+	// appField is the exception: "{}" at minimum, or the console drops the event.
 	empty := presenceEventExtras(Presence{State: "ONLINE", ACDIndex: -1})
-	if len(empty) != 0 {
-		t.Errorf("extras for a bare ONLINE = %v, want empty", empty)
+	if len(empty) != 1 || empty["appField"] != "{}" {
+		t.Errorf("extras for a bare ONLINE = %v, want only appField \"{}\"", empty)
 	}
 }

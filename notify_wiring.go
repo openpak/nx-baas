@@ -80,7 +80,9 @@ func (s *server) presenceSnapshot(userID string) string {
 		return ""
 	}
 	p := aggregatePresence(u, time.Now().Unix(), presenceLease())
-	return p.State + "|" + p.AppID
+	// appField is part of it: a new room changes only appField, and a friend
+	// has to hear about it.
+	return p.State + "|" + p.AppID + "|" + p.AppField
 }
 
 // notifyPresenceIfChanged fans a new aggregate presence out to the friends
@@ -155,10 +157,9 @@ func (s *server) notifyPresenceIfChanged(userID, before string) {
 // catalog index as a number, and nothing at all when the console published
 // nothing (docs/switch/firmware-22.5.0-followup-2026-09-12.md §15).
 func presenceEventExtras(p Presence) map[string]any {
-	out := map[string]any{}
-	if p.AppField != "" {
-		out["appField"] = p.AppField
-	}
+	// appField is always a JSON-object string: the event parser drops the
+	// whole presence_updated on "" or a missing one [firmware, 0x1a7670].
+	out := map[string]any{"appField": appFieldOrEmpty(p.AppField)}
 	if p.AppID != "" {
 		out["appInfo:appId"] = p.AppID
 	}
@@ -187,11 +188,14 @@ func (s *server) wireInvitationNotifications() {
 			UserID: ev.ReceiverID,
 			Kind:   EventFriendInvitationReceived,
 			Payload: map[string]any{
+				// id and invitation_group_id are JSON integers: the event parser
+				// type-checks them and drops the whole event on a string
+				// [firmware, 0x1a9870; docs/switch/friend-invitations-firmware-2026-09-19.md §1a].
 				"invitation": map[string]any{
-					"id":                  ev.InvitationID,
+					"id":                  jsonUint(ev.InvitationID),
 					"sender_id":           ev.SenderID,
 					"application_id":      ev.ApplicationID,
-					"invitation_group_id": ev.GroupID,
+					"invitation_group_id": jsonUint(ev.GroupID),
 				},
 				"unread_count": ev.UnreadCount,
 				// Read by the invitation event's numeric parser beside the
@@ -200,4 +204,12 @@ func (s *server) wireInvitationNotifications() {
 			},
 		})
 	}
+}
+
+// appFieldOrEmpty is the value a console accepts for "nothing published".
+func appFieldOrEmpty(f string) string {
+	if f == "" {
+		return "{}"
+	}
+	return f
 }
