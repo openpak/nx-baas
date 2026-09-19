@@ -44,10 +44,13 @@ type penneAssoc struct {
 
 // penneTokenRec is a notification token handed out against a registration.
 type penneTokenRec struct {
-	Token     string `json:"token"`
-	PenneID   string `json:"penne_id"`
-	UserID    string `json:"user_id"`
-	DeviceID  string `json:"device_id"`
+	Token    string `json:"token"`
+	PenneID  string `json:"penne_id"`
+	UserID   string `json:"user_id"`
+	DeviceID string `json:"device_id"`
+	// AccountID is the console profile (nn::account::Uid) the token was
+	// minted for: /v1/accounts/<uid>/notification_tokens.
+	AccountID string `json:"account_id,omitempty"`
 	CreatedAt int64  `json:"created_at"`
 	ExpiresAt int64  `json:"expires_at"`
 	RevokedAt int64  `json:"revoked_at,omitempty"`
@@ -274,13 +277,80 @@ func (s *penneStore) NoteAccount(assocID, accountID, userID string) {
 		a.AccountIDs = append(a.AccountIDs, accountID)
 		changed = true
 	}
-	if userID != "" && s.d.AccountUsers[accountID] != userID {
+	// Only a first guess: the device token here names the console, not the
+	// profile, so this is whoever signed in last. BindAccount corrects it.
+	if userID != "" && s.d.AccountUsers[accountID] == "" {
 		s.d.AccountUsers[accountID] = userID
 		changed = true
 	}
 	if changed {
 		s.saveLocked()
 	}
+}
+
+// BindAccount records which BAAS user a console profile belongs to, from a
+// request that proves it: the olsc upload of the profile's notification token
+// carries that user's own token, and /links carries its id token. Two profiles
+// on one console were both mapped to whoever signed in last, so one of them
+// never received a notification (2026-09-19,
+// docs/switch/friends-notifications-firmware-2026-09-19.md §1).
+func (s *penneStore) BindAccount(accountID, userID string) bool {
+	if accountID == "" || userID == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.d.AccountUsers[accountID] == userID {
+		return false
+	}
+	s.d.AccountUsers[accountID] = userID
+	s.saveLocked()
+	return true
+}
+
+// TokenAccount is the console profile a notification token was minted for.
+func (s *penneStore) TokenAccount(tok string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if t := s.d.Tokens[tok]; t != nil {
+		return t.AccountID
+	}
+	return ""
+}
+
+// RegistrationsFor lists the console registrations holding a profile that
+// belongs to this user. One console connection carries every profile on it,
+// and the connection is filed under whoever it was registered for.
+func (s *penneStore) RegistrationsFor(userID string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []string
+	for id, a := range s.d.Assocs {
+		for _, acct := range a.AccountIDs {
+			if s.d.AccountUsers[acct] == userID {
+				out = append(out, id)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// UsersOn lists the users whose profiles sit on this registration.
+func (s *penneStore) UsersOn(penneID string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.d.Assocs[penneID]
+	if a == nil {
+		return nil
+	}
+	var out []string
+	for _, acct := range a.AccountIDs {
+		if u := s.d.AccountUsers[acct]; u != "" && !slices.Contains(out, u) {
+			out = append(out, u)
+		}
+	}
+	return out
 }
 
 // AccountsFor lists the console account ids an event for this BAAS account can
@@ -500,7 +570,7 @@ func (s *penneStore) NotificationToken(id, password, userID, deviceID string, no
 
 // NotificationTokenFor mints a token for an association already authenticated
 // by binding (bearer account or device), not by password.
-func (s *penneStore) NotificationTokenFor(a *penneAssoc, now time.Time) (string, error) {
+func (s *penneStore) NotificationTokenFor(a *penneAssoc, accountID string, now time.Time) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.d.Assocs[a.ID] == nil || s.d.Assocs[a.ID].RevokedAt != 0 {
@@ -508,7 +578,7 @@ func (s *penneStore) NotificationTokenFor(a *penneAssoc, now time.Time) (string,
 	}
 	tok := randHex(18)
 	s.d.Tokens[tok] = &penneTokenRec{
-		Token: tok, PenneID: a.ID, UserID: a.UserID, DeviceID: a.DeviceID,
+		Token: tok, PenneID: a.ID, UserID: a.UserID, DeviceID: a.DeviceID, AccountID: accountID,
 		CreatedAt: now.Unix(), ExpiresAt: now.Add(90 * 24 * time.Hour).Unix(),
 	}
 	s.saveLocked()

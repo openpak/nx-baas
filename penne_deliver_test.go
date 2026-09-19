@@ -257,3 +257,60 @@ func TestMessageFramesStillSendWithoutAKnownAccount(t *testing.T) {
 		t.Fatalf("%d frames for an unknown account, want one unaddressed", got)
 	}
 }
+
+// One console, two profiles, one connection filed under the profile that
+// registered it. Each notification token names its profile; the olsc upload
+// of that token proves the user. A notification for the other profile then
+// goes down the same connection, addressed to its own profile
+// (docs/switch/friends-notifications-firmware-2026-09-19.md §1).
+func TestNotificationReachesTheSecondProfileOnAConsole(t *testing.T) {
+	s := &server{store: mustStore(t)}
+	leia, _ := s.store.NewUser()
+	tobagin, _ := s.store.NewUser()
+	store := s.notifStore()
+	store.Register("dev1", leia.ID, "", time.Now())
+	assoc := store.AssocIDForUser(leia.ID)
+	a := store.d.Assocs[assoc]
+	const profileT, profileL = "1000000000a100010000000000000001", "1000000000b200020000000000000001"
+
+	// Both tokens are minted while only the device token is known: the
+	// first guess is whoever signed in last.
+	store.NoteAccount(assoc, profileT, leia.ID)
+	store.NoteAccount(assoc, profileL, leia.ID)
+	tokT, _ := store.NotificationTokenFor(a, profileT, time.Now())
+	tokL, _ := store.NotificationTokenFor(a, profileL, time.Now())
+
+	// olsc uploads each token under its own user.
+	if !store.BindAccount(store.TokenAccount(tokT), tobagin.ID) {
+		t.Fatal("hansolo's token did not bind its profile")
+	}
+	store.BindAccount(store.TokenAccount(tokL), leia.ID)
+	// A later guess does not undo a proven binding.
+	store.NoteAccount(assoc, profileT, leia.ID)
+	if got := store.AccountsFor(tobagin.ID); len(got) != 1 || got[0] != profileT {
+		t.Fatalf("hansolo's profiles = %v, want [%s]", got, profileT)
+	}
+
+	sess := &penneSession{user: leia.ID, device: "dev1", penneID: assoc,
+		ctx: context.Background(), send: make(chan penneOutbound, 4)}
+	s.notifHub().attach(sess)
+	if r := s.SubmitNotification(PenneDelivery{ID: "ev1", UserID: tobagin.ID, Kind: EventFriendRequestAuthorized}); !r.Accepted {
+		t.Fatalf("submit: %+v", r)
+	}
+	s.penneWake(tobagin.ID)
+	select {
+	case o := <-sess.send:
+		if o.id != "ev1" {
+			t.Fatalf("delivered %q", o.id)
+		}
+	default:
+		t.Fatal("hansolo's notification never reached the console holding the profile")
+	}
+	// And the message on the wire names tobagin's profile, not Leia's.
+	frames := s.penneMessageFrames(&penneOutRec{ID: "ev1", UserID: tobagin.ID, Kind: EventFriendRequestAuthorized})
+	env, _ := penne.DecodeEnvelope(frames[0])
+	payload, _ := env.Payload()
+	if m, ok := penne.ParseMessage(payload); len(frames) != 1 || !ok || m.AccountID != profileT {
+		t.Fatalf("%d frame(s), account %q, want one for %s", len(frames), m.AccountID, profileT)
+	}
+}

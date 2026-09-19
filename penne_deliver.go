@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"slices"
 	"sync"
 	"time"
 
@@ -229,16 +230,29 @@ func (s *server) penneWake(userID string) {
 	if len(due) == 0 {
 		return
 	}
+	regs := s.notifStore().RegistrationsFor(userID)
 	h := s.notifHub()
 	h.mu.Lock()
-	if len(h.sessions[userID]) == 0 {
+	// The user's own connections, and every connection of a console that
+	// holds one of the user's profiles: one console, one connection, filed
+	// under the user it was registered for.
+	sessions := append([]*penneSession(nil), h.sessions[userID]...)
+	for u, list := range h.sessions {
+		if u == userID {
+			continue
+		}
+		for _, sess := range list {
+			if slices.Contains(regs, sess.penneID) {
+				sessions = append(sessions, sess)
+			}
+		}
+	}
+	if len(sessions) == 0 {
 		// The commonest reason nothing arrives, and it used to be invisible:
 		// the work is claimed and there is nobody to hand it to. It stays
 		// queued for the next connection.
 		log.Printf("[nx-baas] notify: %d delivery(ies) for %s have no live connection; still queued", len(due), userID)
 	}
-	sessions := make([]*penneSession, len(h.sessions[userID]))
-	copy(sessions, h.sessions[userID])
 	h.mu.Unlock()
 	for _, sess := range sessions {
 		for _, e := range due {

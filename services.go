@@ -11,6 +11,8 @@ package main
 // bcat.go once the module showed they speak msgpack, not JSON.
 
 import (
+	"bytes"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -29,6 +31,7 @@ func (s *server) olsc(w http.ResponseWriter, r *http.Request, body []byte) {
 	case strings.HasSuffix(p, "notification_tokens"):
 		// Echo the token back, which is what the documented reply carries.
 		tok := bodyField(body, r.URL.Query(), "notification_token")
+		s.bindTokenProfile(r, tok)
 		writeJSON(w, 200, map[string]any{"notification_token": tok})
 	case strings.HasSuffix(p, "/save_data_archives"):
 		writeJSON(w, 200, map[string]any{"save_data_archives": []any{}})
@@ -100,7 +103,34 @@ func newSavesProxy(base string) *httputil.ReverseProxy {
 // savesProxy attaches who the console is. The storage API carries the BAAS access token;
 // the blob hosts carry nothing, and the saves service treats their signed URLs as the
 // credential. The token never travels on: only the account it proved does.
+// bindTokenProfile learns which user a console profile belongs to. Within a
+// second of minting a profile's notification token, olsc uploads that token to
+// scsi .../network_service_accounts/<user>/notification_tokens with the user's
+// own token: token -> profile (recorded at mint) -> user (proven here)
+// [firmware, olsc; docs/switch/friends-notifications-firmware-2026-09-19.md §1].
+func (s *server) bindTokenProfile(r *http.Request, tok string) {
+	claims := s.bearer(r)
+	if tok == "" || claims == nil {
+		return
+	}
+	uid := str(claims, "sub")
+	if s.store.User(uid) == nil {
+		return
+	}
+	store := s.notifStore()
+	if acct := store.TokenAccount(tok); acct != "" && store.BindAccount(acct, uid) {
+		log.Printf("[nx-baas] penne: console account %s is %s (olsc token upload)", acct, uid)
+	}
+}
+
 func (s *server) savesProxy(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/notification_tokens") {
+		// Small JSON; read it for the profile binding and hand it on intact.
+		body, _ := io.ReadAll(io.LimitReader(r.Body, 4096))
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		r.ContentLength = int64(len(body))
+		s.bindTokenProfile(r, bodyField(body, r.URL.Query(), "notification_token"))
+	}
 	r.Header.Del("X-OpenPak-Account")
 	r.Header.Del("X-OpenPak-NSA")
 	r.Header.Del("X-OpenPak-Device")
