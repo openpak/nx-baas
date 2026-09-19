@@ -671,6 +671,139 @@ func TestBlocksSpeakTheConsolesShape(t *testing.T) {
 	}
 }
 
+// playLogPatch is the body 30812/30830 and the sync send: four add ops, the
+// chosen group holding the log and the other three "" [friends-contract-22.5.0
+// §A.6].
+func playLogPatch(group, log string) string {
+	ops := []map[string]any{}
+	for _, g := range []string{"self", "favoriteFriends", "friends", "everyone"} {
+		v := ""
+		if g == group {
+			v = log
+		}
+		ops = append(ops, map[string]any{"op": "add", "path": "/extras/" + g + "/playLog", "value": v})
+	}
+	b, _ := json.Marshal(ops)
+	return string(b)
+}
+
+// extrasPlayLogs reads extras.<group>.playLog off a rendered user.
+func extrasPlayLogs(user map[string]any) map[string]any {
+	out := map[string]any{}
+	ex, _ := user["extras"].(map[string]any)
+	for g, v := range ex {
+		if m, ok := v.(map[string]any); ok {
+			if pl, ok := m["playLog"]; ok {
+				out[g] = pl
+			}
+		}
+	}
+	return out
+}
+
+// The play log is a JSON-array string PATCHed into /extras/<group>/playLog,
+// and the group that carries it is the permission. We dropped the PATCH and
+// served "" everywhere, so the console saw "no permission set" and re-sent
+// "[]" on every sync, and friends' "recently played" was always empty. It is
+// now kept, echoed on the user's own object, and shown to others under the
+// group that carries it when they may see it [friends-contract-22.5.0 §A.1,
+// §A.6, §A.7, C9].
+func TestPlayLogIsKeptAndShownToWhoMaySeeIt(t *testing.T) {
+	s, f, users := socialServer(t)
+	a, b := users[0], users[1] // friends
+	f.addAccount("acc-c@example.com", "PlayerC", "pw-c-ccccccccccc")
+	c := newUserFor(t, s, "acc-c@example.com", "pw-c-ccccccccccc") // a stranger to both
+	const played = `[{"appInfo:appId":"0100a5a020d5e000","appInfo:presenceGroupId":"0100a5a020d5e000","totalPlayCount":3,"totalPlayTime":95,"firstPlayedAt":1789000000,"lastPlayedAt":1789840000}]`
+
+	do := func(u *User, method, path, body string) map[string]any {
+		t.Helper()
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, authed(method, path, body, u, s))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s %s: %d %s", method, path, w.Code, w.Body.String())
+		}
+		var out map[string]any
+		_ = json.Unmarshal(w.Body.Bytes(), &out)
+		return out
+	}
+	setGroup := func(group string) {
+		t.Helper()
+		reply := do(b, "PATCH", "/1.0.0/users/"+b.ID, playLogPatch(group, played))
+		if got := extrasPlayLogs(reply)[group]; got != played {
+			t.Fatalf("PATCH reply extras.%s.playLog = %v", group, got)
+		}
+	}
+	// What A's friend list shows of B, and what C's lookup shows of B.
+	seenByFriend := func() map[string]any {
+		list := do(a, "GET", "/2.0.0/users/"+a.ID+"/friends?count=300", "")
+		items, _ := list["items"].([]any)
+		for _, it := range items {
+			it := it.(map[string]any)
+			if it["friendId"] == b.ID {
+				return extrasPlayLogs(it["friend"].(map[string]any))
+			}
+		}
+		t.Fatal("B is not in A's list")
+		return nil
+	}
+	seenByStranger := func() map[string]any {
+		out := do(c, "GET", "/1.0.0/users?filter.id.$in="+b.ID, "")
+		items, _ := out["items"].([]any)
+		if len(items) != 1 {
+			t.Fatalf("lookup: %v", out)
+		}
+		return extrasPlayLogs(items[0].(map[string]any))
+	}
+	carries := func(logs map[string]any) string {
+		for g, v := range logs {
+			if v == played {
+				return g
+			}
+		}
+		return ""
+	}
+
+	// friends: kept, echoed on B's own GET (and only there in its group),
+	// and seen by A but not by C.
+	setGroup("friends")
+	own := extrasPlayLogs(do(b, "GET", "/1.0.0/users/"+b.ID, ""))
+	if own["friends"] != played || own["self"] != "" || own["favoriteFriends"] != "" || own["everyone"] != "" {
+		t.Errorf("own user after friends: %v", own)
+	}
+	if g := carries(seenByFriend()); g != "friends" {
+		t.Errorf("a friend sees the log under %q, want friends", g)
+	}
+	if g := carries(seenByStranger()); g != "" {
+		t.Errorf("a stranger sees a friends-only log under %q", g)
+	}
+
+	// everyone: C sees it too.
+	setGroup("everyone")
+	if g := carries(seenByStranger()); g != "everyone" {
+		t.Errorf("a stranger sees an everyone log under %q", g)
+	}
+
+	// favoriteFriends: A sees it only once B marks A favourite.
+	setGroup("favoriteFriends")
+	if g := carries(seenByFriend()); g != "" {
+		t.Errorf("a non-favourite friend sees a favourites log under %q", g)
+	}
+	do(b, "PATCH", "/2.0.0/users/"+b.ID+"/friends/"+a.ID, `[{"op":"replace","path":"/isFavorite","value":true}]`)
+	if g := carries(seenByFriend()); g != "favoriteFriends" {
+		t.Errorf("a favourite friend sees the log under %q", g)
+	}
+
+	// self: nobody else, and it survives a restart on B's own object.
+	setGroup("self")
+	if g := carries(seenByFriend()); g != "" {
+		t.Errorf("a friend sees a self-only log under %q", g)
+	}
+	s.store = loadStore(s.store.path)
+	if own := extrasPlayLogs(do(b, "GET", "/1.0.0/users/"+b.ID, "")); own["self"] != played {
+		t.Errorf("own user after restart: %v", own)
+	}
+}
+
 // The emulator's add-by-code path speaks the same Resolve contract as the
 // console (SOC-04): "code", not a key nothing matched.
 func TestEmulatorFriendCodeLookup(t *testing.T) {

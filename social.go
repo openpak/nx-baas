@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"strings"
 )
 
 // maxListEntries is the bound the console itself applies (the parser caps the
@@ -66,6 +67,11 @@ func onlineNotificationOf(p *FriendPreference) bool {
 func (s *server) relationshipObj(viewer *User, f Friend, now int64) map[string]any {
 	user := s.friendObj(f, now)
 	user["presence"] = s.visiblePresence(viewer, f, now)
+	// The friend's play log, under the group that carries it when this
+	// viewer may see it: what "recently played" and the same-app filters
+	// read, from $.items[*].friend.extras.*.playLog [§A.1].
+	group, pl := s.visiblePlayLog(viewer, s.store.User(f.BaasUserID), true)
+	setPlayLog(user, group, pl)
 	created := f.CreatedAt
 	if created == 0 {
 		created = now
@@ -95,6 +101,73 @@ func (s *server) relationshipObj(viewer *User, f Friend, now int64) map[string]a
 			},
 		},
 	}
+}
+
+// playLogGroups are the extras groups a play log can sit in, in the order the
+// console reads its own permission from them (self 1, favoriteFriends 2,
+// friends 3, everyone 5; first match wins) [friends-contract-22.5.0 §A.6].
+var playLogGroups = []string{"self", "favoriteFriends", "friends", "everyone"}
+
+// playLogGroup is the group carrying u's play log, which is u's play-log
+// permission, and the log. A value counts only as the console's parser takes
+// it: a string that starts with [ and ends with ] [§A.1]. Called with the
+// store lock held.
+func playLogGroup(u *User) (group, pl string) {
+	for _, g := range playLogGroups {
+		if v := u.PlayLog[g]; strings.HasPrefix(v, "[") && strings.HasSuffix(v, "]") {
+			return g, v
+		}
+	}
+	return "", ""
+}
+
+// visiblePlayLog is subject's play log as viewer may see it, and the group it
+// is served under: the one that carries it. everyone is anyone's (viewer nil
+// is anyone), friends a friend's, favoriteFriends only a friend the subject
+// marked favourite, self nobody else's. A block either way hides it.
+func (s *server) visiblePlayLog(viewer, subject *User, areFriends bool) (group, pl string) {
+	if subject == nil {
+		return "", ""
+	}
+	s.store.mu.Lock()
+	defer s.store.mu.Unlock()
+	group, pl = playLogGroup(subject)
+	if viewer != nil && viewer.ID == subject.ID {
+		return group, pl
+	}
+	if viewer != nil && blocksEither(viewer, subject) {
+		return "", ""
+	}
+	switch group {
+	case "everyone":
+		return group, pl
+	case "friends":
+		if viewer != nil && areFriends {
+			return group, pl
+		}
+	case "favoriteFriends":
+		if viewer != nil && areFriends && subject.FriendPrefs[viewer.ID] != nil && subject.FriendPrefs[viewer.ID].Favorite {
+			return group, pl
+		}
+	}
+	return "", ""
+}
+
+// setPlayLog writes a play log into a rendered user's extras group.
+func setPlayLog(user map[string]any, group, pl string) {
+	if group == "" {
+		return
+	}
+	ex, _ := user["extras"].(map[string]any)
+	if ex == nil {
+		return
+	}
+	g, _ := ex[group].(map[string]any)
+	if g == nil {
+		g = map[string]any{}
+		ex[group] = g
+	}
+	g["playLog"] = pl
 }
 
 // prefOf reads the viewer's preference record for one friend. Empty records

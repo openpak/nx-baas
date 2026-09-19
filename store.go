@@ -140,6 +140,11 @@ type User struct {
 	// friend's BAAS user id: /isFavorite, /extras/self/isConfirmed and
 	// /extras/self/isOnlineNotification.
 	FriendPrefs map[string]*FriendPreference `json:"friendPrefs,omitempty"`
+	// PlayLog is what the console PATCHed into /extras/<group>/playLog, by
+	// group: a string holding a JSON array, stored as sent. Which group
+	// carries it is the play-log permission [friends-contract-22.5.0 §A.6].
+	// nil until the console first writes one.
+	PlayLog map[string]string `json:"playLog,omitempty"`
 	// DevicePresence holds the live per-device presence entries (PRE-01).
 	DevicePresence map[string]*DevicePresence `json:"devicePresence,omitempty"`
 	// FriendsUpdatedAt is when this user's friend graph last changed. The

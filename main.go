@@ -417,7 +417,7 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 		links["nintendoAccount"] = map[string]any{"id": id.NaID, "createdAt": u.CreatedAt, "updatedAt": u.CreatedAt}
 		if !minimal {
 			links["friendCode"] = map[string]any{"id": friendCodeID(id.FriendCode), "createdAt": u.CreatedAt, "updatedAt": u.CreatedAt, "regenerableAt": u.CreatedAt + 30*86400, "regenerable": true}
-			if pl, ok := id.PlayLog.(string); ok && pl != "" && pl != "null" {
+			if pl, ok := id.PlayLog.(string); ok && pl != "" && pl != "null" && u.PlayLog == nil {
 				friendsEx["playLog"], everyone["playLog"] = pl, pl
 			}
 			if at := newerPicture(u, id); at > 0 {
@@ -455,10 +455,19 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 	if (birthday == "" || birthday == "0000-00-00") && id != nil && id.Birthday != "" {
 		birthday = id.Birthday
 	}
+	favoriteFriends := map[string]any{"playLog": ""}
+	if u.PlayLog != nil {
+		// What the console wrote, group by group: the group carrying the log
+		// is its play-log permission, and an empty answer makes it write an
+		// initial "[]" on every sync [friends-contract-22.5.0 §A.6, C9].
+		for g, ex := range map[string]map[string]any{"self": self, "favoriteFriends": favoriteFriends, "friends": friendsEx, "everyone": everyone} {
+			ex["playLog"] = u.PlayLog[g]
+		}
+	}
 	return map[string]any{
 		"birthday": birthday, "blocksUpdatedAt": u.CreatedAt, "country": country, "createdAt": u.CreatedAt, "deleted": false,
 		"deviceAccounts": devs, "etag": fmt.Sprintf("\"%s\"", etag),
-		"extras":           map[string]any{"everyone": everyone, "favoriteFriends": map[string]any{"playLog": ""}, "foaf": map[string]any{"playLog": ""}, "friends": friendsEx, "self": self},
+		"extras":           map[string]any{"everyone": everyone, "favoriteFriends": favoriteFriends, "foaf": map[string]any{"playLog": ""}, "friends": friendsEx, "self": self},
 		"friendsUpdatedAt": friendsUpdatedAt(u), "id": u.ID, "links": links, "nickname": nickname, "nicknameUpdatedAt": u.UpdatedAt,
 		"permissions":   permissionsOf(u),
 		"thumbnail2Url": thumb2, "thumbnailUploadedAt": thumbAt, "thumbnailUrl": thumb1, "updatedAt": u.UpdatedAt,
@@ -554,6 +563,10 @@ func (s *server) friendObj(f Friend, now int64) map[string]any {
 			"everyone":        map[string]any{"playLog": ""},
 		},
 	}
+	// A play log in the everyone group is anyone's to see; the viewer-bound
+	// groups are the relationship renderer's and the search's job.
+	group, pl := s.visiblePlayLog(nil, s.store.User(f.BaasUserID), false)
+	setPlayLog(obj, group, pl)
 	return obj
 }
 
@@ -836,6 +849,18 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 						u.ThumbnailURL = v
 					case "/extras/self/nxAccount":
 						u.NxAccount = v
+					case "/extras/self/playLog", "/extras/favoriteFriends/playLog",
+						"/extras/friends/playLog", "/extras/everyone/playLog":
+						// 30812/30830 and the sync's upload: four ops, the
+						// chosen group holding the log string and the other
+						// three "" [friends-contract-22.5.0 §A.6]. Stored as
+						// sent; the group that holds it is the permission.
+						if _, ok := o.Value.(string); ok {
+							if u.PlayLog == nil {
+								u.PlayLog = map[string]string{}
+							}
+							u.PlayLog[strings.TrimSuffix(strings.TrimPrefix(o.Path, "/extras/"), "/playLog")] = v
+						}
 					case "/permissions/personalAnalytics", "/permissions/personalNotification",
 						"/permissions/friendRequestReception", "/permissions/friends",
 						"/permissions/presence":
@@ -1088,15 +1113,31 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		q := r.URL.Query()
 		now := time.Now().Unix()
+		// $.items[*].extras.*.playLog is whichever group the caller may see
+		// [friends-contract-22.5.0 §A.7]; friendship decides the friends
+		// groups.
+		viewer := s.bearerUser(r)
+		friendOf := map[string]bool{}
+		if id := s.identity(viewer); viewer != nil && id != nil {
+			for _, f := range id.Friends {
+				friendOf[f.BaasUserID] = true
+			}
+		}
+		found := func(f Friend) any {
+			obj := s.searchUserObj(f, now)
+			group, pl := s.visiblePlayLog(viewer, s.store.User(f.BaasUserID), friendOf[f.BaasUserID])
+			setPlayLog(obj, group, pl)
+			return obj
+		}
 		users := []any{}
 		for _, code := range queryList(q, "filter.links.friendCode.id.$in", "friendCode") {
 			if f, err := s.acct.Resolve(url.Values{"code": {normaliseFriendCode(code)}}); err == nil && f != nil {
-				users = append(users, s.searchUserObj(*f, now))
+				users = append(users, found(*f))
 			}
 		}
 		for _, id := range queryList(q, "filter.id.$in", "id") {
 			if f, err := s.acct.Resolve(url.Values{"baas": {id}}); err == nil && f != nil {
-				users = append(users, s.searchUserObj(*f, now))
+				users = append(users, found(*f))
 			}
 		}
 		// {"items": [...]} -- not {"count": n, "users": [...]}. Probed against a
