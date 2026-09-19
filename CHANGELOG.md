@@ -3,6 +3,40 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.12.43 — 2026-09-19
+
+Friends-contract gaps, from the 22.5.0 friends-module read
+(`docs/switch/friends-contract-22.5.0.md`):
+
+- Presence: read the console's DAPresence state byte for PLAYING, always send appField (`"{}"` minimum or the event parser drops it), notify on an appField-only change [c1c2354]
+- Invitation event ids as JSON integers or the module drops the whole `friend_invitation_received` [a03f726]
+- Read no longer accepts: marking a request read (`/extras/receiver/read`) without `/state` stopped auto-accepting it [5680af2]
+- Cancel with the console's spelling, `CANCELED` (one L); only that was rejected [da6fcec]
+- Request boxes carry the read flag and honour `offset`/`count`, so the badge clears and pages stop duplicating [280ab50]
+- Keep the channel and route a friend request was sent with [879646a]
+- Crossed requests become a friendship, answered `AUTHORIZED` so the sender syncs at once [536ff55]
+- Blocks: read `targetUserId` on POST and list `items[*].targetUserId` + `targetUser`, the shape the console parses [535e6ba]
+- Play log kept per `/extras/<group>/playLog` and shown to who may see it, instead of `""` everywhere and a re-sent `"[]"` each sync [fc8f79d]
+- `replace /friendNote` (≤ 20 chars) persists; longer stays the tolerated `invalid_params` [6243cf8]
+- Recommendations as JSON `{"items":[]}`; the empty gRPC body failed the 20300 parse [a920477]
+- `catalog.json` carries `catalog_id` and `enable_icons: ["nx"]` when the title has art [dcb0083]
+- `regenerableAt` is the enforced last-issue + 24 h, not +30 d [a148122]
+- Presence/request switches enforced: presence normalizes to SELF/FAVORITE_FRIENDS/FRIENDS, reception-off refuses new sends (crossed sends still complete) [e6235a7]
+- Thumbnail URLs versioned `?v=<picture time>` so a new picture invalidates the console's image cache [a55af16]
+- `friend_request_received` pushes carry `value.channels` (the sent-with channel, FRIEND_CODE by default) or the console fails the whole event [99a612e]
+
+## v0.12.42 — 2026-09-19
+
+- Presence: read the console's state byte, always send appField [c1c2354]
+- Send the invitation event's ids as JSON integers [a03f726]
+- docs: catalogue the ZNC voice-chat calls a title makes [f0d6c96]
+- internal: /switch/emulator/link-token mints the NA id_token an emulator federates with [181af3a]
+- docs: record the Stardew session-port outage and its guards [f426c1c]
+
+## v0.12.41 — 2026-09-16
+
+- Bind the notification channel on the NA token refresh, not only at login [634e4ed]
+
 ## v0.12.40 — 2026-09-16
 
 - Deliveries addressed to the BAAS account, not the certificate the console presents: the Penne bearer on `god.*` routes is the device token (subject = certificate), so `NoteAccount` keyed console account ids by a cert that `AccountsFor` could never match and every frame left unaddressed — the friends module drops a zero uid by design; `ResolveUser` at the record sites, `BindConsole` heals cert-keyed entries including on an already-bound login. Found live on prod: a natural presence write reached a connected console with no reconnect (the shape failure is gone) but unaddressed [6d8fe42]
