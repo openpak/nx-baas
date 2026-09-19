@@ -416,9 +416,10 @@ func TestUnservedModuleRoutesAnswer(t *testing.T) {
 	}
 }
 
-// The friends module asks about the title a friend is playing by its 128-bit
-// application id; the catalog is keyed by the 64-bit title id, which is that
-// id's upper half. A title we carry answers with its real name and icon.
+// The external application catalog answers from the shop catalog, not with
+// an empty list: 21000 asks about a friend-request route's 128-bit catalog
+// id, and the reply carries catalog_id, application_names and enable_icons
+// [friends-contract-22.5.0 §A.10].
 func TestFriendAppCatalogAnswersFromTheShopCatalog(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(dir+"/icon.jpg", []byte("\xff\xd8\xff-not-really-a-jpeg"), 0o644); err != nil {
@@ -441,6 +442,15 @@ func TestFriendAppCatalogAnswersFromTheShopCatalog(t *testing.T) {
 	w := get("/v1/apps/0100abcd000010000000000000000000/catalog.json")
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "Test Title") {
 		t.Errorf("catalog = %d %s", w.Code, w.Body.String())
+	}
+	for _, want := range []string{
+		`"catalog_id":"0100abcd000010000000000000000000"`,
+		`"enable_icons":["nx"]`,
+		`"en-GB":"Test Title"`,
+	} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Errorf("catalog missing %s: %s", want, w.Body.String())
+		}
 	}
 	if w := get("/v1/apps/0100abcd000010000000000000000000/icon.jpg"); w.Code != 200 || !strings.Contains(w.Body.String(), "not-really-a-jpeg") {
 		t.Errorf("art did not come from the catalog: %d %q", w.Code, w.Body.String())

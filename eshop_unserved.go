@@ -147,14 +147,13 @@ func (s *server) nimUnserved(w http.ResponseWriter, r *http.Request, body []byte
 }
 
 // friendsAppCatalog answers the two routes the friends module fetches itself
-// for the title behind a friend's presence [firmware, friends strings:
-// "https://%s/v1/apps/%016llx%016llx/catalog.json" and ".../<name>.jpg"].
-// Without them a friend shown as PLAYING has no title name and no icon.
-//
-// The catalog document's fields are not recovered, so this serves the shape we
-// can defend — the application id it was asked about and an empty localisation
-// map — and a transparent 1x1 PNG for the art. Both are placeholders whose job
-// is to keep the console's rendering path alive and say so in the log.
+// for a friend-request route or suggestion's external catalog id
+// ("https://%s/v1/apps/%016llx%016llx/catalog.json" and ".../nx.jpg",
+// host c-%.accounts.nintendo.com), matched here on the path before host
+// routing claims it, so it answers on every host that reaches this server
+// [friends-contract-22.5.0 §A.10]. The module only builds the nx.jpg URL and
+// never downloads it. A catalog id this server does not carry renders as
+// "unknown" instead of failing.
 func (s *server) friendsAppCatalog(w http.ResponseWriter, r *http.Request) bool {
 	p := r.URL.Path
 	if !strings.HasPrefix(p, "/v1/apps/") {
@@ -170,13 +169,26 @@ func (s *server) friendsAppCatalog(w http.ResponseWriter, r *http.Request) bool 
 	title := s.shopTitleByAppID(appID)
 	switch {
 	case file == "catalog.json":
-		doc := map[string]any{"application_id": appID, "application_names": map[string]any{}}
+		// The external application catalog [friends-contract-22.5.0
+		// §A.10]: catalog_id is the 32-hex id it was asked about,
+		// application_names carries the shop's localised names (the module
+		// copies only its own language key: ja-JP, en-US, fr-FR, de-DE,
+		// it-IT, es-ES, zh-CN, ko-KR, nl-NL, pt-PT, ru-RU, zh-TW, en-GB,
+		// fr-CA, es-MX, zh-Hans, zh-Hant, pt-BR), and enable_icons holding
+		// "nx" is what makes the module build the .../nx.jpg icon URL.
+		doc := map[string]any{
+			"catalog_id": appID, "application_id": appID,
+			"application_names": map[string]any{}, "enable_icons": []any{},
+		}
 		if title != nil {
 			name, names := shopTitleText(title)
 			doc["application_names"] = names
 			doc["name"] = name
 			doc["publisher"] = title.Publisher
 			doc["version"] = title.Version
+			if title.IconPath != "" {
+				doc["enable_icons"] = []any{"nx"}
+			}
 			log.Printf("[nx-baas] friends app catalog for %s -> %q", appID, name)
 		} else {
 			// A title this server does not carry: the console asked about
