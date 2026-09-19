@@ -999,6 +999,7 @@ func TestThumbnailUrlChangesWhenThePictureDoes(t *testing.T) {
 		t.Errorf("versioned avatar = %d %q", w.Code, w.Header().Get("Content-Type"))
 	}
 }
+
 // console (SOC-04): "code", not a key nothing matched.
 func TestEmulatorFriendCodeLookup(t *testing.T) {
 	s, f, users := socialServer(t)

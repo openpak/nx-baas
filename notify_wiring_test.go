@@ -55,6 +55,43 @@ func TestCoreFriendEventsNotifyTheAccountTheCoreAddressed(t *testing.T) {
 	}
 }
 
+// friend_request_received fails the console's parse without
+// $.value.channels[0]; the push carries the channel the request was sent
+// with when this server saw the send, FRIEND_CODE otherwise
+// [friends-notifications-firmware-2026-09-19.md §2.2].
+func TestRequestReceivedPushCarriesTheChannel(t *testing.T) {
+	s, _, users := socialServer(t)
+	b := s.acct.(*openpakBackend)
+	a, other := users[0], users[1]
+
+	id, _ := s.store.EnsureRequest(other.PID, a.PID)
+	s.noteRequestRoute(id, []byte(`{"channels":["IN_APP"]}`))
+	s.notifyCoreFriendEvent(b, "friend_requested", "acc-a@example.com", "acc-b@example.com", 21)
+	queue := outboxOf(s, a.ID)
+	if len(queue) != 1 {
+		t.Fatalf("friend_requested produced %d deliveries, want 1", len(queue))
+	}
+	value, _ := queue[len(queue)-1].Payload["value"].(map[string]any)
+	ch, _ := value["channels"].([]string)
+	if len(ch) != 1 || ch[0] != "IN_APP" {
+		t.Fatalf("channels = %v, want [IN_APP]", value["channels"])
+	}
+
+	// A request this server never saw still parses: FRIEND_CODE.
+	s2, _, users2 := socialServer(t)
+	b2 := s2.acct.(*openpakBackend)
+	s2.notifyCoreFriendEvent(b2, "friend_requested", "acc-a@example.com", "acc-b@example.com", 22)
+	queue2 := outboxOf(s2, users2[0].ID)
+	if len(queue2) != 1 {
+		t.Fatalf("friend_requested produced %d deliveries, want 1", len(queue2))
+	}
+	value2, _ := queue2[len(queue2)-1].Payload["value"].(map[string]any)
+	ch2, _ := value2["channels"].([]string)
+	if len(ch2) != 1 || ch2[0] != "FRIEND_CODE" {
+		t.Fatalf("channels = %v, want [FRIEND_CODE]", value2["channels"])
+	}
+}
+
 // A poll page reprocessed after a crash resubmits the same core versions. The
 // event id is the version, so the recipient must not be alerted twice.
 func TestReplayedCoreEventsDoNotAlertTwice(t *testing.T) {

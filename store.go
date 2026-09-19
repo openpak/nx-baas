@@ -446,6 +446,19 @@ func (s *Store) OpenRequest(fromPID, toPID uint64) bool {
 	return false
 }
 
+// RequestChannel is the channel an unanswered request from -> to was sent
+// with, or "" when no open request names the pair.
+func (s *Store) RequestChannel(fromPID, toPID uint64) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, r := range s.Requests {
+		if r.State == "" && r.FromPID == fromPID && r.ToPID == toPID {
+			return r.Channel
+		}
+	}
+	return ""
+}
+
 // LiveUsers snapshots the users for the presence reconciler: the reconciler
 // runs on its own goroutine, so it must not walk the live map while handlers
 // mutate it. Entry structs are copied; their DevicePresence maps are copied

@@ -60,11 +60,24 @@ func (s *server) notifyCoreFriendEvent(b *openpakBackend, evType, accountID, sub
 	if other != nil {
 		otherBaas = other.BaasUserID
 	}
+	payload := map[string]any{"friendId": otherBaas}
+	if kind == EventFriendRequestReceived && other != nil {
+		// The console's received parser fails the whole event without
+		// $.value.channels[0]; nothing else in the body is read
+		// [friends-notifications-firmware-2026-09-19.md §2.2]. The channel
+		// is the one the request was sent with when this server saw the
+		// send, FRIEND_CODE otherwise (the add-by-code common case).
+		ch := s.store.RequestChannel(other.PID, me.PID)
+		if ch == "" {
+			ch = "FRIEND_CODE"
+		}
+		payload["value"] = map[string]any{"channels": []string{ch}}
+	}
 	s.SubmitNotification(PenneDelivery{
 		ID:      fmt.Sprintf("core:%d", version),
 		UserID:  me.BaasUserID,
 		Kind:    kind,
-		Payload: map[string]any{"friendId": otherBaas},
+		Payload: payload,
 	})
 }
 
