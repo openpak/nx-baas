@@ -940,7 +940,65 @@ func TestSendToReceiverWithReceptionOffFails(t *testing.T) {
 	}
 }
 
-// The emulator's add-by-code path speaks the same Resolve contract as the
+// The console caches images by URL, so a new picture must come with a new
+// URL: ?v=<picture time>, the versioning the /avatar/ URLs already ship.
+// Otherwise friends keep the old picture after the kind-6 refetch, and a
+// friend's entry never even moves its uploaded-at
+// [friends-contract-22.5.0 §A.11, C21].
+func TestThumbnailUrlChangesWhenThePictureDoes(t *testing.T) {
+	s, _, users := socialServer(t)
+	a, b := users[0], users[1]
+
+	get := func(viewer *User, id string) map[string]any {
+		t.Helper()
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, authed("GET", "/1.0.0/users/"+id, "", viewer, s))
+		var out map[string]any
+		_ = json.Unmarshal(w.Body.Bytes(), &out)
+		return out
+	}
+	entryOf := func() map[string]any {
+		t.Helper()
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, authed("GET", "/2.0.0/users/"+a.ID+"/friends?count=300", "", a, s))
+		var list map[string]any
+		_ = json.Unmarshal(w.Body.Bytes(), &list)
+		for _, it := range list["items"].([]any) {
+			if it.(map[string]any)["friendId"] == b.ID {
+				return it.(map[string]any)["friend"].(map[string]any)
+			}
+		}
+		t.Fatal("B is not in A's list")
+		return nil
+	}
+
+	s.store.Update(b, func(u *User) { u.Avatar, u.AvatarAt = "/9j/", 1789000000 })
+	if got := get(b, b.ID)["thumbnailUrl"]; got != cdnHost+"/1/"+b.ID+"?v=1789000000" {
+		t.Errorf("own thumbnailUrl = %v", got)
+	}
+	first := entryOf()
+	if got := first["thumbnailUrl"]; got != cdnHost+"/1/"+b.ID+"?v=1789000000" {
+		t.Errorf("friend thumbnailUrl = %v", got)
+	}
+	if first["thumbnailUploadedAt"] != float64(1789000000) {
+		t.Errorf("friend thumbnailUploadedAt = %v", first["thumbnailUploadedAt"])
+	}
+
+	// A new picture is a new URL, and the versioned URL serves the picture:
+	// the route matches on the path, so the query is ignored on fetch.
+	s.store.Update(b, func(u *User) { u.AvatarAt = 1789100000 })
+	second := entryOf()
+	if second["thumbnailUrl"] == first["thumbnailUrl"] {
+		t.Errorf("friend thumbnailUrl did not move with the picture: %v", second["thumbnailUrl"])
+	}
+	r := httptest.NewRequest("GET", second["thumbnailUrl"].(string), nil)
+	r.Host = "cdn-image-" + baasHost
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+	if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "image/jpeg" {
+		t.Errorf("versioned avatar = %d %q", w.Code, w.Header().Get("Content-Type"))
+	}
+}
 // console (SOC-04): "code", not a key nothing matched.
 func TestEmulatorFriendCodeLookup(t *testing.T) {
 	s, f, users := socialServer(t)

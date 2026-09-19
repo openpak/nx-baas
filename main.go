@@ -452,6 +452,15 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 			}
 		}
 	}
+	if thumbAt > 0 {
+		// The console caches images by URL: an avatar change must change the
+		// URL, or friends keep the old picture after the kind-6 refetch
+		// [friends-contract-22.5.0 §A.11, C21]. ?v= is the versioning the
+		// /avatar/ URLs already ship, and the route matches on the path, so
+		// the query is ignored on fetch.
+		thumb1 += fmt.Sprintf("?v=%d", thumbAt)
+		thumb2 += fmt.Sprintf("?v=%d", thumbAt)
+	}
 	// Serve what the account actually holds, and nothing more: a captured working response
 	// carries "birthday":"0000-00-00" with the console perfectly happy, so the invented
 	// defaults we used to substitute were fixing a problem that was never demonstrated.
@@ -540,6 +549,20 @@ func (s *server) friendObj(f Friend, now int64) map[string]any {
 		codeGen = local.CodeGeneratedAt
 	}
 	regenAt, regen := codeRegen(codeGen, created)
+	// Their picture's version, when this server holds their record: the
+	// console caches images by URL, so a new picture must come with a new
+	// URL or friends keep the old one [friends-contract-22.5.0 §A.11, C21].
+	picAt, picKnown := created, false
+	if local != nil {
+		if at := newerPicture(local, nil); at > 0 {
+			picAt, picKnown = at, true
+		}
+	}
+	thumbURL, thumb2URL := cdnHost+"/1/"+f.BaasUserID, cdnHost+"/2/"+f.BaasUserID
+	if picKnown {
+		thumbURL += fmt.Sprintf("?v=%d", picAt)
+		thumb2URL += fmt.Sprintf("?v=%d", picAt)
+	}
 	obj := map[string]any{
 		"id":        f.BaasUserID,
 		"nickname":  f.Nickname,
@@ -554,9 +577,9 @@ func (s *server) friendObj(f Friend, now int64) map[string]any {
 		// answers this address with the account's picture, or the default
 		// when it has none — a URL in a reply this server 404s is how a
 		// "reachable avatar" becomes a broken one.
-		"thumbnailUrl":        cdnHost + "/1/" + f.BaasUserID,
-		"thumbnail2Url":       cdnHost + "/2/" + f.BaasUserID,
-		"thumbnailUploadedAt": created,
+		"thumbnailUrl":        thumbURL,
+		"thumbnail2Url":       thumb2URL,
+		"thumbnailUploadedAt": picAt,
 		"nicknameUpdatedAt":   created,
 		"friendsUpdatedAt":    created,
 		"blocksUpdatedAt":     created,
