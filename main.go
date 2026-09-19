@@ -903,7 +903,10 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		case "blocks":
 			switch r.Method {
 			case "POST":
-				target := bodyField(body, form, "userId", "id")
+				// {"targetUserId":"%016llx","extras":{"self":{"reason":…}}}
+				// is what the console sends [friends-contract-22.5.0 §A.8];
+				// userId and id are what this server read before, kept.
+				target := bodyField(body, form, "targetUserId", "userId", "id")
 				if target == "" {
 					baasErr(w, r, 400, "invalid_params", "Invalid Params", "invalid params")
 					return
@@ -925,16 +928,39 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 					baasErr(w, r, status, code, title, detail)
 					return
 				}
-				writeJSON(w, 200, map[string]any{"id": target, "createdAt": time.Now().Unix()})
+				var in struct {
+					Extras struct {
+						Self map[string]any `json:"self"`
+					} `json:"extras"`
+				}
+				_ = json.Unmarshal(body, &in)
+				now := time.Now().Unix()
+				s.store.Update(u, func(u *User) {
+					if u.BlockDetails == nil {
+						u.BlockDetails = map[string]*BlockDetail{}
+					}
+					u.BlockDetails[other.BaasUserID] = &BlockDetail{CreatedAt: now, Self: in.Extras.Self}
+				})
+				// The console ignores this body; it re-syncs the list.
+				writeJSON(w, 200, s.blockObj(u, other.BaasUserID, now))
 			default:
 				if s.requireCaller(w, r, seg[2]) == nil {
 					return
 				}
+				// $.items[*].targetUserId + targetUser, not {"blocks":[{"id"}]}:
+				// the old envelope failed every block sync, so each block and
+				// unblock reported an error after it had worked, and the
+				// friend-list re-sync that follows a block never ran
+				// [friends-contract-22.5.0 §A.8, C14].
+				now := time.Now().Unix()
 				list := []any{}
 				for _, b := range u.Blocks {
-					list = append(list, map[string]any{"id": b})
+					if len(list) == maxBlockEntries {
+						break
+					}
+					list = append(list, s.blockObj(u, b, now))
 				}
-				writeJSON(w, 200, map[string]any{"count": len(list), "blocks": list})
+				writeJSON(w, 200, listEnvelope(list))
 			}
 		case "friends", "friend_requests", "relationships":
 			s.friends(w, r, u, seg[3:], body)

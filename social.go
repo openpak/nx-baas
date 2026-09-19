@@ -321,9 +321,39 @@ func (s *server) setBlock(me *User, other *Friend, block bool) error {
 		u.Blocks = kept
 		if block {
 			u.Blocks = append(u.Blocks, other.BaasUserID)
+		} else {
+			delete(u.BlockDetails, other.BaasUserID)
 		}
 	})
 	return nil
+}
+
+// maxBlockEntries is the block list's bound in the console: it asks for
+// count=100 and a 101st item fails the whole parse [friends-contract-22.5.0
+// §A.8].
+const maxBlockEntries = 100
+
+// blockObj renders one block-list item as the console parses it:
+// targetUserId and targetUser.nickname are required, and an item without
+// them fails the whole list, so a target this network cannot resolve still
+// gets a nickname (empty) and the default picture [friends-contract-22.5.0
+// §A.8].
+func (s *server) blockObj(u *User, target string, now int64) map[string]any {
+	user := map[string]any{"nickname": "", "thumbnailUrl": cdnHost + "/1/default"}
+	if f := s.resolveFriend(target); f != nil {
+		user = s.friendObj(*f, now)
+	}
+	item := map[string]any{"targetUserId": target, "targetUser": user}
+	s.store.mu.Lock()
+	d := u.BlockDetails[target]
+	s.store.mu.Unlock()
+	if d != nil {
+		item["createdAt"] = d.CreatedAt
+		if d.Self != nil {
+			item["extras"] = map[string]any{"self": d.Self}
+		}
+	}
+	return item
 }
 
 // resolveFriend looks a target up by BAAS user id, for the mutation handlers

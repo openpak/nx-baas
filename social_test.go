@@ -604,6 +604,73 @@ func TestBlockUnblockCommitAndTakeEffect(t *testing.T) {
 	}
 }
 
+// The block list is $.items[*].targetUserId + targetUser, and the console
+// blocks with {"targetUserId", "extras":{"self":{"reason"}}}. We read userId
+// (400 for every console block) and answered {"blocks":[{"id"}]}, which fails
+// the whole parse, so every block sync failed and the re-sync after a block
+// never ran [friends-contract-22.5.0 §A.8, C14, C15].
+func TestBlocksSpeakTheConsolesShape(t *testing.T) {
+	s, f, users := socialServer(t)
+	a, b := users[0], users[1]
+
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, authed("POST", "/1.0.0/users/"+a.ID+"/blocks",
+		`{"targetUserId":"`+b.ID+`","extras":{"self":{"reason":"BAD_FRIEND"}}}`, a, s))
+	if w.Code != http.StatusOK {
+		t.Fatalf("block: %d %s", w.Code, w.Body.String())
+	}
+	if !f.blockedEither("acc-a@example.com", "acc-b@example.com") {
+		t.Fatal("block answered 200 but never reached the core")
+	}
+
+	list := func() []map[string]any {
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, authed("GET", "/1.0.0/users/"+a.ID+"/blocks?count=100", "", a, s))
+		var out struct {
+			Items []map[string]any `json:"items"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil || w.Code != http.StatusOK {
+			t.Fatalf("block list: %d %s", w.Code, w.Body.String())
+		}
+		return out.Items
+	}
+	items := list()
+	if len(items) != 1 {
+		t.Fatalf("block list items: %v", items)
+	}
+	it := items[0]
+	user, _ := it["targetUser"].(map[string]any)
+	ex, _ := it["extras"].(map[string]any)
+	self, _ := ex["self"].(map[string]any)
+	if it["targetUserId"] != b.ID || user["nickname"] != "PlayerB" || user["thumbnailUrl"] == "" {
+		t.Errorf("block item lacks its required fields: %v", it)
+	}
+	if self["reason"] != "BAD_FRIEND" {
+		t.Errorf("extras.self.reason: %v", it["extras"])
+	}
+	if _, ok := it["createdAt"].(float64); !ok {
+		t.Errorf("createdAt: %v", it["createdAt"])
+	}
+
+	// Unblock empties the list, and the next block starts from its own body.
+	w = httptest.NewRecorder()
+	s.ServeHTTP(w, authed("DELETE", "/1.0.0/users/"+a.ID+"/blocks/"+b.ID, "", a, s))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("unblock: %d", w.Code)
+	}
+	if items := list(); len(items) != 0 {
+		t.Errorf("block list after unblock: %v", items)
+	}
+	w = httptest.NewRecorder()
+	s.ServeHTTP(w, authed("POST", "/1.0.0/users/"+a.ID+"/blocks", `{"userId":"`+b.ID+`"}`, a, s))
+	if w.Code != http.StatusOK {
+		t.Fatalf("block by the old key: %d", w.Code)
+	}
+	if items := list(); len(items) != 1 || items[0]["extras"] != nil {
+		t.Errorf("a re-block kept the old reason: %v", items)
+	}
+}
+
 // The emulator's add-by-code path speaks the same Resolve contract as the
 // console (SOC-04): "code", not a key nothing matched.
 func TestEmulatorFriendCodeLookup(t *testing.T) {

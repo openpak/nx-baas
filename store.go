@@ -62,6 +62,13 @@ type FriendPreference struct {
 	UpdatedAt int64  `json:"updatedAt"`
 }
 
+// BlockDetail is one block's own state beyond the id [friends-contract-22.5.0
+// §A.8]: the POST body's extras.self, served back as the item's extras.self.
+type BlockDetail struct {
+	CreatedAt int64          `json:"createdAt"`
+	Self      map[string]any `json:"self,omitempty"`
+}
+
 // FriendRequestRecord is the durable identity of one friend request (SOC-03):
 // the console cancels, rejects and accepts by this id, so it must survive a
 // restart and mean the same pair on every surface that shows it. The
@@ -121,6 +128,10 @@ type User struct {
 	Permissions map[string]any `json:"permissions,omitempty"`
 	// Blocks is the block list the friends sysmodule manages, by BAAS user id.
 	Blocks []string `json:"blocks,omitempty"`
+	// BlockDetails holds what the console said about each block, by the
+	// blocked user's BAAS id: when, and extras.self (reason, and the route
+	// keys when a game is attached). Blocks made before this have none.
+	BlockDetails map[string]*BlockDetail `json:"blockDetails,omitempty"`
 	// Favourites are friends marked as such on the console. Superseded by
 	// FriendPrefs, into which loadStore folds it once; kept so a store written
 	// by this build still reads correctly on a rollback build.
