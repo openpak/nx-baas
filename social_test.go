@@ -127,6 +127,30 @@ func TestDurableRequestIdentitySurvivesRestart(t *testing.T) {
 	}
 }
 
+// Opening the request box marks the request read. That is not an answer: the
+// request stays open, the inbox still shows it, and nobody became friends
+// (2026-09-12: every request was "accepted" the moment Leia looked at it).
+func TestMarkingARequestReadDoesNotAcceptIt(t *testing.T) {
+	s, f, users := socialServer(t)
+	a, b := users[0], users[1]
+	f.friends, f.incoming, f.outgoing = map[string][]string{}, map[string][]string{}, map[string][]string{}
+
+	_, reply := postRequest(t, s, a, `{"receiverId":"`+b.ID+`"}`)
+	reqID, _ := reply["id"].(string)
+	code, read := answerRequest(t, s, b, "PATCH", reqID, `[{"op":"add","path":"/extras/receiver/read","value":true}]`)
+	if code != http.StatusOK || read["state"] != "PENDING" {
+		t.Fatalf("mark read: %d %v", code, read)
+	}
+	if id, _ := s.acct.Identity(a.PID); len(id.Friends) != 0 {
+		t.Fatalf("marking read befriended: %+v", id.Friends)
+	}
+	// Still answerable afterwards.
+	if code, reply := answerRequest(t, s, b, "PATCH", reqID,
+		`[{"op":"replace","path":"/state","value":"AUTHORIZED"}]`); code != http.StatusOK || reply["state"] != "AUTHORIZED" {
+		t.Fatalf("accept after read: %d %v", code, reply)
+	}
+}
+
 // Both sides of an acceptance (J1): A requests, B accepts, both lists show
 // the relationship. Also: duplicates are idempotent and a reverse request
 // resolves truthfully to the request that already exists.

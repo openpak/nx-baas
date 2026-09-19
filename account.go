@@ -322,7 +322,10 @@ func patchedState(body []byte) string {
 	if strings.Contains(strings.ToUpper(string(body)), "REJECT") {
 		return "REJECTED"
 	}
-	return "AUTHORIZED"
+	// No answer in it. Opening the request box PATCHes
+	// [{"op":"add","path":"/extras/receiver/read","value":true}], and reading
+	// that as AUTHORIZED befriended everyone the moment they looked.
+	return ""
 }
 
 // friendListFormatEpoch is when the 22.5.0 friend-list shape shipped. Consoles

@@ -1387,6 +1387,33 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			state = "CANCELLED"
 		}
 		record, other := s.friendRequestByRef(seg[1])
+		if state == "" {
+			// Marked read, not answered: the request stays open.
+			var target *Friend
+			incoming := true
+			switch {
+			case record != nil:
+				incoming = record.ToPID == me.PID
+				otherPID := record.FromPID
+				if !incoming {
+					otherPID = record.ToPID
+				}
+				target = s.friendByPID(otherPID)
+			case other != nil:
+				target = other
+			}
+			if target == nil {
+				baasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
+				return
+			}
+			reply := s.friendRequestReply(me, myID, target, seg[1], incoming, nil, now)
+			if record != nil && record.State != "" {
+				reply["state"] = record.State
+			}
+			reply["extras"] = map[string]any{"receiver": map[string]any{"read": true}}
+			writeJSON(w, 200, reply)
+			return
+		}
 		var err error
 		switch {
 		case record != nil && record.State != "":
