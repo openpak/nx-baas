@@ -79,6 +79,10 @@ type FriendRequestRecord struct {
 	// reads as "this invitation is no longer valid".
 	State     string `json:"state,omitempty"`
 	SettledAt int64  `json:"settledAt,omitempty"`
+	// Read is the receiver's extras.receiver.read, set by 30205
+	// ReadFriendRequest. The console's request badge is the inbox items
+	// without it [friends-contract-22.5.0 §A.4.2, §A.4.3].
+	Read bool `json:"read,omitempty"`
 }
 
 // User is a BAAS user. PID == 0 means not yet linked to a OpenPak account; once linked its ID is
@@ -359,6 +363,18 @@ func (s *Store) RequestByID(id string) *FriendRequestRecord {
 	}
 	cp := *r
 	return &cp
+}
+
+// MarkRequestRead records the receiver's extras.receiver.read on a request.
+func (s *Store) MarkRequestRead(id string, read bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.Requests[id]
+	if r == nil || r.Read == read {
+		return
+	}
+	r.Read = read
+	s.save()
 }
 
 // settledRequestRetention is how long an answered request keeps answering

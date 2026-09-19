@@ -335,6 +335,99 @@ func TestCancelUsesTheConsolesSpellingAndEveryReplyIsTheFullRequest(t *testing.T
 	}
 }
 
+// requestBox drives GET /2.0.0/users/<id>/friend_requests/<box><query>.
+func requestBox(t *testing.T, s *server, u *User, box, query string) []map[string]any {
+	t.Helper()
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, authed("GET", "/2.0.0/users/"+u.ID+"/friend_requests/"+box+query, "", u, s))
+	if w.Code != http.StatusOK {
+		t.Fatalf("%s%s: %d %s", box, query, w.Code, w.Body.String())
+	}
+	var out struct {
+		Items []map[string]any `json:"items"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &out)
+	return out.Items
+}
+
+// The request badge is the inbox items without extras.receiver.read:true.
+// 30205 marked a request read and we echoed it, but the inbox never carried
+// the flag, so the badge never cleared. The console also pages the boxes and
+// trusts the server to: offset from the IPC call, count from its buffer,
+// newest first, PENDING only [friends-contract-22.5.0 §A.4.2, §A.4.3, C3].
+func TestRequestBoxCarriesReadAndHonoursThePage(t *testing.T) {
+	s, f, users := socialServer(t)
+	a, b := users[0], users[1]
+	f.friends, f.incoming, f.outgoing = map[string][]string{}, map[string][]string{}, map[string][]string{}
+	f.addAccount("acc-c@example.com", "PlayerC", "pw-c-ccccccccccc")
+	c := newUserFor(t, s, "acc-c@example.com", "pw-c-ccccccccccc")
+
+	_, fromA := postRequest(t, s, a, `{"receiverId":"`+b.ID+`"}`)
+	_, fromC := postRequest(t, s, c, `{"receiverId":"`+b.ID+`"}`)
+	older, newer := fromA["id"].(string), fromC["id"].(string)
+	s.store.mu.Lock()
+	s.store.Requests[older].CreatedAt -= 60
+	s.store.mu.Unlock()
+
+	const q = "?offset=0&count=10&sort=createdAt:desc&filter.state.$eq=PENDING"
+	inbox := requestBox(t, s, b, "inbox", q)
+	if len(inbox) != 2 || inbox[0]["id"] != newer || inbox[1]["id"] != older {
+		t.Fatalf("inbox is not newest first: %v", inbox)
+	}
+	read := func(item map[string]any) any {
+		ex, _ := item["extras"].(map[string]any)
+		rc, _ := ex["receiver"].(map[string]any)
+		return rc["read"]
+	}
+	for _, it := range inbox {
+		if read(it) != false {
+			t.Errorf("unread item carries extras.receiver.read=%v", read(it))
+		}
+		if gaps := requestReplyGaps(it, map[string]*User{older: a, newer: c}[it["id"].(string)], false); gaps != nil {
+			t.Errorf("inbox item lacks %v", gaps)
+		}
+	}
+
+	// 30205 marks one read; the inbox says so from then on, and the other
+	// stays unread.
+	if code, _ := answerRequest(t, s, b, "PATCH", older, `[{"op":"add","path":"/extras/receiver/read","value":true}]`); code != http.StatusOK {
+		t.Fatalf("mark read: %d", code)
+	}
+	s.store = loadStore(s.store.path) // and it survives a restart
+	inbox = requestBox(t, s, b, "inbox", q)
+	if read(inbox[0]) != false || read(inbox[1]) != true {
+		t.Errorf("read flags after 30205: %v, %v", read(inbox[0]), read(inbox[1]))
+	}
+	// The sender cannot mark the receiver's flag.
+	answerRequest(t, s, c, "PATCH", newer, `[{"op":"add","path":"/extras/receiver/read","value":true}]`)
+	if inbox = requestBox(t, s, b, "inbox", q); read(inbox[0]) != false {
+		t.Error("the sender marked the receiver's request read")
+	}
+
+	// The page: offset and count.
+	if page := requestBox(t, s, b, "inbox", "?offset=1&count=1&sort=createdAt:desc&filter.state.$eq=PENDING"); len(page) != 1 || page[0]["id"] != older {
+		t.Errorf("offset=1&count=1: %v", page)
+	}
+	if page := requestBox(t, s, b, "inbox", "?offset=0&count=1&sort=createdAt:desc&filter.state.$eq=PENDING"); len(page) != 1 || page[0]["id"] != newer {
+		t.Errorf("offset=0&count=1: %v", page)
+	}
+	if page := requestBox(t, s, b, "inbox", "?offset=5&count=10&sort=createdAt:desc&filter.state.$eq=PENDING"); len(page) != 0 {
+		t.Errorf("offset past the end: %v", page)
+	}
+	// Only PENDING is ever in a box.
+	if page := requestBox(t, s, b, "inbox", "?offset=0&count=10&filter.state.$eq=REJECTED"); len(page) != 0 {
+		t.Errorf("filter.state.$eq=REJECTED: %v", page)
+	}
+	// The outbox carries the receiver's six fields.
+	outbox := requestBox(t, s, a, "outbox", q)
+	if len(outbox) != 1 {
+		t.Fatalf("outbox: %v", outbox)
+	}
+	if gaps := requestReplyGaps(outbox[0], b, true); gaps != nil {
+		t.Errorf("outbox item lacks %v", gaps)
+	}
+}
+
 // A second answer to a settled request is refused: the record is dropped
 // after its lifecycle ends, and the core refuses what the cache shows.
 // The console answers the same request twice — once from the request box and

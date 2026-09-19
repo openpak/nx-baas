@@ -35,6 +35,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1295,11 +1296,18 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			baasErr(w, r, 403, "insufficient_scope", "Token is insufficient", "not linked")
 			return
 		}
-		list := []any{}
+		list := []map[string]any{}
 		incoming := seg[3] != "outbox"
 		requests := myID.FriendRequests
 		if !incoming {
 			requests = myID.SentRequests
+		}
+		// The console asks for PENDING only and trusts the filter
+		// [friends-contract-22.5.0 §A.4.2]. Every request the core lists is
+		// pending, so any other state is an empty box.
+		q := r.URL.Query()
+		if st := q.Get("filter.state.$eq"); st != "" && requestState(st) != "PENDING" {
+			requests = nil
 		}
 		meObj := s.userObj(me, myID, "")
 		for _, f := range requests {
@@ -1326,13 +1334,34 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			if incoming {
 				entry["sender"], entry["senderId"] = other, f.BaasUserID
 				entry["receiver"], entry["receiverId"] = meObj, me.ID
+				// The badge is the inbox items without read:true, so a
+				// request 30205 marked read has to say so here or the badge
+				// never clears [§A.4.3].
+				entry["extras"] = map[string]any{"receiver": map[string]any{"read": record != nil && record.Read}}
 			} else {
 				entry["sender"], entry["senderId"] = meObj, me.ID
 				entry["receiver"], entry["receiverId"] = other, f.BaasUserID
 			}
 			list = append(list, entry)
 		}
-		writeJSON(w, 200, listEnvelope(list))
+		// sort=createdAt:desc, then the console's page: offset from the IPC
+		// call, count from its buffer. Items past count are dropped at the far
+		// end and a repeated page is a duplicate, so the page is cut here
+		// [§A.4.2].
+		sort.SliceStable(list, func(i, j int) bool {
+			return list[i]["createdAt"].(int64) > list[j]["createdAt"].(int64)
+		})
+		if off, err := strconv.Atoi(q.Get("offset")); err == nil && off > 0 {
+			list = list[min(off, len(list)):]
+		}
+		if n, err := strconv.Atoi(q.Get("count")); err == nil && n >= 0 && n < len(list) {
+			list = list[:n]
+		}
+		items := make([]any, len(list))
+		for i, e := range list {
+			items[i] = e
+		}
+		writeJSON(w, 200, listEnvelope(items))
 		return
 
 	case len(seg) == 1 && seg[0] == "friend_requests" && r.Method == "POST":
@@ -1406,11 +1435,30 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 				baasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 				return
 			}
+			// 30205 ReadFriendRequest: [{"op":"add","path":"/extras/receiver/read",
+			// "value":true}]. Kept on the request, because the inbox is where
+			// the console counts it [friends-contract-22.5.0 §A.4.3]; only the
+			// receiver's own flag is the receiver's to set.
+			read := false
+			if record != nil {
+				read = record.Read
+			}
+			var ops []struct {
+				Path  string
+				Value any
+			}
+			_ = json.Unmarshal(body, &ops)
+			for _, o := range ops {
+				if v, ok := o.Value.(bool); ok && o.Path == "/extras/receiver/read" && record != nil && record.ToPID == me.PID {
+					s.store.MarkRequestRead(record.ID, v)
+					read = v
+				}
+			}
 			reply := s.friendRequestReply(me, myID, target, seg[1], incoming, nil, now)
 			if record != nil && record.State != "" {
 				reply["state"] = requestState(record.State)
 			}
-			reply["extras"] = map[string]any{"receiver": map[string]any{"read": true}}
+			reply["extras"] = map[string]any{"receiver": map[string]any{"read": read}}
 			writeJSON(w, 200, reply)
 			return
 		}
