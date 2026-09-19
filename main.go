@@ -1326,7 +1326,18 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			entry := map[string]any{
 				"id": reqID, "state": "PENDING",
 				"createdAt": createdAt, "updatedAt": updatedAt,
-				"channels": []string{"FRIEND_CODE"},
+				"channels": requestChannels(record),
+			}
+			// The route, from the side each box reads it: the inbox from
+			// senderAndReceiver, the outbox from sender (and
+			// senderAndReceiver for the game) [§A.4.2]. extras.sender is the
+			// sender's own; it never reaches the receiver.
+			ex := map[string]any{}
+			if record != nil && record.SenderAndReceiver != nil {
+				ex["senderAndReceiver"] = record.SenderAndReceiver
+			}
+			if record != nil && record.Sender != nil && !incoming {
+				ex["sender"] = record.Sender
 			}
 			// Who sent it is the whole point of an inbox: the same object
 			// in both slots said nothing, and the console had nothing to
@@ -1337,10 +1348,13 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 				// The badge is the inbox items without read:true, so a
 				// request 30205 marked read has to say so here or the badge
 				// never clears [§A.4.3].
-				entry["extras"] = map[string]any{"receiver": map[string]any{"read": record != nil && record.Read}}
+				ex["receiver"] = map[string]any{"read": record != nil && record.Read}
 			} else {
 				entry["sender"], entry["senderId"] = meObj, me.ID
 				entry["receiver"], entry["receiverId"] = other, f.BaasUserID
+			}
+			if len(ex) > 0 {
+				entry["extras"] = ex
 			}
 			list = append(list, entry)
 		}
@@ -1393,6 +1407,9 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			status, code, title, detail := baasFailure(err)
 			baasErr(w, r, status, code, title, detail)
 			return
+		}
+		if created && !incoming {
+			s.noteRequestRoute(reqID, body)
 		}
 		s.friendGraphChanged(me, target.BaasUserID)
 		// The request gets its own durable id. It used to be handed back the
@@ -1558,7 +1575,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			"id":       seg[1],
 			"senderId": senderID, "receiverId": receiverID,
 			"sender": senderObj, "receiver": receiverObj,
-			"state": state, "channels": []string{"FRIEND_CODE"},
+			"state": state, "channels": requestChannels(record),
 			"createdAt": createdAt, "updatedAt": now,
 		})
 		return

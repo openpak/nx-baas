@@ -83,6 +83,14 @@ type FriendRequestRecord struct {
 	// ReadFriendRequest. The console's request badge is the inbox items
 	// without it [friends-contract-22.5.0 §A.4.2, §A.4.3].
 	Read bool `json:"read,omitempty"`
+	// Channel and the route extras are what the sending console POSTed:
+	// channels[0], extras.sender (the sender's own view) and
+	// extras.senderAndReceiver (both sides'). The boxes serve them back —
+	// the inbox reads the route from senderAndReceiver, the outbox from
+	// sender [friends-contract-22.5.0 §A.4.1, §A.4.2].
+	Channel           string         `json:"channel,omitempty"`
+	Sender            map[string]any `json:"extrasSender,omitempty"`
+	SenderAndReceiver map[string]any `json:"extrasSenderAndReceiver,omitempty"`
 }
 
 // User is a BAAS user. PID == 0 means not yet linked to a OpenPak account; once linked its ID is
@@ -374,6 +382,19 @@ func (s *Store) MarkRequestRead(id string, read bool) {
 		return
 	}
 	r.Read = read
+	s.save()
+}
+
+// SetRequestRoute records how a request was sent: its channel and the route
+// extras of the POST that created it.
+func (s *Store) SetRequestRoute(id, channel string, sender, both map[string]any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.Requests[id]
+	if r == nil {
+		return
+	}
+	r.Channel, r.Sender, r.SenderAndReceiver = channel, sender, both
 	s.save()
 }
 

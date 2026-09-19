@@ -428,6 +428,61 @@ func TestRequestBoxCarriesReadAndHonoursThePage(t *testing.T) {
 	}
 }
 
+// A request keeps the channel and route it was sent with. The boxes said
+// FRIEND_CODE for everything and dropped the POST's extras, so an in-app
+// request showed no game and no in-app name. The inbox reads the route from
+// extras.senderAndReceiver, the outbox from extras.sender; extras.sender is
+// the sender's own [friends-contract-22.5.0 §A.4.1, §A.4.2, C3, C4].
+func TestRequestBoxesKeepTheChannelAndRoute(t *testing.T) {
+	s, f, users := socialServer(t)
+	a, b := users[0], users[1]
+	f.friends, f.incoming, f.outgoing = map[string][]string{}, map[string][]string{}, map[string][]string{}
+
+	body := `{"channels":["IN_APP"],"senderId":"` + a.ID + `","receiverId":"` + b.ID + `","extras":{` +
+		`"sender":{"route:sender":"me","route:name":"Bobby","route:name:language":"en-US"},` +
+		`"senderAndReceiver":{"route:appInfo:appId":"0100a5a020d5e000","route:appInfo:acdIndex":0,` +
+		`"route:appInfo:presenceGroupId":"0100a5a020d5e000","route:name":"Alice","route:name:language":"en-US"}}}`
+	code, sent := postRequest(t, s, a, body)
+	if code >= 300 {
+		t.Fatalf("send: %d %v", code, sent)
+	}
+	if ch, _ := sent["channels"].([]any); len(ch) != 1 || ch[0] != "IN_APP" {
+		t.Errorf("send reply channels: %v", sent["channels"])
+	}
+	extras := func(item map[string]any, group string) map[string]any {
+		ex, _ := item["extras"].(map[string]any)
+		g, _ := ex[group].(map[string]any)
+		return g
+	}
+
+	inbox := requestBox(t, s, b, "inbox", "?offset=0&count=10")
+	if len(inbox) != 1 {
+		t.Fatalf("inbox: %v", inbox)
+	}
+	if ch, _ := inbox[0]["channels"].([]any); len(ch) != 1 || ch[0] != "IN_APP" {
+		t.Errorf("inbox channels: %v", inbox[0]["channels"])
+	}
+	if sr := extras(inbox[0], "senderAndReceiver"); sr["route:appInfo:appId"] != "0100a5a020d5e000" || sr["route:name"] != "Alice" {
+		t.Errorf("inbox senderAndReceiver: %v", sr)
+	}
+	if sn := extras(inbox[0], "sender"); sn != nil {
+		t.Errorf("the sender's own extras reached the receiver: %v", sn)
+	}
+
+	outbox := requestBox(t, s, a, "outbox", "?offset=0&count=10")
+	if len(outbox) != 1 {
+		t.Fatalf("outbox: %v", outbox)
+	}
+	if sn := extras(outbox[0], "sender"); sn["route:name"] != "Bobby" {
+		t.Errorf("outbox sender: %v", sn)
+	}
+
+	_, accepted := answerRequest(t, s, b, "PATCH", sent["id"].(string), `[{"op":"replace","path":"/state","value":"AUTHORIZED"}]`)
+	if ch, _ := accepted["channels"].([]any); len(ch) != 1 || ch[0] != "IN_APP" {
+		t.Errorf("accept reply channels: %v", accepted["channels"])
+	}
+}
+
 // A second answer to a settled request is refused: the record is dropped
 // after its lifecycle ends, and the core refuses what the cache shows.
 // The console answers the same request twice — once from the request box and

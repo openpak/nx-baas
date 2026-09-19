@@ -17,6 +17,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"net/url"
 )
@@ -214,12 +215,51 @@ func (s *server) friendRequestReply(me *User, id *Identity, target *Friend, reqI
 		senderObj, receiverObj = receiverObj, senderObj
 		senderID, receiverID = target.BaasUserID, me.ID
 	}
+	channels := channelsOf(body)
+	if record != nil && record.Channel != "" {
+		channels = requestChannels(record)
+	}
 	return map[string]any{
 		"id": reqID, "senderId": senderID, "receiverId": receiverID,
 		"sender": senderObj, "receiver": receiverObj,
-		"state": "PENDING", "channels": channelsOf(body),
+		"state": "PENDING", "channels": channels,
 		"createdAt": createdAt, "updatedAt": updatedAt,
 	}
+}
+
+// requestChannels is the channel a request was sent with, as the one-element
+// array the console reads channels[0] from. Requests that predate the record
+// keeping it, or that came from the core rather than a console, say
+// FRIEND_CODE as they always did.
+func requestChannels(record *FriendRequestRecord) []string {
+	if record == nil || record.Channel == "" {
+		return []string{"FRIEND_CODE"}
+	}
+	return []string{record.Channel}
+}
+
+// noteRequestRoute keeps the channel and route extras of the POST that
+// created a request, so both boxes can show which game, name or catalog it
+// came from [friends-contract-22.5.0 §A.4.1].
+func (s *server) noteRequestRoute(reqID string, body []byte) {
+	var in struct {
+		Channels []string `json:"channels"`
+		Extras   struct {
+			Sender            map[string]any `json:"sender"`
+			SenderAndReceiver map[string]any `json:"senderAndReceiver"`
+		} `json:"extras"`
+	}
+	if json.Unmarshal(body, &in) != nil {
+		return
+	}
+	channel := ""
+	if len(in.Channels) > 0 {
+		channel = in.Channels[0]
+	}
+	if channel == "" && in.Extras.Sender == nil && in.Extras.SenderAndReceiver == nil {
+		return
+	}
+	s.store.SetRequestRoute(reqID, channel, in.Extras.Sender, in.Extras.SenderAndReceiver)
 }
 
 // settleRequest accepts or rejects the request addressed to me. The durable
