@@ -180,6 +180,30 @@ func (s *server) noteDevicePresence(u *User, deviceID, state, appID, appField, g
 	})
 }
 
+// renewDevicePresence extends a claim that is still the truth. Presence is
+// published on change and on nothing else -- by the console and by the
+// emulator both -- so without this a person who has not switched game in two
+// minutes silently goes offline while sitting in front of the console
+// (2026-09-20: an invitation naming its sender as "offline for 0 minutes").
+// Only presence we are still hearing a live connection for is renewed.
+func (s *server) renewDevicePresence(userID, deviceID string) {
+	u := s.store.User(userID)
+	if u == nil || deviceID == "" {
+		return
+	}
+	now := time.Now().Unix()
+	lease := int64(presenceLease().Seconds())
+	s.store.Update(u, func(u *User) {
+		e := u.DevicePresence[deviceID]
+		if e == nil || e.ExpiresAt == 0 || stateRank(e.State) == 0 {
+			return // never claimed, or claimed as gone: not ours to extend
+		}
+		if e.ExpiresAt > now { // still live: push the lease out
+			e.ExpiresAt = now + lease
+		}
+	})
+}
+
 // expireDevicePresence drops one device's live claim (device unlink, account
 // switch): the console is gone even though it never said so. When no other
 // live claim remains, the old presence field is ended with it, so an account

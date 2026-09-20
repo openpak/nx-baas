@@ -27,6 +27,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"nx-baas/internal/penne"
@@ -180,6 +181,7 @@ func (s *server) frontlineHeldOpen(w http.ResponseWriter, r *http.Request, rec *
 			// Keepalive: flush without content. The newline heartbeat this
 			// replaces was unvalidated and would desync a length-prefixed
 			// decoder; a zero-byte flush desyncs nothing.
+			s.penneRenewPresence(sess)
 			fl.Flush()
 		}
 	}
@@ -365,6 +367,10 @@ type penneSession struct {
 	user    string
 	device  string
 	penneID string
+	// published is every (user, device) whose presence arrived on this
+	// connection, so the keepalive can renew what the console has already
+	// said rather than let it lapse between changes.
+	published sync.Map
 	// prio carries answers the console is blocking on. They must go out
 	// before anything queued, and a late one is fatal, so the channel holds
 	// exactly one and a reply that cannot leave at once is dropped.
@@ -723,6 +729,7 @@ func (s *server) penneDispatch(sess *penneSession, frame []byte) {
 		user, _ := p.String(1)
 		if device != "" && user != "" {
 			sess.ack(user + "/" + device)
+			sess.published.Store(user, device)
 		}
 		if s.penneNotePresence(p) {
 			return
@@ -756,6 +763,16 @@ func (s *server) penneSweep() {
 			}
 		}
 	}
+}
+
+// penneRenewPresence keeps alive what this console has already published. The
+// console publishes on change only, so between changes its people would fall
+// out of their lease and read as offline.
+func (s *server) penneRenewPresence(sess *penneSession) {
+	sess.published.Range(func(user, device any) bool {
+		s.renewDevicePresence(user.(string), device.(string))
+		return true
+	})
 }
 
 // penneWakeConsole replays what is owed to every profile on this console, not
