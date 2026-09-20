@@ -148,13 +148,13 @@ func (s *server) frontlineHeldOpen(w http.ResponseWriter, r *http.Request, rec *
 			s.notifStore().framesOut.Add(1)
 			if err := penne.WriteFrame(w, out.frame); err != nil {
 				if out.id != "" {
-					s.notifStore().MarkFailed(sess.user, out.id, err.Error(), time.Now())
+					s.penneMarkFailed(sess, out.id, err)
 				}
 				cancel()
 				continue
 			}
 			if out.id != "" {
-				s.notifStore().MarkDelivered(sess.user, out.id, time.Now())
+				s.penneMarkDelivered(sess, out.id)
 			}
 			fl.Flush()
 		case <-ticker.C:
@@ -248,13 +248,13 @@ func (s *server) frontlineStream(w http.ResponseWriter, r *http.Request, rec *pe
 			// held-open path.
 			if err := writeChunk(penne.AppendFrame(nil, out.frame)); err != nil {
 				if out.id != "" {
-					s.notifStore().MarkFailed(sess.user, out.id, err.Error(), time.Now())
+					s.penneMarkFailed(sess, out.id, err)
 				}
 				cancel()
 				continue
 			}
 			if out.id != "" {
-				s.notifStore().MarkDelivered(sess.user, out.id, time.Now())
+				s.penneMarkDelivered(sess, out.id)
 			}
 		}
 	}
@@ -699,6 +699,34 @@ func (s *server) penneWakeConsole(sess *penneSession) {
 	for _, u := range s.notifStore().UsersOn(sess.penneID) {
 		if u != sess.user {
 			s.penneWake(u)
+		}
+	}
+}
+
+// penneMarkDelivered settles a written delivery against whichever profile on
+// this console owns it. A connection is filed under the profile that
+// registered it, so a notification for the other profile on the same console
+// was never found here and was re-sent on every wake (2026-09-20: the same
+// presence_updated written once a second).
+func (s *server) penneMarkDelivered(sess *penneSession, id string) {
+	store := s.notifStore()
+	now := time.Now()
+	store.MarkDelivered(sess.user, id, now)
+	for _, u := range store.UsersOn(sess.penneID) {
+		if u != sess.user {
+			store.MarkDelivered(u, id, now)
+		}
+	}
+}
+
+// penneMarkFailed schedules the retry against whichever profile owns it.
+func (s *server) penneMarkFailed(sess *penneSession, id string, err error) {
+	store := s.notifStore()
+	now := time.Now()
+	store.MarkFailed(sess.user, id, err.Error(), now)
+	for _, u := range store.UsersOn(sess.penneID) {
+		if u != sess.user {
+			store.MarkFailed(u, id, err.Error(), now)
 		}
 	}
 }

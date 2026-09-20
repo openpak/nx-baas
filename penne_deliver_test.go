@@ -306,6 +306,18 @@ func TestNotificationReachesTheSecondProfileOnAConsole(t *testing.T) {
 	default:
 		t.Fatal("hansolo's notification never reached the console holding the profile")
 	}
+	// Writing it settles it against the profile that owns it, not the profile
+	// the connection is filed under: otherwise it is re-sent on every wake.
+	s.penneMarkDelivered(sess, "ev1")
+	for len(sess.send) > 0 {
+		<-sess.send
+	}
+	s.penneWake(tobagin.ID)
+	select {
+	case o := <-sess.send:
+		t.Fatalf("delivered event %q was written again", o.id)
+	default:
+	}
 	// And the message on the wire names tobagin's profile, not Leia's.
 	frames := s.penneMessageFrames(&penneOutRec{ID: "ev1", UserID: tobagin.ID, Kind: EventFriendRequestAuthorized})
 	env, _ := penne.DecodeEnvelope(frames[0])
