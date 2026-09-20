@@ -705,12 +705,26 @@ func (s *server) penneDispatch(sess *penneSession, frame []byte) {
 	case penne.TypeDAPresence:
 		// The console publishing its own presence, for any account signed in on
 		// it — not only the one this connection is bound to (penne_presence.go).
-		if p, ok := env.Payload(); ok && s.penneNotePresence(p) {
-			// Echoed the other way round from the wire: the console builds
-			// the string it waits for as <nsa>/<device account>.
-			device, _ := p.String(0)
-			user, _ := p.String(1)
+		//
+		// Answered first, and whether or not the user is one we know: a
+		// presence frame is a request like any other, and until it is answered
+		// the console publishes nothing else and is torn down ten seconds
+		// later. That is why only one profile's presence ever reached us
+		// (docs/switch/presence-publish-gate-2026-09-20.md).
+		p, ok := env.Payload()
+		if !ok {
+			store.unknownType.Add(1)
+			log.Printf("[nx-baas] penne: DAPresence without a payload%s", frameHex(frame))
+			return
+		}
+		// Echoed the other way round from the wire: the console builds the
+		// string it waits for as <nsa>/<device account>.
+		device, _ := p.String(0)
+		user, _ := p.String(1)
+		if device != "" && user != "" {
 			sess.ack(user + "/" + device)
+		}
+		if s.penneNotePresence(p) {
 			return
 		}
 		store.unknownType.Add(1)

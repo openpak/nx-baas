@@ -34,14 +34,15 @@ func uuid4() string {
 }
 
 // 40 alphanumerics, like a real BAAS device-account password.
+// randPassword mints a device-account password. The account module checks all
+// forty characters are hex digits before it writes the profile's local record,
+// and writes nothing at all otherwise -- and that record is create-only, so a
+// profile that links with a non-hex password can never publish presence or
+// receive notifications until it is unlinked (2026-09-20,
+// docs/switch/presence-publish-gate-2026-09-20.md). Alphanumeric passwords
+// passed that check with probability about 1e-18.
 func randPassword() string {
-	const alnum = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-	b := make([]byte, 40)
-	rand.Read(b)
-	for i := range b {
-		b[i] = alnum[int(b[i])%len(alnum)]
-	}
-	return string(b)
+	return randHex(20)
 }
 
 func loadRSAKey(path string) *rsa.PrivateKey {
