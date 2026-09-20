@@ -337,13 +337,21 @@ type penneSession struct {
 	done    chan struct{}
 }
 
-// ack answers a request the console just made. The console aborts on an Ack it
-// did not ask for, or one whose string is not the exact one it stored, so this
-// is only ever called from the handler for the frame being answered
-// (docs/penne-message-delivery-2026-09-20.md §4).
+// ack answers a request the console just made.
+//
+// Held back, 2026-09-20: answering PutRecord, SubscribeTopic, DAPresence and
+// PowerState crashed npns on hardware within minutes (two crash reports,
+// 010000000000002f, and ns behind it). The console keeps ONE outstanding
+// request and aborts on an Ack that arrives with none outstanding or whose
+// string is not the one it is waiting for, so an answer that is merely queued
+// -- while the console has already timed out or moved to its next request --
+// is fatal. Sending these needs a per-connection view of what the console is
+// waiting for, not a reply per frame handled.
 func (sess *penneSession) ack(name string) {
 	sess.offer("", penne.BuildAck(name))
 }
+
+var _ = (*penneSession).ack
 
 // offer queues a frame without ever blocking the caller; if this connection is
 // slow, the persistent outbox keeps the work.
@@ -553,7 +561,7 @@ func (s *server) penneDispatch(sess *penneSession, frame []byte) {
 		// Confirmation: SubscriptionUpdated carries one u64 (recovered shape);
 		// the value's meaning is not recovered -- we send the unix second as
 		// the least-surprising candidate, flagged in the protocol spec.
-		sess.ack("topic.subscription")
+		sess.offer("", penne.BuildSubscriptionUpdated(uint64(time.Now().Unix())))
 	case penne.TypePing: // 16: three u64s recovered; echo field 0
 		var ping uint64
 		if payload, ok := env.Payload(); ok {
@@ -598,7 +606,6 @@ func (s *server) penneDispatch(sess *penneSession, frame []byte) {
 			return
 		}
 		log.Printf("[nx-baas] penne: %s %q from user=%s", env.TypeName(), name, sess.user)
-		sess.ack(name)
 
 	case penne.TypePowerState: // 0x0e: one string, "Awake" or "Asleep"
 		state := ""
@@ -611,7 +618,6 @@ func (s *server) penneDispatch(sess *penneSession, frame []byte) {
 			return
 		}
 		log.Printf("[nx-baas] penne: power state %s user=%s", state, sess.user)
-		sess.ack(state)
 
 	case penne.TypeHi, penne.TypeIdle, penne.TypeSubscriptionListRequest:
 		// Recovered empty/near-empty client messages: noted, no answer defined
@@ -653,9 +659,6 @@ func (s *server) penneDispatch(sess *penneSession, frame []byte) {
 		// The console publishing its own presence, for any account signed in on
 		// it — not only the one this connection is bound to (penne_presence.go).
 		if p, ok := env.Payload(); ok && s.penneNotePresence(p) {
-			device, _ := p.String(0)
-			user, _ := p.String(1)
-			sess.ack(device + "/" + user)
 			return
 		}
 		store.unknownType.Add(1)
