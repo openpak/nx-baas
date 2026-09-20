@@ -1396,6 +1396,20 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		// Answer with the single-friend shape the firmware's single-entry
 		// parser reads: $.friendId, $.friend.nickname, $.isFavorite.
 		target := s.resolveFriend(seg[3])
+		if target == nil && myID != nil {
+			// The console *replaces* its cached entry with this reply, and a
+			// reply without friendId, friend.nickname and friend.thumbnailUrl
+			// fails the call with 2121-2411 [friends-contract-22.5.0 §A.2].
+			// A lookup can be unavailable; the friendship this server is
+			// already holding still names the person, so the reply stays a
+			// full relationship object.
+			for _, f := range myID.Friends {
+				if f.BaasUserID == seg[3] {
+					target = &f
+					break
+				}
+			}
+		}
 		if target == nil {
 			// The person may be unresolvable right now; the preference change
 			// is still committed (losing a star the person just set is worse

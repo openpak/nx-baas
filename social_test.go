@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -856,6 +857,70 @@ func TestFriendNotePersistsAndProjects(t *testing.T) {
 	s.store = loadStore(s.store.path)
 	if got := entryOf()["friendNote"]; got != "raids tue" {
 		t.Errorf("list friendNote after restart = %v", got)
+	}
+}
+
+// unresolvedBackend answers Identity — so the friendship is known — but
+// cannot look anybody up by id, which is what a core lookup outage looks
+// like from this server.
+type unresolvedBackend struct{ accountBackend }
+
+func (unresolvedBackend) Resolve(url.Values) (*Friend, error) { return nil, errCoreUnavailable }
+
+// Every PATCH on a friend is answered with the full relationship object: the
+// console replaces its cached entry with the reply, and one missing required
+// field (friendId, friend.nickname, friend.thumbnailUrl) fails the call with
+// 2121-2411 and drops the friend from the cache [friends-contract-22.5.0
+// §A.2]. That holds for all four ops the console sends, and when the lookup
+// behind the reply is unavailable.
+func TestEveryFriendPatchAnswersTheWholeRelationship(t *testing.T) {
+	s, _, users := socialServer(t)
+	a, b := users[0], users[1]
+
+	patch := func(body string) map[string]any {
+		t.Helper()
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, authed("PATCH", "/2.0.0/users/"+a.ID+"/friends/"+b.ID, body, a, s))
+		if w.Code != http.StatusOK {
+			t.Fatalf("PATCH %s: %d %s", body, w.Code, w.Body.String())
+		}
+		var reply map[string]any
+		_ = json.Unmarshal(w.Body.Bytes(), &reply)
+		if gaps := relationshipEntryGaps(reply); len(gaps) > 0 {
+			t.Fatalf("PATCH %s reply lacks %v: %v", body, gaps, reply)
+		}
+		return reply
+	}
+	self := func(reply map[string]any) map[string]any {
+		ex, _ := reply["extras"].(map[string]any)
+		g, _ := ex["self"].(map[string]any)
+		return g
+	}
+
+	// 30120, 30121, 30100/30110 and 30130: each reply carries the state the
+	// console is about to cache, not just the field it wrote.
+	if reply := patch(`[{"op":"replace","path":"/isFavorite","value":true}]`); reply["isFavorite"] != true {
+		t.Errorf("isFavorite reply: %v", reply["isFavorite"])
+	}
+	reply := patch(`[{"op":"add","path":"/extras/self/isOnlineNotification","value":false}]`)
+	if self(reply)["isOnlineNotification"] != false || reply["isFavorite"] != true {
+		t.Errorf("online-notification reply: %v", reply)
+	}
+	reply = patch(`[{"op":"add","path":"/extras/self/isConfirmed","value":true}]`)
+	if self(reply)["isConfirmed"] != true {
+		t.Errorf("isConfirmed reply: %v", reply)
+	}
+	reply = patch(`[{"op":"replace","path":"/friendNote","value":"co-op sat"}]`)
+	if reply["friendNote"] != "co-op sat" || reply["friend"].(map[string]any)["nickname"] != "PlayerB" {
+		t.Errorf("friendNote reply: %v", reply)
+	}
+
+	// The lookup behind the friend goes away; the friendship this server
+	// holds still names them, so the reply is still a whole entry.
+	s.acct = unresolvedBackend{s.acct}
+	reply = patch(`[{"op":"replace","path":"/isFavorite","value":false}]`)
+	if reply["friendId"] != b.ID || reply["friend"].(map[string]any)["nickname"] != "PlayerB" {
+		t.Errorf("reply without a lookup: %v", reply)
 	}
 }
 
