@@ -337,6 +337,14 @@ type penneSession struct {
 	done    chan struct{}
 }
 
+// ack answers a request the console just made. The console aborts on an Ack it
+// did not ask for, or one whose string is not the exact one it stored, so this
+// is only ever called from the handler for the frame being answered
+// (docs/penne-message-delivery-2026-09-20.md §4).
+func (sess *penneSession) ack(name string) {
+	sess.offer("", penne.BuildAck(name))
+}
+
 // offer queues a frame without ever blocking the caller; if this connection is
 // slow, the persistent outbox keeps the work.
 func (sess *penneSession) offer(id string, frame []byte) {
@@ -545,18 +553,17 @@ func (s *server) penneDispatch(sess *penneSession, frame []byte) {
 		// Confirmation: SubscriptionUpdated carries one u64 (recovered shape);
 		// the value's meaning is not recovered -- we send the unix second as
 		// the least-surprising candidate, flagged in the protocol spec.
-		sess.offer("", penne.BuildSubscriptionUpdated(uint64(time.Now().Unix())))
+		sess.ack("topic.subscription")
 	case penne.TypePing: // 16: three u64s recovered; echo field 0
 		var ping uint64
 		if payload, ok := env.Payload(); ok {
 			ping, _ = payload.U64(0)
 		}
 		sess.offer("", penne.BuildPong(ping))
-	case penne.TypeAck: // 9: the module sends one field; correlation target not yet recovered
+	case penne.TypeAck: // 9: one string — the name it read out of our frame
 		if payload, ok := env.Payload(); ok {
-			if v, ok := payload.U64(0); ok {
-				log.Printf("[nx-baas] penne: ack=%d user=%s", v, sess.user)
-			} else if id, ok := payload.String(0); ok {
+			if id, ok := payload.String(0); ok {
+				log.Printf("[nx-baas] penne: ack=%q user=%s", id, sess.user)
 				// Best-effort replay ack: a message id naming one of our
 				// queued events settles that delivery.
 				if !store.AckDelivery(sess.user, id, time.Now()) {
@@ -564,6 +571,8 @@ func (s *server) penneDispatch(sess *penneSession, frame []byte) {
 						store.AckDelivery(u, id, time.Now())
 					}
 				}
+			} else if v, ok := payload.U64(0); ok {
+				log.Printf("[nx-baas] penne: ack=%d user=%s", v, sess.user)
 			}
 		}
 	case penne.TypeResendRequest: // 26: one string field; treat it as replay-by-id
@@ -573,7 +582,38 @@ func (s *server) penneDispatch(sess *penneSession, frame []byte) {
 				s.penneWakeConsole(sess)
 			}
 		}
-	case penne.TypeHi, penne.TypeIdle, penne.TypePowerState, penne.TypeSubscriptionListRequest:
+	case penne.TypePutRecord, penne.TypeDeleteRecord:
+		// The console uploading (or deleting) one of its own records. It waits
+		// for an Ack naming that record.
+		payload, ok := env.Payload()
+		if !ok {
+			store.unknownType.Add(1)
+			log.Printf("[nx-baas] penne: %s without a payload%s", env.TypeName(), frameHex(frame))
+			return
+		}
+		name, ok := penne.EntryName(payload)
+		if !ok || name == "" {
+			store.unknownType.Add(1)
+			log.Printf("[nx-baas] penne: %s without a record name%s", env.TypeName(), frameHex(frame))
+			return
+		}
+		log.Printf("[nx-baas] penne: %s %q from user=%s", env.TypeName(), name, sess.user)
+		sess.ack(name)
+
+	case penne.TypePowerState: // 0x0e: one string, "Awake" or "Asleep"
+		state := ""
+		if payload, ok := env.Payload(); ok {
+			state, _ = payload.String(0)
+		}
+		if state == "" {
+			store.unknownType.Add(1)
+			log.Printf("[nx-baas] penne: PowerState without a state%s", frameHex(frame))
+			return
+		}
+		log.Printf("[nx-baas] penne: power state %s user=%s", state, sess.user)
+		sess.ack(state)
+
+	case penne.TypeHi, penne.TypeIdle, penne.TypeSubscriptionListRequest:
 		// Recovered empty/near-empty client messages: noted, no answer defined
 		// by evidence. Logged by name because the first one the console ever
 		// sends is what settles the opening handshake.
@@ -613,6 +653,9 @@ func (s *server) penneDispatch(sess *penneSession, frame []byte) {
 		// The console publishing its own presence, for any account signed in on
 		// it — not only the one this connection is bound to (penne_presence.go).
 		if p, ok := env.Payload(); ok && s.penneNotePresence(p) {
+			device, _ := p.String(0)
+			user, _ := p.String(1)
+			sess.ack(device + "/" + user)
 			return
 		}
 		store.unknownType.Add(1)

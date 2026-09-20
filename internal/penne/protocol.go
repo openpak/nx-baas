@@ -669,6 +669,33 @@ func BuildPong(echo uint64) []byte {
 	return b.FinishEnvelope(TypePong, payload)
 }
 
+// BuildAck encodes the Ack the console waits for after every request it
+// sends. Its payload is one string, and the console aborts on an Ack with no
+// request outstanding or one whose string differs from what it expects, so
+// this is only ever a reply (docs/penne-message-delivery-2026-09-20.md §4).
+func BuildAck(name string) []byte {
+	b := NewBuilder(64 + len(name))
+	s := b.CreateString(name)
+	b.StartTable(1)
+	b.PrependUOffsetSlot(0, s)
+	payload := b.EndTable()
+	return b.FinishEnvelope(TypeAck, payload)
+}
+
+// EntryName is slot 0 of the single entry a PutRecord or DeleteRecord carries:
+// the record name, which is what its Ack echoes.
+func EntryName(payload Table) (string, bool) {
+	entry, ok := payload.VectorTable(0, 0)
+	if !ok {
+		return "", false
+	}
+	t, ok := entry.Table(1)
+	if !ok {
+		return "", false
+	}
+	return t.String(0)
+}
+
 // BuildPing encodes a Ping envelope with its three recovered uint64 fields
 // (semantics not yet recovered; the caller supplies what it can defend).
 func BuildPing(f0, f1, f2 uint64) []byte {
@@ -932,6 +959,8 @@ type Message struct {
 	Type      uint16
 	Receivers string
 	AccountID string
+	// Tag is Meta slot 4: at most 39 characters, may be empty, must exist.
+	Tag       string
 	Body      string
 	DeliverAt uint64 // absent (0) means deliver now
 }
@@ -942,7 +971,14 @@ func BuildMessage(m Message, issued, expires uint64) []byte {
 
 	recv := b.CreateString(m.Receivers)
 	acct := b.CreateString(m.AccountID)
-	b.StartTable(3)
+	// Slot 4 is read with no vtable-length check for every message whose type
+	// is not 2, and its length must be <= 39. A three-slot Meta made the read
+	// run off the end of the vtable, the parse fail, and the message be
+	// dropped after the console had already acked it
+	// (docs/penne-message-delivery-2026-09-20.md §1.4).
+	tag := b.CreateString(m.Tag)
+	b.StartTable(5)
+	b.PrependUOffsetSlot(4, tag)
 	b.PrependUOffsetSlot(2, acct)
 	b.PrependUOffsetSlot(1, recv)
 	meta := b.EndTable()
@@ -970,11 +1006,11 @@ func BuildMessage(m Message, issued, expires uint64) []byte {
 	b.PrependUOffsetSlot(0, vec)
 	payload := b.EndTable()
 
-	tag := b.CreateString(envelopeTag)
+	envTag := b.CreateString(envelopeTag)
 	b.StartTable(5)
 	b.PrependU64Slot(4, expires)
 	b.PrependU64Slot(3, issued)
-	b.PrependUOffsetSlot(2, tag)
+	b.PrependUOffsetSlot(2, envTag)
 	b.PrependUOffsetSlot(1, payload)
 	b.PrependU8Slot(0, TypePutRecord)
 	root := b.EndTable()
@@ -1011,6 +1047,7 @@ func ParseMessage(payload Table) (Message, bool) {
 	if meta, ok := t.Table(2); ok {
 		m.Receivers, _ = meta.String(1)
 		m.AccountID, _ = meta.String(2)
+		m.Tag, _ = meta.String(4)
 	}
 	return m, true
 }

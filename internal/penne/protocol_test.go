@@ -328,3 +328,54 @@ func TestAbsentFieldsReadAsAbsent(t *testing.T) {
 		t.Errorf("slot 0 = %d (ok=%v), want 42", v, ok)
 	}
 }
+
+// Meta carries four slots. The console reads slot 4 for every message whose
+// type is not 2, without checking the vtable is long enough, so a three-slot
+// Meta was read past its end and the message dropped after being acked
+// (docs/penne-message-delivery-2026-09-20.md §1.4).
+func TestMessageMetaCarriesTheSlotTheConsoleAlwaysReads(t *testing.T) {
+	frame := BuildMessage(Message{
+		Name: "friend_deleted", Type: 1, Receivers: "0x010000000000000e",
+		AccountID: "1000000000a100010000000000000001", Body: `{"type":"friend_deleted"}`,
+	}, 100, 3700)
+	env, err := DecodeEnvelope(frame)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	payload, ok := env.Payload()
+	if !ok {
+		t.Fatal("no payload")
+	}
+	m, ok := ParseMessage(payload)
+	if !ok {
+		t.Fatal("not a kind-1 message")
+	}
+	entry, _ := payload.VectorTable(0, 0)
+	msg, _ := entry.Table(1)
+	meta, _ := msg.Table(2)
+	if _, present := meta.String(4); !present {
+		t.Fatal("Meta slot 4 is absent; the console drops the message")
+	}
+	if len(m.Tag) > 39 {
+		t.Fatalf("tag is %d chars, the console's limit is 39", len(m.Tag))
+	}
+	if m.AccountID != "1000000000a100010000000000000001" || m.Receivers != "0x010000000000000e" {
+		t.Fatalf("meta round-trip: %+v", m)
+	}
+}
+
+// The Ack is one string: the name the console read out of our frame, and the
+// exact string it expects back after a request of its own.
+func TestAckCarriesTheNameAsAString(t *testing.T) {
+	env, err := DecodeEnvelope(BuildAck("topic.subscription"))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Type() != TypeAck {
+		t.Fatalf("type %s", env.TypeName())
+	}
+	payload, _ := env.Payload()
+	if got, ok := payload.String(0); !ok || got != "topic.subscription" {
+		t.Fatalf("ack string = %q (ok=%v)", got, ok)
+	}
+}

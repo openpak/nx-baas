@@ -123,6 +123,11 @@ type penneData struct {
 	ByUser       map[string]string      `json:"by_user"`       // BAAS user id -> newest penne id
 	ConsoleUsers map[string]string      `json:"console_users"` // device certificate -> BAAS user id
 	AccountUsers map[string]string      `json:"account_users"` // console account id (128-bit) -> BAAS user id
+	// AccountProven marks the mappings a request proved, as opposed to the
+	// device-token guess: an event goes only to a proven profile when one
+	// exists, because a frame addressed to the wrong profile is dropped by
+	// the console and costs one of its seven undelivered slots.
+	AccountProven map[string]bool `json:"account_proven,omitempty"`
 	// SyncProbe counts the sync answers tried while NX_PENNE_SYNC_PROBE is
 	// set. It is durable because the rotation is worthless if a deploy sends
 	// it back to the first candidate every time.
@@ -154,7 +159,8 @@ func newPenneStore(path string) *penneStore {
 	s := &penneStore{path: path, d: &penneData{
 		Assocs: map[string]*penneAssoc{}, ByDevice: map[string]string{}, ByUser: map[string]string{},
 		ConsoleUsers: map[string]string{}, AccountUsers: map[string]string{},
-		Tokens: map[string]*penneTokenRec{}, Tickets: map[string]*penneTicketRec{},
+		AccountProven: map[string]bool{},
+		Tokens:        map[string]*penneTokenRec{}, Tickets: map[string]*penneTicketRec{},
 		Subs: map[string][]*penneSubRec{}, PushChannels: map[string]*pennePushChan{},
 		Outbox: map[string][]*penneOutRec{}, Delivered: map[string]map[string]int64{},
 	}}
@@ -178,6 +184,9 @@ func newPenneStore(path string) *penneStore {
 		}
 		if s.d.AccountUsers == nil {
 			s.d.AccountUsers = map[string]string{}
+		}
+		if s.d.AccountProven == nil {
+			s.d.AccountProven = map[string]bool{}
 		}
 		if s.d.ByUser == nil {
 			s.d.ByUser = map[string]string{}
@@ -300,12 +309,11 @@ func (s *penneStore) BindAccount(accountID, userID string) bool {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.d.AccountUsers[accountID] == userID {
-		return false
-	}
+	was, proven := s.d.AccountUsers[accountID], s.d.AccountProven[accountID]
 	s.d.AccountUsers[accountID] = userID
+	s.d.AccountProven[accountID] = true
 	s.saveLocked()
-	return true
+	return was != userID || !proven
 }
 
 // TokenAccount is the console profile a notification token was minted for.
@@ -358,13 +366,21 @@ func (s *penneStore) UsersOn(penneID string) []string {
 func (s *penneStore) AccountsFor(userID string) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := []string{}
+	out, guesses := []string{}, []string{}
 	for account, user := range s.d.AccountUsers {
-		if user == userID {
+		if user != userID {
+			continue
+		}
+		if s.d.AccountProven[account] {
 			out = append(out, account)
+		} else {
+			guesses = append(guesses, account)
 		}
 	}
-	return out
+	if len(out) > 0 {
+		return out
+	}
+	return guesses
 }
 
 // NextSyncProbe returns the next probe attempt number and remembers it.
