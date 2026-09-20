@@ -76,6 +76,34 @@ const invitationMaxMessageLen = 256
 // 24h matches the core's own invitation TTL cap; override for tests only.
 const invitationTTLDefault = 24 * time.Hour
 
+// invitationSenderGrace is how long an invitation is offered regardless of
+// what the sender's presence says. Presence arrives late and a host publishes
+// its title after the room exists, so a fresh invitation is never judged by it.
+const invitationSenderGrace = 2 * time.Minute
+
+// invitationSenderGone reports that the sender has demonstrably left the game
+// they invited into: their presence names another title, or no title at all.
+// Unknown presence is never taken as evidence — a console publishes presence
+// for only some of its profiles — so the 24h expiry remains the backstop.
+func (s *server) invitationSenderGone(inv *invitationRecord, now int64) bool {
+	if s == nil || s.store == nil || now-inv.CreatedAt < int64(invitationSenderGrace.Seconds()) {
+		return false
+	}
+	u := s.store.User(inv.SenderID)
+	if u == nil {
+		return false
+	}
+	p := aggregatePresence(u, now, presenceLease())
+	switch p.State {
+	case "PLAYING":
+		return inv.ApplicationID != "" && p.AppID != "" && !strings.EqualFold(p.AppID, inv.ApplicationID)
+	case "ONLINE", "INACTIVE", "OFFLINE":
+		// Signed in with no game, or gone: either way not in that room.
+		return true
+	}
+	return false
+}
+
 // Retention: read rows and dead groups are pruned so the store cannot grow
 // without bound. Unread invitations survive until expiry — that is the point.
 const invitationReadRetention = 7 * 24 * time.Hour
@@ -255,12 +283,18 @@ func (st *invitationStore) dropLocked(inv *invitationRecord) {
 }
 
 // unreadCountLocked counts live, unread rows for one receiver.
-func (st *invitationStore) unreadCountLocked(receiverID string, now int64) int {
+// unreadCountLocked counts what the badge should show. gone, when given,
+// drops invitations whose sender has left the game they invited into.
+func (st *invitationStore) unreadCountLocked(receiverID string, now int64, gone func(*invitationRecord) bool) int {
 	n := 0
 	for _, inv := range st.Invitations {
-		if inv.ReceiverID == receiverID && !inv.Read && inv.ExpiresAt > now {
-			n++
+		if inv.ReceiverID != receiverID || inv.Read || inv.ExpiresAt <= now {
+			continue
 		}
+		if gone != nil && gone(inv) {
+			continue
+		}
+		n++
 	}
 	return n
 }
@@ -631,7 +665,7 @@ func (s *server) invitationGroupCreate(w http.ResponseWriter, r *http.Request, b
 	st.saveLocked() // committed before the response or the event: no false success
 	unread := map[string]int{}
 	for _, inv := range invitations {
-		unread[inv.ReceiverID] = st.unreadCountLocked(inv.ReceiverID, now.Unix())
+		unread[inv.ReceiverID] = st.unreadCountLocked(inv.ReceiverID, now.Unix(), nil)
 	}
 	st.mu.Unlock()
 
@@ -843,6 +877,9 @@ func (s *server) invitationInbox(w http.ResponseWriter, r *http.Request, uid str
 		if unreadOnly && inv.Read {
 			continue
 		}
+		if s.invitationSenderGone(inv, now) {
+			continue
+		}
 		items = append(items, inv)
 	}
 	sort.Slice(items, func(i, j int) bool { // newest first, like the other lists
@@ -1043,7 +1080,9 @@ func (s *server) applyRead(w http.ResponseWriter, receiverID string, ids map[str
 	}
 	st.pruneLocked(time.Unix(now, 0))
 	st.saveLocked()
-	unread := st.unreadCountLocked(receiverID, now)
+	unread := st.unreadCountLocked(receiverID, now, func(inv *invitationRecord) bool {
+		return s.invitationSenderGone(inv, now)
+	})
 	st.mu.Unlock()
 	log.Printf("[nx-baas] five: mark read for %s: %d applied, %d unread left", receiverID, applied, unread)
 	writeJSON(w, 200, map[string]any{"count": unread})

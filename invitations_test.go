@@ -669,3 +669,51 @@ func TestInvitationsAreMarkedReadWithTheConsolesForm(t *testing.T) {
 		t.Errorf("unread after the form patch = %v, want 0", got["count"])
 	}
 }
+
+// An invitation is only worth showing while its sender is still in the game
+// they invited into: a host who quit leaves a room nobody can join. Presence
+// we do not have is never taken as evidence, and a fresh invitation is never
+// judged by presence at all (2026-09-20).
+func TestInvitationDropsOutWhenTheSenderLeftTheGame(t *testing.T) {
+	s := fiveServer(t)
+	w := fiveDo(t, s, "POST", "/v2/invitation_groups", fiveToken(s, invSenderUID), createBody(invReceiverUID))
+	if w.Code != 200 {
+		t.Fatalf("create = %d %s", w.Code, w.Body)
+	}
+	inbox := func() float64 {
+		t.Helper()
+		w := fiveDo(t, s, "GET", "/v2/users/"+invReceiverUID+"/invitations/inbox?invitation_types=friend",
+			fiveToken(s, invReceiverUID), "")
+		var got map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		n, _ := got["count"].(float64)
+		return n
+	}
+	if inbox() != 1 {
+		t.Fatalf("a fresh invitation is not offered: %v", inbox())
+	}
+
+	// Age it past the grace, with the sender still hosting that title.
+	st := invitationStoreFor()
+	st.mu.Lock()
+	for _, inv := range st.Invitations {
+		inv.CreatedAt -= int64(invitationSenderGrace.Seconds()) + 60
+	}
+	st.mu.Unlock()
+	sender := s.store.User(invSenderUID)
+	if sender == nil {
+		t.Skip("the five test server has no user store entry for the sender")
+	}
+	s.noteDevicePresence(sender, "dev-1", "PLAYING", "0100ed9024eb8000", "", "", -1)
+	if inbox() != 1 {
+		t.Errorf("an invitation from a sender still in that game was hidden")
+	}
+
+	// They quit to the Home menu: the room is gone with them.
+	s.noteDevicePresence(s.store.User(invSenderUID), "dev-1", "INACTIVE", "", "", "", -1)
+	if got := inbox(); got != 0 {
+		t.Errorf("inbox = %v after the sender left the game, want 0", got)
+	}
+}
