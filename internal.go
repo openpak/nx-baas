@@ -196,10 +196,24 @@ func (s *server) switchEmulator(w http.ResponseWriter, r *http.Request) {
 	lease := presenceLease()
 	friend := func(f Friend) map[string]any {
 		status, appID, appField := f.PresenceStatus, f.PresenceAppID, f.PresenceAppField
+		// namespace says which platform they are on, so a client can say "on a
+		// Wii U" for a friend whose title it could never draw.
+		namespace, since := "", int64(0)
 		if subject := s.store.User(f.BaasUserID); subject != nil {
 			p := Presence{State: "OFFLINE"}
 			if viewer == nil || presenceVisible(viewer, subject, true) {
 				p = aggregatePresence(subject, now, lease)
+			}
+			if p.State == "OFFLINE" {
+				// Nothing live here: the core knows where else they are.
+				if elsewhere, live := s.presenceFromCore(b.accountFor(f.PID), b.namespace, now); live {
+					p = elsewhere
+					if cp, ok := s.corePresenceOf(b.accountFor(f.PID)); ok {
+						namespace, since = cp.Namespace, cp.Since
+					}
+				}
+			} else {
+				namespace, since = b.namespace, p.UpdatedAt
 			}
 			switch p.State {
 			case "PLAYING":
@@ -213,7 +227,11 @@ func (s *server) switchEmulator(w http.ResponseWriter, r *http.Request) {
 		}
 		return map[string]any{
 			"pid": f.PID, "account_id": b.accountFor(f.PID), "name": f.Nickname, "friend_code": f.FriendCode,
-			"presence": map[string]any{"status": status, "app_field": appField, "app_id": appID},
+			"friends_since": f.CreatedAt,
+			"presence": map[string]any{
+				"status": status, "app_field": appField, "app_id": appID,
+				"namespace": namespace, "since": since,
+			},
 		}
 	}
 	friends := make([]map[string]any, 0, len(id.Friends))
