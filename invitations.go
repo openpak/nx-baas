@@ -76,6 +76,22 @@ const invitationMaxMessageLen = 256
 // 24h matches the core's own invitation TTL cap; override for tests only.
 const invitationTTLDefault = 24 * time.Hour
 
+// supersedeLocked retires the sender's earlier invitations to this receiver
+// for the same title. An invitation carries a room code, so an older one
+// names a room its sender has already left: offering both invites the
+// receiver to join the dead one.
+func (st *invitationStore) supersedeLocked(fresh *invitationRecord, now int64) {
+	for _, inv := range st.Invitations {
+		if inv.ID == fresh.ID || inv.ReceiverID != fresh.ReceiverID || inv.SenderID != fresh.SenderID {
+			continue
+		}
+		if !strings.EqualFold(inv.ApplicationID, fresh.ApplicationID) || inv.ExpiresAt <= now {
+			continue
+		}
+		inv.ExpiresAt, inv.UpdatedAt = now, now
+	}
+}
+
 // invitationSenderGrace is how long an invitation is offered regardless of
 // what the sender's presence says. Presence arrives late and a host publishes
 // its title after the room exists, so a fresh invitation is never judged by it.
@@ -656,6 +672,7 @@ func (s *server) invitationGroupCreate(w http.ResponseWriter, r *http.Request, b
 			ExpiresAt: now.Add(ttl).Unix(),
 		}
 		inv.ID = st.nextIDLocked(now)
+		st.supersedeLocked(inv, now.Unix())
 		st.Invitations[inv.ID] = inv
 		group.InvitationIDs = append(group.InvitationIDs, inv.ID)
 		invitations = append(invitations, inv)

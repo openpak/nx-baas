@@ -717,3 +717,45 @@ func TestInvitationDropsOutWhenTheSenderLeftTheGame(t *testing.T) {
 		t.Errorf("inbox = %v after the sender left the game, want 0", got)
 	}
 }
+
+// A second invitation from the same friend for the same game replaces the
+// first: the room code in the older one names a room its sender has left.
+func TestANewInvitationSupersedesTheSendersOlderOne(t *testing.T) {
+	s := fiveServer(t)
+	send := func() string {
+		t.Helper()
+		w := fiveDo(t, s, "POST", "/v2/invitation_groups", fiveToken(s, invSenderUID), createBody(invReceiverUID))
+		if w.Code != 200 {
+			t.Fatalf("create = %d %s", w.Code, w.Body)
+		}
+		var group struct {
+			Invitations []struct {
+				ID json.Number `json:"id"`
+			} `json:"invitations"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &group); err != nil || len(group.Invitations) != 1 {
+			t.Fatalf("group: %v %s", err, w.Body)
+		}
+		return group.Invitations[0].ID.String()
+	}
+	first := send()
+	second := send()
+
+	w := fiveDo(t, s, "GET", "/v2/users/"+invReceiverUID+"/invitations/inbox?invitation_types=friend",
+		fiveToken(s, invReceiverUID), "")
+	var box struct {
+		Count int `json:"count"`
+		Items []struct {
+			ID json.Number `json:"id"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &box); err != nil {
+		t.Fatal(err)
+	}
+	if box.Count != 1 || len(box.Items) != 1 {
+		t.Fatalf("inbox holds %d invitations, want only the newest", box.Count)
+	}
+	if got := box.Items[0].ID.String(); got != second || got == first {
+		t.Errorf("inbox holds %s, want the newest %s (older was %s)", got, second, first)
+	}
+}
