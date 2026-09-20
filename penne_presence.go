@@ -73,10 +73,16 @@ func presenceFromExtras(doc string, stateByte uint8) (state, appID, appField, gr
 	switch stateByte {
 	case 0:
 		state = "OFFLINE"
+	case 2:
+		state = "ONLINE"
 	case 3:
 		state = "PLAYING"
 	default:
-		state = "ONLINE"
+		// INACTIVE: signed in with no game running. Served verbatim, because
+		// the reading side maps INACTIVE to Offline and ONLINE to Online —
+		// serving ONLINE here showed a console at the Home menu as online
+		// with a title area it could not fill (2026-09-20).
+		state = "INACTIVE"
 	}
 	var extras struct {
 		Friends struct {

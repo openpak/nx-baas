@@ -59,8 +59,8 @@ func TestCapturedDAPresenceParses(t *testing.T) {
 
 	// Idle on Home: online, and deliberately NOT "playing title 0000000000000000".
 	state, appID, _, _, acd := presenceFromExtras(doc, 1)
-	if state != "ONLINE" {
-		t.Errorf("state = %q, want ONLINE", state)
+	if state != "INACTIVE" {
+		t.Errorf("state = %q, want INACTIVE (signed in, no game)", state)
 	}
 	if appID != "" {
 		t.Errorf("appID = %q; an all-zero title id means no game", appID)
