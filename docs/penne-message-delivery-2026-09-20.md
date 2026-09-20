@@ -689,3 +689,286 @@ Note for whoever runs this: fixing §5.1 (the `Meta` slot 4) and fixing this are
 independent. Presence *in* (us telling the console about friends) is the
 message path; presence *out* (the console telling us about itself) is this
 gate. Neither unblocks the other.
+
+---
+
+# Follow-up, 2026-09-20 (after shipping §5.1/§5.3/§5.4)
+
+Two of my §5.4 ack strings were **wrong**, and each one is a console abort.
+Corrections are in §7.2. Everything else below is new ground.
+
+## 7. Acks: ordering, the exact compare, and what crashed npns
+
+### 7.1 The rules, precisely
+
+There is **no ordering rule and no minimum delay**. npns does not care that the
+Ack is the next frame you write. It cares about exactly three things, checked in
+`FUN_001deab0` in this order, and **each failure is `FUN_001062a0` — a User
+Break, not an error return**: **[firm]**
+
+1. **`conn+0x9368 != 0`.** A request must be outstanding. An Ack with none
+   pending aborts npns. This is the module's `UnexpectedAck`.
+2. **the payload string pointer is non-null** (`FUN_001066a0`), and so is
+   `conn+0x9370`.
+3. **`strcmp(ackString, conn+0x9370) == 0`** (`FUN_0021c100`). A mismatch
+   aborts npns. This is `InconsistentAck`.
+
+Only then does it clear `conn+0x9368` and dispatch on `conn+0x93a0`.
+
+**`conn+0x9370`** is a 32-byte buffer written by the request sender, at the same
+instant it sets `conn+0x9368 = 1` and `conn+0x8cce8 = now + 10 s`. It is
+**overwritten by the next request** and is never cleared. So a *late* Ack does
+not just miss its window — it lands on the *next* request's expected string and
+aborts on the mismatch. **[firm]**
+
+**You can always tell from the inbound frame alone.** A request is outstanding
+if and only if the console just sent one of these, and **nothing else must ever
+be acked**: **[firm]**
+
+| Inbound type | `conn+0x93a0` | Expected Ack string |
+| --- | --- | --- |
+| `0x04` PutRecord (console→us) | 0 | the record name it sent |
+| `0x05` DeleteRecord | 1 | the record name it sent |
+| `0x17` SubscribeTopic | 2 | literal **`topic.subscription`** |
+| `0x23` DenySubscribe | 3 | [open] |
+| `0x1c` SubscriptionListRequest | 4 | [open] |
+| `0x1d` MyAccountMessageRequest | 5 | [open] |
+| `0x1b` DAPresence | 6 | see §7.2 — **reversed** |
+| `0x10` Ping | 7 | answer with **Pong (0x11)**, not Ack |
+| `0x24` TopicRead | 10 | [open] |
+| `0x0e` PowerState | 0xb | **`Awake`** or **`Sleep`** — see §7.2 |
+| `0x1a` ResendRequest | — | [open] |
+| `0x1e` ReloadLink | — | [open] |
+
+The console can never have two outstanding: every sender in `FUN_001dc9e0`
+asserts `conn+0x9368 != 1` before running, and the steady state only reaches the
+senders when the flag is clear. So the invariant you must hold is simply
+**"one Ack per request frame, carrying that frame's own string, or no Ack at
+all"**. Sending nothing costs you a reconnect in 10 s. Sending the wrong thing
+costs the user a crash dump.
+
+### 7.2 The two strings I got wrong
+
+**(a) DAPresence — the two ids are echoed in the REVERSE of their wire order.**
+**[firm]**
+
+`FUN_001de140` builds the expected string as
+`snprintf("%016llx/%016llx", p[1], p[0])` and asserts the result is exactly
+33 characters, where `p = conn+0x94b8`. The frame builder `FUN_001ebf40` writes
+`p[0]` into **payload slot 0** and `p[1]` into **payload slot 1**.
+
+`penne_presence.go` already names those: slot 0 = `device` (device-account id),
+slot 1 = `userID` (NSA id). Live: `device=cccccccccccc0001`,
+`user=aaaaaaaaaaaa0001`.
+
+So the Ack string is **`<slot 1>/<slot 0>`** =
+`aaaaaaaaaaaa0001/cccccccccccc0001` — **NSA id first, device-account id
+second**. My §5.4 said `<deviceAccountId>/<nsaId>`. That is backwards, it
+fails the `strcmp`, and DAPresence arrives every 10–60 s. **This is almost
+certainly one of the two crash reports.**
+
+**(b) PowerState — the strings are `Awake` and `Sleep`, not `Asleep`.**
+**[firm]**
+
+`FUN_001dd2f0` formats `conn+0x9370` from a two-entry table (npns `.data`,
+Ghidra `0x268908`, reached through `PTR_PTR_0026b3d0`) into an **8-byte**
+buffer: index 0 = `"Awake"`, index 1 = `"Sleep"`. (The lowercase `awake`/`sleep`
+in the module are the `X-Power-State` HTTP header values, a different pair.)
+`"Asleep"` never matches.
+
+### 7.3 A safe server-side implementation
+
+The queue is the problem, not the latency. Concretely:
+
+1. **Build and write the Ack inside the same handler turn that read the
+   request**, on a *priority* path that bypasses `sess.send` entirely — write it
+   to the hijacked connection before returning from the frame handler.
+2. **If you cannot write it immediately, drop it.** A dropped Ack costs one
+   reconnect; a late Ack is a crash.
+3. **Never queue an Ack behind a notification.** If you must share one writer,
+   give the Ack its own single-slot channel that the writer drains first, and
+   **invalidate that slot as soon as another inbound request frame arrives** —
+   the expected string has just changed.
+4. **Never ack a frame that is not in the §7.1 table.** In particular do not ack
+   `RootHash` (0x06), `SyncComplete` (0x08), `LeafHash` (0x07), `Hi` (0x20) or
+   the console's `Ack`/`Nack`.
+5. **Do not ack twice.** A duplicate is an `UnexpectedAck` abort.
+6. Until the strings for the `[open]` rows above are confirmed on hardware,
+   **do not ack those types at all** — take the reconnect. A guessed string is a
+   console crash, and there is no "safe default".
+
+Until (a) and (b) are fixed and the priority path is in, keeping the acks
+withdrawn is the right call.
+
+## 8. Does the 10 s teardown lose delivered messages?
+
+**No. Nothing we send can be delivered-then-lost by a teardown.** **[firm]**
+
+Trace: `FUN_001dc510` handles a kind-1 message **synchronously**, on the frame
+handler's own stack, *before* `FUN_001dfbb0` even captures the name for the Ack.
+When `deliverAt` is absent or past, it calls the IPC hub (`conn+0x6950`) right
+there. The hub, its session ring, each session's delivered queue and the 7-deep
+undelivered queue all live in **npns-global objects, not in the connection**.
+
+`FUN_001d99b0` (the teardown) clears only connection-local state: `0x93e0`,
+`0x9358`, `0x9368`, `0x93a8`, `0x93dc`, `0x8cd00`, `0x8ccd3`, and the
+`0x34e0..0x34f8` block. It does not touch the hub. A reconnect re-runs the
+handshake on the same connection object with the same hub. **[firm]**
+
+Two real caveats:
+
+- **Delayed messages are connection-local.** A message with a future
+  `deliverAt` is parked in a list at `conn+0x9ee88`/`0x9ee90`/`0x9eea0` and the
+  steady state only drains it while `conn+0x8cd00 == 1` — which the teardown
+  clears. Such a message can be stranded until some later message resets the
+  timer. We omit `deliverAt`, so this does not apply to us, and it is a good
+  reason to keep omitting it. **[likely]**
+- **An npns *abort* loses everything** — hub, sessions, listen keys, undelivered
+  queue. That is a different event from a teardown, and §9.1 is why it matters
+  far more than it looks.
+
+So: not acking costs reconnects and churn, but it has never eaten a
+notification.
+
+## 9. What else can swallow a correctly-parsed event
+
+### 9.1 The listen key is registered ONCE per friends process — and npns crashed
+
+`FUN_001a0d20` is called from **exactly one site**, friends' module init
+(`0x17bd38` region). It calls the u64 `Listen(0x010000000000000e)` and, only on
+success, creates and starts the `nn.friends.EventWatcher` thread; on failure it
+takes the abort path (`FUN_0010a2f0`). **There is no re-registration anywhere in
+the module** — not on npns state change, not on connection loss, not on the
+account events. **[firm]**
+
+npns owns the session and its key set. **When npns died on your `InconsistentAck`
+(§7.2), friends' `npns:s` session died with it, and friends does not re-Listen.**
+The EventWatcher thread keeps waiting on its event and `FUN_001eabb0` keeps
+failing; the drain loop just `break`s. **[firm]** on the single call site and the
+break; **[likely]** on whether friends survives deaf or is itself restarted by
+`pm` (in which case init re-runs and it recovers).
+
+**Observable signature:** after an npns crash, *no* pushed event of any kind
+reaches friends for the rest of the boot, while every REST surface keeps working
+perfectly — which is exactly the invitation symptom you are looking at. The
+`ns` crash report alongside npns is consistent with the same session loss.
+
+**→ Reboot the console before drawing any conclusion from the invitation test.**
+That test was almost certainly run against a deaf friends module.
+
+### 9.2 `slot+0x2a1` gates the notification handlers too — same flag as §6
+
+This is the unification, and it is the important one. **[firm]**
+
+| Event | Handler | What it calls | Gate |
+| --- | --- | --- | --- |
+| `friend_deleted` | `0x1a1c60` | cooldown clear `0x19ad50`, then `FUN_0018c120(syncMgr, uid)` | **`slot+0x2a1 == 1`** and **`mgr+0x44 == 1`** |
+| `friend_request_authorized` | `0x1a1bb0` | same, plus count cache `0x1942a0`, then `FUN_0018bf40(syncMgr, uid)` | **`slot+0x2a1 == 1`** and `mgr+0x44` |
+| `presence_updated` / any presence change | — | `FUN_0018bb40` | **`slot+0x2a1 == 1`** (§6) |
+
+`FUN_0018c120`: finds the uid's slot in `syncMgr+0x220`, and **only if
+`slot+0x2a1 == 1`** does it look at `mgr+0x44`. With `mgr+0x44 == 1` it arms the
+friend-list sync task (state 2, deadline, counter++) and kicks the worker
+(`FUN_0018a780`); with `mgr+0x44 == 0` it writes state **0** — i.e. it
+deliberately does **not** schedule the sync. With `+0x2a1 == 0` it does nothing
+at all.
+
+`mgr+0x44` is the friends worker's cached "npns frontline is in the steady
+state": the loop reads `FUN_001eace0()` and pushes `state == 8` into
+`FUN_00195e50` (presence mgr `+0xfc0`), `FUN_00191ca0`, and
+`FUN_0018e6d0(FUN_00189ef0(), …)` — the sync manager, hence `+0x44`. **[likely]**
+on `FUN_0018e6d0` being the `+0x44` setter; **[firm]** on `state == 8` being the
+source and on the `+0x44` branch in `FUN_0018c120`.
+
+So **a frontline that tears down every 10 s actively suppresses the friend-list
+refresh**, independently of delivery. That is a second reason to fix the acks
+properly rather than leave them off.
+
+And §6's conclusion now covers both problems: if <user-b>'s
+`<accountSave>/baas/<uid>.dat` is missing or invalid, her `+0x2a1` is 0, so she
+gets **neither** presence publishing **nor** any friend-list refresh from a
+push. One local file explains everything we have observed about her profile.
+**[likely]**
+
+### 9.3 The invitation path is different — and its body is correct
+
+`friend_invitation_received` (`0x1a19a0`) does **not** go through the sync
+manager, so `+0x2a1` does not gate it. Its chain is:
+
+1. **Parse** with the dedicated handler `FUN_001a97c0`. Required fields, from
+   the end-of-object validator `FUN_001a9810` (`mask & 0x2f` must be `0x2f`):
+   **[firm]**
+
+   | JSON path | Type | Bit | Required |
+   | --- | --- | --- | --- |
+   | `$.invitation.id` | integer | 0x01 | **yes** |
+   | `$.invitation.invitation_group_id` | integer | 0x02 | **yes** |
+   | `$.invitation.sender_id` | string, parsed as **hex** (optional `0x`/`+`, `-` rejected, ≤16 digits) | 0x04 | **yes** |
+   | `$.invitation.application_id` | string, same hex parse | 0x08 | **yes** |
+   | `$.unread_count` | integer, must fit in `int32` | 0x10 | no |
+   | `$.created_at` | integer | 0x20 | **yes** |
+
+   Nothing else is read — not `$.id`, not the top-level `$.type` beyond the
+   dispatcher's own match.
+
+   **Your body satisfies all five required fields**, `sender_id` and
+   `application_id` both parse cleanly as 16 hex digits. The parse is not the
+   blocker. **[firm]**
+
+2. **Count/badge:** `FUN_001931f0(countCache, uid, $.unread_count)`. The count
+   cache (singleton `0x18a070` → `&DAT_0046be60`) holds **eight** Uid slots at
+   `+0x20` stride `0x10`, values at `+0xa0 + i*0x30`. **A uid that is not in
+   that table returns `0x115a79`** (nn::friends 121/2221) and the handler stops
+   — no badge *and* no toast. The cache is an account observer in its own right
+   (its vptr is an observer sub-object, `FUN_00192c30`), populated from the same
+   hub as §6. **[firm]** on the lookup and the error; **[likely]** on which set
+   populates it.
+
+3. **Toast**, only if all three hold: **[firm]**
+   - `FUN_001903e0(uid)` — the uid is in the **open users** list
+     (`FUN_00172410`, the same list §6 calls set B) — **or**
+     `FUN_001904a0()` — the open-user list is **empty**;
+   - `DAT_0047b030 == 0` — a global suppression flag, set by `FUN_001a13e0`
+     and cleared by `FUN_001a1400`;
+   - then `FUN_001a96d0(uid, sender_id, application_id, invitation id, group id,
+     …)` draws it.
+
+### 9.4 Telling the causes apart from the server side
+
+| Cause | Server-visible signature |
+| --- | --- |
+| npns died, friends is deaf (§9.1) | Acks still come back normally (npns restarted), but **no** event of any kind has an effect, including `friend_deleted`. An Atmosphere report for `010000000000002f` exists. Cured only by reboot. |
+| `Meta` still malformed | The Ack still echoes the name (it always does). Indistinguishable from the server — use the `friend_deleted` probe below. |
+| Receiver token never matched | Nothing now, then a **burst** of effects the moment friends next re-Listens (reboot), as the ≤7-deep undelivered queue drains. |
+| Undelivered queue overflow | Send eight or more before a reboot and the oldest silently vanish. Keep probes under seven. |
+| `slot+0x2a1 == 0` for that profile (§6, §9.2) | `friend_deleted` produces **no** `GET /2.0.0/users/<id>/friends?count=300`, *and* that same profile never appears in any `DAPresence`. The two symptoms always travel together. |
+| `mgr+0x44 == 0` (frontline not steady) | `friend_deleted` lands but no friend-list GET; correlates with a connection that reconnected within the last few seconds. Fixing the acks fixes this. |
+| uid not in the count cache | Invitation only: no badge, no toast, but `friend_deleted` for the same uid **does** produce the friend-list GET. |
+| Not an open user / `DAT_0047b030` | Invitation only: the **badge count updates** (visible next time the UI opens) but no toast. `friend_deleted` unaffected. |
+
+### 9.5 The probe to use from now on
+
+**Stop using `friend_invitation_received` to test delivery.** Its entire effect
+is local — a count-cache write and a toast — so a silent failure is
+indistinguishable from a silent success, and it has the most gates of the five.
+
+**Use `friend_deleted`.** It needs only `$.type`, it has no parser of its own,
+no count-cache lookup, no open-user check and no suppression flag, and when it
+works it produces an immediate, unmistakable, server-side observable: an
+unsolicited **`GET /2.0.0/users/<uid>/friends?count=300`**. `friend_request_authorized`
+is the same shape. That is the only clean delivery oracle the firmware offers.
+
+Order of operations for the next run:
+
+1. **Reboot the console** (§9.1 — assume friends is currently deaf).
+2. Leave the acks **off**; take the 10 s reconnects for now.
+3. Send one `friend_deleted` to <user-a>'s Uid (the profile that *does* publish
+   presence, so `+0x2a1` is known-good for him) and watch for the friends GET.
+   - GET appears ⇒ §5.1 worked, the pipeline is proven end to end.
+   - No GET ⇒ either the frame is still malformed or `mgr+0x44` was 0; retry
+     immediately after a fresh `SyncComplete`, while the connection is young.
+4. Only then send one to <user-b>'s Uid. If <user-a> works and <user-b> does not, §6.5
+   step 3 (relink her Nintendo Account) is the whole remaining fix.
+5. Re-enable acks only with §7.2 corrected and §7.3's priority path in place,
+   and only for the four types whose strings are confirmed: PutRecord,
+   DeleteRecord, SubscribeTopic, DAPresence, plus PowerState.

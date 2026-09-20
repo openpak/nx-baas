@@ -110,7 +110,7 @@ func (s *server) frontlineHeldOpen(w http.ResponseWriter, r *http.Request, rec *
 	ctx, cancel := context.WithCancel(r.Context())
 	sess := &penneSession{
 		user: s.sessionUser(rec), device: rec.DeviceID, penneID: rec.PenneID,
-		ctx: ctx, cancel: cancel, send: make(chan penneOutbound, penneSendQueue),
+		ctx: ctx, cancel: cancel, send: make(chan penneOutbound, penneSendQueue), prio: make(chan []byte, 1),
 		done: make(chan struct{}),
 	}
 	s.penneHub.attach(sess)
@@ -144,7 +144,26 @@ func (s *server) frontlineHeldOpen(w http.ResponseWriter, r *http.Request, rec *
 		case <-ctx.Done(): // console hung up
 			close(sess.done)
 			return
+		case frame := <-sess.prio:
+			s.notifStore().framesOut.Add(1)
+			if err := penne.WriteFrame(w, frame); err != nil {
+				cancel()
+				continue
+			}
+			fl.Flush()
 		case out := <-sess.send:
+			// An answer queued behind this one would arrive late, so take it
+			// first if it is already waiting.
+			select {
+			case frame := <-sess.prio:
+				s.notifStore().framesOut.Add(1)
+				if err := penne.WriteFrame(w, frame); err != nil {
+					cancel()
+					continue
+				}
+				fl.Flush()
+			default:
+			}
 			s.notifStore().framesOut.Add(1)
 			if err := penne.WriteFrame(w, out.frame); err != nil {
 				if out.id != "" {
@@ -198,7 +217,7 @@ func (s *server) frontlineStream(w http.ResponseWriter, r *http.Request, rec *pe
 	defer cancel()
 	sess := &penneSession{
 		user: s.sessionUser(rec), device: rec.DeviceID, penneID: rec.PenneID,
-		ctx: ctx, cancel: cancel, send: make(chan penneOutbound, penneSendQueue),
+		ctx: ctx, cancel: cancel, send: make(chan penneOutbound, penneSendQueue), prio: make(chan []byte, 1),
 		done: make(chan struct{}),
 	}
 	s.penneHub.attach(sess)
@@ -241,7 +260,22 @@ func (s *server) frontlineStream(w http.ResponseWriter, r *http.Request, rec *pe
 			brw.Writer.WriteString("0\r\n\r\n") //nolint:errcheck // closing anyway
 			brw.Writer.Flush()
 			return
+		case frame := <-sess.prio:
+			s.notifStore().framesOut.Add(1)
+			if err := writeChunk(penne.AppendFrame(nil, frame)); err != nil {
+				cancel()
+				continue
+			}
 		case out := <-sess.send:
+			select {
+			case frame := <-sess.prio:
+				s.notifStore().framesOut.Add(1)
+				if err := writeChunk(penne.AppendFrame(nil, frame)); err != nil {
+					cancel()
+					continue
+				}
+			default:
+			}
 			s.notifStore().framesOut.Add(1)
 			// The chunk carries a framed message: the protocol's own
 			// length prefix rides inside the HTTP chunk, as in the
@@ -331,27 +365,35 @@ type penneSession struct {
 	user    string
 	device  string
 	penneID string
-	ctx     context.Context
-	cancel  context.CancelFunc
-	send    chan penneOutbound
-	done    chan struct{}
+	// prio carries answers the console is blocking on. They must go out
+	// before anything queued, and a late one is fatal, so the channel holds
+	// exactly one and a reply that cannot leave at once is dropped.
+	prio   chan []byte
+	ctx    context.Context
+	cancel context.CancelFunc
+	send   chan penneOutbound
+	done   chan struct{}
 }
 
-// ack answers a request the console just made.
+// ack answers the request the console just sent, on the priority path.
 //
-// Held back, 2026-09-20: answering PutRecord, SubscribeTopic, DAPresence and
-// PowerState crashed npns on hardware within minutes (two crash reports,
-// 010000000000002f, and ns behind it). The console keeps ONE outstanding
-// request and aborts on an Ack that arrives with none outstanding or whose
-// string is not the one it is waiting for, so an answer that is merely queued
-// -- while the console has already timed out or moved to its next request --
-// is fatal. Sending these needs a per-connection view of what the console is
-// waiting for, not a reply per frame handled.
+// The console keeps one request outstanding, with the string it expects in a
+// buffer that is never cleared, only overwritten by its next request. So an
+// Ack that arrives late does not miss its window: it is compared against the
+// NEXT request's string and aborts npns, taking the friends module's listener
+// with it for the rest of the boot (2026-09-20, two crash reports). A reply
+// that cannot go out immediately is therefore dropped -- that costs one
+// reconnect, where a late one costs a crash
+// (docs/penne-message-delivery-2026-09-20.md §7).
 func (sess *penneSession) ack(name string) {
-	sess.offer("", penne.BuildAck(name))
+	if name == "" {
+		return
+	}
+	select {
+	case sess.prio <- penne.BuildAck(name):
+	default: // an answer is already waiting: this one would be late
+	}
 }
-
-var _ = (*penneSession).ack
 
 // offer queues a frame without ever blocking the caller; if this connection is
 // slow, the persistent outbox keeps the work.
@@ -561,7 +603,9 @@ func (s *server) penneDispatch(sess *penneSession, frame []byte) {
 		// Confirmation: SubscriptionUpdated carries one u64 (recovered shape);
 		// the value's meaning is not recovered -- we send the unix second as
 		// the least-surprising candidate, flagged in the protocol spec.
-		sess.offer("", penne.BuildSubscriptionUpdated(uint64(time.Now().Unix())))
+		// SubscriptionUpdated does not clear the console's pending request;
+		// only an Ack naming the subscription does.
+		sess.ack("topic.subscription")
 	case penne.TypePing: // 16: three u64s recovered; echo field 0
 		var ping uint64
 		if payload, ok := env.Payload(); ok {
@@ -606,6 +650,7 @@ func (s *server) penneDispatch(sess *penneSession, frame []byte) {
 			return
 		}
 		log.Printf("[nx-baas] penne: %s %q from user=%s", env.TypeName(), name, sess.user)
+		sess.ack(name)
 
 	case penne.TypePowerState: // 0x0e: one string, "Awake" or "Asleep"
 		state := ""
@@ -617,7 +662,9 @@ func (s *server) penneDispatch(sess *penneSession, frame []byte) {
 			log.Printf("[nx-baas] penne: PowerState without a state%s", frameHex(frame))
 			return
 		}
+		// The console sends "Awake" or "Sleep" and waits for that same word.
 		log.Printf("[nx-baas] penne: power state %s user=%s", state, sess.user)
+		sess.ack(state)
 
 	case penne.TypeHi, penne.TypeIdle, penne.TypeSubscriptionListRequest:
 		// Recovered empty/near-empty client messages: noted, no answer defined
@@ -659,6 +706,11 @@ func (s *server) penneDispatch(sess *penneSession, frame []byte) {
 		// The console publishing its own presence, for any account signed in on
 		// it — not only the one this connection is bound to (penne_presence.go).
 		if p, ok := env.Payload(); ok && s.penneNotePresence(p) {
+			// Echoed the other way round from the wire: the console builds
+			// the string it waits for as <nsa>/<device account>.
+			device, _ := p.String(0)
+			user, _ := p.String(1)
+			sess.ack(user + "/" + device)
 			return
 		}
 		store.unknownType.Add(1)
