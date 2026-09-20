@@ -135,7 +135,7 @@ func (s *server) frontlineHeldOpen(w http.ResponseWriter, r *http.Request, rec *
 	go s.penneRead(sess, r.Body)
 
 	// Finite-body connections need the same offline replay as stream connections.
-	s.penneWake(sess.user)
+	s.penneWakeConsole(sess)
 
 	ticker := time.NewTicker(frontlineKeepalive)
 	defer ticker.Stop()
@@ -212,7 +212,7 @@ func (s *server) frontlineStream(w http.ResponseWriter, r *http.Request, rec *pe
 
 	// Reconciliation first: anything the outbox owes this account goes out
 	// before new work (NTF-05 reconnect behavior).
-	s.penneWake(sess.user)
+	s.penneWakeConsole(sess)
 
 	writeChunk := func(frame []byte) error {
 		if _, err := fmt.Fprintf(brw.Writer, "%x\r\n", len(frame)); err != nil {
@@ -559,14 +559,18 @@ func (s *server) penneDispatch(sess *penneSession, frame []byte) {
 			} else if id, ok := payload.String(0); ok {
 				// Best-effort replay ack: a message id naming one of our
 				// queued events settles that delivery.
-				store.AckDelivery(sess.user, id, time.Now())
+				if !store.AckDelivery(sess.user, id, time.Now()) {
+					for _, u := range store.UsersOn(sess.penneID) {
+						store.AckDelivery(u, id, time.Now())
+					}
+				}
 			}
 		}
 	case penne.TypeResendRequest: // 26: one string field; treat it as replay-by-id
 		if payload, ok := env.Payload(); ok {
 			if id, ok := payload.String(0); ok {
 				log.Printf("[nx-baas] penne: resend requested for %s", id)
-				s.penneWake(sess.user)
+				s.penneWakeConsole(sess)
 			}
 		}
 	case penne.TypeHi, penne.TypeIdle, penne.TypePowerState, penne.TypeSubscriptionListRequest:
@@ -638,6 +642,17 @@ func (s *server) penneSweep() {
 			if snap["outbox_pending"] != 0 || snap["malformed"] != uint64(0) {
 				log.Printf("[nx-baas] penne: %v", snap)
 			}
+		}
+	}
+}
+
+// penneWakeConsole replays what is owed to every profile on this console, not
+// only the user the connection was registered for.
+func (s *server) penneWakeConsole(sess *penneSession) {
+	s.penneWake(sess.user)
+	for _, u := range s.notifStore().UsersOn(sess.penneID) {
+		if u != sess.user {
+			s.penneWake(u)
 		}
 	}
 }

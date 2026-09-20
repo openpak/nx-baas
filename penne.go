@@ -109,13 +109,13 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 			// keyed by the BAAS account the outbox delivers to. Recorded as a
 			// cert it is an address no delivery can ever find.
 			store.NoteAccount(assoc.ID, accountID, store.ResolveUser(userID))
-			log.Printf("[nx-baas] penne: notification token for console account %s (registration %s, user %q)", accountID, assoc.ID, store.ResolveUser(userID))
+			log.Printf("[nx-baas] penne: notification token for console account %s (registration %s, first guess %q)", accountID, assoc.ID, store.ResolveUser(userID))
 		}
 		if !ok {
 			writeJSON(w, 401, map[string]any{"status": 401, "title": "authentication required"})
 			return
 		}
-		tok, err := store.NotificationTokenFor(assoc, now)
+		tok, err := store.NotificationTokenFor(assoc, accountID, now)
 		if err != nil {
 			writeJSON(w, 401, map[string]any{"status": 401, "title": "authentication failed"})
 			return
@@ -128,7 +128,11 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		if assoc, ok := s.penneAuthedAssoc(store, in, userID, deviceID, now); ok && nsa != "" {
 			store.LinkNSA(assoc.ID, nsa, now)
-			store.NoteAccount(assoc.ID, accountID, store.ResolveUser(userID))
+			// The id token names this profile's own account.
+			store.NoteAccount(assoc.ID, accountID, "")
+			if store.BindAccount(accountID, nsa) {
+				log.Printf("[nx-baas] penne: console account %s is %s (links)", accountID, nsa)
+			}
 		}
 		writeJSON(w, 200, map[string]any{"nsa_id": nsa})
 	case strings.HasPrefix(host, "god.") && r.Method == "DELETE":
