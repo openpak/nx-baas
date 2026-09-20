@@ -242,7 +242,19 @@ func (s *server) visiblePresence(viewer *User, f Friend, now int64) map[string]a
 	if !presenceVisible(viewer, subject, true) {
 		return presenceObj(Presence{State: "OFFLINE", UpdatedAt: now})
 	}
-	return presenceObj(aggregatePresence(subject, now, lease))
+	agg := aggregatePresence(subject, now, lease)
+	if agg.State == "OFFLINE" {
+		// Nothing of theirs is live on a Switch. The core knows where else
+		// they are, and a friend playing on another console is still somebody
+		// to say hello to.
+		if b, ok := s.acct.(*openpakBackend); ok {
+			if elsewhere, live := s.presenceFromCore(b.accountFor(f.PID), b.namespace, now); live {
+				elsewhere.LogoutAt = agg.LogoutAt
+				return presenceObj(elsewhere)
+			}
+		}
+	}
+	return presenceObj(agg)
 }
 
 // ---------- core mutations (SOC-03) ----------

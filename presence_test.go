@@ -28,7 +28,10 @@ type fakeSessions struct {
 	leases map[string]int64 // session id -> unix expiry
 	byAcct map[string]string
 	titles map[string]string // the title each account's session was registered with
-	gone   bool              // the core lost everything (restart)
+	// namespace is what the core reports these sessions under; another
+	// platform's namespace is how a Wii U friend reads on a Switch.
+	namespace string
+	gone      bool // the core lost everything (restart)
 }
 
 func newFakeSessions() *fakeSessions {
@@ -50,6 +53,26 @@ func (x *fakeSessions) RegisterSession(ctx context.Context, r *accountv1.Registe
 	}
 	x.titles[r.GetAccountId()] = r.GetTitleId()
 	return &accountv1.RegisterSessionResponse{SessionId: id, LeaseSeconds: r.GetLeaseSeconds()}, nil
+}
+
+// GetPresence: the core's side of cross-platform presence. Registered
+// sessions answer for themselves; anything else is absent, which is the same
+// fact as offline.
+func (x *fakeSessions) GetPresence(ctx context.Context, r *accountv1.GetPresenceRequest, _ ...grpc.CallOption,
+) (*accountv1.GetPresenceResponse, error) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	out := &accountv1.GetPresenceResponse{}
+	for _, id := range r.GetAccountIds() {
+		sid, ok := x.byAcct[id]
+		if !ok || x.leases[sid] <= time.Now().Unix() {
+			continue
+		}
+		out.Presence = append(out.Presence, &accountv1.Presence{
+			AccountId: id, Namespace: x.namespace, TitleId: x.titles[id], SinceUnix: time.Now().Unix(),
+		})
+	}
+	return out, nil
 }
 
 func (x *fakeSessions) Heartbeat(ctx context.Context, r *accountv1.HeartbeatRequest, _ ...grpc.CallOption,
@@ -463,5 +486,66 @@ func TestCoreSessionCarriesTheTitleBeingPlayed(t *testing.T) {
 	s.reconcilePresenceOnce(now.Add(2*time.Second), lease)
 	if got := title(); got != "" {
 		t.Fatalf("core session still names %q after the game closed", got)
+	}
+}
+
+// A friend live on another platform is live to a Switch too. The core is the
+// place every platform reports into, so a Wii U session reads as online here
+// -- without a title, because a console can only draw its own games and a
+// foreign title id would render as one it does not have.
+func TestAFriendPlayingOnAnotherPlatformReadsAsOnline(t *testing.T) {
+	s, _, users := socialServer(t)
+	sess := newFakeSessions()
+	sess.namespace = "wiiu"
+	b := s.acct.(*openpakBackend)
+	b.sessions = sess
+	viewer, friend := users[0], users[1]
+
+	account := b.accountFor(friend.PID)
+	if account == "" {
+		t.Fatal("fixture: no core account for the friend")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := sess.RegisterSession(ctx, &accountv1.RegisterSessionRequest{
+		AccountId: account, Namespace: "wiiu", TitleId: "0005000010101d00",
+		EndpointRef: "nex", LeaseSeconds: 300,
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	id, err := s.acct.Identity(viewer.PID)
+	if err != nil || id == nil || len(id.Friends) == 0 {
+		t.Fatalf("identity: %v", err)
+	}
+	var f Friend
+	for _, cand := range id.Friends {
+		if cand.PID == friend.PID {
+			f = cand
+		}
+	}
+	got := s.visiblePresence(viewer, f, time.Now().Unix())
+	if got["state"] != "ONLINE" {
+		t.Fatalf("presence = %v, want ONLINE for a friend playing elsewhere", got["state"])
+	}
+	ex, _ := got["extras"].(map[string]any)
+	friends, _ := ex["friends"].(map[string]any)
+	if len(friends) != 0 {
+		t.Fatalf("a foreign title reached the console: %v", friends)
+	}
+
+	// And this platform's own session still names its title.
+	sess.namespace = b.namespace
+	s.coreSeen().byID = map[string]corePresence{}
+	s.coreSeen().at = time.Time{}
+	if _, err := sess.RegisterSession(ctx, &accountv1.RegisterSessionRequest{
+		AccountId: account, Namespace: b.namespace, TitleId: "0100a5a020d5e000",
+		EndpointRef: "baas", LeaseSeconds: 300,
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	got = s.visiblePresence(viewer, f, time.Now().Unix())
+	if got["state"] != "PLAYING" {
+		t.Fatalf("presence = %v, want PLAYING on this platform", got["state"])
 	}
 }

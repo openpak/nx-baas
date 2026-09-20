@@ -1,0 +1,111 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+package main
+
+// Presence from the other side of the account core.
+//
+// A Switch publishes its presence here and nowhere else, and this adapter puts
+// it into the core so the website, the app and every other console's emulator
+// can read it. The same is true in reverse: a friend playing on a Wii U is
+// live in the core under that platform's namespace, and without this a Switch
+// would show them offline. What each platform can say about itself differs --
+// one names the title, another only that somebody is signed in -- so this
+// renders exactly what the core was told and invents nothing.
+
+import (
+	"context"
+	"strings"
+	"sync"
+	"time"
+
+	accountv1 "nx-baas/accountpb"
+)
+
+// corePresence is one account's presence as the core holds it.
+type corePresence struct {
+	Namespace string
+	TitleID   string
+	Since     int64
+}
+
+// corePresenceTTL is how long a lookup is reused. The core's own lease is the
+// authority; this only keeps a friend list from asking once per friend per
+// render.
+const corePresenceTTL = 10 * time.Second
+
+type corePresenceCache struct {
+	mu   sync.Mutex
+	at   time.Time
+	byID map[string]corePresence
+}
+
+// coreSeen is per server, not per process: two servers in one test binary do
+// not share what the core told one of them.
+func (s *server) coreSeen() *corePresenceCache {
+	s.coreSeenOnce.Do(func() { s.corePresence = &corePresenceCache{byID: map[string]corePresence{}} })
+	return s.corePresence
+}
+
+// corePresenceOf reports what the core knows about an account, or false when
+// it knows nothing (which is the same fact as offline there). A core that is
+// unreachable answers "nothing", never a guess.
+func (s *server) corePresenceOf(accountID string) (corePresence, bool) {
+	b, ok := s.acct.(*openpakBackend)
+	if !ok || b == nil || b.sessions == nil || accountID == "" {
+		return corePresence{}, false
+	}
+	cache := s.coreSeen()
+	cache.mu.Lock()
+	fresh := time.Since(cache.at) < corePresenceTTL
+	if fresh {
+		p, known := cache.byID[accountID]
+		cache.mu.Unlock()
+		return p, known
+	}
+	cache.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	resp, err := b.sessions.GetPresence(ctx, &accountv1.GetPresenceRequest{AccountIds: []string{accountID}})
+	if err != nil {
+		logErr("core presence", err)
+		return corePresence{}, false
+	}
+	next := map[string]corePresence{}
+	for _, p := range resp.GetPresence() {
+		next[p.GetAccountId()] = corePresence{
+			Namespace: p.GetNamespace(), TitleID: p.GetTitleId(), Since: p.GetSinceUnix(),
+		}
+	}
+	cache.mu.Lock()
+	// Only the account asked about is refreshed: another friend's absence from
+	// this answer means nothing about them.
+	for id, p := range next {
+		cache.byID[id] = p
+	}
+	if _, answered := next[accountID]; !answered {
+		delete(cache.byID, accountID)
+	}
+	cache.at = time.Now()
+	cache.mu.Unlock()
+	p, known := next[accountID]
+	return p, known
+}
+
+// presenceFromCore renders a friend who is live somewhere that is not this
+// platform. The title stays empty unless the core's namespace is this one: a
+// console can only draw its own titles, and a foreign title id would render as
+// a game it does not have.
+func (s *server) presenceFromCore(accountID, namespace string, now int64) (Presence, bool) {
+	p, ok := s.corePresenceOf(accountID)
+	if !ok {
+		return Presence{}, false
+	}
+	out := Presence{State: "ONLINE", UpdatedAt: p.Since, ACDIndex: -1}
+	if out.UpdatedAt == 0 {
+		out.UpdatedAt = now
+	}
+	if p.TitleID != "" && strings.EqualFold(p.Namespace, namespace) {
+		out.State, out.AppID, out.PresenceGroupID = "PLAYING", p.TitleID, p.TitleID
+	}
+	return out, true
+}

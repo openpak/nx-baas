@@ -90,6 +90,9 @@ type server struct {
 	// with, so a console changing game re-registers rather than leaving the
 	// core reporting the game it started on.
 	liveSessionTitle map[string]string
+	// corePresence caches what the core last said about other platforms.
+	corePresence *corePresenceCache
+	coreSeenOnce sync.Once
 	// Penne notification channel (workstream B): durable push-channel state
 	// (registrations, tokens, tickets, subscriptions, delivery outbox) and the
 	// live frontline session registry. notifStore() lazily creates in-memory

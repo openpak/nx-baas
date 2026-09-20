@@ -18,6 +18,14 @@ service Sessions {
   rpc ExpireSession(ExpireSessionRequest) returns (ExpireSessionResponse);
   // Resolve the live session for an account and title, if any.
   rpc ResolveSession(ResolveSessionRequest) returns (ResolveSessionResponse);
+  // Presence for a set of accounts, derived from their live session leases:
+  // who is online and in which title. A read for companion surfaces (a phone
+  // showing a friends list); it registers nothing and renews nothing.
+  rpc GetPresence(GetPresenceRequest) returns (GetPresenceResponse);
+  // How many people are playing, per title. Derived from the same live leases
+  // as presence, so a status page and a friends list can never disagree about
+  // who is online. Counts accounts, not sessions.
+  rpc GetPlayerCounts(GetPlayerCountsRequest) returns (GetPlayerCountsResponse);
 }
 
 service Invitations {
@@ -36,6 +44,16 @@ service Invitations {
   // Acknowledge received invitations (id + nonce pairs). Only pending
   // invitations matching namespace/account/nonce are marked delivered.
   rpc AckInvitations(AckInvitationsRequest) returns (AckInvitationsResponse);
+  // Read the pending invitations addressed to an account, across every
+  // namespace, WITHOUT consuming them: no redelivery window is started and
+  // nothing is marked delivered, so a companion app showing an inbox cannot
+  // take an invitation away from the adapter that has to deliver it. The
+  // summary carries no payload and no nonce; both belong to that adapter.
+  rpc ListInvitations(ListInvitationsRequest) returns (ListInvitationsResponse);
+  // Reject an invitation on behalf of its recipient (the "decline" button).
+  // Only the account it was addressed to can reject it, and only while it is
+  // still pending.
+  rpc RejectInvitation(RejectInvitationRequest) returns (RejectInvitationResponse);
 }
 
 message RegisterSessionRequest {
@@ -110,4 +128,76 @@ message Invitation {
   bytes payload = 5;
   string nonce = 6;
   int64 expires_at_unix = 7;
+}
+
+message GetPresenceRequest {
+  repeated string account_ids = 1; // capped server-side at 200
+}
+
+message GetPresenceResponse {
+  repeated Presence presence = 1; // only accounts with a live session
+}
+
+message Presence {
+  string account_id = 1;
+  string namespace = 2;    // adapter the session belongs to
+  string title_id = 3;     // what they are playing; empty when the adapter sent none
+  int64 since_unix = 4;    // when the session was registered
+  string node_id = 5;      // the federation node the session came through; "home" for the core's own adapters
+}
+
+message ListInvitationsRequest {
+  string account_id = 1;
+  int32 limit = 2;         // optional; server default and cap 100
+}
+
+message ListInvitationsResponse {
+  repeated InvitationSummary invitations = 1;
+}
+
+// What a person may see about an invitation waiting for them. Deliberately not
+// Invitation: payload and nonce are the delivering adapter's business.
+message InvitationSummary {
+  string invitation_id = 1;
+  string from_account_id = 2;
+  string from_display_name = 3;
+  string title_id = 4;
+  string namespace = 5;
+  int64 expires_at_unix = 6;
+}
+
+message RejectInvitationRequest {
+  string account_id = 1;   // must be the recipient
+  string invitation_id = 2;
+}
+
+message RejectInvitationResponse { bool rejected = 1; }
+
+message GetPlayerCountsRequest {}
+
+message GetPlayerCountsResponse {
+  repeated TitlePlayers titles = 1;
+  int32 total_players = 2; // distinct accounts, not the sum of the rows
+  // Per adapter namespace: one entry per console network with anybody on it.
+  // Also distinct accounts, so someone playing two titles on the same network
+  // is one player there.
+  repeated NetworkPlayers networks = 3;
+  // Per federation node, distinct accounts. Where people are, for the status page.
+  repeated NodePlayers nodes = 4;
+}
+
+message NodePlayers {
+  string node_id = 1;
+  int32 players = 2;
+}
+
+message NetworkPlayers {
+  string namespace = 1;
+  int32 players = 2;
+}
+
+message TitlePlayers {
+  string title_id = 1;
+  string namespace = 2;
+  int32 players = 3;
 }
