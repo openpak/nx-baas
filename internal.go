@@ -243,7 +243,11 @@ func (s *server) switchEmulator(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, friend(f))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"pid": pr.PID, "username": id.Nickname, "friend_code": pr.FriendCode, "baas_user_id": pr.BaasUserID,
+		// country is the account's own, so an emulator can tell a game where
+		// its player is from: a console has one from setup and shows a flag
+		// beside the player, an emulator had none to give (2026-09-20).
+		"country": id.Country,
+		"pid":     pr.PID, "username": id.Nickname, "friend_code": pr.FriendCode, "baas_user_id": pr.BaasUserID,
 		"token": s.acct.nexToken(pr.PID, id.Nickname), "friends": friends, "requests": requests,
 	})
 }
