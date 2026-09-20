@@ -334,10 +334,18 @@ func (s *server) reconcilePresenceOnce(now time.Time, lease time.Duration) {
 			// keep the core session alive for it. A session id we lost (a
 			// restart) is re-derived, never invented from residue.
 			if s.liveSessions[u.ID] != "" {
+				// The core session carries the title, so switching game (or
+				// putting one down) has to be re-registered: a heartbeat
+				// cannot change what it says they are playing.
+				if s.liveSessionTitle[u.ID] != agg.AppID {
+					s.expireCoreSession(b, u)
+					s.registerCoreSession(b, u, agg.AppID)
+					continue
+				}
 				s.renewCoreSession(b, u)
 				continue
 			}
-			s.registerCoreSession(b, u)
+			s.registerCoreSession(b, u, agg.AppID)
 		default:
 			// The aggregate is offline: end the core session at once instead
 			// of waiting out its lease, and stop showing the claim locally.
@@ -367,7 +375,12 @@ func (s *server) expireLocalPresence(u *User, now int64, lease time.Duration) {
 
 // registerCoreSession tells the core the account is signed in. Best effort:
 // presence is never worth failing a console request over.
-func (s *server) registerCoreSession(b *openpakBackend, u *User) {
+// registerCoreSession tells the core the account is signed in, and what it is
+// playing. The core carries a title per session and every other surface reads
+// it from there -- the website, the app, another console's emulator -- so a
+// title left empty is the difference between "Leia is online" and "Leia is
+// playing Kirby on a Switch" everywhere at once (2026-09-20).
+func (s *server) registerCoreSession(b *openpakBackend, u *User, titleID string) {
 	accountID := b.accountFor(u.PID)
 	if accountID == "" {
 		return
@@ -375,7 +388,7 @@ func (s *server) registerCoreSession(b *openpakBackend, u *User) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	resp, err := b.sessions.RegisterSession(ctx, &accountv1.RegisterSessionRequest{
-		AccountId: accountID, Namespace: b.namespace, TitleId: "",
+		AccountId: accountID, Namespace: b.namespace, TitleId: titleID,
 		EndpointRef: "baas", LeaseSeconds: int32(onlineLease.Seconds()),
 	})
 	if err != nil {
@@ -385,7 +398,12 @@ func (s *server) registerCoreSession(b *openpakBackend, u *User) {
 	if s.liveSessions == nil {
 		s.liveSessions = map[string]string{}
 	}
+	if s.liveSessionTitle == nil {
+		s.liveSessionTitle = map[string]string{}
+	}
 	s.liveSessions[u.ID] = resp.GetSessionId()
+	s.liveSessionTitle[u.ID] = titleID
+	log.Printf("[nx-baas] presence: core session for %s namespace=%s title=%q", accountID, b.namespace, titleID)
 }
 
 // renewCoreSession heartbeats the account's session so the core's shorter
@@ -400,7 +418,7 @@ func (s *server) renewCoreSession(b *openpakBackend, u *User) {
 		return
 	}
 	delete(s.liveSessions, u.ID)
-	s.registerCoreSession(b, u)
+	s.registerCoreSession(b, u, s.liveSessionTitle[u.ID])
 }
 
 // expireCoreSession ends the core session for an account that is offline.
@@ -410,6 +428,7 @@ func (s *server) expireCoreSession(b *openpakBackend, u *User) {
 		return
 	}
 	delete(s.liveSessions, u.ID)
+	delete(s.liveSessionTitle, u.ID)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if _, err := b.sessions.ExpireSession(ctx, &accountv1.ExpireSessionRequest{SessionId: id}); err != nil {

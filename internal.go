@@ -186,10 +186,34 @@ func (s *server) switchEmulator(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, http.StatusNotFound, "unknown account")
 		return
 	}
+	// Presence comes from this server's own store, the way the console's
+	// friend list reads it (social.go): a console publishes here and nowhere
+	// else, so the projection the core carries says OFFLINE for somebody who
+	// is sitting in a game (2026-09-20, an emulator showing a playing friend
+	// as offline). Privacy is the same check the console gets.
+	viewer := s.store.User(pr.BaasUserID)
+	now := time.Now().Unix()
+	lease := presenceLease()
 	friend := func(f Friend) map[string]any {
+		status, appID, appField := f.PresenceStatus, f.PresenceAppID, f.PresenceAppField
+		if subject := s.store.User(f.BaasUserID); subject != nil {
+			p := Presence{State: "OFFLINE"}
+			if viewer == nil || presenceVisible(viewer, subject, true) {
+				p = aggregatePresence(subject, now, lease)
+			}
+			switch p.State {
+			case "PLAYING":
+				status = 2
+			case "ONLINE":
+				status = 1
+			default: // INACTIVE reads as offline, as it does on a console
+				status = 0
+			}
+			appID, appField = p.AppID, p.AppField
+		}
 		return map[string]any{
 			"pid": f.PID, "account_id": b.accountFor(f.PID), "name": f.Nickname, "friend_code": f.FriendCode,
-			"presence": map[string]any{"status": f.PresenceStatus, "app_field": f.PresenceAppField, "app_id": f.PresenceAppID},
+			"presence": map[string]any{"status": status, "app_field": appField, "app_id": appID},
 		}
 	}
 	friends := make([]map[string]any, 0, len(id.Friends))

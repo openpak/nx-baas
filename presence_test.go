@@ -27,7 +27,8 @@ type fakeSessions struct {
 	mu     sync.Mutex
 	leases map[string]int64 // session id -> unix expiry
 	byAcct map[string]string
-	gone   bool // the core lost everything (restart)
+	titles map[string]string // the title each account's session was registered with
+	gone   bool              // the core lost everything (restart)
 }
 
 func newFakeSessions() *fakeSessions {
@@ -44,6 +45,10 @@ func (x *fakeSessions) RegisterSession(ctx context.Context, r *accountv1.Registe
 	id := "sess-" + r.GetAccountId()
 	x.leases[id] = time.Now().Unix() + int64(r.GetLeaseSeconds())
 	x.byAcct[r.GetAccountId()] = id
+	if x.titles == nil {
+		x.titles = map[string]string{}
+	}
+	x.titles[r.GetAccountId()] = r.GetTitleId()
 	return &accountv1.RegisterSessionResponse{SessionId: id, LeaseSeconds: r.GetLeaseSeconds()}, nil
 }
 
@@ -414,5 +419,49 @@ func TestPresenceVisibleTreatsJunkPermissionAsSelf(t *testing.T) {
 	unset := &User{ID: "subject-2"}
 	if !presenceVisible(viewer, unset, true) {
 		t.Error("unset presence permission hidden from a friend; default is open")
+	}
+}
+
+// Everything outside the Switch adapter -- the website, the app, another
+// console's emulator -- reads presence from the core, so the title has to go
+// there: without it a friend in a game is merely "online" everywhere but the
+// console that published it. Changing game re-registers, because a heartbeat
+// cannot change what the session says they are playing.
+func TestCoreSessionCarriesTheTitleBeingPlayed(t *testing.T) {
+	s, _, users := socialServer(t)
+	sess := newFakeSessions()
+	b := s.acct.(*openpakBackend)
+	b.sessions = sess
+	u := users[1]
+	account := b.accountFor(u.PID)
+	if account == "" {
+		t.Fatal("fixture: no core account")
+	}
+	title := func() string {
+		sess.mu.Lock()
+		defer sess.mu.Unlock()
+		return sess.titles[account]
+	}
+	lease := presenceLease()
+	now := time.Now()
+
+	s.noteDevicePresence(u, "dev-1", "PLAYING", "0100a5a020d5e000", "{}", "0100a5a020d5e000", -1)
+	s.reconcilePresenceOnce(now, lease)
+	if got := title(); got != "0100a5a020d5e000" {
+		t.Fatalf("core session title = %q, want the game being played", got)
+	}
+
+	// A different game: the session is replaced, not heartbeaten.
+	s.noteDevicePresence(s.store.User(u.ID), "dev-1", "PLAYING", "0100152000022000", "{}", "0100152000022000", -1)
+	s.reconcilePresenceOnce(now.Add(time.Second), lease)
+	if got := title(); got != "0100152000022000" {
+		t.Fatalf("core session title = %q after switching game", got)
+	}
+
+	// Back to the Home menu: online, playing nothing.
+	s.noteDevicePresence(s.store.User(u.ID), "dev-1", "ONLINE", "", "{}", "", -1)
+	s.reconcilePresenceOnce(now.Add(2*time.Second), lease)
+	if got := title(); got != "" {
+		t.Fatalf("core session still names %q after the game closed", got)
 	}
 }

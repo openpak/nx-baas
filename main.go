@@ -86,6 +86,10 @@ type server struct {
 	// In-memory by design: a restart re-derives truth from the core (and local
 	// leases), never from this map.
 	liveSessions map[string]string
+	// liveSessionTitle is the title each of those sessions was registered
+	// with, so a console changing game re-registers rather than leaving the
+	// core reporting the game it started on.
+	liveSessionTitle map[string]string
 	// Penne notification channel (workstream B): durable push-channel state
 	// (registrations, tokens, tickets, subscriptions, delivery outbox) and the
 	// live frontline session registry. notifStore() lazily creates in-memory
