@@ -73,8 +73,10 @@ const invitationMaxMessages = 16
 const invitationMaxMessageLen = 256
 
 // Native invitations expire server-side (the wire shape carries no expiry).
-// 24h matches the core's own invitation TTL cap; override for tests only.
-const invitationTTLDefault = 24 * time.Hour
+// 4h: an invitation names a room, and a room nobody is still sitting in is
+// worth less than the confusion of offering it. The real service allows a day;
+// presence retires most invitations long before either (2026-09-20).
+const invitationTTLDefault = 4 * time.Hour
 
 // supersedeLocked retires the sender's earlier invitations to this receiver
 // for the same title. An invitation carries a room code, so an older one
@@ -645,7 +647,7 @@ func (s *server) invitationGroupCreate(w http.ResponseWriter, r *http.Request, b
 
 	ttl := invitationTTLDefault
 	if v := getenv("NX_INVITATION_TTL_SECONDS", ""); v != "" {
-		if secs, err := strconv.Atoi(v); err == nil && secs > 0 && time.Duration(secs)*time.Hour <= invitationTTLDefault {
+		if secs, err := strconv.Atoi(v); err == nil && secs > 0 && time.Duration(secs)*time.Second <= invitationTTLDefault {
 			ttl = time.Duration(secs) * time.Second
 		}
 	}
