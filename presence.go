@@ -144,6 +144,13 @@ func devicePresenceWins(a, b *DevicePresence) bool {
 	if ra != rb {
 		return ra > rb
 	}
+	// Between two claims that say the same thing, the one naming a game says
+	// more: a bare "signed in" from a login must not take the title off
+	// somebody the console says is playing (2026-09-20, a session losing
+	// Kirby to a login seconds later).
+	if (a.AppID != "") != (b.AppID != "") {
+		return a.AppID != ""
+	}
 	return a.UpdatedAt > b.UpdatedAt
 }
 
@@ -151,6 +158,16 @@ func devicePresenceWins(a, b *DevicePresence) bool {
 // device's live claim (kept as remembered departure evidence, not as a live
 // one). Whether the account as a whole is anywhere is the aggregate's call.
 func (s *server) noteDevicePresence(u *User, deviceID, state, appID, appField, groupID string, acdIndex int) {
+	// An all-zero title id is "no game", not a game whose id is zero: the
+	// emulator publishes it at the menu, and it reached the core as a title
+	// with players on it (2026-09-20, the status page listing
+	// 0000000000000000).
+	if strings.Trim(appID, "0") == "" {
+		appID = ""
+	}
+	if strings.Trim(groupID, "0") == "" {
+		groupID = ""
+	}
 	now := time.Now().Unix()
 	lease := int64(presenceLease().Seconds())
 	before := s.presenceSnapshot(u.ID)

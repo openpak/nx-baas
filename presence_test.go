@@ -549,3 +549,25 @@ func TestAFriendPlayingOnAnotherPlatformReadsAsOnline(t *testing.T) {
 		t.Fatalf("presence = %v, want PLAYING on this platform", got["state"])
 	}
 }
+
+// Two claims that say the same thing: the one naming a game says more. A
+// login records a bare "signed in", and seconds after the console said what
+// somebody was playing that login was taking the title away again.
+func TestABareSignInDoesNotTakeTheGameAway(t *testing.T) {
+	s, _, users := socialServer(t)
+	u := users[1]
+	s.noteDevicePresence(u, "console", "ONLINE", "0100a5a020d5e000", "{}", "0100a5a020d5e000", -1)
+	s.noteDevicePresence(s.store.User(u.ID), "login", "ONLINE", "", "", "", -1)
+
+	agg := aggregatePresence(s.store.User(u.ID), time.Now().Unix(), presenceLease())
+	if agg.AppID != "0100a5a020d5e000" {
+		t.Fatalf("aggregate app = %q, want the game the console named", agg.AppID)
+	}
+
+	// An all-zero title id is "no game", never a game whose id is zero.
+	s.noteDevicePresence(s.store.User(u.ID), "emulator", "ONLINE", "0000000000000000", "{}", "0000000000000000", -1)
+	got := s.store.User(u.ID).DevicePresence["emulator"]
+	if got.AppID != "" || got.PresenceGroupID != "" {
+		t.Fatalf("all-zero ids were stored as a title: %+v", got)
+	}
+}
