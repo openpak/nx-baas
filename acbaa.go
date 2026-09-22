@@ -816,14 +816,15 @@ func (s *server) acbaaMessageCards(w http.ResponseWriter, r *http.Request) {
 }
 
 // acbaaProfileStatus answers GET users/<id>/profile_status. The game's task
-// for this call is TaskInquireProfileReportStatus (binary symbol): it asks
-// whether the passport has been REPORTED and upheld, not whether it exists.
-// The two values the game accepts are literally "ok" and "ng" (main
-// 0x5a73ec compares both, anything else fails closed as 2219-0021), and
-// "ok" is the bad one: measured live 2026-09-22, an "ok"/"ok" answer with
-// the profile uploaded sends Orville into the "your Passport violates the
-// Nintendo Code of Conduct" refusal, and the gate never opens. Nobody
-// moderates passports here, so every profile is unreported: "ng"/"ng".
+// for this call is TaskInquireProfileReportStatus (binary symbol). The two
+// values it accepts are literally "ok" and "ng" (main 0x5a73ec compares
+// both; anything else fails closed as 2219-0021). Measured 2026-09-22:
+// NEITHER value opens or closes Orville's gate by itself — the "Passport
+// violates the Nintendo Code of Conduct" refusal came from a verdict the
+// game remembered from an earlier failed passport upload, and it cleared
+// the moment a changed passport was PUT and answered with the stored
+// record. Nobody moderates passports here, so answer "ng" (unreported)
+// for both sides, unconditionally; no bookkeeping needed.
 func (s *server) acbaaProfileStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-msgpack")
 	w.WriteHeader(200)
