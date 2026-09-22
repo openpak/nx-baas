@@ -90,6 +90,14 @@ func (s *server) acbaa(w http.ResponseWriter, r *http.Request, body []byte) {
 		s.acbaaFriendRequests(w, r)
 		return
 	}
+	if r.Method == http.MethodPost && r.URL.Path == "/api/v1/friend_requests" {
+		s.acbaaSendFriendRequest(w, r, body)
+		return
+	}
+	if r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/api/v1/friend_requests/") {
+		s.acbaaAnswerFriendRequest(w, r, body)
+		return
+	}
 	if r.Method == http.MethodGet && r.URL.Path == "/api/v1/friends" {
 		s.acbaaFriends(w, r)
 		return
@@ -670,6 +678,18 @@ type acbaaDisk struct {
 	LandProfiles map[uint64]acbaaProfile      `json:"land_profiles"`
 	UserLand     map[uint64]uint64            `json:"user_land"`
 	UIDMap       map[uint64]uint64            `json:"uid_map"`
+	FriendReqs   map[uint64]acbaaFriendReq    `json:"friend_requests,omitempty"`
+	Friends      map[uint64][]uint64          `json:"friends,omitempty"`
+}
+
+// acbaaFriendReq is a pending best-friend request: who asked whom, when,
+// and the opaque "meta" record the phone attached (the asker's player and
+// island names, echoed back to the receiver as-is).
+type acbaaFriendReq struct {
+	From   uint64 `json:"from"`
+	To     uint64 `json:"to"`
+	SentAt int64  `json:"sent_at"`
+	Meta   []byte `json:"meta"`
 }
 
 // acbaaNames is what the game told us about who plays where: echoed back
@@ -701,7 +721,8 @@ func (s *server) acbaaLoad() {
 	s.acbaaLandProfiles = disk.LandProfiles
 	s.acbaaUserLand = disk.UserLand
 	s.acbaaUIDMap = disk.UIDMap
-	s.acbaaUIDMap = disk.UIDMap
+	s.acbaaFriendReqs = disk.FriendReqs
+	s.acbaaFriendList = disk.Friends
 	n := len(disk.Profiles)
 	// Proactive migration: every BAAS account whose legacy ACNH id differs
 	// from its NEX PID gets its records moved now, not when the game
@@ -727,7 +748,7 @@ func (s *server) acbaaSaveLocked() {
 	if s.acbaaPath == "" {
 		return
 	}
-	b, err := json.Marshal(acbaaDisk{Profiles: s.acbaaProfiles, Resources: s.acbaaResources, Names: s.acbaaNames, LandProfiles: s.acbaaLandProfiles, UserLand: s.acbaaUserLand, UIDMap: s.acbaaUIDMap})
+	b, err := json.Marshal(acbaaDisk{Profiles: s.acbaaProfiles, Resources: s.acbaaResources, Names: s.acbaaNames, LandProfiles: s.acbaaLandProfiles, UserLand: s.acbaaUserLand, UIDMap: s.acbaaUIDMap, FriendReqs: s.acbaaFriendReqs, Friends: s.acbaaFriendList})
 	if err != nil {
 		log.Printf("[acbaa] store marshal: %v", err)
 		return
@@ -767,28 +788,161 @@ func (s *server) acbaaProfileSHA(uid uint64) string {
 	return s.acbaaProfiles[uid].SHA
 }
 
-// acbaaFriends lists ACNH friends: GET /api/v1/friends answers
-// {count, friends} per the documented shape (entries carry user_id).
-// Empty until friend links are recorded server-side; the Dodo-code path
-// does not need it. (POST friend_requests / accept flows come when the
-// game asks.)
-func (s *server) acbaaFriends(w http.ResponseWriter, r *http.Request) {
+// Best friends (the NookPhone's "Best Friends List"), as the game speaks it
+// (observed 2026-09-22, Ryujinx on a console's island):
+//
+//	POST /api/v1/friend_requests?target_user_id=<nsa id decimal>
+//	body = fixmap{meta: bin(<msgpack: mMtVer, mMtPId, mMtPNm, mMtVId, mMtVNm, …>)}
+//
+// Shapes per kinnay's AC:NH server page (facts only): the answer is
+// {id, approved}; GET ?type=send|receive lists {id, user_id, sent_at, meta};
+// PUT /friend_requests/<id> {action} accepts; GET /friends lists {user_id}.
+// A request from someone who already asked the caller is approved on the
+// spot, which is what "approved" is for. Meta is opaque here: whatever the
+// phone attached is what the other phone gets.
+func (s *server) acbaaSendFriendRequest(w http.ResponseWriter, r *http.Request, body []byte) {
+	from := s.acbaaResolveUID(acbaaBearerID(r.Header.Get("Authorization")))
+	to, err := strconv.ParseUint(r.URL.Query().Get("target_user_id"), 10, 64)
+	if from == 0 || err != nil || to == 0 || to == from {
+		log.Printf("[acbaa] friend request from=%d target=%q: refused", from, r.URL.Query().Get("target_user_id"))
+		acbaaError(w, 400, "3004")
+		return
+	}
+	to = s.acbaaResolveUID(to)
+	var meta []byte
+	if v, err := msgpackDecode(body); err == nil {
+		if m, ok := v.(map[string]any); ok {
+			meta, _ = m["meta"].([]byte)
+		}
+	}
+	s.mu.Lock()
+	if s.acbaaFriendReqs == nil {
+		s.acbaaFriendReqs = map[uint64]acbaaFriendReq{}
+	}
+	approved := false
+	for id, req := range s.acbaaFriendReqs {
+		if req.From == to && req.To == from { // they asked first: mutual
+			delete(s.acbaaFriendReqs, id)
+			approved = true
+		}
+	}
+	id := uint64(time.Now().UnixNano())
+	if approved || s.acbaaAreFriendsLocked(from, to) {
+		s.acbaaBefriendLocked(from, to)
+		approved = true
+	} else {
+		s.acbaaFriendReqs[id] = acbaaFriendReq{From: from, To: to, SentAt: time.Now().Unix(), Meta: meta}
+	}
+	s.acbaaSaveLocked()
+	s.mu.Unlock()
+	log.Printf("[acbaa] friend request from=%d to=%d meta=%dB approved=%v", from, to, len(meta), approved)
 	w.Header().Set("Content-Type", "application/x-msgpack")
 	w.WriteHeader(200)
-	w.Write(msgpack(map[string]any{"count": 0, "friends": []any{}}))
+	w.Write(msgpackOrdered("id", id, "approved", approved))
 }
 
-// acbaaFriendRequests lists pending ACNH friend requests: GET
-// /api/v1/friend_requests?type= answers {count, friend_requests} per the
-// /api/v1/friend_requests?type= answers {count, friend_requests} per the
-// documented shape (entries carry id, user_id, sent_at, meta). OpenPak has
-// no request queue yet, so the list is empty — no one is waiting, which is
-// true. (POST/PUT for sending/accepting come when the game asks.)
-func (s *server) acbaaFriendRequests(w http.ResponseWriter, r *http.Request) {
-	log.Printf("[acbaa] friend requests type=%q", r.URL.Query().Get("type"))
+func (s *server) acbaaAreFriendsLocked(a, b uint64) bool {
+	for _, f := range s.acbaaFriendList[a] {
+		if f == b {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *server) acbaaBefriendLocked(a, b uint64) {
+	if s.acbaaFriendList == nil {
+		s.acbaaFriendList = map[uint64][]uint64{}
+	}
+	if !s.acbaaAreFriendsLocked(a, b) {
+		s.acbaaFriendList[a] = append(s.acbaaFriendList[a], b)
+	}
+	if !s.acbaaAreFriendsLocked(b, a) {
+		s.acbaaFriendList[b] = append(s.acbaaFriendList[b], a)
+	}
+}
+
+// acbaaAnswerFriendRequest: PUT /api/v1/friend_requests/<id> {action}.
+// "accept" (any action that is not a refusal) befriends both sides; the
+// request is dropped either way. Only the receiver may answer.
+func (s *server) acbaaAnswerFriendRequest(w http.ResponseWriter, r *http.Request, body []byte) {
+	me := s.acbaaResolveUID(acbaaBearerID(r.Header.Get("Authorization")))
+	id, err := strconv.ParseUint(strings.TrimPrefix(r.URL.Path, "/api/v1/friend_requests/"), 10, 64)
+	if err != nil {
+		acbaaError(w, 404, "3004")
+		return
+	}
+	action := ""
+	if v, err := msgpackDecode(body); err == nil {
+		if m, ok := v.(map[string]any); ok {
+			action, _ = m["action"].(string)
+		}
+	}
+	s.mu.Lock()
+	req, ok := s.acbaaFriendReqs[id]
+	if !ok || req.To != me {
+		s.mu.Unlock()
+		log.Printf("[acbaa] friend request %d answered by %d: not theirs", id, me)
+		acbaaError(w, 404, "3004")
+		return
+	}
+	delete(s.acbaaFriendReqs, id)
+	refused := strings.HasPrefix(strings.ToLower(action), "rej") || strings.HasPrefix(strings.ToLower(action), "dec")
+	if !refused {
+		s.acbaaBefriendLocked(req.From, req.To)
+	}
+	s.acbaaSaveLocked()
+	s.mu.Unlock()
+	log.Printf("[acbaa] friend request %d from=%d to=%d action=%q befriended=%v", id, req.From, req.To, action, !refused)
 	w.Header().Set("Content-Type", "application/x-msgpack")
 	w.WriteHeader(200)
-	w.Write(msgpack(map[string]any{"count": 0, "friend_requests": []any{}}))
+	w.Write(msgpack(map[string]any{}))
+}
+
+// acbaaFriends: GET /api/v1/friends -> {count, friends:[{user_id}]}.
+func (s *server) acbaaFriends(w http.ResponseWriter, r *http.Request) {
+	me := s.acbaaResolveUID(acbaaBearerID(r.Header.Get("Authorization")))
+	s.mu.Lock()
+	list := append([]uint64(nil), s.acbaaFriendList[me]...)
+	s.mu.Unlock()
+	friends := make([]any, 0, len(list))
+	for _, f := range list {
+		friends = append(friends, map[string]any{"user_id": f})
+	}
+	log.Printf("[acbaa] friends of %d -> %d", me, len(friends))
+	w.Header().Set("Content-Type", "application/x-msgpack")
+	w.WriteHeader(200)
+	w.Write(msgpackOrdered("count", len(friends), "friends", friends))
+}
+
+// acbaaFriendRequests: GET /api/v1/friend_requests?type=send|receive ->
+// {count, friend_requests:[{id, user_id, sent_at, meta}]}, user_id being
+// the other party.
+func (s *server) acbaaFriendRequests(w http.ResponseWriter, r *http.Request) {
+	me := s.acbaaResolveUID(acbaaBearerID(r.Header.Get("Authorization")))
+	typ := r.URL.Query().Get("type")
+	s.mu.Lock()
+	var out []any
+	for id, req := range s.acbaaFriendReqs {
+		other := uint64(0)
+		switch {
+		case typ == "send" && req.From == me:
+			other = req.To
+		case typ == "receive" && req.To == me:
+			other = req.From
+		default:
+			continue
+		}
+		out = append(out, msgpackRaw(msgpackOrdered("id", id, "user_id", other, "sent_at", req.SentAt, "meta", req.Meta)))
+	}
+	s.mu.Unlock()
+	if out == nil {
+		out = []any{}
+	}
+	log.Printf("[acbaa] friend requests type=%q for %d -> %d", typ, me, len(out))
+	w.Header().Set("Content-Type", "application/x-msgpack")
+	w.WriteHeader(200)
+	w.Write(msgpackOrdered("count", len(out), "friend_requests", out))
 }
 
 // acbaaMessageCards lists the player's message cards: GET

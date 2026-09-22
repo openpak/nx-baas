@@ -118,7 +118,11 @@ type server struct {
 	// minted before the single-identity change keep addressing the same
 	// account on warm clients.
 	acbaaUIDMap map[uint64]uint64
-	acbaaPath   string
+	// ACNH best friends: pending requests by id, and each user's confirmed
+	// best-friend list (symmetric). Persisted with the rest.
+	acbaaFriendReqs map[uint64]acbaaFriendReq
+	acbaaFriendList map[uint64][]uint64
+	acbaaPath       string
 	// shop is the store workstream's state (catalog, entitlements, tasks, beach links);
 	// shopUI holds the storefront's in-memory diagnostics ring.
 	shop   *shopState

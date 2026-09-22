@@ -12,6 +12,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -842,5 +843,62 @@ func TestUnknownAcbaaRouteIs404(t *testing.T) {
 	errBody, ok := v.(map[string]any)
 	if !ok || errBody["category"] != "lib" || errBody["code"] != "3004" {
 		t.Fatalf("error body = %#v, want {category:lib, code:3004}", v)
+	}
+}
+
+// Best friends: A asks B (pending, listed on both sides with the meta the
+// phone attached), B accepts, both list each other. B asking A while A's
+// request is pending is approved on the spot.
+func TestAcbaaBestFriends(t *testing.T) {
+	s := testServer(t)
+	host := "https://api.hac.lp1.acbaa.srv.nintendo.net"
+	a, b := uint64(12297829382472990721), uint64(12297829382472990722)
+	do := func(method, path string, uid uint64, body []byte) map[string]any {
+		req := httptest.NewRequest(method, host+path, bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+acbaaMintToken(uid))
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, req)
+		if w.Code != 200 {
+			t.Fatalf("%s %s: status %d", method, path, w.Code)
+		}
+		v, err := msgpackDecode(w.Body.Bytes())
+		if err != nil {
+			t.Fatalf("%s %s: not msgpack: %v", method, path, err)
+		}
+		return v.(map[string]any)
+	}
+	meta := []byte{0x81, 0xa6, 'm', 'M', 't', 'V', 'e', 'r', 0x02}
+	sent := do("POST", "/api/v1/friend_requests?target_user_id=12297829382472990722", a, msgpack(map[string]any{"meta": meta}))
+	if sent["approved"] != false {
+		t.Fatalf("first request approved = %#v, want false", sent["approved"])
+	}
+	inbox := do("GET", "/api/v1/friend_requests?type=receive", b, nil)
+	items := inbox["friend_requests"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("B's inbox has %d, want 1", len(items))
+	}
+	entry := items[0].(map[string]any)
+	if msgpackReadUintOf(entry["user_id"]) != a || !bytes.Equal(entry["meta"].([]byte), meta) {
+		t.Fatalf("inbox entry = %#v", entry)
+	}
+	if out := do("GET", "/api/v1/friend_requests?type=send", a, nil); msgpackReadIntOf(out["count"]) != 1 {
+		t.Fatalf("A's outbox = %#v", out)
+	}
+	id := msgpackReadUintOf(entry["id"])
+	do("PUT", "/api/v1/friend_requests/"+strconv.FormatUint(id, 10), b, msgpack(map[string]any{"action": "accept"}))
+	for _, who := range []uint64{a, b} {
+		fr := do("GET", "/api/v1/friends", who, nil)
+		if msgpackReadIntOf(fr["count"]) != 1 {
+			t.Fatalf("%d's friends = %#v", who, fr)
+		}
+	}
+	if left := do("GET", "/api/v1/friend_requests?type=receive", b, nil); msgpackReadIntOf(left["count"]) != 0 {
+		t.Fatalf("accepted request still listed: %#v", left)
+	}
+	// Mutual: C asks D, D asks C -> approved immediately.
+	c, d := uint64(11), uint64(12)
+	do("POST", "/api/v1/friend_requests?target_user_id=12", c, msgpack(map[string]any{"meta": meta}))
+	if got := do("POST", "/api/v1/friend_requests?target_user_id=11", d, msgpack(map[string]any{"meta": meta})); got["approved"] != true {
+		t.Fatalf("mutual request approved = %#v, want true", got["approved"])
 	}
 }

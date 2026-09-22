@@ -98,6 +98,10 @@ func (s *server) bcatDoc(w http.ResponseWriter, r *http.Request, doc map[string]
 // msgpack encodes the subset these documents use: string-keyed maps, strings,
 // integers, booleans and arrays. ponytail: no dependency for four type tags —
 // add one the day a document needs floats or binary.
+// msgpackRaw is msgpack already encoded, for embedding an ordered map in a
+// list the game reads positionally.
+type msgpackRaw []byte
+
 func msgpack(v any) []byte {
 	var out []byte
 	switch t := v.(type) {
@@ -109,6 +113,16 @@ func msgpack(v any) []byte {
 		} else {
 			out = append(out, 0xc2)
 		}
+	case msgpackRaw: // already encoded, embedded as-is (ordered maps inside lists)
+		out = append(out, t...)
+	case []byte:
+		switch {
+		case len(t) < 256:
+			out = append(out, 0xc4, byte(len(t)))
+		default:
+			out = append(out, 0xc5, byte(len(t)>>8), byte(len(t)))
+		}
+		out = append(out, t...)
 	case string:
 		out = append(out, msgpackLen(0xa0, 0xd9, 0xda, 0xdb, len(t))...)
 		out = append(out, t...)
