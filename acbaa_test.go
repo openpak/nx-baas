@@ -413,10 +413,11 @@ func TestAcbaaProfileStatusAndUpload(t *testing.T) {
 	if msgpackReadIntOf(rec["created_at"]) <= 0 {
 		t.Errorf("created_at = %#v, want unix time", rec["created_at"])
 	}
-	// Player side flips to "ok"; the island side stays "ng" until its own
-	// upload lands.
-	if status := get(); status["user_profile"] != "ok" || status["land_profile"] != "ng" {
-		t.Fatalf("after user upload status = %#v, want ok/ng", status)
+	// Uploading never changes the answer: "ok" is the reported-and-upheld
+	// verdict (Orville refuses the gate on it, measured 2026-09-22), and
+	// nothing here reports anyone.
+	if status := get(); status["user_profile"] != "ng" || status["land_profile"] != "ng" {
+		t.Fatalf("after user upload status = %#v, want ng/ng", status)
 	}
 	// Bind the user to a land: land side flips to "ok" (island registered),
 	// even before a separate lands/<id>/profile upload (which the game
@@ -429,8 +430,8 @@ func TestAcbaaProfileStatusAndUpload(t *testing.T) {
 	if w3.Code != 200 {
 		t.Fatalf("bind status %d, want 200", w3.Code)
 	}
-	if status := get(); status["user_profile"] != "ok" || status["land_profile"] != "ok" {
-		t.Fatalf("after bind status = %#v, want ok/ok", status)
+	if status := get(); status["user_profile"] != "ng" || status["land_profile"] != "ng" {
+		t.Fatalf("after bind status = %#v, want ng/ng", status)
 	}
 	lp := httptest.NewRequest("PUT", host+"/api/v1/lands/2720403009/profile",
 		bytes.NewReader(upBody))
@@ -458,8 +459,8 @@ func TestAcbaaProfileStatusAndUpload(t *testing.T) {
 	if msgpackReadIntOf(lrec["created_at"]) <= 0 {
 		t.Errorf("created_at = %#v, want unix time", lrec["created_at"])
 	}
-	if status := get(); status["user_profile"] != "ok" || status["land_profile"] != "ok" {
-		t.Fatalf("after land upload status = %#v, want ok/ok", status)
+	if status := get(); status["user_profile"] != "ng" || status["land_profile"] != "ng" {
+		t.Fatalf("after land upload status = %#v, want ng/ng", status)
 	}
 	// Bad land id and bad body are refused, not stored.
 	bad := httptest.NewRequest("PUT", host+"/api/v1/lands/0/profile", bytes.NewReader(upBody))
@@ -509,8 +510,8 @@ func TestAcbaaLegacyUIDResolvesForward(t *testing.T) {
 		return status
 	}
 	legacy := "/api/v1/users/12297829382472990721/profile_status"
-	if status := get(legacy); status["user_profile"] != "ok" || status["land_profile"] != "ok" {
-		t.Fatalf("legacy status = %#v, want ok/ok", status)
+	if status := get(legacy); status["user_profile"] != "ng" || status["land_profile"] != "ng" {
+		t.Fatalf("legacy status = %#v, want ng/ng", status)
 	}
 	// Upload under the legacy path lands on the canonical record and the
 	// answer echoes the id the game sent.

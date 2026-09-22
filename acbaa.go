@@ -815,45 +815,23 @@ func (s *server) acbaaMessageCards(w http.ResponseWriter, r *http.Request) {
 	w.Write(msgpack(map[string]any{"total": 0, "count": 0, "headers": []any{}}))
 }
 
-// acbaaProfileStatus reports profile presence: GET users/<id>/profile_status
-// answers {user_profile, land_profile} per the documented shape. The values
-// are literally "ok" or "ng" — the game compares the first two bytes
-// (main 0x5a73ec: "ok"→1, "ng"→0, anything else→0x2adb failure surfaced as
-// 2219-0021). Anything we returned before (empty, digest, timestamp, names)
-// falls into the failure arm, which is why every shape failed identically.
-// "ok" exactly when that side was uploaded; the land side turns "ok" via
-// PUT lands/<id>/profile, which the game calls when it needs it.
+// acbaaProfileStatus answers GET users/<id>/profile_status. The game's task
+// for this call is TaskInquireProfileReportStatus (binary symbol): it asks
+// whether the passport has been REPORTED and upheld, not whether it exists.
+// The two values the game accepts are literally "ok" and "ng" (main
+// 0x5a73ec compares both, anything else fails closed as 2219-0021), and
+// "ok" is the bad one: measured live 2026-09-22, an "ok"/"ok" answer with
+// the profile uploaded sends Orville into the "your Passport violates the
+// Nintendo Code of Conduct" refusal, and the gate never opens. Nobody
+// moderates passports here, so every profile is unreported: "ng"/"ng".
 func (s *server) acbaaProfileStatus(w http.ResponseWriter, r *http.Request) {
-	uid, ok := acbaaUserOf(r.URL.Path)
-	user, land := "ng", "ng"
-	if ok {
-		uid = s.acbaaResolveUID(uid)
-		s.mu.Lock()
-		if _, found := s.acbaaProfiles[uid]; found {
-			user = "ok"
-		}
-		// Land side is "ok" as soon as the island is registered and bound,
-		// not only after a separate lands/<id>/profile upload (which the
-		// game never calls in the observed flow). The bind link is primary;
-		// the registered island name is the fallback: warm runs skip the
-		// bind POST entirely, and stores written before the link field
-		// existed carry the name but no link.
-		if landID, linked := s.acbaaUserLand[uid]; linked && landID != 0 {
-			land = "ok"
-		} else if rec, hasNames := s.acbaaNames[uid]; hasNames && rec.Land != "" {
-			land = "ok"
-		}
-		s.mu.Unlock()
-	}
 	w.Header().Set("Content-Type", "application/x-msgpack")
 	w.WriteHeader(200)
 	// kinnay's field order (user_profile first): the shared encoder sorts
 	// keys, and a positional reader would swap the two on a sorted map.
-	// Exactly these two keys: the game byte-compares their values, and this
-	// answer is read on every online entry, warm or fresh.
 	w.Write(msgpackOrdered(
-		"user_profile", user,
-		"land_profile", land,
+		"user_profile", "ng",
+		"land_profile", "ng",
 	))
 }
 
