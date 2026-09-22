@@ -258,31 +258,26 @@ func (s *server) acbaaRegisterUser(w http.ResponseWriter, r *http.Request, body 
 	))
 }
 
-// acbaaUserID binds the ACNH user to the proven BAAS account: the Bearer
-// sub is that account's id in hex. A token without a usable sub falls back
-// to a name hash — same name, same id — rather than refusing: refusing here
-// would lock the player out of online entirely on a token-shape surprise.
-// acbaaUserID binds the ACNH user to the proven BAAS account's NEX PID —
-// the same number switch-nexd puts in the kerberos ticket for this login,
-// so the web identity and the NEX identity are one principal and
-// FindMatchmakeSessionByParticipant resolves. A token that will not prove
-// (or names an unknown account) falls back to the legacy derivations
-// rather than refusing: refusing here would lock the player out of online
-// entirely on a token-shape surprise. Legacy ids are migrated to the NEX
-// PID on sight (acbaaMigrateUID) so one account never holds two islands.
+// acbaaUserID is the ACNH user id: the account's network service account
+// id (the Bearer sub, 16 hex digits, as a number). That is what the game
+// itself uses for the user everywhere (the NEX login username, the
+// profile_status path, the best-friend meta's mMtNsaId) and, since
+// switch-nex v0.2.41, its NEX principal id too — so the web identity, the
+// NEX identity and what the game compares friends against are one number.
+// Before that the canonical id was nx-baas's minted pid and the NSA id was
+// migrated onto it; records still under a minted pid move back here on
+// sight, so one account never holds two islands. A token without a usable
+// sub falls back to a name hash rather than refusing: refusing here would
+// lock the player out of online entirely on a token-shape surprise.
 func acbaaUserID(s *server, auth, name string) uint64 {
+	nsa := acbaaLegacyID(auth, name)
 	tok := strings.TrimPrefix(auth, "Bearer ")
-	// Keyless test servers cannot prove tokens; the fallback below covers
-	// them. Production always has both.
 	if s != nil && s.key != nil && s.store != nil {
-		if pid, genuine := s.pidForIDToken(tok); genuine && pid != 0 {
-			if legacy := acbaaLegacyID(auth, name); legacy != 0 && legacy != pid {
-				s.acbaaMigrateUID(legacy, pid)
-			}
-			return pid
+		if pid, genuine := s.pidForIDToken(tok); genuine && pid != 0 && pid != nsa {
+			s.acbaaMigrateUID(pid, nsa)
 		}
 	}
-	return acbaaLegacyID(auth, name)
+	return nsa
 }
 
 // acbaaLegacyID is the pre-single-identity derivation: the Bearer sub as a
@@ -362,12 +357,42 @@ func (s *server) migrateUIDLocked(oldUID, newPID uint64) bool {
 		}
 		delete(s.acbaaUserLand, oldUID)
 	}
-	if moved {
-		if s.acbaaUIDMap == nil {
-			s.acbaaUIDMap = map[uint64]uint64{}
+	if list, ok := s.acbaaFriendList[oldUID]; ok {
+		if s.acbaaFriendList == nil {
+			s.acbaaFriendList = map[uint64][]uint64{}
 		}
-		s.acbaaUIDMap[oldUID] = newPID
+		if _, taken := s.acbaaFriendList[newPID]; !taken {
+			s.acbaaFriendList[newPID] = list
+			moved = true
+		}
+		delete(s.acbaaFriendList, oldUID)
 	}
+	for uid, list := range s.acbaaFriendList {
+		for i, f := range list {
+			if f == oldUID {
+				s.acbaaFriendList[uid][i] = newPID
+			}
+		}
+	}
+	for id, req := range s.acbaaFriendReqs {
+		if req.From == oldUID {
+			req.From = newPID
+		}
+		if req.To == oldUID {
+			req.To = newPID
+		}
+		s.acbaaFriendReqs[id] = req
+	}
+	if s.acbaaUIDMap == nil {
+		s.acbaaUIDMap = map[uint64]uint64{}
+	}
+	if s.acbaaUIDMap[oldUID] != newPID {
+		moved = true
+	}
+	s.acbaaUIDMap[oldUID] = newPID
+	// The canonical id never resolves away: an earlier move in the other
+	// direction (NSA id -> minted pid) must not send it back.
+	delete(s.acbaaUIDMap, newPID)
 	return moved
 }
 

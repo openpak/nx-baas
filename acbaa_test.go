@@ -716,10 +716,10 @@ func TestAcbaaRegisterUserAnswersNEXPID(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &server{key: key, store: loadStore(t.TempDir() + "/baas.json")}
-	s.store.Users["acnh-probe"] = &User{ID: "acnh-probe", PID: 1800000042}
+	s.store.Users["aaaaaaaaaaaa0001"] = &User{ID: "aaaaaaaaaaaa0001", PID: 1800000042}
 	now := time.Now().Unix()
 	tok := signJWT(map[string]any{"alg": "RS256", "kid": "x", "typ": "JWT"}, map[string]any{
-		"typ": "id_token", "iss": baasIssuer, "sub": "acnh-probe",
+		"typ": "id_token", "iss": baasIssuer, "sub": "aaaaaaaaaaaa0001",
 		"exp": now + 3600, "iat": now,
 	}, key)
 	r := httptest.NewRequest("POST", "https://api.hac.lp1.acbaa.srv.nintendo.net/api/v1/users",
@@ -738,33 +738,33 @@ func TestAcbaaRegisterUserAnswersNEXPID(t *testing.T) {
 	if !ok {
 		t.Fatalf("answer is %T, want map", v)
 	}
-	if id := msgpackReadUintOf(user["id"]); id != 1800000042 {
-		t.Errorf("id = %v, want the account's NEX PID", user["id"])
+	// The id is the NSA id (the sub as a number), the same number the game
+	// logs in to NEX with — not the minted pid.
+	if id := msgpackReadUintOf(user["id"]); id != 0xaaaaaaaaaaaa0001 {
+		t.Errorf("id = %v, want the NSA id", user["id"])
 	}
 }
 
-// A legacy BAAS-derived id migrates to the NEX PID on sight: stored
-// profiles, resources, names and the user→land link move with it, so one
-// account never holds two islands.
-func TestAcbaaLegacyIDMigratesToNEXPID(t *testing.T) {
+// Records an earlier build keyed by the minted pid move to the NSA id on
+// sight: profiles, resources, names and the user→land link, so one account
+// never holds two islands.
+func TestAcbaaMintedPIDRecordsMigrateToNSA(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := &server{key: key, store: loadStore(t.TempDir() + "/baas.json"), acbaaPath: t.TempDir() + "/acbaa.json"}
-	s.store.Users["acnh-mig"] = &User{ID: "acnh-mig", PID: 1800000043}
+	s.store.Users["aaaaaaaaaaaa0002"] = &User{ID: "aaaaaaaaaaaa0002", PID: 1800000043}
 	now := time.Now().Unix()
 	tok := signJWT(map[string]any{"alg": "RS256", "kid": "x", "typ": "JWT"}, map[string]any{
-		"typ": "id_token", "iss": baasIssuer, "sub": "acnh-mig",
+		"typ": "id_token", "iss": baasIssuer, "sub": "aaaaaaaaaaaa0002",
 		"exp": now + 3600, "iat": now,
 	}, key)
-	// Legacy id for sub "acnh-mig" is not parseable hex, so it hashes the
-	// posted name instead; seed records under whatever it is (the body
-	// carries name "hansolo").
-	legacy := acbaaLegacyID("Bearer "+tok, "hansolo")
-	s.acbaaNames = map[uint64]acbaaNames{legacy: {User: "somebody", Land: "somewhere"}}
-	s.acbaaProfiles = map[uint64]acbaaProfile{legacy: {SHA: "abc", Size: 7}}
-	s.acbaaUserLand = map[uint64]uint64{legacy: 99}
+	const minted, nsa = uint64(1800000043), uint64(0xaaaaaaaaaaaa0002)
+	s.acbaaNames = map[uint64]acbaaNames{minted: {User: "somebody", Land: "somewhere"}}
+	s.acbaaProfiles = map[uint64]acbaaProfile{minted: {SHA: "abc", Size: 7}}
+	s.acbaaUserLand = map[uint64]uint64{minted: 99}
+	s.acbaaUIDMap = map[uint64]uint64{nsa: minted} // the old direction
 	r := httptest.NewRequest("POST", "https://api.hac.lp1.acbaa.srv.nintendo.net/api/v1/users",
 		bytes.NewReader(acbaaObservedUser))
 	r.Header.Set("Authorization", "Bearer "+tok)
@@ -773,17 +773,20 @@ func TestAcbaaLegacyIDMigratesToNEXPID(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("status %d, want 200", w.Code)
 	}
-	if _, ok := s.acbaaNames[1800000043]; !ok {
-		t.Errorf("names not migrated to NEX PID")
+	if _, ok := s.acbaaNames[nsa]; !ok {
+		t.Errorf("names not migrated to the NSA id")
 	}
-	if _, ok := s.acbaaProfiles[1800000043]; !ok {
-		t.Errorf("profiles not migrated to NEX PID")
+	if _, ok := s.acbaaProfiles[nsa]; !ok {
+		t.Errorf("profiles not migrated to the NSA id")
 	}
-	if s.acbaaUserLand[1800000043] != 99 {
-		t.Errorf("user→land link not migrated to NEX PID")
+	if s.acbaaUserLand[nsa] != 99 {
+		t.Errorf("user→land link not migrated to the NSA id")
 	}
-	if _, ok := s.acbaaNames[legacy]; ok {
-		t.Errorf("legacy names key still present")
+	if _, ok := s.acbaaNames[minted]; ok {
+		t.Errorf("minted-pid names key still present")
+	}
+	if s.acbaaResolveUID(nsa) != nsa || s.acbaaResolveUID(minted) != nsa {
+		t.Errorf("resolve: nsa->%d minted->%d", s.acbaaResolveUID(nsa), s.acbaaResolveUID(minted))
 	}
 }
 
@@ -900,5 +903,35 @@ func TestAcbaaBestFriends(t *testing.T) {
 	do("POST", "/api/v1/friend_requests?target_user_id=12", c, msgpack(map[string]any{"meta": meta}))
 	if got := do("POST", "/api/v1/friend_requests?target_user_id=11", d, msgpack(map[string]any{"meta": meta})); got["approved"] != true {
 		t.Fatalf("mutual request approved = %#v, want true", got["approved"])
+	}
+}
+
+// The canonical ACNH id is the NSA id. Records that an earlier build keyed
+// by the minted pid (and mapped NSA -> minted) move back, the reverse
+// mapping goes, and friends on both sides follow.
+func TestAcbaaMintedPIDMovesBackToNSA(t *testing.T) {
+	const nsa, minted, other = uint64(12297829382472990721), uint64(1900000001), uint64(1900000002)
+	s := &server{
+		acbaaProfiles:   map[uint64]acbaaProfile{minted: {SHA: "abc", Size: 1}},
+		acbaaUIDMap:     map[uint64]uint64{nsa: minted},
+		acbaaFriendList: map[uint64][]uint64{minted: {other}, other: {minted}},
+	}
+	s.mu.Lock()
+	moved := s.migrateUIDLocked(minted, nsa)
+	s.mu.Unlock()
+	if !moved {
+		t.Fatal("nothing moved")
+	}
+	if _, ok := s.acbaaProfiles[nsa]; !ok {
+		t.Fatalf("profile not under the NSA id: %#v", s.acbaaProfiles)
+	}
+	if s.acbaaResolveUID(nsa) != nsa || s.acbaaResolveUID(minted) != nsa {
+		t.Fatalf("resolve: nsa->%d minted->%d", s.acbaaResolveUID(nsa), s.acbaaResolveUID(minted))
+	}
+	if got := s.acbaaFriendList[other]; len(got) != 1 || got[0] != nsa {
+		t.Fatalf("other's friend list = %v", got)
+	}
+	if got := s.acbaaFriendList[nsa]; len(got) != 1 || got[0] != other {
+		t.Fatalf("nsa's friend list = %v", got)
 	}
 }
