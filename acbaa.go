@@ -815,24 +815,29 @@ func (s *server) acbaaMessageCards(w http.ResponseWriter, r *http.Request) {
 	w.Write(msgpack(map[string]any{"total": 0, "count": 0, "headers": []any{}}))
 }
 
-// acbaaProfileStatus answers GET users/<id>/profile_status. The game's task
-// for this call is TaskInquireProfileReportStatus (binary symbol). The two
-// values it accepts are literally "ok" and "ng" (main 0x5a73ec compares
-// both; anything else fails closed as 2219-0021). Measured 2026-09-22:
-// NEITHER value opens or closes Orville's gate by itself — the "Passport
-// violates the Nintendo Code of Conduct" refusal came from a verdict the
-// game remembered from an earlier failed passport upload, and it cleared
-// the moment a changed passport was PUT and answered with the stored
-// record. Nobody moderates passports here, so answer "ng" (unreported)
-// for both sides, unconditionally; no bookkeeping needed.
+// acbaaProfileStatus answers GET users/<id>/profile_status: whether the
+// passport ("user_profile") and island ("land_profile") stand. The game's
+// task is TaskInquireProfileReportStatus and it accepts exactly "ok" or
+// "ng" (main 0x5a73ec; anything else fails closed as 2219-0021).
+//
+// "ng" LATCHES. Measured 2026-09-22: an "ng" answer makes the game remember
+// the passport as violating the Code of Conduct, Orville refuses the gate
+// on every later visit regardless of what this call answers next, and the
+// only thing that clears it is the player changing the passport so the
+// game re-uploads it (PUT users/<id>/profile). A stale "ng" from the days
+// when the profile lived under a mismatched uid is what kept both consoles
+// out; answering "ng" deliberately re-latched it within a minute. Nobody
+// moderates passports here, so it is "ok"/"ok" for everyone, always — a
+// fresh account's first status check runs BEFORE its first upload, and an
+// "ng" there would latch a brand-new player.
 func (s *server) acbaaProfileStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-msgpack")
 	w.WriteHeader(200)
 	// kinnay's field order (user_profile first): the shared encoder sorts
 	// keys, and a positional reader would swap the two on a sorted map.
 	w.Write(msgpackOrdered(
-		"user_profile", "ng",
-		"land_profile", "ng",
+		"user_profile", "ok",
+		"land_profile", "ok",
 	))
 }
 
