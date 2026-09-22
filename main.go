@@ -99,6 +99,26 @@ type server struct {
 	// versions when unset, so direct handler tests keep working.
 	penneState *penneStore
 	penneHub   *penneHub
+	// acbaaProfiles remembers uploaded ACNH player profiles by ACNH user id
+	// so profile_status reflects them after a PUT, and acbaaResources the
+	// per-user web_service_resources uploads. Both file-backed (acbaaPath)
+	// because a restart must not blank them: a warm client that already
+	// registered checks status without re-uploading, and blanks read as a
+	// failure (2219-0021). Lazily created so direct handler tests work.
+	acbaaProfiles  map[uint64]acbaaProfile
+	acbaaResources map[uint64]map[string][]byte
+	acbaaNames     map[uint64]acbaaNames
+	// acbaaLandProfiles remembers uploaded island profiles by land
+	// in_app_id, and acbaaUserLand links each user to their land (set at
+	// bind time). profile_status reports "ok" per side exactly when that
+	// side was uploaded — the game byte-compares for "ok"/"ng".
+	acbaaLandProfiles map[uint64]acbaaProfile
+	acbaaUserLand     map[uint64]uint64
+	// acbaaUIDMap records legacy ACNH id -> NEX PID moves, so path uids
+	// minted before the single-identity change keep addressing the same
+	// account on warm clients.
+	acbaaUIDMap map[uint64]uint64
+	acbaaPath   string
 	// shop is the store workstream's state (catalog, entitlements, tasks, beach links);
 	// shopUI holds the storefront's in-memory diagnostics ring.
 	shop   *shopState
@@ -2336,6 +2356,11 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(host, "bcat-"):
 		// BCAT and the News channel: msgpack, two routes (bcat.go).
 		s.bcat(w, r, body)
+	case strings.Contains(host, ".acbaa.srv.nintendo.net"):
+		// Animal Crossing web API (acbaa.go): island registration. Before
+		// this it fell into the catch-all 404 and ACNH errored (2219-xxxx)
+		// before ever reaching NEX.
+		s.acbaa(w, r, body)
 	case strings.HasSuffix(host, ".dg.srv.nintendo.net"), strings.Contains(host, ".er.srv.nintendo.net"):
 		// prepo's play reports and eupld's error reports (netdiag.go).
 		s.telemetry(w, r, body)
@@ -2430,6 +2455,8 @@ func main() {
 		acct:    newBackend(),
 		shop:    newShopState(getenv("NX_DATA", "/data") + "/shop"),
 	}
+	s.acbaaPath = getenv("NX_DATA", "/data") + "/acbaa.json"
+	s.acbaaLoad()
 	if b, ok := s.acct.(*openpakBackend); ok {
 		go s.followCoreEvents(b)
 		// One presence reconciler beside the one core-event poller: leases,
