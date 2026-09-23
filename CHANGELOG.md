@@ -3,7 +3,7 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
-## Unreleased — after v0.16.0
+## v0.17.0 — 2026-09-23
 
 The four eShop P2 leftovers that v0.16.0 answered with stubs are now features (evidence
 and what stays unverified: `docs/native-shop.md`, "After v0.16.0"):
