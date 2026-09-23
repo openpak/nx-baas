@@ -872,7 +872,12 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		// behind the console is recorded for the notification channel.
 		s.notifStore().BindConsole(di, u.ID)
 		s.expireDeviceEverywhere(form.Get("id"), u.ID)
-		s.noteDevicePresence(u, form.Get("id"), "ONLINE", "", "", "", -1)
+		// A console re-logs in every hour while it plays; the login knows no
+		// title, so it must not overwrite the one the device already published
+		// (2026-09-22: a game dropping off the friend list at each login).
+		if !s.deviceClaimLive(u, form.Get("id")) {
+			s.noteDevicePresence(u, form.Get("id"), "ONLINE", "", "", "", -1)
+		}
 		s.reportOnline(r.Context(), u)
 		res := map[string]any{
 			"expiresIn": 10800, "user": s.userObj(u, id, ""), "idToken": s.idToken(u, id, username, app),

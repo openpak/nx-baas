@@ -537,7 +537,7 @@ func TestAFriendPlayingOnAnotherPlatformReadsAsOnline(t *testing.T) {
 	// And this platform's own session still names its title.
 	sess.namespace = b.namespace
 	s.coreSeen().byID = map[string]corePresence{}
-	s.coreSeen().at = time.Time{}
+	s.coreSeen().at = map[string]time.Time{}
 	if _, err := sess.RegisterSession(ctx, &accountv1.RegisterSessionRequest{
 		AccountId: account, Namespace: b.namespace, TitleId: "0100a5a020d5e000",
 		EndpointRef: "baas", LeaseSeconds: 300,
@@ -569,5 +569,28 @@ func TestABareSignInDoesNotTakeTheGameAway(t *testing.T) {
 	got := s.store.User(u.ID).DevicePresence["emulator"]
 	if got.AppID != "" || got.PresenceGroupID != "" {
 		t.Fatalf("all-zero ids were stored as a title: %+v", got)
+	}
+}
+
+// Two friends rendered back to back: the second is looked up on its own, not
+// answered from the first one's cache entry (which said nothing about it).
+func TestCorePresenceCacheIsPerAccount(t *testing.T) {
+	s, _, users := socialServer(t)
+	sess := newFakeSessions()
+	b := s.acct.(*openpakBackend)
+	b.sessions = sess
+	offline, live := b.accountFor(users[0].PID), b.accountFor(users[1].PID)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := sess.RegisterSession(ctx, &accountv1.RegisterSessionRequest{
+		AccountId: live, Namespace: "wiiu", EndpointRef: "nex", LeaseSeconds: 300,
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if _, ok := s.corePresenceOf(offline); ok {
+		t.Fatal("an account with no session read as live")
+	}
+	if _, ok := s.corePresenceOf(live); !ok {
+		t.Fatal("a live friend read as offline because another was looked up first")
 	}
 }

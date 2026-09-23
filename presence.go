@@ -258,6 +258,14 @@ func hasLiveDeviceClaim(u *User, now int64, lease time.Duration) bool {
 	return false
 }
 
+// deviceClaimLive answers whether one device holds a live claim right now.
+func (s *server) deviceClaimLive(u *User, deviceID string) bool {
+	s.store.mu.Lock()
+	defer s.store.mu.Unlock()
+	e := u.DevicePresence[deviceID]
+	return e != nil && stateRank(e.State) > 0 && e.ExpiresAt > time.Now().Unix()
+}
+
 // expireDeviceEverywhere ends a device account's claim in every other user's
 // record: one console holds one signed-in user at a time, so when it signs in
 // as someone new, the previous account's presence for that device is a lie

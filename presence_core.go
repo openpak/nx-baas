@@ -32,16 +32,20 @@ type corePresence struct {
 // render.
 const corePresenceTTL = 10 * time.Second
 
+// Freshness is per account: one global timestamp made every friend but the
+// first read as offline for ten seconds after any lookup.
 type corePresenceCache struct {
 	mu   sync.Mutex
-	at   time.Time
+	at   map[string]time.Time
 	byID map[string]corePresence
 }
 
 // coreSeen is per server, not per process: two servers in one test binary do
 // not share what the core told one of them.
 func (s *server) coreSeen() *corePresenceCache {
-	s.coreSeenOnce.Do(func() { s.corePresence = &corePresenceCache{byID: map[string]corePresence{}} })
+	s.coreSeenOnce.Do(func() {
+		s.corePresence = &corePresenceCache{at: map[string]time.Time{}, byID: map[string]corePresence{}}
+	})
 	return s.corePresence
 }
 
@@ -55,8 +59,7 @@ func (s *server) corePresenceOf(accountID string) (corePresence, bool) {
 	}
 	cache := s.coreSeen()
 	cache.mu.Lock()
-	fresh := time.Since(cache.at) < corePresenceTTL
-	if fresh {
+	if at, ok := cache.at[accountID]; ok && time.Since(at) < corePresenceTTL {
 		p, known := cache.byID[accountID]
 		cache.mu.Unlock()
 		return p, known
@@ -85,7 +88,7 @@ func (s *server) corePresenceOf(accountID string) (corePresence, bool) {
 	if _, answered := next[accountID]; !answered {
 		delete(cache.byID, accountID)
 	}
-	cache.at = time.Now()
+	cache.at[accountID] = time.Now()
 	cache.mu.Unlock()
 	p, known := next[accountID]
 	return p, known
