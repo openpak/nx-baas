@@ -371,7 +371,7 @@ func (s *server) shopDiagReport(w http.ResponseWriter, r *http.Request, body []b
 
 func (s *server) shopEntryPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, shopPage("OpenPak Shop", shopAppJS))
+	fmt.Fprint(w, storePage())
 }
 
 func (s *server) shopDiagPage(w http.ResponseWriter, r *http.Request) {
@@ -522,15 +522,100 @@ func mustJSON(v any) string {
 	return string(b)
 }
 
-// shopAppJS is the storefront (SHP-02): catalog grid, details, acquisition, downloads, and
-// the scene views systemWeb opens on savanna. Bridge calls are guarded: when window.nx is
-// missing (a plain browser), the page says so and refuses acquisition instead of pretending a
-// download can happen — a web page is not a native install (SHP-04).
+// storePage is the storefront's own shell, laid out like the console eShop: a sidebar with
+// the brand block and sections, a two-column card grid, and a footer with the button hints.
+// OpenPak's purple and blue replace Nintendo's red. Sized for the 1280x720 applet.
+func storePage() string {
+	return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">` +
+		`<meta name="viewport" content="width=1280,initial-scale=1"><title>OpenPak Shop</title>` +
+		`<style>` + storeCSS + `</style></head><body>` +
+		`<nav id="side"><div class="logo"><img src="` + logoDataURI + `" alt="">OpenPak Shop</div>` +
+		`<button class="nav" data-view="highlights"><span class="ic">☆</span>Highlights</button>` +
+		`<button class="nav" data-view="search"><span class="ic">⌕</span>Search</button>` +
+		`<button class="nav" data-view="owned"><span class="ic">♡</span>Your Titles</button>` +
+		`<div class="gap"></div>` +
+		`<button class="nav sub" data-view="recent">Recent Releases</button>` +
+		`<button class="nav sub" data-view="updates">Recently Updated</button>` +
+		`<button class="nav sub" data-view="nso">Nintendo Switch Online</button>` +
+		`<button class="nav sub" data-view="redeem">Redeem Code</button>` +
+		`</nav><section id="main"><div class="top"><span class="note">All titles are free</span>` +
+		`<span id="who" class="who"></span></div>` +
+		`<div id="banner" class="banner"></div><div id="app"><p class="empty">Loading…</p></div></section>` +
+		`<footer><span class="fl"><img src="` + logoDataURI + `" alt=""></span>` +
+		`<span class="hint"><b>B</b>Back</span><span class="hint"><b>A</b>Confirm</span></footer>` +
+		`<script>` + shopBridgeJS + shopAppJS + `</script></body></html>`
+}
+
+const storeCSS = `
+:root{--p1:#6d4aff;--p2:#3b82f6;--bg:#ececf1;--card:#ffffff;--ink:#1d1b26;--muted:#6b6880;--line:#dcdae6}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);overflow:hidden;
+font:22px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+button{font:inherit;color:inherit;cursor:pointer}
+#side{position:fixed;left:0;top:0;bottom:64px;width:330px;background:#f7f7fa;overflow-y:auto;padding-bottom:16px}
+.logo{height:56px;display:flex;align-items:center;gap:12px;padding:0 26px;color:#fff;font-weight:700;font-size:24px;
+background:linear-gradient(120deg,var(--p1),var(--p2));margin-bottom:14px}
+.logo img{width:30px;height:30px;filter:brightness(0) invert(1)}
+.nav{display:flex;align-items:center;gap:16px;width:calc(100% - 28px);margin:4px 14px;padding:14px 22px;
+background:none;border:3px solid transparent;border-radius:12px;text-align:left;font-size:24px}
+.nav.sub{font-size:20px;padding:10px 22px}
+.nav .ic{width:26px;text-align:center;font-size:24px}
+.nav.on{background:#fff;box-shadow:inset 5px 0 0 var(--p1)}
+.gap{height:10px}
+#main{position:fixed;left:330px;right:0;top:0;bottom:64px;overflow-y:auto;padding:0 34px 30px}
+.top{display:flex;align-items:center;justify-content:space-between;height:64px}
+.note{color:var(--muted);font-size:17px}
+.who{font-size:17px;color:var(--muted)}
+.banner{display:none;background:#fdecec;color:#9b1c1c;border-radius:12px;padding:12px 18px;margin-bottom:16px;font-size:18px}
+h1{font-size:30px;margin:4px 0 16px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.card{display:block;width:100%;padding:0;background:var(--card);border:3px solid transparent;border-radius:14px;
+overflow:hidden;text-align:left;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.strip{height:30px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px;font-weight:700;
+letter-spacing:.06em;text-transform:uppercase;background:linear-gradient(120deg,var(--p1),var(--p2))}
+.art{position:relative;height:230px;overflow:hidden;background:#2a2340}
+.art .blur{position:absolute;inset:-30px;background-size:cover;background-position:center;filter:blur(24px) saturate(1.3);opacity:.75}
+.art img{position:relative;display:block;height:180px;width:180px;margin:25px auto;border-radius:18px;box-shadow:0 8px 24px rgba(0,0,0,.35)}
+.cap{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 16px;font-size:22px}
+.cap .n{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.badge{flex:none;font-size:15px;font-weight:700;padding:2px 8px;border-radius:5px;background:#ffcf33;color:#3a2a00}
+.badge.own{background:#d7f5e3;color:#11643a}
+.detail{display:grid;grid-template-columns:360px 1fr;gap:28px;background:var(--card);border-radius:16px;padding:24px}
+.detail .art{height:360px;border-radius:14px}
+.detail .art img{width:250px;height:250px;margin:55px auto}
+.detail h1{margin:0 0 4px}
+.pub{color:var(--muted);margin:0 0 14px}
+.desc{margin:0 0 18px;font-size:19px;color:#3b3850}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 18px;font-size:18px;margin-bottom:20px}
+.kv b{color:var(--muted);font-weight:500}
+.act{display:inline-block;min-width:260px;padding:14px 26px;border:3px solid transparent;border-radius:40px;color:#fff;font-weight:700;
+background:linear-gradient(120deg,var(--p1),var(--p2))}
+.act.plain{background:#fff;color:var(--ink);border-color:var(--line)}
+.msg{color:var(--muted);font-size:19px}
+.empty{color:var(--muted);font-size:22px;padding:30px 0}
+.search{width:100%;font:inherit;font-size:24px;padding:14px 20px;border:3px solid var(--line);border-radius:14px;margin-bottom:20px;background:#fff}
+footer{position:fixed;left:0;right:0;bottom:0;height:64px;background:#f7f7fa;border-top:1px solid var(--line);
+display:flex;align-items:center;gap:34px;padding:0 40px;font-size:22px}
+footer .fl{margin-right:auto}
+footer .fl img{height:34px}
+.hint{display:flex;align-items:center;gap:10px}
+.hint b{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:50%;background:#1d1b26;color:#fff;font-size:16px}
+.nav:focus,.card:focus,.act:focus,.search:focus{outline:none;border-color:var(--p1);
+box-shadow:0 0 0 3px #fff,0 0 0 6px rgba(59,130,246,.55)}
+.card:focus{transform:translateY(-2px)}
+`
+
+// shopAppJS is the storefront (SHP-02): sections, catalog cards, details, acquisition,
+// downloads, and the scene views systemWeb opens on savanna. The catalog renders at once;
+// the account is asked for in the background and the view refreshes when it arrives, so a
+// slow or unanswered bridge never holds the shop closed. Bridge calls are guarded: without
+// window.nx (a plain browser) acquisition is refused rather than faked (SHP-04).
 const shopAppJS = `
 (function(){
 function esc(s){return String(s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
-var app=document.getElementById('app'), banner=document.getElementById('banner');
-var token=null, lang=(navigator.language||'en-US');
+function $(id){return document.getElementById(id);}
+var app=$('app'), banner=$('banner');
+var token=null, lang=(navigator.language||'en-US'), catalog=null, view=null, back=null;
 function show(m){banner.style.display='block';banner.textContent=m;}
 function hide(){banner.style.display='none';}
 function api(path,opts){opts=opts||{};opts.headers=opts.headers||{};if(token)opts.headers['Authorization']='Bearer '+token;
@@ -539,92 +624,126 @@ function query(){var o={},s=location.search.replace(/^\?/,'').split('&');
  for(var i=0;i<s.length;i++){if(!s[i])continue;var kv=s[i].split('=');o[decodeURIComponent(kv[0])]=decodeURIComponent((kv[1]||'').replace(/\+/g,' '));}
  return o;}
 var Q=query();
-
-// Account handoff: the page asks the console who is using the shop. requestNaIdToken is
-// the name 22.5.0 carries; setNsaIdTokenAvailableCallback delivers the network service
-// account's token when the console has one cached. Either token identifies the account to
-// this server. The callback shapes are unrecovered; what arrives is reported, and with no
-// token the page browses read-only and says so.
 var bridge={present:typeof(window.nx)!=='undefined'};
-function identify(){
- return new Promise(function(res){
-  if(!bridge.present){return res(false);}
-  function take(r){
-   var t=nxToken(r&&r.value);
-   report({event:'identify',where:r&&r.where,absent:!!(r&&r.absent),token:!!t,shape:t?'':brief(r&&r.value)});
-   if(t&&!token){token=t;res(true);}
-  }
-  nxCall('setNsaIdTokenAvailableCallback',[],take);
-  if(!nxCall('requestNaIdToken',[],take)){nxCall('ensureNaIdToken',[],take);}
-  setTimeout(function(){res(!!token);},4000);
- });
+
+// Account handoff. On 22.5.0 the console carries nx.shop.requestNaIdToken, and calling it
+// with only a callback throws "Not enough arguments" (hardware, 2026-09-23). Its parameters
+// are not recovered, so the likely shapes are tried in turn; the first that does not throw,
+// the function's declared length and what came back are reported, so the next console run
+// names the real signature. The shop does not wait for any of it.
+function identify(done){
+ if(!bridge.present){return;}
+ function take(r){
+  var t=nxToken(r&&r.value);
+  report({event:'identify',where:r&&r.where,absent:!!(r&&r.absent),token:!!t,shape:t?'':brief(r&&r.value)});
+  if(t&&!token){token=t;done();}
+ }
+ nxCall('setNsaIdTokenAvailableCallback',[],take);
+ var f=nxFind('requestNaIdToken')||nxFind('ensureNaIdToken');
+ if(!f){return;}
+ var CB={};
+ var tries=[[CB],[false,CB],[true,CB],[CB,CB],['',CB],[{},CB]];
+ for(var i=0;i<tries.length;i++){
+  var args=tries[i].map(function(a){return a===CB?function(v){take({where:f.where,value:v});}:a;});
+  try{
+   var r=f.fn.apply(f.self,args);
+   report({event:'identify_call',where:f.where,declared:f.fn.length,tried:i,returned:brief(r)});
+   if(r&&typeof(r.then)==='function'){r.then(function(v){take({where:f.where,value:v});},function(e){take({where:f.where,value:{error:String(e)}});});}
+   else if(r!==undefined){take({where:f.where,value:r});}
+   return;
+  }catch(e){report({event:'identify_call',where:f.where,declared:f.fn.length,tried:i,error:String(e)});}
+ }
 }
 
 function human(n){if(n>1073741824)return (n/1073741824).toFixed(2)+' GB';if(n>1048576)return (n/1048576).toFixed(1)+' MB';if(n>1024)return (n/1024).toFixed(0)+' KB';return n+' B';}
-
-function list(ownedOnly){
- hide(); app.innerHTML='<div class="row"><span class="name">Loading…</span></div>';
- api('/catalog?lang='+encodeURIComponent(lang)).then(function(r){
-  if(r.status!==200){show('The catalog is unavailable right now ('+r.status+').');app.innerHTML='';return;}
-  var ts=r.body.titles||[];
-  if(ownedOnly){ts=ts.filter(function(t){return t.ownership==='owned';});}
-  var head=ownedOnly?'<h1>Your titles</h1>':'';
-  if(ownedOnly&&!token){app.innerHTML=head+'<p class="note">Sign-in did not reach the shop, so it cannot tell which titles are yours.</p>';return;}
-  if(!ts.length){app.innerHTML=head+'<div class="row"><span class="name">'+(ownedOnly?'You have no titles from this shop yet.':'The catalog is empty.')+'</span><span class="pill">nothing here yet</span></div>';return;}
-  var g=head+'<div class="grid">';
-  for(var i=0;i<ts.length;i++){var t=ts[i];
-   g+='<button class="tile" data-tid="'+esc(t.title_id)+'">'+
-      '<img src="'+esc(t.icon)+'" alt="">'+
-      '<span><span class="t-name">'+esc(t.name)+'</span><br>'+
-      '<span class="t-sub">'+esc(t.publisher||'')+' · '+human(t.size_bytes||0)+' · v'+esc(t.version_label||t.version)+'</span>'+
-      (t.ownership==='owned'?'<br><span class="own">Owned</span>':'')+
-      '</span></button>';
-  }
-  app.innerHTML=g+'</div>';
-  var b=app.querySelectorAll('.tile');
-  for(var j=0;j<b.length;j++){b[j].addEventListener('click',function(){detail(this.getAttribute('data-tid'));});}
-  if(b.length){b[0].focus();}
- }).catch(function(){show('The catalog could not be reached.');app.innerHTML='';});
+var DAY=86400;
+function isNew(t){return t.updated_at&&(Date.now()/1000-t.updated_at)<30*DAY;}
+function load(){
+ if(catalog){return Promise.resolve(catalog);}
+ return api('/catalog?lang='+encodeURIComponent(lang)).then(function(r){
+  if(r.status!==200){throw new Error(String(r.status));}
+  catalog=r.body.titles||[];return catalog;});
 }
-
+function select(v){
+ var b=document.querySelectorAll('.nav');
+ for(var i=0;i<b.length;i++){b[i].className=b[i].className.replace(/ on/g,'')+(b[i].getAttribute('data-view')===v?' on':'');}
+}
+function art(t){return '<div class="art"><div class="blur" style="background-image:url('+esc(t.icon)+')"></div><img src="'+esc(t.icon)+'" alt=""></div>';}
+function card(t){
+ var badge=t.ownership==='owned'?'<span class="badge own">OWNED</span>':(isNew(t)?'<span class="badge">NEW</span>':'');
+ return '<button class="card" data-tid="'+esc(t.title_id)+'"><div class="strip">'+esc(t.category||'Homebrew')+'</div>'+
+  art(t)+'<div class="cap"><span class="n">'+esc(t.name)+'</span>'+badge+'</div></button>';
+}
+function wire(){
+ var b=app.querySelectorAll('.card');
+ for(var j=0;j<b.length;j++){b[j].addEventListener('click',function(){detail(this.getAttribute('data-tid'));});}
+}
+function grid(ts,title,empty){
+ app.innerHTML=(title?'<h1>'+title+'</h1>':'')+(ts.length?'<div class="grid">'+ts.map(card).join('')+'</div>':'<p class="empty">'+empty+'</p>');
+ wire();
+}
+function section(v,focusFirst){
+ view=function(){section(v,false);}; back=null; select(v); hide();
+ if(v==='nso'){return info('Nintendo Switch Online','Memberships are not sold on OpenPak: online play and every other Nintendo Switch Online feature are already included with your OpenPak account.');}
+ if(v==='redeem'){return info('Redeem Code','Codes are not needed on OpenPak: every title in this shop is free to get.');}
+ if(v==='search'){return search();}
+ load().then(function(ts){
+  ts=ts.slice();
+  if(v==='owned'){
+   if(!token){return info('Your Titles','Sign-in has not reached the shop yet, so it cannot tell which titles are yours.');}
+   return grid(ts.filter(function(t){return t.ownership==='owned';}),'Your Titles','You have no titles from this shop yet.');
+  }
+  if(v==='recent'||v==='updates'){ts.sort(function(a,b){return (b.updated_at||0)-(a.updated_at||0);});
+   return grid(ts,v==='recent'?'Recent Releases':'Recently Updated','Nothing here yet.');}
+  grid(ts,'','The shop is empty for now.');
+  if(focusFirst){var c=app.querySelector('.card');if(c){c.focus();}}
+ }).catch(function(e){show('The shop could not be reached ('+e.message+').');app.innerHTML='';});
+}
+function search(){
+ app.innerHTML='<input class="search" id="q" placeholder="Search the OpenPak Shop" autocomplete="off"><div id="res"></div>';
+ var q=$('q');
+ function run(){load().then(function(ts){var s=q.value.trim().toLowerCase();
+  var hit=s?ts.filter(function(t){return (t.name+' '+(t.publisher||'')).toLowerCase().indexOf(s)>=0;}):[];
+  $('res').innerHTML=s?(hit.length?'<div class="grid">'+hit.map(card).join('')+'</div>':'<p class="empty">No titles match “'+esc(q.value)+'”.</p>'):'';
+  wire();});}
+ q.addEventListener('input',run);q.addEventListener('change',run);q.focus();
+}
+function info(h,body){
+ app.innerHTML='<h1>'+esc(h)+'</h1><p class="msg">'+esc(body)+'</p>';
+}
 function detail(tid){
- hide(); app.innerHTML='<div class="row"><span class="name">Loading…</span></div>';
+ var from=view; hide();
+ view=function(){detail(tid);}; back=function(){from();};
+ app.innerHTML='<p class="empty">Loading…</p>';
  api('/catalog/'+encodeURIComponent(tid)+'?lang='+encodeURIComponent(lang)).then(function(r){
   var t=r.body;
-  if(r.status!==200||!t){show('This title is not in the OpenPak shop.');list(false);return;}
-  var own=t.ownership;
-  var act='';
-  if(own==='owned'){act='<button class="small" id="dl">Download</button>';}
-  else if(own==='revoked'){act='<p class="note">This title is no longer licensed on this account.</p>';}
-  else if(!bridge.present){act='<p class="note">Acquisition needs the console shop bridge (window.nx). You are viewing a standalone page; nothing can be acquired here.</p>';}
-  else{act='<button class="small" id="acq">Get it free</button>';}
-  app.innerHTML='<a class="back" href="#" id="back">← Back</a>'+
-   '<div class="detail card"><img class="icon" src="'+esc(t.icon)+'" alt="">'+
-   '<h1>'+esc(t.name)+'</h1><p>'+esc(t.description||'')+'</p>'+
-   '<div class="kv">'+
-   '<b>Publisher</b><span>'+esc(t.publisher||'—')+'</span>'+
-   '<b>Size</b><span>'+human(t.size_bytes||0)+'</span>'+
+  if(r.status!==200||!t){show('This title is not in the OpenPak shop.');return section('highlights',true);}
+  var own=t.ownership, act='';
+  if(own==='owned'){act='<button class="act" id="dl">Download</button>';}
+  else if(own==='revoked'){act='<p class="msg">This title is no longer licensed on this account.</p>';}
+  else if(!bridge.present){act='<p class="msg">Getting titles needs the console. This page is open in a plain browser.</p>';}
+  else{act='<button class="act" id="acq">Free Download</button>';}
+  app.innerHTML='<div class="detail">'+art(t)+'<div><h1>'+esc(t.name)+'</h1><p class="pub">'+esc(t.publisher||'')+'</p>'+
+   (t.description?'<p class="desc">'+esc(t.description)+'</p>':'')+
+   '<div class="kv"><b>Size</b><span>'+human(t.size_bytes||0)+'</span>'+
    '<b>Version</b><span>'+esc(t.version_label||t.version)+'</span>'+
-   '<b>Compatibility</b><span>'+esc((t.compatibility||[]).join(', ')||'—')+'</span>'+
-   '<b>Languages</b><span>'+esc((t.languages||[]).join(', ')||'—')+'</span>'+
-   '<b>Ownership</b><span>'+esc(own||'unknown (not signed in)')+'</span>'+
-   '</div>'+act+'</div>';
-  document.getElementById('back').addEventListener('click',function(e){e.preventDefault();list(false);});
-  var acq=document.getElementById('acq');
-  if(acq){acq.addEventListener('click',function(){acquire(t);});acq.focus();}
-  var dl=document.getElementById('dl');
-  if(dl){dl.addEventListener('click',function(){startDownload(t);});dl.focus();}
+   '<b>Play modes</b><span>'+esc((t.compatibility||[]).join(', ')||'—')+'</span>'+
+   '<b>Languages</b><span>'+esc((t.languages||[]).join(', ')||'—')+'</span></div>'+act+'</div></div>';
+  var a=$('acq')||$('dl');
+  if($('acq')){$('acq').addEventListener('click',function(){acquire(t);});}
+  if($('dl')){$('dl').addEventListener('click',function(){startDownload(t);});}
+  if(a){a.focus();}
  }).catch(function(){show('This title could not be reached.');});
 }
 
 function acquire(t){
- hide(); app.innerHTML='<div class="row"><span class="name">Getting '+esc(t.name)+'…</span></div>';
+ hide(); app.innerHTML='<p class="empty">Getting '+esc(t.name)+'…</p>';
  api('/catalog/'+t.title_id+'/acquire',{method:'POST'}).then(function(r){
   if(r.status===200){
    report({event:'acquired',title_id:t.title_id,elicense_id:r.body.elicense_id,already_owned:r.body.already_owned});
-   startDownload(t);
+   catalog=null; startDownload(t);
   }else{
-   show('Acquisition failed: '+((r.body.error&&r.body.error.message)||r.status));
+   show('Could not get it: '+((r.body.error&&r.body.error.message)||r.status));
    detail(t.title_id);
   }
  });
@@ -645,50 +764,49 @@ function handOff(t){
  }
 }
 function startDownload(t){
- hide(); app.innerHTML='<div class="row"><span class="name">Preparing download…</span></div>';
+ hide(); app.innerHTML='<p class="empty">Preparing download…</p>';
  api('/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title_id:t.title_id})}).then(function(r){
   if(r.status!==200){show('Download refused: '+((r.body.error&&r.body.error.message)||r.status));detail(t.title_id);return;}
   var id=r.body.id;
   syncRights(function(){
    handOff(t);
-   app.innerHTML='<div class="row ok"><span class="name">'+esc(t.name)+' was handed to the console to download.</span><span class="pill">queued</span></div>'+
-    '<p class="note">Progress shows on the HOME Menu. You can close the shop.</p>'+
-    '<button class="small" id="done">Close the shop</button> <button class="small" id="back2">Back</button> <button class="small" id="cancel">Cancel download</button>';
-   document.getElementById('done').addEventListener('click',closeShop);
-   document.getElementById('back2').addEventListener('click',function(){list(false);});
-   document.getElementById('cancel').addEventListener('click',function(){
-    api('/tasks/'+id+'/cancel',{method:'POST'}).then(function(){handOff(t);detail(t.title_id);});
-   });
-   document.getElementById('done').focus();
+   app.innerHTML='<div class="detail">'+art(t)+'<div><h1>'+esc(t.name)+'</h1>'+
+    '<p class="msg">The download has started. Progress shows on the HOME Menu, and you can close the shop.</p>'+
+    '<button class="act" id="done">Close the shop</button> <button class="act plain" id="cancel">Cancel download</button></div></div>';
+   $('done').addEventListener('click',closeShop);
+   $('cancel').addEventListener('click',function(){api('/tasks/'+id+'/cancel',{method:'POST'}).then(function(){handOff(t);detail(t.title_id);});});
+   $('done').focus();
   });
  });
 }
 
-function info(h,body){
- hide(); app.innerHTML='<h1>'+h+'</h1>'+body+'<button class="small" id="back3">Browse the shop</button>';
- document.getElementById('back3').addEventListener('click',function(){list(false);});
- document.getElementById('back3').focus();
-}
+// The controller: B goes back one step, and from a section it leaves the shop.
+document.addEventListener('keydown',function(e){
+ var k=e.key||e.keyCode;
+ if(e.target&&e.target.id==='q'&&(k==='Backspace'||k===8)){return;}
+ if(k==='Escape'||k==='Backspace'||k===27||k===8){e.preventDefault();if(back){back();}else{closeShop();}}
+});
+var navs=document.querySelectorAll('.nav');
+for(var i=0;i<navs.length;i++){navs[i].addEventListener('click',function(){section(this.getAttribute('data-view'),true);});}
 
 // The scene systemWeb opened, from the savanna path (bugyo's /ashigaru/ lands on the top).
 // OpenPak's shop carries homebrew and its updates only: add-on content, tickets,
 // subscriptions, memberships and codes are Nintendo's commerce, and their scenes say so.
 function route(){
  var p=location.pathname.replace(/\/$/,''), m;
- var none='<p>This part of the Nintendo eShop is not available on OpenPak. The OpenPak shop carries free homebrew and its updates.</p>';
- if(/^\/detail\/application_items\//.test(p)||/^\/catalog_tickets\//.test(p)){return info('Not available on OpenPak',none);}
- if((m=p.match(/^\/detail\/([^\/]+)/))){return detail(decodeURIComponent(m[1]).toLowerCase());}
- if(Q.dst_app_id){return detail(Q.dst_app_id.toLowerCase());}
- if(p==='/my'||p==='/shelf'){return list(true);}
- if(p==='/membership'||Q.landing_page==='nso'){return info('Nintendo Switch Online','<p>Memberships are not sold on OpenPak: online play and every other Nintendo Switch Online feature are already included with your OpenPak account.</p>');}
- if(p==='/redeem/input'){return info('Redeem a code','<p>Redeeming codes is not available on OpenPak: every title in this shop is free to get.</p>');}
- list(false);
+ if(/^\/detail\/application_items\//.test(p)||/^\/catalog_tickets\//.test(p)){section('highlights');return info('Not available on OpenPak','This part of the Nintendo eShop is not available on OpenPak. The OpenPak shop carries free homebrew and its updates.');}
+ if((m=p.match(/^\/detail\/([^\/]+)/))){section('highlights');return detail(decodeURIComponent(m[1]).toLowerCase());}
+ if(Q.dst_app_id){section('highlights');return detail(Q.dst_app_id.toLowerCase());}
+ if(p==='/my'||p==='/shelf'){return section('owned',true);}
+ if(p==='/membership'||Q.landing_page==='nso'){return section('nso');}
+ if(p==='/redeem/input'){return section('redeem');}
+ section('highlights');
+ var h=document.querySelector('.nav');if(h){h.focus();}
 }
 
-identify().then(function(){
- if(!bridge.present){show('Standalone mode: the console shop bridge is absent. Browsing works; acquiring does not.');}
- report({event:'page',path:location.pathname,query:location.search,bridge:bridge.present,identified:!!token});
- route();
-});
+if(!bridge.present){show('This is the console shop opened in a plain browser: browsing works, getting titles does not.');}
+report({event:'page',path:location.pathname,query:location.search,bridge:bridge.present});
+route();
+identify(function(){catalog=null;$('who').textContent='Signed in';report({event:'identified'});if(view){view();}});
 })();
 `

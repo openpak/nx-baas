@@ -3,6 +3,22 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.19.0 — 2026-09-23
+
+- **eShop, laid out like the console eShop** in OpenPak purple and blue: a sidebar (Highlights,
+  Search, Your Titles, Recent Releases, Recently Updated, Nintendo Switch Online, Redeem
+  Code), a two-column card grid with NEW and OWNED badges, a detail view with one action
+  button, and a footer with the B/A hints. B goes back, and from a section leaves the shop.
+- **The eShop opens faster**: the catalog renders at once instead of waiting up to 4 s for
+  the account; the view refreshes when sign-in arrives.
+- **Sign-in in the shop**: on 22.5.0 `nx.shop.requestNaIdToken` exists and throws "Not
+  enough arguments" with a callback alone (hardware, 2026-09-23). The likely signatures are
+  tried in turn and the first that works, the declared arity and the result are reported.
+- **Switch Online pages**: seven pages (Home, Online Play, Save Data Cloud, Smartphone App,
+  Across Consoles, FAQ, Help & Guides) on a tab bar that L and R move through. The keys L
+  and R send are not known yet, so the likely ones and gamepad buttons 4/5 are all taken,
+  and every key the page sees is logged once through `/_openpak/diag`.
+
 ## v0.18.0 — 2026-09-23
 
 - **Voice-chat lobby**: the znc `/lobby/` page is now OpenPak voice chat's console side. It
