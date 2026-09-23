@@ -182,39 +182,40 @@ const lhubCSS = `
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;overflow:hidden;color:#fff;
 background:radial-gradient(ellipse at 30% 40%,#3b6cff 0%,#2448e0 45%,#1a33b8 100%);
-font:22px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+font:2.9vh/1.3 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+body{display:flex;flex-direction:column}
 button{font:inherit;color:inherit;cursor:pointer}
-.wrap{display:flex;height:540px;padding:40px 110px 0}
-.left{width:400px;display:flex;flex-direction:column;justify-content:center}
-.tag{margin:0 0 6px;font-size:22px;opacity:.9}
-.mark{display:flex;align-items:center;gap:14px}
-.mark img{width:70px;height:70px;filter:brightness(0) invert(1)}
-.mark span{font-size:72px;font-weight:800;letter-spacing:.02em;line-height:1}
-.sub{margin:6px 0 22px;font-weight:700;letter-spacing:.08em;font-size:20px}
-.guide{align-self:flex-start;background:#fff;color:#1f3fbf;border:4px solid transparent;border-radius:30px;padding:10px 34px;font-size:24px}
-.who{margin:18px 0 0;font-size:18px;opacity:.85}
-.right{flex:1;display:flex;flex-direction:column;justify-content:center;padding-left:30px}
-.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:26px 20px}
-.it{background:none;border:4px solid transparent;border-radius:18px;padding:14px 8px;text-align:center}
-.it .ic{font-size:64px;line-height:1.1;display:block;margin-bottom:8px}
-.it .t{font-size:21px}
-h1{font-size:40px;margin:0 0 14px}
-.lead{margin:0 0 18px;font-size:21px;opacity:.9}
-.rows{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-.row{background:rgba(255,255,255,.12);border:4px solid transparent;border-radius:16px;padding:14px 18px;text-align:left}
-.row b{display:block;font-size:21px;margin-bottom:2px}
-.row span{font-size:17px;opacity:.9}
+.wrap{flex:1;min-height:0;display:flex;align-items:center;padding:0 9vw}
+.left{width:30vw;display:flex;flex-direction:column}
+.tag{margin:0 0 .6vh;font-size:2.8vh;opacity:.9}
+.mark{display:flex;align-items:center;gap:1.4vw}
+.mark img{width:8vh;height:8vh;padding:1vh;border-radius:50%;background:#fff}
+.mark span{font-size:8.5vh;font-weight:800;letter-spacing:.02em;line-height:1}
+.sub{margin:.8vh 0 2.6vh;font-weight:700;letter-spacing:.08em;font-size:2.5vh}
+.guide{align-self:flex-start;background:#fff;color:#1f3fbf;border:.5vh solid transparent;border-radius:4vh;padding:1vh 3vw;font-size:2.8vh}
+.who{margin:2vh 0 0;font-size:2.2vh;opacity:.85}
+.right{flex:1;display:flex;flex-direction:column;justify-content:center;padding-left:2vw}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:2.5vh 1.5vw}
+.it{background:none;border:.5vh solid transparent;border-radius:2vh;padding:1.4vh .5vw;text-align:center}
+.it .ic{font-size:7vh;line-height:1.1;display:block;margin-bottom:.8vh}
+.it .t{font-size:2.6vh}
+h1{font-size:4.6vh;margin:0 0 1.4vh}
+.lead{margin:0 0 2vh;font-size:2.6vh;opacity:.9}
+.rows{display:grid;grid-template-columns:1fr 1fr;gap:1.6vh 1.2vw}
+.row{background:rgba(255,255,255,.12);border:.5vh solid transparent;border-radius:1.8vh;padding:1.4vh 1.4vw;text-align:left}
+.row b{display:block;font-size:2.6vh;margin-bottom:.2vh}
+.row span{font-size:2.1vh;opacity:.9}
 .rows.one{grid-template-columns:1fr}
 .url{font-weight:700;text-decoration:underline}
-.dots{position:absolute;left:0;right:0;top:560px;display:flex;justify-content:center;align-items:center;gap:22px;font-size:20px}
-.dots b{display:inline-flex;align-items:center;justify-content:center;width:28px;height:24px;border:2px solid #fff;border-radius:5px;font-size:15px}
-#dots i{display:inline-block;width:10px;height:10px;margin:0 7px;border-radius:50%;background:rgba(255,255,255,.45)}
+.dots{flex:none;display:flex;justify-content:center;align-items:center;gap:1.6vw;font-size:2.4vh;margin:0 0 1.6vh}
+.dots b{display:inline-flex;align-items:center;justify-content:center;width:3.6vh;height:3vh;border:.25vh solid #fff;border-radius:.6vh;font-size:1.8vh}
+#dots i{display:inline-block;width:1.2vh;height:1.2vh;margin:0 .6vw;border-radius:50%;background:rgba(255,255,255,.45)}
 #dots i.on{background:#fff;transform:scale(1.4)}
-.cta{position:absolute;left:230px;right:230px;top:610px;height:70px;background:#fff;color:#1f3fbf;border:4px solid transparent;
-border-radius:36px;font-size:26px;font-weight:700}
-.side{position:absolute;top:300px;width:64px;height:64px;border-radius:50%;border:0;background:rgba(0,0,0,.18);font-size:40px;line-height:1}
-.side.l{left:24px}.side.r{right:24px}
-.it:focus,.row:focus,.guide:focus,.cta:focus{outline:none;border-color:#7ff0ff;box-shadow:0 0 12px rgba(127,240,255,.8)}
+.cta{flex:none;align-self:center;width:62vw;height:8vh;margin:0 0 3vh;background:#fff;color:#1f3fbf;border:.5vh solid transparent;
+border-radius:4vh;font-size:3vh;font-weight:700}
+.side{position:absolute;top:42%;width:7vh;height:7vh;border-radius:50%;border:0;background:rgba(0,0,0,.18);font-size:4.5vh;line-height:1}
+.side.l{left:2vw}.side.r{right:2vw}
+.it:focus,.row:focus,.guide:focus,.cta:focus{outline:none;border-color:#7ff0ff;box-shadow:0 0 1.4vh rgba(127,240,255,.8)}
 `
 
 const lhubJS = `

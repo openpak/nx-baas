@@ -3,6 +3,13 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.22.0 — 2026-09-23
+
+- OpenPak Online is sized from the screen it gets (the console's own button bar takes the
+  bottom of the 720), so the wide button no longer hides under that bar; the logo shows in
+  its own colours on a white badge instead of as a white disc. The console's bar was
+  confirmed on hardware showing only Back and Confirm.
+
 ## v0.21.0 — 2026-09-23
 
 - **OpenPak Online (Switch Online) is all blue** and laid out like Nintendo's: the OpenPak
