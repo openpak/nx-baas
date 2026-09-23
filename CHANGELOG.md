@@ -3,6 +3,17 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.21.0 — 2026-09-23
+
+- **OpenPak Online (Switch Online) is all blue** and laid out like Nintendo's: the OpenPak
+  Online mark and a Complete Guide button on the left, the page on the right (the home page
+  is a 3×2 grid of the features), dots between L and R, and one wide button at the bottom.
+- **The console's button bar shows only Confirm and Back** on the eShop and Switch Online
+  pages: both drive `window.nx.footer` (unsetAssign for X/End and the zoom buttons,
+  setAssign for A, B and, on Switch Online, L/R), and pinch zoom is off. The footer API is
+  unconfirmed on 22.5.0, so what it offers and each call's outcome are reported.
+- L/R reached the page on hardware (v0.20.0); a press that arrives twice turns one page.
+
 ## v0.20.0 — 2026-09-23
 
 - eShop and Switch Online pages lose the bottom bar: the console draws its own button hints.

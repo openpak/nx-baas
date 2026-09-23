@@ -161,146 +161,148 @@ func writeJSONValue(w http.ResponseWriter, status int, v any) {
 	fmt.Fprint(w, mustJSON(v))
 }
 
-// lhubPage is the Switch Online landing page, laid out like Nintendo's: a tab bar of pages
-// that L and R move between, each page one of the things an OpenPak account includes, and
-// a footer with the button hints. OpenPak's purple and blue. Closing ends the applet.
+// lhubPage is the Switch Online landing page, laid out like Nintendo's: an all-blue page
+// with the OpenPak Online mark on the left, the page's content on the right, dots between
+// L and R, and one wide button at the bottom. L and R move between the pages. The console
+// draws the button hints itself (footerJS keeps them to Confirm and Back).
 var lhubPage = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">` +
-	`<meta name="viewport" content="width=1280,initial-scale=1"><title>Nintendo Switch Online</title>` +
+	`<meta name="viewport" content="width=1280,initial-scale=1,maximum-scale=1,user-scalable=no"><title>OpenPak Online</title>` +
 	`<style>` + lhubCSS + `</style></head><body>` +
-	`<header><div class="logo"><img src="` + logoDataURI + `" alt="">OpenPak Online</div>` +
-	`<div id="status" class="status">Membership active · included</div></header>` +
-	`<div class="tabs"><span class="sh">L</span><div id="tabbar"></div><span class="sh">R</span></div>` +
-	`<p id="paywall" class="paywall" hidden></p>` +
-	`<main id="page"></main>` +
-	`<script>` + shopBridgeJS + lhubJS + `</script></body></html>`
+	`<button class="side l" id="prev" tabindex="-1">‹</button><button class="side r" id="next" tabindex="-1">›</button>` +
+	`<div class="wrap"><div class="left"><p class="tag" id="tag">Everything is included</p>` +
+	`<div class="mark"><img src="` + logoDataURI + `" alt=""><span>ONLINE</span></div>` +
+	`<p class="sub">OpenPak Online</p><button class="guide" id="guide">Complete Guide</button>` +
+	`<p class="who" id="status">Membership active · included</p></div>` +
+	`<div class="right" id="page"></div></div>` +
+	`<div class="dots"><span class="lr">‹ <b>L</b></span><span id="dots"></span><span class="lr"><b>R</b> ›</span></div>` +
+	`<button class="cta" id="cta">Membership active — nothing to buy</button>` +
+	`<script>` + shopBridgeJS + footerJS + lhubJS + `</script></body></html>`
 
 const lhubCSS = `
-:root{--p1:#6d4aff;--p2:#3b82f6;--bg:#ececf1;--card:#fff;--ink:#1d1b26;--muted:#6b6880;--line:#dcdae6}
 *{box-sizing:border-box}
-html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);overflow:hidden;
-font:22px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+html,body{margin:0;height:100%;overflow:hidden;color:#fff;
+background:radial-gradient(ellipse at 30% 40%,#3b6cff 0%,#2448e0 45%,#1a33b8 100%);
+font:22px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 button{font:inherit;color:inherit;cursor:pointer}
-header{height:64px;display:flex;align-items:center;justify-content:space-between;padding:0 34px;color:#fff;
-background:linear-gradient(120deg,var(--p1),var(--p2))}
-.logo{display:flex;align-items:center;gap:12px;font-weight:700;font-size:26px}
-.logo img{width:32px;height:32px;filter:brightness(0) invert(1)}
-.status{font-size:18px;background:rgba(255,255,255,.18);padding:6px 16px;border-radius:20px}
-.tabs{display:flex;align-items:center;gap:12px;padding:12px 24px;background:#f7f7fa;border-bottom:1px solid var(--line)}
-#tabbar{display:flex;gap:6px;flex:1;justify-content:center}
-.tab{background:none;border:3px solid transparent;border-radius:24px;padding:8px 18px;font-size:19px;color:var(--muted)}
-.tab.on{background:#fff;color:var(--ink);font-weight:700;box-shadow:0 1px 3px rgba(0,0,0,.1)}
-.sh{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:30px;border-radius:8px;background:#1d1b26;color:#fff;font-size:16px;font-weight:700}
-.paywall{margin:14px 34px 0;padding:12px 18px;border-radius:12px;background:#e9f7ef;color:#11643a;font-size:19px}
-main{position:fixed;top:128px;bottom:0;left:0;right:0;overflow-y:auto;padding:24px 34px}
-h1{font-size:34px;margin:0 0 6px}
-.lead{color:var(--muted);margin:0 0 22px;font-size:21px}
-.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
-.cards.two{grid-template-columns:1fr 1fr}
-.c{background:var(--card);border-radius:16px;padding:22px;border:3px solid transparent;text-align:left;box-shadow:0 1px 3px rgba(0,0,0,.08)}
-.c .ic{width:52px;height:52px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:28px;color:#fff;
-background:linear-gradient(120deg,var(--p1),var(--p2));margin-bottom:12px}
-.c h2{font-size:23px;margin:0 0 6px}
-.c p{margin:0;color:#4a475c;font-size:18px}
-.qa{background:var(--card);border-radius:14px;padding:18px 22px;margin-bottom:12px;border:3px solid transparent;width:100%;text-align:left}
-.qa b{display:block;font-size:21px;margin-bottom:4px}
-.qa span{color:#4a475c;font-size:18px}
-.url{font-weight:700;color:var(--p1)}
-.tab:focus,.c:focus,.qa:focus{outline:none;border-color:var(--p1);box-shadow:0 0 0 3px #fff,0 0 0 6px rgba(59,130,246,.55)}
+.wrap{display:flex;height:540px;padding:40px 110px 0}
+.left{width:400px;display:flex;flex-direction:column;justify-content:center}
+.tag{margin:0 0 6px;font-size:22px;opacity:.9}
+.mark{display:flex;align-items:center;gap:14px}
+.mark img{width:70px;height:70px;filter:brightness(0) invert(1)}
+.mark span{font-size:72px;font-weight:800;letter-spacing:.02em;line-height:1}
+.sub{margin:6px 0 22px;font-weight:700;letter-spacing:.08em;font-size:20px}
+.guide{align-self:flex-start;background:#fff;color:#1f3fbf;border:4px solid transparent;border-radius:30px;padding:10px 34px;font-size:24px}
+.who{margin:18px 0 0;font-size:18px;opacity:.85}
+.right{flex:1;display:flex;flex-direction:column;justify-content:center;padding-left:30px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:26px 20px}
+.it{background:none;border:4px solid transparent;border-radius:18px;padding:14px 8px;text-align:center}
+.it .ic{font-size:64px;line-height:1.1;display:block;margin-bottom:8px}
+.it .t{font-size:21px}
+h1{font-size:40px;margin:0 0 14px}
+.lead{margin:0 0 18px;font-size:21px;opacity:.9}
+.rows{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.row{background:rgba(255,255,255,.12);border:4px solid transparent;border-radius:16px;padding:14px 18px;text-align:left}
+.row b{display:block;font-size:21px;margin-bottom:2px}
+.row span{font-size:17px;opacity:.9}
+.rows.one{grid-template-columns:1fr}
+.url{font-weight:700;text-decoration:underline}
+.dots{position:absolute;left:0;right:0;top:560px;display:flex;justify-content:center;align-items:center;gap:22px;font-size:20px}
+.dots b{display:inline-flex;align-items:center;justify-content:center;width:28px;height:24px;border:2px solid #fff;border-radius:5px;font-size:15px}
+#dots i{display:inline-block;width:10px;height:10px;margin:0 7px;border-radius:50%;background:rgba(255,255,255,.45)}
+#dots i.on{background:#fff;transform:scale(1.4)}
+.cta{position:absolute;left:230px;right:230px;top:610px;height:70px;background:#fff;color:#1f3fbf;border:4px solid transparent;
+border-radius:36px;font-size:26px;font-weight:700}
+.side{position:absolute;top:300px;width:64px;height:64px;border-radius:50%;border:0;background:rgba(0,0,0,.18);font-size:40px;line-height:1}
+.side.l{left:24px}.side.r{right:24px}
+.it:focus,.row:focus,.guide:focus,.cta:focus{outline:none;border-color:#7ff0ff;box-shadow:0 0 12px rgba(127,240,255,.8)}
 `
 
 const lhubJS = `
 (function(){
-function esc(s){return String(s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
 function param(k){var m=location.search.match(new RegExp('[?&]'+k+'=([^&]*)'));return m?decodeURIComponent(m[1]):'';}
 function $(id){return document.getElementById(id);}
-function card(ic,h,p){return '<div class="c" tabindex="0"><div class="ic">'+ic+'</div><h2>'+h+'</h2><p>'+p+'</p></div>';}
-function qa(q,a){return '<div class="qa" tabindex="0"><b>'+q+'</b><span>'+a+'</span></div>';}
+function it(ic,t,go){return '<button class="it" data-go="'+go+'"><span class="ic">'+ic+'</span><span class="t">'+t+'</span></button>';}
+function row(h,p){return '<div class="row" tabindex="0"><b>'+h+'</b><span>'+p+'</span></div>';}
 var PAGES=[
- {t:'Home',h:'<h1>Everything is included</h1><p class="lead">Your OpenPak account is your membership. There is nothing to buy and nothing to renew.</p><div class="cards">'+
-  card('🌐','Online play','Play supported games online with friends and players around the world.')+
-  card('☁','Save Data Cloud','Your saves are backed up and follow you to another console.')+
-  card('📱','Smartphone app','Friends, messages and voice chat on your phone.')+
-  card('🎮','Across consoles','Switch, Wii U, 3DS, Wii and DS share one account and one friend list.')+
-  card('📰','News','OpenPak news and channels in the News tab.')+
-  card('★','Expansion Pack','Games that ask for the Expansion Pack see it as active.')+'</div>'},
- {t:'Online Play',h:'<h1>Online play</h1><p class="lead">OpenPak runs its own servers for the games it supports.</p><div class="cards two">'+
-  card('🌐','Matchmaking and rooms','Join random matches, make private rooms and invite friends, as the game itself offers.')+
-  card('🏆','Rankings and events','Leaderboards and events work where the game has them and OpenPak serves them.')+
-  card('✓','Supported games','The list of games and what works in each is on <span class="url">openpak.org/titles</span>.')+
-  card('🛡','Fair play','Reports and bans apply across the whole network, on every console.')+'</div>'},
- {t:'Save Data Cloud',h:'<h1>Save Data Cloud</h1><p class="lead">Keep your progress safe on the OpenPak servers.</p><div class="cards two">'+
-  card('☁','Automatic backup','Saves of supported games are uploaded to your OpenPak account.')+
-  card('⇄','Restore anywhere','Download a save to another console signed in to the same account.')+
-  card('📱','See them on your phone','The OpenPak app and openpak.org list your saves and when they were backed up.')+
-  card('🔒','Only yours','Saves are tied to your account and are never shared.')+'</div>'},
- {t:'Smartphone App',h:'<h1>The OpenPak app</h1><p class="lead">Get it from <span class="url">openpak.org/app</span> and sign in with your OpenPak account.</p><div class="cards">'+
-  card('🎙','Voice chat','Talk with the players in your game room, or with friends by room code.')+
-  card('👥','Friends','Friend requests, invitations and who is playing what, on every console.')+
-  card('💬','Messages','Chat with friends from your phone.')+
-  card('☁','Your saves','See your cloud saves and when they were made.')+
-  card('🆘','Help','Open a help ticket and read the replies.')+
-  card('🔐','Your account','Sign-in, two-step verification and devices.')+'</div>'},
- {t:'Across Consoles',h:'<h1>One network, every console</h1><p class="lead">OpenPak connects Nintendo consoles old and new under one account.</p><div class="cards">'+
-  card('🎮','Nintendo Switch','Online play, friends, eShop, News and Save Data Cloud.')+
-  card('🎮','Wii U and 3DS','Online play, friends, Miiverse-style posts and chat.')+
-  card('🎮','Wii and DS','Nintendo Wi-Fi Connection games online again.')+
-  card('👥','One friend list','Friends from every console appear together, on the console and in the app.')+
-  card('💬','Talk across consoles','Messages sent on one console or the app arrive on the others.')+
-  card('🖥','Emulators','Supported emulators connect to the same network as real consoles.')+'</div>'},
- {t:'FAQ',h:'<h1>Questions</h1>'+
-  qa('Does OpenPak cost anything?','No. Everything here is included with a free OpenPak account.')+
-  qa('Is OpenPak made by Nintendo?','No. OpenPak is an independent network and is not affiliated with Nintendo.')+
-  qa('Which games work online?','The supported list, with what works in each game, is on openpak.org/titles.')+
-  qa('Can I use my Nintendo Account?','OpenPak uses its own accounts. Link your console to your OpenPak account to play.')+
-  qa('Where do I report a player?','From the game or the console where it offers it, or on openpak.org. Reports reach the moderators for every console.')},
- {t:'Help & Guides',h:'<h1>Help and guides</h1><p class="lead">Step-by-step guides and support live on openpak.org.</p><div class="cards two">'+
-  card('📖','Guides','Setting up a console, linking an account and getting online: <span class="url">openpak.org/help</span>.')+
-  card('🆘','Contact support','Open a ticket at <span class="url">openpak.org/help</span> or in the app. Replies show in both.')+
-  card('📊','Service status','Is something down? <span class="url">status.openpak.org</span>.')+
-  card('ℹ','More information','About OpenPak, its rules and privacy: <span class="url">openpak.org</span>.')+'</div>'}
+ {tag:'Everything is included',h:'<div class="grid">'+
+  it('🌐','Online Play',1)+it('☁️','Save Data Cloud',2)+it('📱','Smartphone App',3)+
+  it('🎮','Across Consoles',4)+it('❓','Questions',5)+it('📖','Help &amp; Guides',6)+'</div>'},
+ {tag:'Play together',h:'<h1>🌐 Online Play</h1><p class="lead">OpenPak runs its own servers for the games it supports.</p><div class="rows">'+
+  row('Matchmaking and rooms','Random matches, private rooms and invites, as the game offers them.')+
+  row('Rankings and events','Leaderboards and events where the game has them.')+
+  row('Supported games','The list and what works in each: <span class="url">openpak.org/titles</span>')+
+  row('Fair play','Reports and bans apply across the whole network.')+'</div>'},
+ {tag:'Never lose progress',h:'<h1>☁️ Save Data Cloud</h1><p class="lead">Your saves, kept safe on the OpenPak servers.</p><div class="rows">'+
+  row('Automatic backup','Saves of supported games go to your OpenPak account.')+
+  row('Restore anywhere','Download a save to another console on the same account.')+
+  row('See them on your phone','The OpenPak app and openpak.org list your saves.')+
+  row('Only yours','Saves belong to your account and are never shared.')+'</div>'},
+ {tag:'OpenPak in your pocket',h:'<h1>📱 Smartphone App</h1><p class="lead">Get it at <span class="url">openpak.org/app</span> and sign in with your OpenPak account.</p><div class="rows">'+
+  row('Voice chat','Talk with the players in your game room, or friends by room code.')+
+  row('Friends','Requests, invitations and who is playing what, on every console.')+
+  row('Messages','Chat with friends from your phone.')+
+  row('Help','Open a ticket and read the replies.')+'</div>'},
+ {tag:'One network',h:'<h1>🎮 Across Consoles</h1><p class="lead">One account and one friend list for Nintendo consoles old and new.</p><div class="rows">'+
+  row('Nintendo Switch','Online play, friends, eShop, News and Save Data Cloud.')+
+  row('Wii U and 3DS','Online play, friends, posts and chat.')+
+  row('Wii and DS','Nintendo Wi-Fi Connection games online again.')+
+  row('Emulators','Supported emulators join the same network as consoles.')+'</div>'},
+ {tag:'Good to know',h:'<h1>❓ Questions</h1><div class="rows one">'+
+  row('Does it cost anything?','No. Everything is included with a free OpenPak account.')+
+  row('Is OpenPak made by Nintendo?','No. OpenPak is independent and not affiliated with Nintendo.')+
+  row('Which games work online?','See openpak.org/titles for the list and what works in each.')+
+  row('Can I use my Nintendo Account?','OpenPak uses its own accounts. Link your console to yours to play.')+'</div>'},
+ {tag:'We are here to help',h:'<h1>📖 Help &amp; Guides</h1><p class="lead">Guides and support live on openpak.org.</p><div class="rows">'+
+  row('Guides','Setting up a console and getting online: <span class="url">openpak.org/help</span>')+
+  row('Contact support','Open a ticket at openpak.org/help or in the app.')+
+  row('Service status','Is something down? <span class="url">status.openpak.org</span>')+
+  row('About OpenPak','Rules and privacy: <span class="url">openpak.org</span>')+'</div>'}
 ];
 var cur=0;
 function report(o){try{fetch('/_openpak/diag',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)});}catch(e){}}
-function tabs(){
- var h='';for(var i=0;i<PAGES.length;i++){h+='<button class="tab'+(i===cur?' on':'')+'" data-i="'+i+'">'+PAGES[i].t+'</button>';}
- $('tabbar').innerHTML=h;
- var b=document.querySelectorAll('.tab');
- for(var j=0;j<b.length;j++){b[j].addEventListener('click',function(){go(+this.getAttribute('data-i'));});}
-}
+var last=0;
+// One press can arrive twice (the footer's L/R and a key or gamepad event): the second is dropped.
+function flip(d){var now=Date.now();if(now-last<250){return;}last=now;go(cur+d);}
 function go(i){
- cur=(i+PAGES.length)%PAGES.length; tabs(); $('page').innerHTML=PAGES[cur].h; $('page').scrollTop=0;
- var f=$('page').querySelector('[tabindex]'); if(f){f.focus();}
+ cur=(i+PAGES.length)%PAGES.length;
+ $('page').innerHTML=PAGES[cur].h; $('tag').textContent=PAGES[cur].tag;
+ var d='';for(var k=0;k<PAGES.length;k++){d+='<i class="'+(k===cur?'on':'')+'"></i>';} $('dots').innerHTML=d;
+ var b=$('page').querySelectorAll('.it');
+ for(var j=0;j<b.length;j++){b[j].addEventListener('click',function(){go(+this.getAttribute('data-go'));});}
+ var f=$('page').querySelector('.it,.row'); if(f){f.focus();}
 }
 function leave(){
  if(nxCall('endApplet',[],null)){return;}
  try{window.close();}catch(e){}
  try{history.back();}catch(e){}
 }
-// L and R change page. Which keys the Switch browser sends for them is not known, so the
-// likely ones are all taken, the gamepad buttons (standard mapping 4 and 5) are polled,
-// and every key the page sees is reported once so the first console run names them.
+$('prev').addEventListener('click',function(){go(cur-1);});
+$('next').addEventListener('click',function(){go(cur+1);});
+$('guide').addEventListener('click',function(){go(6);});
+$('cta').addEventListener('click',leave);
+// L and R through the console footer when it offers them; keys and gamepad as a fallback,
+// each key reported once so a console run names what arrives.
+nxFooterSetup({B:function(){if(cur){go(0);}else{leave();}}, L:function(){flip(-1);}, R:function(){flip(1);}}, report);
 var seen={};
 document.addEventListener('keydown',function(e){
  var k=e.key||'', c=e.keyCode;
  if(!seen[k+c]){seen[k+c]=1;report({event:'key',key:k,code:e.code||'',keyCode:c});}
- if(k==='PageUp'||k==='q'||k==='Q'||k==='L'||c===33){e.preventDefault();go(cur-1);}
- else if(k==='PageDown'||k==='e'||k==='E'||k==='R'||c===34){e.preventDefault();go(cur+1);}
- else if(k==='Escape'||k==='Backspace'||c===27||c===8){e.preventDefault();leave();}
+ if(k==='PageUp'||k==='q'||k==='Q'||c===33){e.preventDefault();flip(-1);}
+ else if(k==='PageDown'||k==='e'||k==='E'||c===34){e.preventDefault();flip(1);}
+ else if(k==='Escape'||k==='Backspace'||c===27||c===8){e.preventDefault();if(cur){go(0);}else{leave();}}
 });
 var held={};
 function poll(){
  var pads=navigator.getGamepads?navigator.getGamepads():[];
  for(var i=0;i<pads.length;i++){var p=pads[i];if(!p){continue;}
   for(var b=4;b<=5;b++){var d=p.buttons[b]&&p.buttons[b].pressed;
-   if(d&&!held[b]){go(b===4?cur-1:cur+1);report({event:'pad',button:b,id:p.id});}
+   if(d&&!held[b]){flip(b===4?-1:1);report({event:'pad',button:b,id:p.id});}
    held[b]=d;}}
  window.requestAnimationFrame(poll);
 }
 if(window.requestAnimationFrame){window.requestAnimationFrame(poll);}
 if(param('from')==='paywall'){
- var pw=$('paywall');pw.hidden=false;
- pw.textContent=(param('type')==='lex'?'This game uses the Expansion Pack. ':'This game uses Nintendo Switch Online. ')+
-  'Your OpenPak account already includes it, so you can go back and start the game.';
+ $('cta').textContent=(param('type')==='lex'?'Expansion Pack included':'Nintendo Switch Online included')+' — back to the game';
 }
 function show(t){
  var h={};if(t){h['Authorization']='Bearer '+t;}
@@ -313,6 +315,28 @@ function take(r){var t=nxToken(r&&r.value);if(t&&!asked){asked=true;show(t);}}
 if(!nxCall('requestNaIdToken',[],take)){if(!nxCall('ensureNaIdToken',[],take)){nxCall('loadCachedNaIdToken',[],take);}}
 go(0);
 })();
+`
+
+// footerJS drives the console's own button bar through window.nx.footer (the web applet's
+// footer API: setAssign(button, label, callback) and unsetAssign(button)). Only Confirm and
+// Back are shown, as on Nintendo's pages: the browser's End (X) and zoom (R/L) assignments are
+// removed, and L/R are given to the page when it wants them. Nothing here is confirmed on
+// 22.5.0 hardware, so what the footer object offers and every call's outcome are reported.
+const footerJS = `
+function nxFooterSetup(handlers,rep){
+ var f=window.nx&&window.nx.footer;
+ var out={event:'footer',present:!!f,keys:[],calls:{}};
+ if(!f){rep(out);return;}
+ try{for(var k in f){out.keys.push(k);}}catch(e){}
+ function call(name,args){try{var r=f[name].apply(f,args);out.calls[name+'('+args[0]+')']=String(r);}catch(e){out.calls[name+'('+args[0]+')']='!'+String(e);}}
+ var drop=['X','Y','L','R','ZL','ZR','Plus','Minus'];
+ for(var i=0;i<drop.length;i++){if(!handlers[drop[i]]&&typeof(f.unsetAssign)==='function'){call('unsetAssign',[drop[i]]);}}
+ if(typeof(f.setAssign)==='function'){
+  call('setAssign',['A','Confirm',function(){var e=document.activeElement;if(e&&e.click){e.click();}}]);
+  for(var b in handlers){call('setAssign',[b,b==='B'?'Back':'',handlers[b]]);}
+ }
+ rep(out);
+}
 `
 
 // lobbyPage is the voice-chat lobby (assets/lobby.html): it sends the player to the

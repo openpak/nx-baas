@@ -20,7 +20,7 @@ func TestLhubPageServesAnyPath(t *testing.T) {
 	for _, path := range []string{"/", "/lhub?src_app_id=0100000000001000", "/launch?from=paywall&type=lex&app_id=0100000000010000&location=x"} {
 		rec := hostReq(s, "lp1.nso.nintendo.net", "GET", path, "", "")
 		body := rec.Body.String()
-		if rec.Code != 200 || !strings.Contains(body, "Everything is included") || !strings.Contains(body, "endApplet") {
+		if rec.Code != 200 || !strings.Contains(body, "Everything is included") || !strings.Contains(body, "setAssign") || !strings.Contains(body, "endApplet") {
 			t.Errorf("lhub %s = %d", path, rec.Code)
 		}
 	}

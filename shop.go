@@ -539,7 +539,7 @@ func mustJSON(v any) string {
 // OpenPak's purple and blue replace Nintendo's red. Sized for the 1280x720 applet.
 func storePage() string {
 	return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">` +
-		`<meta name="viewport" content="width=1280,initial-scale=1"><title>OpenPak Shop</title>` +
+		`<meta name="viewport" content="width=1280,initial-scale=1,maximum-scale=1,user-scalable=no"><title>OpenPak Shop</title>` +
 		`<style>` + storeCSS + `</style></head><body>` +
 		`<nav id="side"><div class="logo"><img src="` + logoDataURI + `" alt="">OpenPak Shop</div>` +
 		`<button class="nav" data-view="highlights"><span class="ic">☆</span>Highlights</button>` +
@@ -551,7 +551,7 @@ func storePage() string {
 		`</nav><section id="main"><div class="top"><span class="note">All titles are free</span>` +
 		`<img id="who" class="who" alt="" hidden></div>` +
 		`<div id="banner" class="banner"></div><div id="app"><p class="empty">Loading…</p></div></section>` +
-		`<script>` + shopBridgeJS + shopAppJS + `</script></body></html>`
+		`<script>` + shopBridgeJS + footerJS + shopAppJS + `</script></body></html>`
 }
 
 const storeCSS = `
@@ -793,6 +793,7 @@ document.addEventListener('keydown',function(e){
  if(e.target&&e.target.id==='q'&&(k==='Backspace'||k===8)){return;}
  if(k==='Escape'||k==='Backspace'||k===27||k===8){e.preventDefault();if(back){back();}else{closeShop();}}
 });
+nxFooterSetup({B:function(){if(back){back();}else{closeShop();}}},report);
 var navs=document.querySelectorAll('.nav');
 for(var i=0;i<navs.length;i++){navs[i].addEventListener('click',function(){section(this.getAttribute('data-view'),true);});}
 
