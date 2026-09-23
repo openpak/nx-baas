@@ -3,6 +3,11 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.23.0 — 2026-09-23
+
+- OpenPak Online: the mark, Complete Guide and the wide button appear on the main page only;
+  each topic page uses the full width with larger text, so no page needs scrolling.
+
 ## v0.22.0 — 2026-09-23
 
 - OpenPak Online is sized from the screen it gets (the console's own button bar takes the

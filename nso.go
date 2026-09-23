@@ -169,7 +169,7 @@ var lhubPage = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">` +
 	`<meta name="viewport" content="width=1280,initial-scale=1,maximum-scale=1,user-scalable=no"><title>OpenPak Online</title>` +
 	`<style>` + lhubCSS + `</style></head><body>` +
 	`<button class="side l" id="prev" tabindex="-1">‹</button><button class="side r" id="next" tabindex="-1">›</button>` +
-	`<div class="wrap"><div class="left"><p class="tag" id="tag">Everything is included</p>` +
+	`<div class="wrap"><div class="left" id="left"><p class="tag" id="tag">Everything is included</p>` +
 	`<div class="mark"><img src="` + logoDataURI + `" alt=""><span>ONLINE</span></div>` +
 	`<p class="sub">OpenPak Online</p><button class="guide" id="guide">Complete Guide</button>` +
 	`<p class="who" id="status">Membership active · included</p></div>` +
@@ -195,6 +195,11 @@ button{font:inherit;color:inherit;cursor:pointer}
 .guide{align-self:flex-start;background:#fff;color:#1f3fbf;border:.5vh solid transparent;border-radius:4vh;padding:1vh 3vw;font-size:2.8vh}
 .who{margin:2vh 0 0;font-size:2.2vh;opacity:.85}
 .right{flex:1;display:flex;flex-direction:column;justify-content:center;padding-left:2vw}
+.right.full{padding:0 1vw}
+.right.full .rows{gap:2.2vh 1.6vw}
+.right.full .row{padding:2vh 1.8vw}
+.right.full .row b{font-size:3vh}
+.right.full .row span{font-size:2.5vh}
 .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:2.5vh 1.5vw}
 .it{background:none;border:.5vh solid transparent;border-radius:2vh;padding:1.4vh .5vw;text-align:center}
 .it .ic{font-size:7vh;line-height:1.1;display:block;margin-bottom:.8vh}
@@ -267,6 +272,8 @@ function flip(d){var now=Date.now();if(now-last<250){return;}last=now;go(cur+d);
 function go(i){
  cur=(i+PAGES.length)%PAGES.length;
  $('page').innerHTML=PAGES[cur].h; $('tag').textContent=PAGES[cur].tag;
+ // The mark, the guide button and the wide button belong to the main page; a topic page gets the whole width.
+ $('left').style.display=cur?'none':''; $('cta').style.display=cur?'none':''; $('page').className='right'+(cur?' full':'');
  var d='';for(var k=0;k<PAGES.length;k++){d+='<i class="'+(k===cur?'on':'')+'"></i>';} $('dots').innerHTML=d;
  var b=$('page').querySelectorAll('.it');
  for(var j=0;j<b.length;j++){b[j].addEventListener('click',function(){go(+this.getAttribute('data-go'));});}
