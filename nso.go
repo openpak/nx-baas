@@ -172,8 +172,6 @@ var lhubPage = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">` +
 	`<div class="tabs"><span class="sh">L</span><div id="tabbar"></div><span class="sh">R</span></div>` +
 	`<p id="paywall" class="paywall" hidden></p>` +
 	`<main id="page"></main>` +
-	`<footer><span class="fl"><img src="` + logoDataURI + `" alt=""></span>` +
-	`<span class="hint"><b>L</b><b>R</b>Change page</span><span class="hint"><b>B</b>Back</span><span class="hint"><b>A</b>Confirm</span></footer>` +
 	`<script>` + shopBridgeJS + lhubJS + `</script></body></html>`
 
 const lhubCSS = `
@@ -193,7 +191,7 @@ background:linear-gradient(120deg,var(--p1),var(--p2))}
 .tab.on{background:#fff;color:var(--ink);font-weight:700;box-shadow:0 1px 3px rgba(0,0,0,.1)}
 .sh{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:30px;border-radius:8px;background:#1d1b26;color:#fff;font-size:16px;font-weight:700}
 .paywall{margin:14px 34px 0;padding:12px 18px;border-radius:12px;background:#e9f7ef;color:#11643a;font-size:19px}
-main{position:fixed;top:128px;bottom:64px;left:0;right:0;overflow-y:auto;padding:24px 34px}
+main{position:fixed;top:128px;bottom:0;left:0;right:0;overflow-y:auto;padding:24px 34px}
 h1{font-size:34px;margin:0 0 6px}
 .lead{color:var(--muted);margin:0 0 22px;font-size:21px}
 .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
@@ -207,12 +205,6 @@ background:linear-gradient(120deg,var(--p1),var(--p2));margin-bottom:12px}
 .qa b{display:block;font-size:21px;margin-bottom:4px}
 .qa span{color:#4a475c;font-size:18px}
 .url{font-weight:700;color:var(--p1)}
-footer{position:fixed;left:0;right:0;bottom:0;height:64px;background:#f7f7fa;border-top:1px solid var(--line);
-display:flex;align-items:center;gap:30px;padding:0 40px;font-size:21px}
-footer .fl{margin-right:auto}
-footer .fl img{height:34px}
-.hint{display:flex;align-items:center;gap:8px}
-.hint b{display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:30px;padding:0 6px;border-radius:15px;background:#1d1b26;color:#fff;font-size:15px}
 .tab:focus,.c:focus,.qa:focus{outline:none;border-color:var(--p1);box-shadow:0 0 0 3px #fff,0 0 0 6px rgba(59,130,246,.55)}
 `
 

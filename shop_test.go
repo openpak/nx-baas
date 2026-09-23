@@ -340,3 +340,16 @@ func TestTaskLifecycle(t *testing.T) {
 		t.Errorf("after restart %d tasks, want 2", len(tasks))
 	}
 }
+
+// The storefront's corner picture: the signed-in user's avatar on the shop's own origin
+// (the default picture when they have none); nobody without a token.
+func TestShopAvatarIsTheSignedInUsers(t *testing.T) {
+	s := shopServerFor(t)
+	if rec := shopReq(s, "GET", "/ashigaru/api/v1/me/avatar", "", ""); rec.Code != 404 {
+		t.Errorf("no token = %d, want 404", rec.Code)
+	}
+	rec := shopReq(s, "GET", "/ashigaru/api/v1/me/avatar", naIDTokenFor(s), "")
+	if rec.Code != 200 || rec.Header().Get("Content-Type") != "image/jpeg" || rec.Body.Len() == 0 {
+		t.Errorf("avatar = %d %s %d bytes", rec.Code, rec.Header().Get("Content-Type"), rec.Body.Len())
+	}
+}

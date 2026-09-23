@@ -130,6 +130,18 @@ func (s *server) shopAPI(w http.ResponseWriter, r *http.Request, body []byte) {
 	account, _ := s.shopPrincipal(r)
 
 	switch {
+	case p == "/me/avatar" && r.Method == "GET":
+		// The signed-in user's picture for the corner of the storefront: the same one
+		// the console's profile shows, served on the shop's own origin.
+		_, baasUser := s.shopPrincipal(r)
+		if baasUser == "" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		r2 := r.Clone(r.Context())
+		r2.URL.Path = "/1/" + baasUser
+		s.baas(w, r2, nil)
+		return
 	case p == "/catalog" && r.Method == "GET":
 		owned := map[string]*ShopEntitlement{}
 		if account != "" {
@@ -536,13 +548,9 @@ func storePage() string {
 		`<div class="gap"></div>` +
 		`<button class="nav sub" data-view="recent">Recent Releases</button>` +
 		`<button class="nav sub" data-view="updates">Recently Updated</button>` +
-		`<button class="nav sub" data-view="nso">Nintendo Switch Online</button>` +
-		`<button class="nav sub" data-view="redeem">Redeem Code</button>` +
 		`</nav><section id="main"><div class="top"><span class="note">All titles are free</span>` +
-		`<span id="who" class="who"></span></div>` +
+		`<img id="who" class="who" alt="" hidden></div>` +
 		`<div id="banner" class="banner"></div><div id="app"><p class="empty">Loading…</p></div></section>` +
-		`<footer><span class="fl"><img src="` + logoDataURI + `" alt=""></span>` +
-		`<span class="hint"><b>B</b>Back</span><span class="hint"><b>A</b>Confirm</span></footer>` +
 		`<script>` + shopBridgeJS + shopAppJS + `</script></body></html>`
 }
 
@@ -552,7 +560,7 @@ const storeCSS = `
 html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);overflow:hidden;
 font:22px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 button{font:inherit;color:inherit;cursor:pointer}
-#side{position:fixed;left:0;top:0;bottom:64px;width:330px;background:#f7f7fa;overflow-y:auto;padding-bottom:16px}
+#side{position:fixed;left:0;top:0;bottom:0;width:330px;background:#f7f7fa;overflow-y:auto;padding-bottom:16px}
 .logo{height:56px;display:flex;align-items:center;gap:12px;padding:0 26px;color:#fff;font-weight:700;font-size:24px;
 background:linear-gradient(120deg,var(--p1),var(--p2));margin-bottom:14px}
 .logo img{width:30px;height:30px;filter:brightness(0) invert(1)}
@@ -562,10 +570,10 @@ background:none;border:3px solid transparent;border-radius:12px;text-align:left;
 .nav .ic{width:26px;text-align:center;font-size:24px}
 .nav.on{background:#fff;box-shadow:inset 5px 0 0 var(--p1)}
 .gap{height:10px}
-#main{position:fixed;left:330px;right:0;top:0;bottom:64px;overflow-y:auto;padding:0 34px 30px}
-.top{display:flex;align-items:center;justify-content:space-between;height:64px}
+#main{position:fixed;left:330px;right:0;top:0;bottom:0;overflow-y:auto;padding:0 34px 30px}
+.top{display:flex;align-items:center;justify-content:space-between;height:84px}
 .note{color:var(--muted);font-size:17px}
-.who{font-size:17px;color:var(--muted)}
+.who{width:64px;height:64px;border-radius:50%;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.2);object-fit:cover;background:#fff}
 .banner{display:none;background:#fdecec;color:#9b1c1c;border-radius:12px;padding:12px 18px;margin-bottom:16px;font-size:18px}
 h1{font-size:30px;margin:4px 0 16px}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
@@ -594,12 +602,6 @@ background:linear-gradient(120deg,var(--p1),var(--p2))}
 .msg{color:var(--muted);font-size:19px}
 .empty{color:var(--muted);font-size:22px;padding:30px 0}
 .search{width:100%;font:inherit;font-size:24px;padding:14px 20px;border:3px solid var(--line);border-radius:14px;margin-bottom:20px;background:#fff}
-footer{position:fixed;left:0;right:0;bottom:0;height:64px;background:#f7f7fa;border-top:1px solid var(--line);
-display:flex;align-items:center;gap:34px;padding:0 40px;font-size:22px}
-footer .fl{margin-right:auto}
-footer .fl img{height:34px}
-.hint{display:flex;align-items:center;gap:10px}
-.hint b{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:50%;background:#1d1b26;color:#fff;font-size:16px}
 .nav:focus,.card:focus,.act:focus,.search:focus{outline:none;border-color:var(--p1);
 box-shadow:0 0 0 3px #fff,0 0 0 6px rgba(59,130,246,.55)}
 .card:focus{transform:translateY(-2px)}
@@ -655,6 +657,11 @@ function identify(done){
  }
 }
 
+// The user's own picture, top right, once the account is known.
+function avatar(){
+ fetch('/ashigaru/api/v1/me/avatar',{headers:{'Authorization':'Bearer '+token}}).then(function(r){return r.ok?r.blob():null;}).then(function(b){
+  if(!b){return;}var i=$('who');i.src=URL.createObjectURL(b);i.hidden=false;}).catch(function(){});
+}
 function human(n){if(n>1073741824)return (n/1073741824).toFixed(2)+' GB';if(n>1048576)return (n/1048576).toFixed(1)+' MB';if(n>1024)return (n/1024).toFixed(0)+' KB';return n+' B';}
 var DAY=86400;
 function isNew(t){return t.updated_at&&(Date.now()/1000-t.updated_at)<30*DAY;}
@@ -807,6 +814,6 @@ function route(){
 if(!bridge.present){show('This is the console shop opened in a plain browser: browsing works, getting titles does not.');}
 report({event:'page',path:location.pathname,query:location.search,bridge:bridge.present});
 route();
-identify(function(){catalog=null;$('who').textContent='Signed in';report({event:'identified'});if(view){view();}});
+identify(function(){catalog=null;avatar();report({event:'identified'});if(view){view();}});
 })();
 `

@@ -3,6 +3,14 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.20.0 — 2026-09-23
+
+- eShop and Switch Online pages lose the bottom bar: the console draws its own button hints.
+- The eShop shows the signed-in user's own avatar in a circle, top right
+  (`/ashigaru/api/v1/me/avatar`, the same picture the console profile uses).
+- The eShop sidebar drops Nintendo Switch Online and Redeem Code; the scenes systemWeb opens
+  for them still answer.
+
 ## v0.19.0 — 2026-09-23
 
 - **eShop, laid out like the console eShop** in OpenPak purple and blue: a sidebar (Highlights,
