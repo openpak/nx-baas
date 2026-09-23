@@ -32,20 +32,50 @@ func TestLhubPageServesAnyPath(t *testing.T) {
 	}
 }
 
-// The voice-chat lobby: /lobby/ with the shim's query renders a page that leaves through the
-// Lobby callback URL; the rest of the znc host is a recorded 404.
+// The voice-chat lobby: /lobby/ with the shim's query renders the page that sends the player to
+// the app and leaves through the Lobby callback URL; the rest of the znc host is a recorded 404.
 func TestZncLobbyPageLeavesThroughTheCallback(t *testing.T) {
 	s := shopServerFor(t)
 	for _, path := range []string{"/lobby/", "/lobby/?app_id=0100000000010000&param=abc", "/lobby"} {
 		rec := hostReq(s, "web-lp1.znc.srv.nintendo.net", "GET", path, "", "")
 		body := rec.Body.String()
-		if rec.Code != 200 || !strings.Contains(body, "Voice chat isn't available on OpenPak yet") ||
-			!strings.Contains(body, "lbclose") || !strings.Contains(body, "https://localhost/lobby/") {
+		if rec.Code != 200 || !strings.Contains(body, "Voice chat is on your phone") ||
+			!strings.Contains(body, "/_openpak/voice") || !strings.Contains(body, "https://localhost/lobby/") {
 			t.Errorf("lobby %s = %d", path, rec.Code)
 		}
 	}
 	if rec := hostReq(s, "web-lp1.znc.srv.nintendo.net", "GET", "/other", "", ""); rec.Code != 404 {
 		t.Errorf("znc /other = %d, want 404", rec.Code)
+	}
+}
+
+// The lobby's room lookup names the console's core account to the website and passes its
+// answer through; a console it can't name gets 401.
+func TestZncLobbyVoiceAsksTheWebsiteForTheRoom(t *testing.T) {
+	s := shopServerFor(t)
+	s.banSource = &fakeBans{}
+	var asked string
+	web := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer k" {
+			w.WriteHeader(401)
+			return
+		}
+		asked = r.URL.RawQuery
+		w.Write([]byte(`{"code":"KX7P2Q","in_voice":2}`))
+	}))
+	defer web.Close()
+	t.Setenv("WEBSITE_INTERNAL_URL", web.URL)
+	t.Setenv("WEBSITE_INTERNAL_KEY", "k")
+
+	if rec := hostReq(s, "web-lp1.znc.srv.nintendo.net", "GET", "/_openpak/voice?app_id=01003BC0000A0000", "", ""); rec.Code != 401 {
+		t.Errorf("no token = %d, want 401", rec.Code)
+	}
+	rec := hostReq(s, "web-lp1.znc.srv.nintendo.net", "GET", "/_openpak/voice?app_id=01003BC0000A0000", naIDTokenFor(s), "")
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "KX7P2Q") {
+		t.Fatalf("voice = %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(asked, "account_id=acc-") || !strings.Contains(asked, "app_id=01003BC0000A0000") {
+		t.Errorf("website asked %q", asked)
 	}
 }
 

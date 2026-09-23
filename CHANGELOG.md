@@ -3,6 +3,13 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.18.0 — 2026-09-23
+
+- **Voice-chat lobby**: the znc `/lobby/` page is now OpenPak voice chat's console side. It
+  tells the player to open the OpenPak app → Voice chat and shows their game room's code and
+  how many players are in voice, from `/_openpak/voice` (the console's account, asked of the
+  website's `/internal/voice/room` with `WEBSITE_INTERNAL_URL`/`WEBSITE_INTERNAL_KEY`).
+
 ## v0.17.0 — 2026-09-23
 
 The four eShop P2 leftovers that v0.16.0 answered with stubs are now features (evidence

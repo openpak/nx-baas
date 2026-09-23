@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<!--
+  OpenPak voice-chat lobby: the page a Switch game opens through the Lobby applet
+  (https://web-<env>.znc.srv.nintendo.net/lobby/?app_id=<title id>[&param=...]).
+
+  OpenPak's voice chat, like Nintendo's, runs on the phone and never on the console, so this
+  page only sends the player there: open the OpenPak app -> Voice chat. It shows the room code
+  and how many players are talking when it can find the player's room.
+
+  Written for nx-baas to serve in place of the "not available yet" lobbyPage in nso.go. When it
+  is wired in, the bridge below is the same as shopBridgeJS (nxFind/nxCall/nxToken) and the
+  styles can move onto pageCSS/shopCSS; it is standalone here so it can be opened and tried in
+  a desktop browser (it shows the "no room" state there, and ?demo=1 fakes a room).
+
+  DATA ENDPOINT it needs (same origin, served by nx-baas):
+
+    GET /_openpak/voice?app_id=<app_id>
+    Authorization: Bearer <NA id token>       (from the applet bridge, as the Lhub page gets it)
+
+  nx-baas resolves the console's account from the token (shopPrincipal), then asks the website:
+
+    GET http://openpak-website:20010/internal/voice/room?account_id=<core account id>&app_id=<app_id>
+    Authorization: Bearer <WEBSITE_INTERNAL_KEY>
+
+  and passes the answer through unchanged:
+
+    200 {"code":"KX7P2Q","title":"splatoon-2","players":4,"in_voice":2,"max_members":8,
+         "members":[{"account_id":"...","display_name":"...","in_voice":true}, ...]}
+    404 when the player is in no game room (the page keeps waiting and asks again)
+    401 from nx-baas when it cannot tell who the console is (the page shows the steps only)
+
+  "players" is everyone in the game's room (the matchmaking gathering), "in_voice" how many of
+  them are connected to its voice chat. The page asks every 5 seconds while it is open.
+
+  Leaving navigates to the Lobby shim's callback URL (https://localhost/lobby/), which ends the
+  applet; endApplet and window.close are fallbacks for a host that does not intercept it.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Voice chat</title>
+<style>
+  /* A TV at the other end of a room: big type, high contrast, one column, and a focus ring
+     the D-pad can follow. The Switch browser is 1280x720. */
+  html, body { margin: 0; background: #16161a; color: #f3eff7; }
+  body { font: 28px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 26px 56px; }
+  .brand { display: flex; align-items: center; gap: 16px; font-weight: 700; font-size: 30px; color: #c9b8ff; }
+  .brand .spacer { flex: 1; }
+  h1 { font-size: 46px; line-height: 1.15; margin: 14px 0 6px; }
+  .lead { color: #bdb6c8; margin: 0 0 18px; }
+  ol { margin: 0; padding: 0; list-style: none; counter-reset: step; }
+  ol li { counter-increment: step; display: flex; gap: 20px; align-items: baseline; margin: 0 0 10px; }
+  ol li::before { content: counter(step); flex: 0 0 52px; height: 52px; border-radius: 50%; background: #3b2f63;
+    color: #fff; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .room { display: flex; align-items: center; gap: 40px; margin: 16px 0 20px; padding: 18px 36px; border-radius: 20px;
+    background: #221f2b; border: 2px solid #3a3446; }
+  .room .label { color: #bdb6c8; font-size: 24px; }
+  .code { font: 700 64px/1 ui-monospace, "Cascadia Mono", Menlo, monospace; letter-spacing: 12px; color: #fff; }
+  .count { font-size: 34px; font-weight: 600; }
+  .count.live { color: #7ee2a8; }
+  .waiting { color: #bdb6c8; }
+  button { font: inherit; font-size: 30px; font-weight: 700; padding: 18px 40px; border-radius: 16px; border: 3px solid transparent;
+    background: #6d4aff; color: #fff; cursor: pointer; }
+  button.small { font-size: 24px; padding: 10px 24px; background: #2c2838; }
+  button:focus { outline: none; border-color: #fff; box-shadow: 0 0 0 6px rgba(201, 184, 255, .45); }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <div class="brand">OpenPak <span class="spacer"></span>
+    <button class="small" id="close" type="button">Close</button></div>
+
+  <h1>Voice chat is on your phone</h1>
+  <p class="lead">Talk with the other players in this room using the OpenPak app. The console doesn't carry any audio.</p>
+
+  <ol>
+    <li><span>Open the <b>OpenPak</b> app on your phone.</span></li>
+    <li><span>Go to <b>Friends</b>, then tap the headset button: <b>Voice chat</b>.</span></li>
+    <li><span id="step3">Your room shows up by itself. Tap <b>Join voice chat</b>.</span></li>
+  </ol>
+
+  <div class="room hidden" id="room">
+    <div>
+      <div class="label">Room code</div>
+      <div class="code" id="code">------</div>
+    </div>
+    <div>
+      <div class="label" id="game">&nbsp;</div>
+      <div class="count" id="count">&nbsp;</div>
+    </div>
+  </div>
+  <p class="waiting" id="waiting">Looking for your room…</p>
+
+  <button id="done" type="button">Back to the game</button>
+</main>
+<script>
+(function () {
+  // The applet bridge, as nx-baas's shopBridgeJS has it: the console exposes the NA id token
+  // under one of a few names depending on the applet; ask each until one answers.
+  var NX_SPACES = ['shop', 'ec', 'account', 'lhub', 'lobby'];
+  function nxFind(name) {
+    var nx = window.nx; if (!nx) { return null; }
+    for (var i = 0; i < NX_SPACES.length; i++) {
+      var o = nx[NX_SPACES[i]];
+      if (o && typeof (o[name]) === 'function') { return { fn: o[name], self: o }; }
+    }
+    if (typeof (nx[name]) === 'function') { return { fn: nx[name], self: nx }; }
+    return null;
+  }
+  function nxCall(name, args, cb) {
+    var f = nxFind(name);
+    if (!f) { return false; }
+    function got(v) { if (cb) { cb(v); } }
+    try {
+      var r = f.fn.apply(f.self, (args || []).concat([got]));
+      if (r && typeof (r.then) === 'function') { r.then(got, function () { got(null); }); }
+      else if (r !== undefined) { got(r); }
+    } catch (e) { got(null); }
+    return true;
+  }
+  function nxToken(v) {
+    if (!v) { return null; }
+    if (typeof (v) === 'string') { return v.split('.').length === 3 ? v : null; }
+    return nxToken(v.idToken || v.id_token || v.naIdToken || v.nsaIdToken || v.token || v.value || null);
+  }
+  function param(k) {
+    var m = location.search.match(new RegExp('[?&]' + k + '=([^&]*)'));
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+  function $(id) { return document.getElementById(id); }
+  function gameName(t) {
+    return String(t || '').split('-').map(function (w) { return w ? w.charAt(0).toUpperCase() + w.slice(1) : w; }).join(' ');
+  }
+
+  // Leaving: the callback URL ends the Lobby applet; the rest are for other hosts.
+  function leave() {
+    setTimeout(function () { if (!nxCall('endApplet', [], null)) { try { window.close(); } catch (e) {} } }, 1500);
+    location.href = 'https://localhost/lobby/';
+  }
+  $('close').addEventListener('click', leave);
+  $('done').addEventListener('click', leave);
+  // The controller: A presses the focused button, B leaves, left/right moves between the two.
+  document.addEventListener('keydown', function (e) {
+    var k = e.key || e.keyCode;
+    if (k === 'Escape' || k === 'Backspace' || k === 27 || k === 8) { e.preventDefault(); leave(); }
+    if (k === 'ArrowLeft' || k === 'ArrowUp' || k === 37 || k === 38) { $('close').focus(); }
+    if (k === 'ArrowRight' || k === 'ArrowDown' || k === 39 || k === 40) { $('done').focus(); }
+  });
+  $('done').focus();
+
+  function show(room) {
+    if (!room || !room.code) {
+      $('room').classList.add('hidden');
+      $('waiting').classList.remove('hidden');
+      $('waiting').textContent = 'Waiting for your room. Make or join a room with voice chat on, and it will appear here.';
+      return;
+    }
+    $('room').classList.remove('hidden');
+    $('waiting').classList.add('hidden');
+    $('code').textContent = room.code;
+    $('game').textContent = room.title ? gameName(room.title) : ' ';
+    var n = room.in_voice || 0;
+    var of = room.players || room.max_members || 8;
+    $('count').textContent = n === 0 ? 'Nobody in voice chat yet'
+      : n + ' of ' + of + (of === 1 ? ' player' : ' players') + ' in voice chat';
+    $('count').className = 'count' + (n > 0 ? ' live' : '');
+    $('step3').innerHTML = 'Your room shows up by itself. If it doesn’t, type the code <b>' + room.code + '</b>.';
+  }
+
+  var token = null;
+  function ask() {
+    if (param('demo')) { show({ code: 'KX7P2Q', title: 'splatoon-2', players: 4, in_voice: 2, max_members: 8 }); return; }
+    var headers = {};
+    if (token) { headers['Authorization'] = 'Bearer ' + token; }
+    fetch('/_openpak/voice?app_id=' + encodeURIComponent(param('app_id')), { headers: headers, cache: 'no-store' })
+      .then(function (r) {
+        if (r.status === 401) { $('waiting').textContent = ''; stop(); return null; }
+        return r.ok ? r.json() : null;
+      })
+      .then(function (room) { if (room !== undefined && timer) { show(room); } })
+      .catch(function () { show(null); });
+  }
+  var timer = null;
+  function start() { ask(); timer = setInterval(ask, 5000); }
+  function stop() { if (timer) { clearInterval(timer); timer = null; } }
+
+  // Ask for the token first; a console that offers no bridge still gets the steps and a try.
+  var asked = false;
+  function take(v) { if (asked) { return; } asked = true; token = nxToken(v); start(); }
+  if (!nxCall('requestNaIdToken', [], take)) {
+    if (!nxCall('ensureNaIdToken', [], take)) { nxCall('loadCachedNaIdToken', [], take); }
+  }
+  setTimeout(function () { if (!asked) { asked = true; start(); } }, 3000);
+})();
+</script>
+</body>
+</html>

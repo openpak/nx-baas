@@ -30,10 +30,14 @@ package main
 // voice chat, so the page says so and offers that way out.
 
 import (
+	_ "embed"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
+	"time"
 )
 
 func (s *server) nso(w http.ResponseWriter, r *http.Request, body []byte) {
@@ -69,17 +73,62 @@ func (s *server) nso(w http.ResponseWriter, r *http.Request, body []byte) {
 // /lobby/, a recorded 404 for anything else on the host.
 func (s *server) zncLobby(w http.ResponseWriter, r *http.Request, body []byte) {
 	p := r.URL.Path
+	if p == "/_openpak/voice" {
+		s.lobbyVoice(w, r)
+		return
+	}
 	if p != "/lobby" && !strings.HasPrefix(p, "/lobby/") {
 		dump(r, body, "!! UNHANDLED znc (only /lobby/ is known)")
 		writeJSON(w, 404, map[string]any{"status": 404, "title": "not found"})
 		return
 	}
 	q := r.URL.Query()
-	log.Printf("[nso] znc lobby %s %s%s app_id=%q param=%q ua=%q -> voice chat not available",
+	log.Printf("[nso] znc lobby %s %s%s app_id=%q param=%q ua=%q -> OpenPak voice chat lobby",
 		r.Method, hostOf(r), p, q.Get("app_id"), q.Get("param"), r.UserAgent())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	fmt.Fprint(w, lobbyPage)
+}
+
+// lobbyVoice is the lobby page's room lookup: the console's account from its NA id token,
+// then the website's answer for that account's game room, passed through unchanged
+// (200 room, 404 in no room). 401 when the console can't be named; 503 when the website
+// is not configured or unreachable.
+func (s *server) lobbyVoice(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	_, baasUser := s.shopPrincipal(r)
+	account := ""
+	if s.store == nil || baasUser == "" {
+		// fall through to 401
+	} else if u := s.store.User(baasUser); u != nil && s.banSrc() != nil {
+		account = s.banSrc().accountFor(u.PID)
+	}
+	if account == "" {
+		writeJSON(w, 401, map[string]any{"status": 401, "title": "who is this console?"})
+		return
+	}
+	base, key := strings.TrimRight(getenv("WEBSITE_INTERNAL_URL", ""), "/"), getenv("WEBSITE_INTERNAL_KEY", "")
+	if base == "" || key == "" {
+		writeJSON(w, 503, map[string]any{"status": 503, "title": "voice chat is not configured"})
+		return
+	}
+	u := base + "/internal/voice/room?" + url.Values{"account_id": {account}, "app_id": {r.URL.Query().Get("app_id")}}.Encode()
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, u, nil)
+	if err != nil {
+		writeJSON(w, 503, map[string]any{"status": 503, "title": "voice chat unavailable"})
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		log.Printf("[nso] lobby voice: website unreachable: %v", err)
+		writeJSON(w, 503, map[string]any{"status": 503, "title": "voice chat unavailable"})
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, io.LimitReader(resp.Body, 64<<10))
 }
 
 // nsoMembership tells the page whose membership it is showing. The status itself is the
@@ -152,30 +201,9 @@ setTimeout(function(){if(!asked){asked=true;show(null);}},4000);
 })();
 `
 
-// lobbyCallback is the Lobby shim's callback URL: navigating to it ends the applet.
-const lobbyCallback = "https://localhost/lobby/"
-
-// lobbyPage is the voice-chat lobby, controller first like the Lhub page. Leaving
-// navigates to the callback URL; endApplet and the browser's own close are fallbacks for
-// a host that does not intercept it.
-var lobbyPage = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">` +
-	`<meta name="viewport" content="width=device-width,initial-scale=1"><title>Voice chat</title>` +
-	`<style>` + pageCSS + shopCSS + `</style></head>` +
-	`<body class="console"><main><div class="brand"><img src="` + logoDataURI + `" alt=""> OpenPak` +
-	`<button class="small close" id="lbclose" type="button">Close</button></div>` +
-	`<h1>Voice chat isn't available on OpenPak yet</h1>` +
-	`<p>Online play works without it: close this and keep playing.</p>` +
-	`<button class="small" id="done" type="button">Back to the game</button>` +
-	`</main><script>` + shopBridgeJS + lobbyJS + `</script></body></html>`
-
-const lobbyJS = `
-(function(){
-function leave(){
- setTimeout(function(){if(!nxCall('endApplet',[],null)){try{window.close();}catch(e){}}},1500);
- location.href='` + lobbyCallback + `';
-}
-document.getElementById('lbclose').addEventListener('click',leave);
-document.getElementById('done').addEventListener('click',leave);
-document.getElementById('done').focus();
-})();
-`
+// lobbyPage is the voice-chat lobby (assets/lobby.html): it sends the player to the
+// OpenPak app's voice chat and shows their room from /_openpak/voice. Leaving navigates
+// to the Lobby shim's callback URL, https://localhost/lobby/; endApplet and window.close are fallbacks.
+//
+//go:embed assets/lobby.html
+var lobbyPage string
