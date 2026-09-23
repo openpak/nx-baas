@@ -61,7 +61,8 @@ Returned by list/get/create/update. Field names match the catalog file
   "base_version": 0,
   "updated_at": 1790000000,
   "application": {"version": 0, "version_label": "1.0.0", "content": [ContentObject…]} ,
-  "update": {"title_id": "0100abcd12340800", "version": 65536, "version_label": "1.0.1", "content": [ContentObject…]}
+  "update": {"title_id": "0100abcd12340800", "version": 65536, "version_label": "1.0.1", "content": [ContentObject…]},
+  "bundle": [{"application_id": "0100aaaa00000000", "is_upgrade_edition": false}]
 }
 ```
 
@@ -72,6 +73,10 @@ Returned by list/get/create/update. Field names match the catalog file
 - `version`: the newest version a download reaches (the update's when there is one).
 - `application` / `update`: `null` when that version was never uploaded. Hand-written
   `catalog.json` entries (no `unpublished` key) read as published.
+- `bundle`: the applications that come with this title (a digital bundle, see
+  `docs/native-shop.md` "Digital bundles"). A console whose linked account owns this title
+  offers them for redemption; redeeming grants the account an entitlement for each. Only
+  bundled titles that are in the catalog and published reach the console. `[]` when none.
 - ContentObject: `{"content_id": "32 hex", "content_type": "meta|program|control|legalinformation|htmldocument|data|deltafragment", "size": n, "sha256": "64 hex"}`.
 
 ## Endpoints
@@ -99,7 +104,10 @@ Body: a Title object without `published`, `version*`, `application`, `update`,
 
 Partial update of the metadata fields: `publisher`, `category`, `localized` (replaces the
 whole map), `default_lang`, `languages`, `compatibility`, `screenshots`, `distribution`
-(both fields required if sent). Unknown fields → `400 invalid_field`. Versions and
+(both fields required if sent), `bundle` (replaces the whole list; `[]` removes it; each
+`application_id` must be 16 hex digits ending in `000`, not the title itself, no
+repeats, at most 64; the bundled titles need not exist yet). `bundle` is also accepted on
+create. Unknown fields → `400 invalid_field`. Versions and
 publication have their own endpoints. `200 Title`.
 
 ### `DELETE /internal/store/titles/{title_id}`
@@ -189,7 +197,8 @@ Nintendo Account id the console presents, which this server maps from the accoun
 ```json
 {"account_id": "…", "na_id": "…", "entitlements": [
   {"title_id": "…", "status": "active|revoked", "version": 65536, "elicense_id": "…",
-   "device_id": "…", "created_at": 1790000000, "updated_at": 1790000000}
+   "device_id": "…", "source": "purchase|bundle:<title_id>",
+   "created_at": 1790000000, "updated_at": 1790000000}
 ]}
 ```
 
@@ -200,6 +209,26 @@ Nintendo Account id the console presents, which this server maps from the accoun
 Same addressing. `{"account_id", "na_id", "tasks": [{"id", "title_id", "version", "state",
 "fail_reason", "created_at", "updated_at"}]}`, newest first. `state` ∈
 `queued|downloading|paused|completed|failed|canceled`.
+
+### Firmware blocklist: `/internal/store/firmware-blocklist`
+
+The firmware versions the eShop refuses (bvc, see `docs/native-shop.md` "Firmware
+blocklist"). A listed version makes NIM fail with 2137-8164 before the shop opens, so
+list only versions that must not use the store. Versions are `major-minor-micro`, each
+0–255; `22.5.0` is accepted and stored as `22-5-0`. Persisted in the shop state file.
+
+- `GET /internal/store/firmware-blocklist` → `200 {"versions": [{"version": "13-0-0",
+  "note": "…", "added_at": 1790000000}…]}`, in version order.
+- `PUT /internal/store/firmware-blocklist` with `{"versions": [{"version": "13-0-0",
+  "note": "optional"}…]}` replaces the list (duplicates collapse; an existing entry keeps
+  its `added_at`). `200` with the list.
+- `PUT /internal/store/firmware-blocklist/{version}` adds one (optional body
+  `{"note": "…"}`; re-adding updates the note). `200` with the list.
+- `DELETE /internal/store/firmware-blocklist/{version}` removes one. `200` with the list;
+  `404 not_found` when it was not listed.
+- A malformed version is `400 invalid_field`.
+
+`added_at` is also what bvc sends as the entry's `Last-Modified` and inside its ETag.
 
 ### `GET /internal/store/stats` · `GET /internal/store/titles/{title_id}/stats`
 

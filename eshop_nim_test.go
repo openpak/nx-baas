@@ -293,6 +293,7 @@ func TestNimMetadataHostsDoNotReachAtum(t *testing.T) {
 }
 
 // Beach's device questions that NIM asks there, answered in beach rather than its 404.
+// With no bundle anywhere: both flags false (nothing redeemed), an empty collection.
 func TestBeachAnswersRedeemTargetAndBundleRoutes(t *testing.T) {
 	s := shopServerFor(t)
 	const host = "beach.hac.lp1.eshop.nintendo.net"
@@ -302,9 +303,13 @@ func TestBeachAnswersRedeemTargetAndBundleRoutes(t *testing.T) {
 	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &st) != nil || st["digital_bundle"] != false || st["pre_install"] != false {
 		t.Errorf("redeemed_status = %d %s", rec.Code, rec.Body.String())
 	}
+	// target/set is an account act: without an account it is refused, not faked.
+	if rec := hostReq(s, host, "POST", "/v1/devices/target/set", "", ""); rec.Code != 401 {
+		t.Errorf("target/set without an account = %d, want 401", rec.Code)
+	}
 	for _, p := range []string{"/v1/devices/target/set", "/v1/devices/target/clear"} {
-		if rec := hostReq(s, host, "POST", p, "", "{}"); rec.Code != 200 {
-			t.Errorf("%s = %d", p, rec.Code)
+		if rec := hostReq(s, host, "POST", p, naIDTokenFor(s), ""); rec.Code != 200 {
+			t.Errorf("%s = %d %s", p, rec.Code, rec.Body.String())
 		}
 	}
 	// The bundle lookup is an empty collection: $.contents [] and $.redeemed false.
@@ -315,6 +320,147 @@ func TestBeachAnswersRedeemTargetAndBundleRoutes(t *testing.T) {
 	}
 	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &b) != nil || b.Contents == nil || len(b.Contents) != 0 || b.Redeemed == nil || *b.Redeemed {
 		t.Errorf("digital_bundle = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+const (
+	testBundledID  = "0f9f0c0ffee10000"
+	testUpgradeID  = "0f9f0c0ffee20000"
+	testUnlistedID = "0f9f0c0ffee30000"
+)
+
+// withBundle gives the test title a bundle of two published titles and one that is not
+// in the catalog.
+func withBundle(t *testing.T, s *server) {
+	t.Helper()
+	s.shop.mu.Lock()
+	defer s.shop.mu.Unlock()
+	for _, id := range []string{testBundledID, testUpgradeID} {
+		s.shop.Catalog[id] = &ShopTitle{TitleID: id, Publisher: "OpenPak",
+			Distribution: ShopDistribution{Source: "test", Permission: "test"},
+			Localized:    map[string]ShopText{"en-US": {Name: "Bundled " + id}}}
+	}
+	parent := *s.shop.Catalog[testTitleID]
+	parent.Bundle = []ShopBundleItem{{ApplicationID: testBundledID}, {ApplicationID: testUpgradeID, IsUpgradeEdition: true},
+		{ApplicationID: testUnlistedID}}
+	s.shop.Catalog[testTitleID] = &parent
+}
+
+type bundleReply struct {
+	Contents []struct {
+		ApplicationID    string `json:"application_id"`
+		IsUpgradeEdition bool   `json:"is_upgrade_edition"`
+		Redeemed         bool   `json:"redeemed"`
+	} `json:"contents"`
+	Redeemed bool `json:"redeemed"`
+}
+
+func bundleState(t *testing.T, s *server) (redeemedStatus bool, b bundleReply) {
+	t.Helper()
+	const host = "beach.hac.lp1.eshop.nintendo.net"
+	var st struct {
+		DigitalBundle *bool `json:"digital_bundle"`
+		PreInstall    *bool `json:"pre_install"`
+	}
+	rec := hostReq(s, host, "GET", "/v1/devices/redeemed_status", "", "")
+	if json.Unmarshal(rec.Body.Bytes(), &st) != nil || st.DigitalBundle == nil || st.PreInstall == nil {
+		t.Fatalf("redeemed_status = %d %s", rec.Code, rec.Body.String())
+	}
+	rec = hostReq(s, host, "GET", "/v1/devices/digital_bundle/contents?shop_id=4", "", "")
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &b) != nil {
+		t.Fatalf("contents = %d %s", rec.Code, rec.Body.String())
+	}
+	return *st.DigitalBundle, b
+}
+
+// A title's bundle reaches the device that owns it; target/set redeems it into real
+// rights (edge tokens follow), and target/clear takes back only what it granted.
+func TestDigitalBundleRedemptionGrantsRights(t *testing.T) {
+	s := shopServerFor(t)
+	withBundle(t, s)
+	const host = "beach.hac.lp1.eshop.nintendo.net"
+
+	// Not owned yet: no bundle.
+	linkConsole(t, s)
+	if st, b := bundleState(t, s); st || len(b.Contents) != 0 {
+		t.Fatalf("bundle before owning the title: %v %+v", st, b)
+	}
+
+	// Owning the title brings its published bundled titles, unredeemed.
+	if _, _, err := s.shop.acquire(testNAID, "", testTitleID, testDevice, 0); err != nil {
+		t.Fatal(err)
+	}
+	st, b := bundleState(t, s)
+	if st || b.Redeemed || len(b.Contents) != 2 {
+		t.Fatalf("owned, unredeemed: status %v, %+v", st, b)
+	}
+	if b.Contents[0].ApplicationID != testBundledID || b.Contents[0].IsUpgradeEdition || b.Contents[0].Redeemed ||
+		b.Contents[1].ApplicationID != testUpgradeID || !b.Contents[1].IsUpgradeEdition {
+		t.Errorf("contents = %+v", b.Contents)
+	}
+	edge := func() string {
+		return dragonsReq(s, "dragonst.hac.lp1.dragons.nintendo.net", "POST", "/v2/edge_token/issue",
+			`{"title_ids":["`+testBundledID+`","`+testUpgradeID+`"]}`).Body.String()
+	}
+	if strings.Contains(edge(), testBundledID) {
+		t.Fatal("a bundled title was tokenized before redemption")
+	}
+
+	// Redeem.
+	if rec := hostReq(s, host, "POST", "/v1/devices/target/set", naIDTokenFor(s), ""); rec.Code != 200 {
+		t.Fatalf("target/set = %d %s", rec.Code, rec.Body.String())
+	}
+	st, b = bundleState(t, s)
+	if !st || !b.Redeemed || len(b.Contents) != 2 || !b.Contents[0].Redeemed || !b.Contents[1].Redeemed {
+		t.Fatalf("after redemption: status %v, %+v", st, b)
+	}
+	if e := s.shop.entitlementFor(testNAID, testBundledID); e == nil || e.Status != "active" || e.Source != "bundle:"+testTitleID {
+		t.Fatalf("bundled entitlement = %+v", e)
+	}
+	if out := edge(); !strings.Contains(out, testBundledID) || !strings.Contains(out, testUpgradeID) {
+		t.Errorf("edge token after redemption = %s", out)
+	}
+	// Redeeming again changes nothing and grants nothing twice.
+	hostReq(s, host, "POST", "/v1/devices/target/set", naIDTokenFor(s), "")
+	if n := len(s.shop.Redemptions); n != 2 {
+		t.Errorf("redemptions after a second set = %d, want 2", n)
+	}
+
+	// A restart keeps the redemption.
+	s2 := &server{key: s.key, idKid: s.idKid, jwks: s.jwks, store: s.store, acct: s.acct, shop: newShopState(s.shop.dir)}
+	withBundle(t, s2)
+	if st, _ := bundleState(t, s2); !st {
+		t.Error("the redemption did not survive a restart")
+	}
+
+	// Clear revokes what the redemption granted and makes the bundle redeemable again.
+	if rec := hostReq(s, host, "POST", "/v1/devices/target/clear", naIDTokenFor(s), ""); rec.Code != 200 {
+		t.Fatalf("target/clear = %d", rec.Code)
+	}
+	if e := s.shop.entitlementFor(testNAID, testBundledID); e == nil || e.Status != "revoked" {
+		t.Errorf("after clear the bundled entitlement = %+v", e)
+	}
+	if st, b := bundleState(t, s); st || b.Redeemed || b.Contents[0].Redeemed {
+		t.Errorf("after clear: status %v, %+v", st, b)
+	}
+}
+
+// A bundled title the account already bought is recorded as redeemed but never revoked by
+// a clear: the purchase is not the bundle's to take back.
+func TestDigitalBundleClearKeepsPurchases(t *testing.T) {
+	s := shopServerFor(t)
+	withBundle(t, s)
+	linkConsole(t, s)
+	s.shop.acquire(testNAID, "", testTitleID, testDevice, 0)
+	s.shop.acquire(testNAID, "", testBundledID, testDevice, 0)
+	const host = "beach.hac.lp1.eshop.nintendo.net"
+	hostReq(s, host, "POST", "/v1/devices/target/set", naIDTokenFor(s), "")
+	hostReq(s, host, "POST", "/v1/devices/target/clear", naIDTokenFor(s), "")
+	if e := s.shop.entitlementFor(testNAID, testBundledID); e == nil || e.Status != "active" || e.Source != "" {
+		t.Errorf("purchased title after clear = %+v", e)
+	}
+	if e := s.shop.entitlementFor(testNAID, testUpgradeID); e == nil || e.Status != "revoked" {
+		t.Errorf("granted title after clear = %+v", e)
 	}
 }
 
@@ -335,14 +481,26 @@ func TestIdbeIsARecordedNotFound(t *testing.T) {
 	}
 }
 
-// bvc: NIM treats a 200 as "this firmware is refused" and a 404 as "not listed", so every
-// version must get the 404.
-func TestBvcNeverListsTheFirmware(t *testing.T) {
+// bvc: NIM treats a 200 as "this firmware is refused" and a 404 as "not listed". Only
+// what the operator listed is refused, and both answers look like Akamai's.
+func TestBvcServesTheOperatorBlocklist(t *testing.T) {
 	s := shopServerFor(t)
+	const host = "bvc-hac-lp1.cdn.nintendo.net"
 	for _, p := range []string{"/22-5-0", "/0-0-0", "/"} {
-		if rec := hostReq(s, "bvc-hac-lp1.cdn.nintendo.net", "GET", p, "", ""); rec.Code != 404 {
-			t.Errorf("bvc %s = %d, want 404 (a 200 blocks the console)", p, rec.Code)
+		rec := hostReq(s, host, "GET", p, "", "")
+		if rec.Code != 404 || rec.Body.String() != "Not found\n" || rec.Header().Get("Server") != "AkamaiNetStorage" ||
+			rec.Header().Get("Content-Type") != "" {
+			t.Errorf("bvc %s = %d %q %v, want Akamai's 10-byte 404", p, rec.Code, rec.Body.String(), rec.Header())
 		}
+	}
+	s.shop.BlockedFirmware = []BlockedFirmware{{Version: "13-0-0", AddedAt: 1714521760}}
+	rec := hostReq(s, host, "GET", "/13-0-0", "", "")
+	if rec.Code != 200 || rec.Body.Len() != 0 || rec.Header().Get("Content-Type") != "text/plain" ||
+		rec.Header().Get("ETag") != `"d41d8cd98f00b204e9800998ecf8427e:1714521760.000000"` {
+		t.Errorf("listed bvc = %d %q %v", rec.Code, rec.Body.String(), rec.Header())
+	}
+	if rec := hostReq(s, host, "GET", "/13-0-1", "", ""); rec.Code != 404 {
+		t.Errorf("unlisted 13-0-1 = %d", rec.Code)
 	}
 }
 

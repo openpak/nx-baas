@@ -17,10 +17,13 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // pearljam is the eShop host NIM names beside dragons and tigers
@@ -90,12 +93,73 @@ func (s *server) idbe(w http.ResponseWriter, r *http.Request, body []byte) {
 // 0x1ed990 formats the first three bytes of set:sys GetFirmwareVersion; the
 // check at 0x238460 turns a successful reply into its own error 0x3fc89
 // (2137-8164) and an HTTP 404 into success]. The file's existence is the
-// answer: a version listed there is refused. OpenPak lists no firmware, so
-// every version gets the 404 NIM treats as "not listed". Answering 200 would
-// block the console.
+// answer: a listed version is refused.
+//
+// The list is the operator's (BlockedFirmware, edited through the store admin
+// API): a listed version gets 200, anything else 404. Both answers copy what
+// Nintendo's CDN sends (observed 2026-09-23 on bvc-hac-lp1): a listed version
+// is 200 with an empty text/plain body, an ETag of the empty body's MD5 and a
+// timestamp, and Last-Modified; an unlisted one is 404 with the 10-byte body
+// "Not found\n" and no Content-Type. Both carry Server: AkamaiNetStorage and
+// Accept-Ranges: bytes.
 func (s *server) bvc(w http.ResponseWriter, r *http.Request) {
+	s.ensureShop()
+	v := strings.Trim(r.URL.Path, "/")
+	h := w.Header()
+	h.Set("Server", "AkamaiNetStorage")
+	h.Set("Accept-Ranges", "bytes")
+	if b := s.shop.blockedFirmware(v); b != nil {
+		log.Printf("[shop] bvc %s %s%s -> 200: firmware %s is on the blocklist (NIM refuses it with 2137-8164)", r.Method, hostOf(r), r.URL.Path, v)
+		h.Set("Content-Type", "text/plain")
+		h.Set("Content-Length", "0")
+		h.Set("ETag", fmt.Sprintf(`"d41d8cd98f00b204e9800998ecf8427e:%d.000000"`, b.AddedAt))
+		h.Set("Last-Modified", time.Unix(b.AddedAt, 0).UTC().Format(http.TimeFormat))
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	log.Printf("[shop] bvc %s %s%s -> 404: this firmware version is not listed", r.Method, hostOf(r), r.URL.Path)
+	h["Content-Type"] = nil // Akamai sends none; nil stops net/http sniffing one
+	h.Set("Content-Length", "10")
 	w.WriteHeader(http.StatusNotFound)
+	if r.Method != http.MethodHead {
+		io.WriteString(w, "Not found\n")
+	}
+}
+
+// BlockedFirmware is one entry of the operator's bvc list.
+type BlockedFirmware struct {
+	Version string `json:"version"` // "major-minor-micro", as NIM formats it
+	Note    string `json:"note,omitempty"`
+	AddedAt int64  `json:"added_at"`
+}
+
+// normalizeFirmware accepts "22-5-0" or "22.5.0" and returns NIM's "22-5-0" form, or ""
+// when the string is not three decimal bytes (NIM formats u8s with %d).
+func normalizeFirmware(v string) string {
+	parts := strings.FieldsFunc(strings.TrimSpace(v), func(r rune) bool { return r == '-' || r == '.' })
+	if len(parts) != 3 {
+		return ""
+	}
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 || n > 255 || p != strconv.Itoa(n) {
+			return ""
+		}
+		parts[i] = p
+	}
+	return strings.Join(parts, "-")
+}
+
+func (s *shopState) blockedFirmware(v string) *BlockedFirmware {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.BlockedFirmware {
+		if s.BlockedFirmware[i].Version == v {
+			b := s.BlockedFirmware[i]
+			return &b
+		}
+	}
+	return nil
 }
 
 // nimUnserved answers the NIM routes that had no handler. They are grouped by

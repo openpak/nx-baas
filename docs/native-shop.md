@@ -190,7 +190,7 @@ NA id token and our BAAS-issued NSA id token.
 | `pushmo…/pushmo/p/<id>.json` | `{tasks:[]}` + ETag | meaning of `p` unrecovered; logged |
 | `veer.hac.%.d4c` `/v5/policy.json` | `{ttl:86400, weights:[{vendor:"atum", weight:100}]}` | **verified**: NIM `0x2277e0`/`0x228230` read `$.ttl` and `$.weights[].{vendor,weight}` |
 | `sun.`, `aqua.`, `superfly.`, `atumn*` `.d4c` | routed to the NIM path table before atum | they used to be 404'd by atum |
-| beach `redeemed_status`, `target/{set,clear}`, `digital_bundle/contents` | `{digital_bundle:false, pre_install:false}`; 200; `{contents:[], redeemed:false}` | **verified** (see "P2 leftovers" below). The first pass paired `$.digital_bundle` with the contents route; it belongs to `redeemed_status` |
+| beach `redeemed_status`, `target/{set,clear}`, `digital_bundle/contents` | the device's digital bundle (catalog `bundle`), redeemed by `target/set` into real entitlements | see "Digital bundles" below. The first pass paired `$.digital_bundle` with the contents route; it belongs to `redeemed_status` |
 | dragons/tigers `edge_token/issue`, `issuable_titles` | on all three rights hosts; an update id is authorized by its application's entitlement | |
 | rights publish/available | `accepted_rights_ids` / `skipped_rights_ids` added | NIM `$.accepted_rights_ids[*]`, `$.skipped_rights_ids[*]` |
 
@@ -212,8 +212,62 @@ hardware-confirmed.
 | --- | --- | --- |
 | `web-<env>.znc.srv.nintendo.net/lobby/*` (voice-chat lobby) | **served**: a controller-first page, "Voice chat isn't available on OpenPak yet", Close navigates to `https://localhost/lobby/` (then `endApplet`, then `window.close` if nothing intercepts it). Other paths on the host: recorded 404. On-demand cert, no client-certificate request | systemWeb `ShimUsageLobby::overwriteInternalArgs` (`0x85c65c`): session `LobbyApplet`, start URL `https://web-%.znc.srv.nintendo.net/lobby/` plus `app_id` and, when the caller passed one, `param`; the callback URL `https://localhost/lobby/` and the allowed prefix `https://web-%.znc.srv.nintendo.net/` go through the same two setters the shop shim uses for its `eshop://` callback |
 | `idbe-hac.cdn.nintendo.net/icondata/%02x/%016llX[-%hu].idbe` | **refused**: logged 404 (`no icon data`), naming whether the title is in the store | NIM builders `0x1ecc50` (with version, `%hu`) and `0x1eccc0`; `%02x` is bits 8–15 of the id, the id is upper-case hex. The task (`0x28c5e0`, vtable `0x324830`) sends a device-token header, `Accept: application/json` and `If-None-Match`, and has no reply parser: the body goes back to the IPC caller (`0x1b9e60`, `0x1ba0b0`) unread. No other 22.5.0 module names `.idbe`, so the format is not recoverable from this firmware and none is invented |
-| `bvc-hac-<env>.cdn.nintendo.net/<major>-<minor>-<micro>` | **served**: 404 for every version | NIM builder `0x1ed990` formats the first three bytes of `set:sys` GetFirmwareVersion; the check `0x238460` turns any success into NIM's own error `0x3fc89` (2137-8164) and an HTTP 404 (`0x39d889`, per the status map at `0x1a56f0`) into success. A listed version is refused; OpenPak lists none |
-| beach `/v1/devices/redeemed_status` | **served, shape corrected**: `{digital_bundle:false, pre_install:false}` | NIM `0x234540`: both keys required (else `0x15489`), both read by the reply handler's bool callback (`0x234a50`); each false becomes a "not redeemed" flag for the caller. False is the literal answer, and the safe one next to the shop's `cleanupDigitalBundles` / pre-install cleanup bridge calls |
-| beach `/v1/devices/digital_bundle/contents?shop_id=4` | **served**: `{contents:[], redeemed:false}` | NIM `0x234bd0`, handler vtable `0x328ed8`: `$.contents[]` (max 64) of `{application_id (hex string, base-16), is_upgrade_edition (bool), redeemed (bool)}`, top-level `$.redeemed` (bool). `shop_id` is the constant 4 |
+| `bvc-hac-<env>.cdn.nintendo.net/<major>-<minor>-<micro>` | **served from the operator blocklist** (after v0.16.0): a listed version gets Akamai's 200 (empty `text/plain`, ETag, Last-Modified), anything else Akamai's 10-byte 404 `Not found\n` with no Content-Type | NIM builder `0x1ed990` formats the first three bytes of `set:sys` GetFirmwareVersion; the check `0x238460` turns any success into NIM's own error `0x3fc89` (2137-8164) and an HTTP 404 (`0x39d889`, per the status map at `0x1a56f0`) into success. Headers and bodies copied from `bvc-hac-lp1.cdn.nintendo.net` on 2026-09-23 (see "Firmware blocklist" below) |
+| beach `/v1/devices/redeemed_status` | **served** (after v0.16.0 from the device's bundle): `{digital_bundle, pre_install:false}` | NIM `0x234540`: both keys required (else `0x15489`); the reply handler (`0x234a50`) stores each bool as sent, and `0x234540` sets caller flag bit 0 when `digital_bundle` is false and bit 1 when `pre_install` is false. The booleans read "redeemed"; false is the "not yet redeemed" signal |
+| beach `/v1/devices/digital_bundle/contents?shop_id=4` | **served** (after v0.16.0 from the catalog): the device's bundled applications | NIM `0x234bd0`, handler vtable `0x328ed8`: `$.contents[]` (max 64) of `{application_id (hex string, base-16), is_upgrade_edition (bool), redeemed (bool)}`, top-level `$.redeemed` (bool). `shop_id` is the constant 4. The IPC result copies the count, the 64 ids (+8), the 64 upgrade flags (+0x208) and the 64 redeemed flags (+0x248) |
 | pearljam `/civil`, `/sugar` | **still refused** (recorded 404) | Tried: both URLs are the bases of two endpoint objects (`0x22e430` sugar: 60 s, 10 attempts; `0x22eb70` civil: 60 s, 30 attempts) run by a templated request runner (`0x22d410`) that appends a caller-supplied `{name}` template path and POSTs `application/json`. sugar adds `X-DeviceAuthorization`, `X-NINTENDO-NSA-ID-TOKEN` and `X-Nintendo-Application-Id`; civil adds `X-DeviceAuthorization`, `Authorization: Bearer` and `X-Nintendo-Application-Id`. On error statuses the reply's `$.error.code` is read (`0x22e620`). The success body goes to a request-specific sink (`0x2314b0`) with no selector strings, and none of NIM's `/{version}/…` templates is bound to either endpoint (they belong to dragons' endpoint table at `0x327358`). The direct path `0x22b280` hands base + suffix + body to a persisted request store (`0x1a64e0`). No path or reply shape is recoverable from NIM alone |
 
+
+## After v0.16.0: the P2 leftovers made real
+
+### Digital bundles
+
+A catalog title may declare a bundle (`catalog.json` or the store admin API):
+
+```json
+"bundle": [{"application_id": "0100aaaa00000000"},
+           {"application_id": "0100bbbb00000000", "is_upgrade_edition": true}]
+```
+
+Buying or owning that title gives every console the owning account is linked to (beach
+link) a digital bundle: the bundled applications this store publishes (a bundled id
+that is not in the catalog, or is unpublished, is left out because it could never
+install). The console sees it through NIM's three beach calls (`eshop_bundle.go`):
+
+| Call | NIM | OpenPak |
+| --- | --- | --- |
+| `GET /v1/devices/redeemed_status` (device token only) | `0x234540`; handler `0x234a50` stores each bool, `0x234540` flags "not redeemed" for each false | `digital_bundle` is true once the device has a bundle and all of it is redeemed; false when something is waiting or there is no bundle (the v0.16.0 answer). `pre_install` stays false: OpenPak never pre-installs software |
+| `GET /v1/devices/digital_bundle/contents?shop_id=4` (device token only) | `0x234bd0`, vtable `0x328ed8` | one element per bundled application, `redeemed` per device; top-level `redeemed` = non-empty and all redeemed |
+| `POST /v1/devices/target/set` | task `0x237f30` (flag at `+0x90` = set, URL builder `0x1ed4c0`), device token + `Authorization: Bearer <id token>` of the user at `+0x80`, no body, success body unread | the redemption: the presenting account gets an entitlement for every unredeemed bundled application (the same row a purchase makes, marked `source: bundle:<title>`), the device is linked to it, and the redemption is recorded per device. Idempotent. Without an account: 401 |
+| `POST /v1/devices/target/clear` | same task, flag clear (`0x1ed570`) | removes that account's redemptions on the device and revokes only the entitlements they created; a purchased title is never revoked |
+
+Why `target/set` is the redemption: it is the only account-bearing call in the family,
+and the console's other strings describe the same act (qlaunch `StReceiveDigitalBundle`,
+`StCheckForRedeemable`; the account picker's `ActSelect_DigitalBundleDetail_DlgBodyOwner` /
+`…Other`; Nintendo's public bundle FAQ: "the game will be claimed by the Nintendo Account
+you selected"). The redeemed titles then install through the ordinary path: edge tokens
+(`deviceOwnsTitle`), atum, pushmo.
+
+**Unverified on hardware:** that bit 0 of `redeemed_status` is what makes qlaunch look at
+the contents (the consumer is qlaunch/ns, not NIM; its reading of the flag was not traced),
+what `target/clear` means to Nintendo, and the reply bodies of `target/{set,clear}` (200
+with no body; NIM does not read them).
+
+### Firmware blocklist (bvc)
+
+The operator keeps a list of refused firmware versions (store admin API,
+`/internal/store/firmware-blocklist`, persisted in the shop state). A listed version gets
+200 and NIM refuses it (2137-8164); anything else gets 404. Both answers are copies of
+Nintendo's CDN as observed on 2026-09-23:
+
+- listed: `200`, `Content-Type: text/plain`, `Content-Length: 0`,
+  `ETag: "d41d8cd98f00b204e9800998ecf8427e:<unix time>.000000"` (the MD5 of the empty
+  body), `Last-Modified`, `Accept-Ranges: bytes`, `Server: AkamaiNetStorage`;
+- not listed: `404`, body `Not found\n` (10 bytes), no `Content-Type`, `Accept-Ranges:
+  bytes`, `Server: AkamaiNetStorage`.
+
+For reference, Nintendo's own lp1 list on that day answered 200 for 12.1.0 and every
+x.0.0 from 13.0.0 to 22.0.0 plus several point releases probed (13.1.0, 13.2.1, 16.0.3,
+17.0.1, 18.1.0, 19.0.1, 20.5.0, 21.2.0, 22.1.0), and 404 for 22.5.0 (current), 11.0.1,
+12.0.x and everything below. OpenPak's list starts empty: nothing is refused until the
+operator lists it.

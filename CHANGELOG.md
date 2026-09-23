@@ -3,6 +3,24 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## Unreleased — after v0.16.0
+
+The four eShop P2 leftovers that v0.16.0 answered with stubs are now features (evidence
+and what stays unverified: `docs/native-shop.md`, "After v0.16.0"):
+
+- **Digital bundles**: a catalog title may declare a `bundle` of applications (with an
+  `is_upgrade_edition` flag). beach `digital_bundle/contents` lists the bundle of every
+  title the device's linked accounts own; `target/set` redeems it for the presenting
+  account (real entitlements, so the titles install through edge tokens and atum) and
+  records the redemption per device; `target/clear` undoes it, revoking only what the
+  redemption granted. `redeemed_status.digital_bundle` is true once a bundle is fully
+  redeemed. Editable through the store admin API (`bundle` on the title object);
+  entitlements now carry `source`.
+- **bvc firmware blocklist**: operator-managed through
+  `/internal/store/firmware-blocklist`, persisted. A listed version gets 200 (NIM refuses
+  it with 2137-8164); anything else gets 404. Both answers copy Nintendo's Akamai headers
+  and bodies.
+
 ## v0.16.0 — 2026-09-23
 
 The P2 leftovers from `../docs/switch/native-news-eshop-nso-gap-22.5.0-2026-09-23.md`

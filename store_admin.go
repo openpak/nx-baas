@@ -130,6 +130,8 @@ func (s *server) storeAdmin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"titles": s.shop.allStats("")})
 	case len(seg) >= 2 && seg[0] == "titles":
 		err = s.adminTitle(w, r, strings.ToLower(seg[1]), seg[2:])
+	case seg[0] == "firmware-blocklist" && len(seg) <= 2:
+		err = s.adminFirmwareBlocklist(w, r, seg[1:])
 	case len(seg) == 3 && seg[0] == "accounts" && m == http.MethodGet:
 		err = s.adminAccount(w, r, seg[1], seg[2])
 	default:
@@ -260,7 +262,7 @@ func adminTitleObj(t *ShopTitle, withContent bool) map[string]any {
 		"languages": t.Languages, "compatibility": t.Compatibility, "screenshots": t.Screenshots,
 		"distribution": t.Distribution, "icon_path": t.IconPath, "size_bytes": t.SizeBytes,
 		"version": t.Version, "version_label": t.VersionLabel, "base_version": t.applicationVersion(),
-		"updated_at": t.UpdatedAt, "application": nil, "update": nil,
+		"updated_at": t.UpdatedAt, "application": nil, "update": nil, "bundle": bundleObjs(t.Bundle),
 	}
 	if len(t.Content) > 0 || t.CNMTPath != "" {
 		label := t.BaseVersionLabel
@@ -281,6 +283,14 @@ func adminTitleObj(t *ShopTitle, withContent bool) map[string]any {
 		o["update"] = up
 	}
 	return o
+}
+
+func bundleObjs(b []ShopBundleItem) []map[string]any {
+	out := make([]map[string]any, 0, len(b))
+	for _, it := range b {
+		out = append(out, map[string]any{"application_id": it.ApplicationID, "is_upgrade_edition": it.IsUpgradeEdition})
+	}
+	return out
 }
 
 func (s *server) adminListTitles(w http.ResponseWriter) error {
@@ -312,6 +322,7 @@ type titleMeta struct {
 	Compatibility *[]string            `json:"compatibility"`
 	Screenshots   *[]string            `json:"screenshots"`
 	Distribution  *ShopDistribution    `json:"distribution"`
+	Bundle        *[]ShopBundleItem    `json:"bundle"`
 }
 
 func (m *titleMeta) apply(t *ShopTitle) error {
@@ -352,7 +363,43 @@ func (m *titleMeta) apply(t *ShopTitle) error {
 		}
 		t.Distribution = *m.Distribution
 	}
+	if m.Bundle != nil {
+		b, err := validBundle(t.TitleID, *m.Bundle)
+		if err != nil {
+			return err
+		}
+		t.Bundle = b
+	}
 	return nil
+}
+
+// validBundle checks a title's bundle list: application ids (16 hex ending in 000), not the
+// title itself, no repeats, at most NIM's 64. Bundled titles need not exist yet; the
+// console only sees the ones published (eshop_bundle.go).
+func validBundle(self string, in []ShopBundleItem) ([]ShopBundleItem, error) {
+	if len(in) > maxBundleContents {
+		return nil, adminErr(400, "invalid_field", "bundle holds at most %d applications", maxBundleContents)
+	}
+	out := make([]ShopBundleItem, 0, len(in))
+	seen := map[string]bool{}
+	for _, it := range in {
+		id := strings.ToLower(it.ApplicationID)
+		if !validTitleID(id) || !strings.HasSuffix(id, "000") {
+			return nil, adminErr(400, "invalid_field", "bundle application_id %q must be 16 hex digits ending in 000", it.ApplicationID)
+		}
+		if id == self {
+			return nil, adminErr(400, "invalid_field", "a title cannot bundle itself")
+		}
+		if seen[id] {
+			return nil, adminErr(400, "invalid_field", "bundle lists %s twice", id)
+		}
+		seen[id] = true
+		out = append(out, ShopBundleItem{ApplicationID: id, IsUpgradeEdition: it.IsUpgradeEdition})
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
 }
 
 func decodeStrict(r io.Reader, v any, allowUnknown bool) error {
@@ -865,7 +912,8 @@ func (s *server) adminAccount(w http.ResponseWriter, r *http.Request, accountID,
 			if strings.EqualFold(e.AccountID, naID) {
 				items = append(items, map[string]any{
 					"title_id": e.TitleID, "status": e.Status, "version": e.Version, "elicense_id": e.ELicenseID,
-					"device_id": e.DeviceID, "created_at": e.CreatedAt, "updated_at": e.UpdatedAt,
+					"device_id": e.DeviceID, "source": firstNonEmpty(e.Source, "purchase"),
+					"created_at": e.CreatedAt, "updated_at": e.UpdatedAt,
 				})
 			}
 		}
@@ -923,4 +971,103 @@ func (s *shopState) allStats(only string) []map[string]any {
 		})
 	}
 	return out
+}
+
+// ---------- firmware blocklist (bvc) ----------
+
+// adminFirmwareBlocklist edits the versions bvc refuses (eshop_unserved.go):
+// GET lists, PUT replaces the list, PUT/DELETE on /{version} adds or removes one.
+func (s *server) adminFirmwareBlocklist(w http.ResponseWriter, r *http.Request, rest []string) error {
+	m := r.Method
+	switch {
+	case len(rest) == 0 && m == http.MethodGet:
+	case len(rest) == 0 && m == http.MethodPut:
+		var in struct {
+			Versions []struct {
+				Version string `json:"version"`
+				Note    string `json:"note"`
+			} `json:"versions"`
+		}
+		if err := decodeStrict(r.Body, &in, false); err != nil {
+			return err
+		}
+		list := []BlockedFirmware{}
+		seen := map[string]bool{}
+		now := time.Now().Unix()
+		for _, v := range in.Versions {
+			n := normalizeFirmware(v.Version)
+			if n == "" {
+				return adminErr(400, "invalid_field", "firmware version %q must be major-minor-micro, each 0-255", v.Version)
+			}
+			if seen[n] {
+				continue
+			}
+			seen[n] = true
+			added := now
+			if old := s.shop.blockedFirmware(n); old != nil {
+				added = old.AddedAt
+			}
+			list = append(list, BlockedFirmware{Version: n, Note: v.Note, AddedAt: added})
+		}
+		s.shop.mu.Lock()
+		s.shop.BlockedFirmware = list
+		s.shop.save()
+		s.shop.mu.Unlock()
+		log.Printf("[store-admin] firmware blocklist replaced: %d version(s)", len(list))
+	case len(rest) == 1 && (m == http.MethodPut || m == http.MethodDelete):
+		n := normalizeFirmware(rest[0])
+		if n == "" {
+			return adminErr(400, "invalid_field", "firmware version %q must be major-minor-micro, each 0-255", rest[0])
+		}
+		var note struct {
+			Note string `json:"note"`
+		}
+		if m == http.MethodPut && r.ContentLength != 0 {
+			if err := decodeStrict(r.Body, &note, false); err != nil {
+				return err
+			}
+		}
+		s.shop.mu.Lock()
+		found := -1
+		for i, b := range s.shop.BlockedFirmware {
+			if b.Version == n {
+				found = i
+			}
+		}
+		switch {
+		case m == http.MethodDelete && found < 0:
+			s.shop.mu.Unlock()
+			return adminErr(404, "not_found", "firmware %s is not on the blocklist", n)
+		case m == http.MethodDelete:
+			s.shop.BlockedFirmware = append(s.shop.BlockedFirmware[:found], s.shop.BlockedFirmware[found+1:]...)
+		case found >= 0:
+			s.shop.BlockedFirmware[found].Note = note.Note
+		default:
+			s.shop.BlockedFirmware = append(s.shop.BlockedFirmware, BlockedFirmware{Version: n, Note: note.Note, AddedAt: time.Now().Unix()})
+		}
+		s.shop.save()
+		s.shop.mu.Unlock()
+		log.Printf("[store-admin] firmware blocklist: %s %s", m, n)
+	default:
+		return adminErr(405, "method_not_allowed", "%s %s", m, r.URL.Path)
+	}
+	s.shop.mu.Lock()
+	list := append([]BlockedFirmware{}, s.shop.BlockedFirmware...)
+	s.shop.mu.Unlock()
+	sort.Slice(list, func(i, j int) bool { return firmwareLess(list[i].Version, list[j].Version) })
+	writeJSON(w, 200, map[string]any{"versions": list})
+	return nil
+}
+
+// firmwareLess orders "major-minor-micro" numerically.
+func firmwareLess(a, b string) bool {
+	pa, pb := strings.Split(a, "-"), strings.Split(b, "-")
+	for i := 0; i < 3 && i < len(pa) && i < len(pb); i++ {
+		x, _ := strconv.Atoi(pa[i])
+		y, _ := strconv.Atoi(pb[i])
+		if x != y {
+			return x < y
+		}
+	}
+	return a < b
 }

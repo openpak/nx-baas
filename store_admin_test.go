@@ -357,3 +357,75 @@ func TestStoreAdminIcon(t *testing.T) {
 		t.Fatalf("non-image icon = %d", rec.Code)
 	}
 }
+
+// A title's bundle is set through PATCH, validated, and written to catalog.json.
+func TestStoreAdminBundle(t *testing.T) {
+	s := adminServer(t)
+	createAdminTitle(t, s)
+	path := "/internal/store/titles/" + adminTID
+	rec := adminDo(t, s, "PATCH", path, []byte(`{"bundle":[{"application_id":"0100AAAA00000000"},{"application_id":"0100bbbb00000000","is_upgrade_edition":true}]}`), "")
+	if rec.Code != 200 {
+		t.Fatalf("patch bundle = %d %s", rec.Code, rec.Body.String())
+	}
+	b, _ := adminJSON(t, rec)["bundle"].([]any)
+	if len(b) != 2 || b[0].(map[string]any)["application_id"] != "0100aaaa00000000" || b[1].(map[string]any)["is_upgrade_edition"] != true {
+		t.Errorf("bundle = %v", adminJSON(t, rec)["bundle"])
+	}
+	cat, _ := os.ReadFile(s.shop.dir + "/catalog.json")
+	if !strings.Contains(string(cat), `"is_upgrade_edition": true`) {
+		t.Errorf("catalog.json does not carry the bundle: %s", cat)
+	}
+	for _, bad := range []string{
+		`{"bundle":[{"application_id":"` + adminTID + `"}]}`,
+		`{"bundle":[{"application_id":"0100aaaa00000800"}]}`,
+		`{"bundle":[{"application_id":"0100aaaa00000000"},{"application_id":"0100AAAA00000000"}]}`,
+	} {
+		if rec := adminDo(t, s, "PATCH", path, []byte(bad), ""); rec.Code != 400 {
+			t.Errorf("patch %s = %d, want 400", bad, rec.Code)
+		}
+	}
+	if rec := adminDo(t, s, "PATCH", path, []byte(`{"bundle":[]}`), ""); rec.Code != 200 || len(adminJSON(t, rec)["bundle"].([]any)) != 0 {
+		t.Errorf("clearing the bundle = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// The bvc blocklist: replace, add, remove, validated, persisted, and served.
+func TestStoreAdminFirmwareBlocklist(t *testing.T) {
+	s := adminServer(t)
+	const path = "/internal/store/firmware-blocklist"
+	rec := adminDo(t, s, "PUT", path, []byte(`{"versions":[{"version":"14-0-0"},{"version":"13.0.0","note":"old"}]}`), "application/json")
+	if rec.Code != 200 {
+		t.Fatalf("put = %d %s", rec.Code, rec.Body.String())
+	}
+	if vs := adminJSON(t, rec)["versions"].([]any); len(vs) != 2 || vs[0].(map[string]any)["version"] != "13-0-0" {
+		t.Errorf("versions = %v", vs)
+	}
+	if rec := adminDo(t, s, "PUT", path+"/22-1-0", nil, ""); rec.Code != 200 || len(adminJSON(t, rec)["versions"].([]any)) != 3 {
+		t.Errorf("add = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := adminDo(t, s, "DELETE", path+"/14-0-0", nil, ""); rec.Code != 200 || len(adminJSON(t, rec)["versions"].([]any)) != 2 {
+		t.Errorf("delete = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := adminDo(t, s, "DELETE", path+"/14-0-0", nil, ""); rec.Code != 404 {
+		t.Errorf("delete missing = %d", rec.Code)
+	}
+	for _, bad := range []string{path + "/22-5", path + "/256-0-0", path + "/a-b-c"} {
+		if rec := adminDo(t, s, "PUT", bad, nil, ""); rec.Code != 400 {
+			t.Errorf("put %s = %d, want 400", bad, rec.Code)
+		}
+	}
+	// Persisted, and bvc answers from it.
+	s2 := &server{shop: newShopState(s.shop.dir)}
+	if rec := adminDo(t, s2, "GET", path, nil, ""); len(adminJSON(t, rec)["versions"].([]any)) != 2 {
+		t.Errorf("after restart = %s", rec.Body.String())
+	}
+	for v, want := range map[string]int{"/22-1-0": 200, "/13-0-0": 200, "/14-0-0": 404} {
+		req := httptest.NewRequest("GET", "https://bvc-hac-lp1.cdn.nintendo.net"+v, nil)
+		req.Host = "bvc-hac-lp1.cdn.nintendo.net"
+		w := httptest.NewRecorder()
+		s2.bvc(w, req)
+		if w.Code != want {
+			t.Errorf("bvc %s = %d, want %d", v, w.Code, want)
+		}
+	}
+}

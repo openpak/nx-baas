@@ -73,6 +73,19 @@ type ShopTitle struct {
 	// BaseVersionLabel is the application version's display label, kept beside
 	// VersionLabel (which follows the newest version) by the admin API.
 	BaseVersionLabel string `json:"base_version_label,omitempty"`
+	// Bundle lists the applications that come with this title: a console whose linked
+	// account owns this title has them as its digital bundle (beach
+	// /v1/devices/digital_bundle/contents), and redeeming the bundle (beach
+	// /v1/devices/target/set) grants the redeeming account their rights. See
+	// eshop_bundle.go.
+	Bundle []ShopBundleItem `json:"bundle,omitempty"`
+}
+
+// ShopBundleItem is one bundled application. IsUpgradeEdition is carried to the console
+// as the element's is_upgrade_edition flag [nim 0x234bd0].
+type ShopBundleItem struct {
+	ApplicationID    string `json:"application_id"`
+	IsUpgradeEdition bool   `json:"is_upgrade_edition,omitempty"`
 }
 
 // ShopPatch is one title update: its version and the files that carry it.
@@ -190,6 +203,9 @@ type ShopEntitlement struct {
 	Status       string `json:"status"` // "active" or "revoked"
 	CreatedAt    int64  `json:"created_at"`
 	UpdatedAt    int64  `json:"updated_at"`
+	// Source is empty for a purchase and "bundle:<title id>" for a row a digital-bundle
+	// redemption created (eshop_bundle.go); clearing the redemption revokes only those.
+	Source string `json:"source,omitempty"`
 }
 
 // ShopTask tracks one download (SHP-04/05). State transitions:
@@ -219,6 +235,12 @@ type shopState struct {
 	Links deviceLinkTable `json:"links"`
 	// Stats counts what atum served per application id (store_admin.go).
 	Stats map[string]*ShopTitleStats `json:"stats,omitempty"`
+	// Redemptions records which bundled applications each device has redeemed, and for
+	// which account (eshop_bundle.go).
+	Redemptions []*BundleRedemption `json:"bundle_redemptions,omitempty"`
+	// BlockedFirmware is the operator's bvc list: firmware versions ("major-minor-micro")
+	// the eShop refuses (eshop_unserved.go, bvc).
+	BlockedFirmware []BlockedFirmware `json:"blocked_firmware,omitempty"`
 	// catalogMod is catalog.json's modification time at the last read (reloadCatalog).
 	catalogMod time.Time
 }
@@ -291,6 +313,9 @@ func (s *shopState) loadCatalogFile() {
 			continue
 		}
 		t.TitleID = strings.ToLower(t.TitleID)
+		for i := range t.Bundle {
+			t.Bundle[i].ApplicationID = strings.ToLower(t.Bundle[i].ApplicationID)
+		}
 		t.normalize()
 		if old := s.Catalog[t.TitleID]; old != nil && old.Version != t.Version {
 			log.Printf("[shop] catalog: %s published version %d (was %d)", t.TitleID, t.Version, old.Version)

@@ -214,28 +214,9 @@ func (s *server) beach(w http.ResponseWriter, r *http.Request, body []byte) {
 		// OpenPak's catalog has no membership gate; availability false is the honest
 		// constant until a capture names the real shape.
 		writeJSON(w, 200, map[string]any{"is_available": false})
-	// "Has this device redeemed its bundle / its pre-installed software?"
-	// [firmware, nim 0x234540: the reply must carry both $.digital_bundle and
-	// $.pre_install as booleans, or NIM fails the call; each false becomes a
-	// "not yet redeemed" flag handed back to its caller]. Nothing on a console
-	// is ever redeemed through OpenPak, so both are false. That is the literal
-	// answer, and it is the safe one: "true" would say the pre-installed
-	// software was settled, which is what the shop's cleanup bridge calls act on.
-	// The old {"redeemed":false} lacked both keys, so NIM rejected it.
-	case p == "/v1/devices/redeemed_status":
-		log.Printf("[shop] beach %s %s -> nothing redeemed (digital_bundle=false, pre_install=false)", r.Method, p)
-		writeJSON(w, 200, map[string]any{"digital_bundle": false, "pre_install": false})
-	case p == "/v1/devices/target/set", p == "/v1/devices/target/clear":
-		log.Printf("[shop] beach %s %s -> accepted, no download targeting implemented", r.Method, p)
-		w.WriteHeader(http.StatusOK)
-	// "Which titles came with this device's bundle?" [firmware, nim 0x234bd0,
-	// reply handler at 0x328ed8: $.contents is an array of at most 64
-	// {application_id (hex string), is_upgrade_edition (bool), redeemed (bool)},
-	// and a top-level $.redeemed bool; shop_id is always 4 on hac]. OpenPak
-	// sells no bundles, so the collection is empty and nothing is redeemed.
-	case p == "/v1/devices/digital_bundle/contents":
-		log.Printf("[shop] beach %s %s shop_id=%q -> no bundled contents", r.Method, p, r.URL.Query().Get("shop_id"))
-		writeJSON(w, 200, map[string]any{"contents": []any{}, "redeemed": false})
+	// The digital-bundle family: redeemed_status, digital_bundle/contents and
+	// target/{set,clear} (eshop_bundle.go).
+	case s.beachBundle(w, r, p):
 	case p == "/v1/rom_cards" && r.Method == "GET", p == "/v1/rom_cards" && r.Method == "POST",
 		p == "/v1/rom_cards/register" && r.Method == "POST":
 		// Physical-card registration is not part of the digital catalog journey.
