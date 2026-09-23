@@ -28,6 +28,7 @@ type fakeSessions struct {
 	leases map[string]int64 // session id -> unix expiry
 	byAcct map[string]string
 	titles map[string]string // the title each account's session was registered with
+	clients map[string]string // the client each account's session was registered with
 	// namespace is what the core reports these sessions under; another
 	// platform's namespace is how a Wii U friend reads on a Switch.
 	namespace string
@@ -52,6 +53,10 @@ func (x *fakeSessions) RegisterSession(ctx context.Context, r *accountv1.Registe
 		x.titles = map[string]string{}
 	}
 	x.titles[r.GetAccountId()] = r.GetTitleId()
+	if x.clients == nil {
+		x.clients = map[string]string{}
+	}
+	x.clients[r.GetAccountId()] = r.GetClient()
 	return &accountv1.RegisterSessionResponse{SessionId: id, LeaseSeconds: r.GetLeaseSeconds()}, nil
 }
 
@@ -70,6 +75,7 @@ func (x *fakeSessions) GetPresence(ctx context.Context, r *accountv1.GetPresence
 		}
 		out.Presence = append(out.Presence, &accountv1.Presence{
 			AccountId: id, Namespace: x.namespace, TitleId: x.titles[id], SinceUnix: time.Now().Unix(),
+			Client: x.clients[id],
 		})
 	}
 	return out, nil
@@ -530,8 +536,13 @@ func TestAFriendPlayingOnAnotherPlatformReadsAsOnline(t *testing.T) {
 	}
 	ex, _ := got["extras"].(map[string]any)
 	friends, _ := ex["friends"].(map[string]any)
-	if len(friends) != 0 {
+	if _, leaked := friends["appInfo:appId"]; leaked || len(friends) != 1 {
 		t.Fatalf("a foreign title reached the console: %v", friends)
+	}
+	// What the title id cannot say, the description does: no name is known
+	// (no website in the test), so "a game", on the platform's own name.
+	if friends["appField"] != `{"sys_description":"Playing a game on Wii U"}` {
+		t.Fatalf("appField = %v", friends["appField"])
 	}
 
 	// And this platform's own session still names its title.

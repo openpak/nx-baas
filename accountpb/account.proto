@@ -24,6 +24,23 @@ service Identity {
   rpc VerifyAdapterCredential(VerifyAdapterCredentialRequest) returns (VerifyAdapterCredentialResponse);
   // Resolve an account by ID for status and minimal profile projection.
   rpc GetAccount(GetAccountRequest) returns (GetAccountResponse);
+  // The second half of a password check for an account with two-factor
+  // authentication (see the rule on VerifyPasswordRequest). Takes a TOTP code
+  // or a recovery code. Unauthenticated for a wrong or reused code,
+  // ResourceExhausted after 5 wrong codes in 15 minutes (shared with web
+  // sign-in), FailedPrecondition when the account has no second factor.
+  rpc VerifySecondFactor(VerifySecondFactorRequest) returns (VerifySecondFactorResponse);
+}
+
+message VerifySecondFactorRequest {
+  string account_id = 1;
+  string code = 2;          // 6-digit TOTP code, or
+  string recovery_code = 3; // one of the ten recovery codes ("xxxxx-xxxxx"; case, dashes, spaces ignored)
+}
+
+message VerifySecondFactorResponse {
+  bool recovery_code_used = 1;
+  uint32 recovery_codes_left = 2;
 }
 
 message VerifyPasswordByIDRequest {
@@ -31,6 +48,8 @@ message VerifyPasswordByIDRequest {
   string purpose = 2;
   string account_id = 3;
   string password = 4;
+  // Same rule as VerifyPasswordRequest.second_factor_supported.
+  bool second_factor_supported = 5;
 }
 
 message VerifyPasswordRequest {
@@ -38,6 +57,20 @@ message VerifyPasswordRequest {
   string purpose = 2;          // e.g. "console_login", "link"
   string email = 3;
   string password = 4;
+  // Two-factor rule. A password alone never signs in an account that has
+  // two-factor authentication. For such an account, after the password
+  // checks out:
+  //   - a caller that leaves this false gets FailedPrecondition
+  //     ("two-factor authentication required") and no account id, so a
+  //     caller written before two-factor existed fails closed instead of
+  //     becoming a bypass;
+  //   - a caller that sets it gets the normal response with
+  //     two_factor_required = true, and MUST complete VerifySecondFactor
+  //     before treating the person as signed in or linking anything.
+  // Wrong passwords are rejected first, so the rule reveals nothing to a
+  // guesser. Adapter credentials (VerifyAdapterCredential) are unaffected:
+  // they are issued to a device after a completed sign-in.
+  bool second_factor_supported = 5;
 }
 
 message VerifyPasswordResponse {
@@ -47,6 +80,9 @@ message VerifyPasswordResponse {
   // Profile facts the console's user object requires; empty when never collected.
   string country = 4;
   string birthday = 5; // ISO 8601 date, e.g. "1990-01-01"
+  // Set only for callers that sent second_factor_supported: the password was
+  // right, and VerifySecondFactor is still owed.
+  bool two_factor_required = 6;
 }
 
 message GetAccountRequest { string account_id = 1; }
@@ -58,6 +94,7 @@ message GetAccountResponse {
   string display_name = 4;
   string country = 5;
   string birthday = 6; // ISO 8601 date, e.g. "1990-01-01"
+  bool two_factor_enabled = 7;
 }
 
 message SetAdapterCredentialRequest {
@@ -114,6 +151,47 @@ service Links {
   // adapter retries never mint a second subject (PRD SW-01). NotFound when
   // the account has no active link in that namespace.
   rpc GetActiveLinkByAccount(GetActiveLinkByAccountRequest) returns (GetLinkBySubjectResponse);
+  // Publish the adapter-minted human code (e.g. the Switch friend code) on an
+  // active link; replaces the previous one, empty unpublishes. The core
+  // stores it and never mints or interprets it. AlreadyExists when another
+  // active link in the namespace holds the same code; FailedPrecondition when
+  // the link is not active. Unlinking clears it. See docs/public-codes.md.
+  rpc SetLinkPublicCode(SetLinkPublicCodeRequest) returns (SetLinkPublicCodeResponse);
+  // Every active link of an account (optionally one namespace), with subject
+  // and published code: the read side for third-party surfaces.
+  rpc ListAccountLinks(ListAccountLinksRequest) returns (ListAccountLinksResponse);
+  // Resolve a code as a person typed it to the active link that published it.
+  // NotFound when no active link in the namespace holds it.
+  rpc GetLinkByPublicCode(GetLinkByPublicCodeRequest) returns (GetLinkBySubjectResponse);
+}
+
+message SetLinkPublicCodeRequest {
+  string link_id = 1;
+  string public_code = 2; // display form, e.g. "SW-1234-5678-9012"; up to 64 characters
+  // Optional canonical lookup form, e.g. "123456789012". Reduced to lower-case
+  // letters and digits; empty means the display form reduced the same way.
+  string lookup_key = 3;
+}
+
+message SetLinkPublicCodeResponse {}
+
+message ListAccountLinksRequest {
+  string account_id = 1;
+  string namespace = 2; // optional filter
+}
+
+message AccountLink {
+  string link_id = 1;
+  string namespace = 2;
+  string subject_id = 3;
+  string public_code = 4; // empty until the adapter publishes one
+}
+
+message ListAccountLinksResponse { repeated AccountLink links = 1; }
+
+message GetLinkByPublicCodeRequest {
+  string namespace = 1;
+  string public_code = 2; // as typed: case, dashes and spaces are ignored
 }
 
 message ReserveLinkRequest {
@@ -156,9 +234,11 @@ message GetLinkBySubjectResponse {
   string link_id = 1;
   string account_id = 2;
   LinkState state = 3;
-  // Populated only by GetActiveLinkByAccount (the subject is the lookup key
-  // on GetLinkBySubject).
+  // Populated by GetActiveLinkByAccount and GetLinkByPublicCode (the subject
+  // is the lookup key on GetLinkBySubject).
   string subject_id = 4;
+  // The adapter-published human code for this link, if any (every call).
+  string public_code = 5;
 }
 
 enum LinkState {

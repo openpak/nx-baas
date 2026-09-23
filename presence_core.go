@@ -25,6 +25,7 @@ type corePresence struct {
 	Namespace string
 	TitleID   string
 	Since     int64
+	Client    string
 }
 
 // corePresenceTTL is how long a lookup is reused. The core's own lease is the
@@ -77,6 +78,7 @@ func (s *server) corePresenceOf(accountID string) (corePresence, bool) {
 	for _, p := range resp.GetPresence() {
 		next[p.GetAccountId()] = corePresence{
 			Namespace: p.GetNamespace(), TitleID: p.GetTitleId(), Since: p.GetSinceUnix(),
+			Client: p.GetClient(),
 		}
 	}
 	cache.mu.Lock()
@@ -98,17 +100,33 @@ func (s *server) corePresenceOf(accountID string) (corePresence, bool) {
 // platform. The title stays empty unless the core's namespace is this one: a
 // console can only draw its own titles, and a foreign title id would render as
 // a game it does not have.
+//
+// What a foreign title cannot say in appInfo it says in words: the appField
+// carries sys_description, the key a game's SetDescription writes, e.g.
+// {"sys_description":"Playing Kirby on Wii U"}. The friend-list parser reads
+// any "{...}" appField into the key/value blob GetDescription searches, and
+// the absent appInfo keys read as zero [firmware notes §3.1]. Whether the
+// system friend list actually shows a description for a friend with no
+// title is NOT verified on hardware; NX_FOREIGN_PRESENCE_DESCRIPTION=0 turns
+// the text off and leaves the plain ONLINE this served before.
 func (s *server) presenceFromCore(accountID, namespace string, now int64) (Presence, bool) {
 	p, ok := s.corePresenceOf(accountID)
 	if !ok {
 		return Presence{}, false
 	}
-	out := Presence{State: "ONLINE", UpdatedAt: p.Since, ACDIndex: -1}
+	out := Presence{State: "ONLINE", UpdatedAt: p.Since, ACDIndex: -1, Client: p.Client}
 	if out.UpdatedAt == 0 {
 		out.UpdatedAt = now
 	}
-	if p.TitleID != "" && strings.EqualFold(p.Namespace, namespace) {
-		out.State, out.AppID, out.PresenceGroupID = "PLAYING", p.TitleID, p.TitleID
+	if strings.EqualFold(p.Namespace, namespace) {
+		if p.TitleID != "" {
+			out.State, out.AppID, out.PresenceGroupID = "PLAYING", p.TitleID, p.TitleID
+		}
+		return out, true
+	}
+	if getenv("NX_FOREIGN_PRESENCE_DESCRIPTION", "1") != "0" {
+		out.AppField = descriptionAppField(presenceDescription(clientLabel(p.Namespace, p.Client),
+			p.TitleID, siteTitleNames.name(p.Namespace, p.TitleID)))
 	}
 	return out, true
 }

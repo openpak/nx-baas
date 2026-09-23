@@ -198,7 +198,7 @@ func (s *server) switchEmulator(w http.ResponseWriter, r *http.Request) {
 		status, appID, appField := f.PresenceStatus, f.PresenceAppID, f.PresenceAppField
 		// namespace says which platform they are on, so a client can say "on a
 		// Wii U" for a friend whose title it could never draw.
-		namespace, since := "", int64(0)
+		namespace, since, client := "", int64(0), ""
 		if subject := s.store.User(f.BaasUserID); subject != nil {
 			p := Presence{State: "OFFLINE"}
 			if viewer == nil || presenceVisible(viewer, subject, true) {
@@ -209,11 +209,11 @@ func (s *server) switchEmulator(w http.ResponseWriter, r *http.Request) {
 				if elsewhere, live := s.presenceFromCore(b.accountFor(f.PID), b.namespace, now); live {
 					p = elsewhere
 					if cp, ok := s.corePresenceOf(b.accountFor(f.PID)); ok {
-						namespace, since = cp.Namespace, cp.Since
+						namespace, since, client = cp.Namespace, cp.Since, cp.Client
 					}
 				}
 			} else {
-				namespace, since = b.namespace, p.UpdatedAt
+				namespace, since, client = b.namespace, p.UpdatedAt, p.Client
 			}
 			switch p.State {
 			case "PLAYING":
@@ -231,6 +231,9 @@ func (s *server) switchEmulator(w http.ResponseWriter, r *http.Request) {
 			"presence": map[string]any{
 				"status": status, "app_field": appField, "app_id": appID,
 				"namespace": namespace, "since": since,
+				// Which console or emulator, for "Playing X on Ryujinx". platform
+				// repeats namespace under the name the website's API uses.
+				"platform": namespace, "client": client, "label": clientLabel(namespace, client),
 			},
 		}
 	}

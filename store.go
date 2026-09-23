@@ -25,6 +25,10 @@ type Presence struct {
 	PresenceGroupID string `json:"presenceGroupId"`
 	UpdatedAt       int64  `json:"updatedAt"`
 	LogoutAt        int64  `json:"logoutAt"`
+	// Client is what the claim came from inside this namespace: "switch" for a
+	// real console, "ryujinx"/"eden"/"citron" for an emulator that says so, ""
+	// when nothing said. Never rendered to a console; carried to the core.
+	Client string `json:"client,omitempty"`
 }
 
 // DevicePresence is one console's claim about where its user is, with the
@@ -45,6 +49,7 @@ type DevicePresence struct {
 	UpdatedAt       int64  `json:"updatedAt"` // last state change (never moved by a render)
 	ExpiresAt       int64  `json:"expiresAt"` // lease deadline; 0 = not leased (explicit offline)
 	LogoutAt        int64  `json:"logoutAt"`  // set when this device said it is done
+	Client          string `json:"client,omitempty"` // see Presence.Client
 }
 
 // FriendPreference is one viewer's per-relationship state (SOC-02): what the

@@ -62,6 +62,10 @@ message RegisterSessionRequest {
   string title_id = 3;       // adapter-scoped title/tenant routing metadata
   string endpoint_ref = 4;   // opaque adapter-interpreted delivery handle
   int32 lease_seconds = 5;   // optional; server default 30, cap 300
+  // What the session runs on inside the namespace: "switch" (real console),
+  // "ryujinx", "eden", "citron", "wiiu", "3ds", "cemu", "azahar". Optional;
+  // empty means the adapter could not tell. Capped at 64 bytes.
+  string client = 6;
 }
 
 message RegisterSessionResponse {
@@ -144,6 +148,7 @@ message Presence {
   string title_id = 3;     // what they are playing; empty when the adapter sent none
   int64 since_unix = 4;    // when the session was registered
   string node_id = 5;      // the federation node the session came through; "home" for the core's own adapters
+  string client = 6;       // RegisterSessionRequest.client of that session; empty when unknown
 }
 
 message ListInvitationsRequest {

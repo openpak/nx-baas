@@ -22,12 +22,16 @@ const (
 )
 
 type RegisterSessionRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	AccountId     string                 `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
-	Namespace     string                 `protobuf:"bytes,2,opt,name=namespace,proto3" json:"namespace,omitempty"`                            // owning adapter namespace (e.g. "switch")
-	TitleId       string                 `protobuf:"bytes,3,opt,name=title_id,json=titleId,proto3" json:"title_id,omitempty"`                 // adapter-scoped title/tenant routing metadata
-	EndpointRef   string                 `protobuf:"bytes,4,opt,name=endpoint_ref,json=endpointRef,proto3" json:"endpoint_ref,omitempty"`     // opaque adapter-interpreted delivery handle
-	LeaseSeconds  int32                  `protobuf:"varint,5,opt,name=lease_seconds,json=leaseSeconds,proto3" json:"lease_seconds,omitempty"` // optional; server default 30, cap 300
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	AccountId    string                 `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	Namespace    string                 `protobuf:"bytes,2,opt,name=namespace,proto3" json:"namespace,omitempty"`                            // owning adapter namespace (e.g. "switch")
+	TitleId      string                 `protobuf:"bytes,3,opt,name=title_id,json=titleId,proto3" json:"title_id,omitempty"`                 // adapter-scoped title/tenant routing metadata
+	EndpointRef  string                 `protobuf:"bytes,4,opt,name=endpoint_ref,json=endpointRef,proto3" json:"endpoint_ref,omitempty"`     // opaque adapter-interpreted delivery handle
+	LeaseSeconds int32                  `protobuf:"varint,5,opt,name=lease_seconds,json=leaseSeconds,proto3" json:"lease_seconds,omitempty"` // optional; server default 30, cap 300
+	// What the session runs on inside the namespace: "switch" (real console),
+	// "ryujinx", "eden", "citron", "wiiu", "3ds", "cemu", "azahar". Optional;
+	// empty means the adapter could not tell. Capped at 64 bytes.
+	Client        string `protobuf:"bytes,6,opt,name=client,proto3" json:"client,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -95,6 +99,13 @@ func (x *RegisterSessionRequest) GetLeaseSeconds() int32 {
 		return x.LeaseSeconds
 	}
 	return 0
+}
+
+func (x *RegisterSessionRequest) GetClient() string {
+	if x != nil {
+		return x.Client
+	}
+	return ""
 }
 
 type RegisterSessionResponse struct {
@@ -960,6 +971,7 @@ type Presence struct {
 	TitleId       string                 `protobuf:"bytes,3,opt,name=title_id,json=titleId,proto3" json:"title_id,omitempty"`        // what they are playing; empty when the adapter sent none
 	SinceUnix     int64                  `protobuf:"varint,4,opt,name=since_unix,json=sinceUnix,proto3" json:"since_unix,omitempty"` // when the session was registered
 	NodeId        string                 `protobuf:"bytes,5,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`           // the federation node the session came through; "home" for the core's own adapters
+	Client        string                 `protobuf:"bytes,6,opt,name=client,proto3" json:"client,omitempty"`                         // RegisterSessionRequest.client of that session; empty when unknown
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1025,6 +1037,13 @@ func (x *Presence) GetSinceUnix() int64 {
 func (x *Presence) GetNodeId() string {
 	if x != nil {
 		return x.NodeId
+	}
+	return ""
+}
+
+func (x *Presence) GetClient() string {
+	if x != nil {
+		return x.Client
 	}
 	return ""
 }
@@ -1583,14 +1602,15 @@ var File_openpak_account_v1_sessions_invitations_proto protoreflect.FileDescript
 
 const file_openpak_account_v1_sessions_invitations_proto_rawDesc = "" +
 	"\n" +
-	"-openpak/account/v1/sessions_invitations.proto\x12\x12openpak.account.v1\"\xb8\x01\n" +
+	"-openpak/account/v1/sessions_invitations.proto\x12\x12openpak.account.v1\"\xd0\x01\n" +
 	"\x16RegisterSessionRequest\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12\x19\n" +
 	"\btitle_id\x18\x03 \x01(\tR\atitleId\x12!\n" +
 	"\fendpoint_ref\x18\x04 \x01(\tR\vendpointRef\x12#\n" +
-	"\rlease_seconds\x18\x05 \x01(\x05R\fleaseSeconds\"]\n" +
+	"\rlease_seconds\x18\x05 \x01(\x05R\fleaseSeconds\x12\x16\n" +
+	"\x06client\x18\x06 \x01(\tR\x06client\"]\n" +
 	"\x17RegisterSessionResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12#\n" +
@@ -1651,7 +1671,7 @@ const file_openpak_account_v1_sessions_invitations_proto_rawDesc = "" +
 	"\vaccount_ids\x18\x01 \x03(\tR\n" +
 	"accountIds\"O\n" +
 	"\x13GetPresenceResponse\x128\n" +
-	"\bpresence\x18\x01 \x03(\v2\x1c.openpak.account.v1.PresenceR\bpresence\"\x9a\x01\n" +
+	"\bpresence\x18\x01 \x03(\v2\x1c.openpak.account.v1.PresenceR\bpresence\"\xb2\x01\n" +
 	"\bPresence\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x1c\n" +
@@ -1659,7 +1679,8 @@ const file_openpak_account_v1_sessions_invitations_proto_rawDesc = "" +
 	"\btitle_id\x18\x03 \x01(\tR\atitleId\x12\x1d\n" +
 	"\n" +
 	"since_unix\x18\x04 \x01(\x03R\tsinceUnix\x12\x17\n" +
-	"\anode_id\x18\x05 \x01(\tR\x06nodeId\"M\n" +
+	"\anode_id\x18\x05 \x01(\tR\x06nodeId\x12\x16\n" +
+	"\x06client\x18\x06 \x01(\tR\x06client\"M\n" +
 	"\x16ListInvitationsRequest\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x14\n" +

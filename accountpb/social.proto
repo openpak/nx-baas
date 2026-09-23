@@ -32,6 +32,9 @@ service Social {
   // denies interactions while a block exists.
   rpc Block(BlockRequest) returns (BlockResponse);
   rpc Unblock(UnblockRequest) returns (UnblockResponse);
+  // The accounts account_id has blocked, newest first (the blocker's own
+  // list only; who blocked you is never answered). Deleted accounts drop out.
+  rpc ListBlocks(ListBlocksRequest) returns (ListBlocksResponse);
 }
 
 message RequestFriendRequest {
@@ -140,6 +143,16 @@ message UnblockRequest {
 }
 
 message UnblockResponse {}
+
+message ListBlocksRequest { string account_id = 1; }
+
+message BlockedAccount {
+  string account_id = 1;
+  string display_name = 2;
+  int64 blocked_at_unix = 3;
+}
+
+message ListBlocksResponse { repeated BlockedAccount blocked = 1; }
 
 enum FriendState {
   FRIEND_STATE_UNSPECIFIED = 0;

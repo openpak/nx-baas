@@ -3,6 +3,21 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.13.0 — 2026-09-23
+
+Cross-network presence with client labels:
+
+- `X-OpenPak-Client: <client>/<version>` (ryujinx, eden, citron) is recorded per device claim on
+  login and on the presence PATCH; Penne DAPresence claims are `switch`; no header is `""`.
+  The client rides into the core session (`RegisterSessionRequest.client`), from the
+  reconciler and from the title-less login session alike; a client change re-registers.
+- A friend live on another platform (Wii U, 3DS) renders ONLINE with no title id and an
+  appField `{"sys_description":"Playing <title> on <label>"}` / `"Online on <label>"`. Title
+  names come from the website (`GET /internal/titles/name`, cached, never blocking a
+  render). Unverified on hardware whether the system friend list shows the description for a
+  friend with no title; `NX_FOREIGN_PRESENCE_DESCRIPTION=0` turns it off.
+- `/internal/switch/emulator` friends' presence gains `platform`, `client`, `label`.
+
 ## v0.12.43 — 2026-09-19
 
 Friends-contract gaps, from the 22.5.0 friends-module read
