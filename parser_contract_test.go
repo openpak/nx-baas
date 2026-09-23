@@ -392,6 +392,7 @@ func TestFieldsTheModulesParseArePresent(t *testing.T) {
 // Routes the modules reach that had no handler: answered with the smallest
 // defensible shape rather than a 404 the console has to interpret.
 func TestUnservedModuleRoutesAnswer(t *testing.T) {
+	t.Setenv("NX_DATA", t.TempDir())
 	s := &server{store: loadStore(t.TempDir() + "/baas.json")}
 	for _, tc := range []struct {
 		host, path string
@@ -404,7 +405,7 @@ func TestUnservedModuleRoutesAnswer(t *testing.T) {
 		{"api.hac.lp1.nim.nintendo.net", "/v1/system_update_meta?device_id=x", 200, `"system_update_metas":[]`},
 		{"api.hac.lp1.nim.nintendo.net", "/v1/acds/search", 200, `"acds":[]`},
 		{"frs.srv.nintendo.net", "/v1/apps/0100abcd00001000/catalog.json", 200, `"application_id":"0100abcd00001000"`},
-		{"pearljam.hac.lp1.eshop.nintendo.net", "/civil", 404, "not implemented"},
+		{"pearljam.hac.lp1.eshop.nintendo.net", "/civil", 401, `"code":"0401"`},
 	} {
 		r := httptest.NewRequest("GET", "https://"+tc.host+tc.path, nil)
 		r.Host = tc.host

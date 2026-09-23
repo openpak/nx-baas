@@ -2402,14 +2402,14 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// routes. Beach moved from penne's `{}` placeholder to a real handler; the extraction
 	// keeps penne's own cases untouched.
 	case strings.HasPrefix(host, "pearljam."):
-		// The eShop host NIM names beside dragons and tigers; its two paths
-		// are recorded, not implemented (eshop_unserved.go).
+		// The eShop host NIM names beside dragons and tigers; /civil and /sugar
+		// answer a checked, recorded success (eshop_unserved.go).
 		s.pearljam(w, r, body)
 	case strings.HasPrefix(host, "idbe-hac."):
-		// NIM's icon data; the format is not recovered (eshop_unserved.go).
+		// NIM's icon data: Nintendo's 3DS / Wii U files relayed (eshop_idbe.go).
 		s.idbe(w, r, body)
 	case strings.HasPrefix(host, "bvc-hac-"):
-		// NIM's firmware-version check: 404 means "not listed" (eshop_unserved.go).
+		// NIM's firmware-version check against the operator blocklist (eshop_unserved.go).
 		s.bvc(w, r)
 	case strings.HasSuffix(host, ".znc.srv.nintendo.net"):
 		// The voice-chat lobby page systemWeb opens (nso.go).

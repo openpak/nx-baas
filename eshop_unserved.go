@@ -21,6 +21,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -28,64 +29,86 @@ import (
 
 // pearljam is the eShop host NIM names beside dragons and tigers
 // [firmware, nim strings: "https://pearljam.hac.%.eshop.nintendo.net/civil"
-// and "/sugar"]. What the two paths carry is still not recovered, after a
-// second pass over NIM (2026-09-23, docs/native-shop.md "P2 leftovers"):
+// and "/sugar"]. What NIM does with it (22.5.0, docs/native-shop.md "pearljam"):
 //
-//   - The two URLs are the bases of two endpoint objects (sugar: 60 s, 10
-//     attempts; civil: 60 s, 30 attempts). A caller-supplied suffix is
-//     appended to the base, the path is expanded from a "{name}" template, and
-//     the body is POSTed as application/json.
-//   - sugar sends X-DeviceAuthorization: Bearer <device token>,
-//     X-NINTENDO-NSA-ID-TOKEN: Bearer <nsa id token> and
-//     X-Nintendo-Application-Id; civil sends X-DeviceAuthorization,
-//     Authorization: Bearer and X-Nintendo-Application-Id.
-//   - On an error status (400, 401, 403, 404 and the other 4xx/5xx NIM lists)
-//     the reply's $.error.code is read. A success body goes to a
-//     request-specific sink that is not named anywhere in NIM, and no
-//     "/{version}/..." template in NIM is bound to either endpoint.
+//   - It is a pass-through. The IPC caller (nim:eca / nim:ecas, task
+//     "nn.nim.ShopServiceAccessTask"; live path sf vtable 0x32a680 slot
+//     0x32a6a8 -> 0x246090 -> 0x22aec0 -> 0x22afd0) supplies the endpoint
+//     selector (0 = sugar, 1 = civil, 0x22ee40), the path-suffix template
+//     (ctx+0x50), the method (index into {2,4,5,6} at 0x2c26e0) and the JSON
+//     body (ctx+0x60/0x68). NIM only expands {applicationid} (16 hex digits)
+//     and {country} in the suffix; any other {token} fails with 0x5089.
+//   - sugar (0x22e430: 60 s, 10 attempts) sends X-DeviceAuthorization,
+//     X-NINTENDO-NSA-ID-TOKEN and X-Nintendo-Application-Id; civil (0x22eb70:
+//     60 s, 30 attempts) sends X-DeviceAuthorization, Authorization: Bearer and
+//     X-Nintendo-Application-Id. Body: application/json.
+//   - A success body goes back to the IPC caller unread (0x2314b0 only
+//     accumulates chunks). On an error status NIM reads $.error.code and
+//     nothing else (NIM result 0x905 for sugar, 0x904 for civil).
+//   - Failed sends are queued in the savedata file "nim_eca_dbg" (0x1a64e0,
+//     filled by 0x22b280 with base + suffix and the body) and retried.
 //
-// So neither path's suffix nor its reply is known, and no body is invented.
-// Recording the full request is the point: the first console that asks
-// writes the specification.
+// So the paths, verbs and bodies belong to whichever applet drives the IPC
+// (none is recovered), and NIM itself needs only a non-error status. Every
+// suffix and verb under /civil and /sugar is accepted: the auth headers are
+// checked against our own tokens, the request is dumped in full to the log and
+// to $NX_DATA/pearljam/, and the answer is 200 {} — the smallest success. Bad
+// or missing auth gets {"error":{"code","message"}} with 401, the one reply
+// field NIM reads. Unverified on hardware: which suffixes the console sends,
+// and whether its caller expects fields in a success body.
 func (s *server) pearljam(w http.ResponseWriter, r *http.Request, body []byte) {
 	p := r.URL.Path
-	dump(r, body, "!! ESHOP pearljam (shape unrecovered; see eshop_unserved.go)")
+	endpoint := ""
 	switch {
-	case strings.HasPrefix(p, "/civil"), strings.HasPrefix(p, "/sugar"):
-		// Answering 404 keeps the console's own error path intact rather than
-		// feeding it an invented body it might act on.
-		writeJSON(w, 404, map[string]any{"status": 404, "title": "not implemented",
-			"detail": "pearljam " + p + " is recorded, not implemented: its contract is not recovered"})
+	case p == "/civil" || strings.HasPrefix(p, "/civil/"):
+		endpoint = "civil"
+	case p == "/sugar" || strings.HasPrefix(p, "/sugar/"):
+		endpoint = "sugar"
 	default:
-		writeJSON(w, 404, map[string]any{"status": 404, "title": "not found"})
+		dump(r, body, "!! UNHANDLED pearljam")
+		writeJSON(w, 404, map[string]any{"error": map[string]any{"code": "0404", "message": "not found"}})
+		return
 	}
+	dump(r, body, "!! ESHOP pearljam "+endpoint+" (shape unverified; full request kept)")
+	keepPearljamRequest(endpoint, r, body)
+	device := s.bearerHeader(r, "X-DeviceAuthorization") != nil
+	account := false
+	if endpoint == "sugar" {
+		account = s.bearerHeader(r, "X-NINTENDO-NSA-ID-TOKEN") != nil
+	} else {
+		account = s.bearerHeader(r, "Authorization") != nil
+	}
+	if !device || !account {
+		log.Printf("[shop] pearljam %s %s %s -> 401 (device token ok=%v, account token ok=%v)", endpoint, r.Method, p, device, account)
+		writeJSON(w, 401, map[string]any{"error": map[string]any{"code": "0401",
+			"message": "pearljam " + endpoint + " needs a valid device token and account token"}})
+		return
+	}
+	log.Printf("[shop] pearljam %s %s %s app=%s -> 200 {} (unverified: NIM passes the body to its caller unread)",
+		endpoint, r.Method, p, r.Header.Get("X-Nintendo-Application-Id"))
+	writeJSON(w, 200, map[string]any{})
 }
 
-// idbe answers idbe-hac.cdn.nintendo.net, NIM's icon-data host
-// [firmware, nim: the URL builders at 0x1ecc50 and 0x1eccc0 write
-// https://idbe-hac.cdn.nintendo.net + /icondata/%02x/%016llX.idbe, or
-// .../%016llX-%hu.idbe with a version; %02x is bits 8-15 of the id, the id is
-// upper-case hex]. The request carries a device token header, Accept:
-// application/json and If-None-Match. NIM hands the body back to its IPC
-// caller without reading it (the task has no reply parser), and no other
-// module in the 22.5.0 package names the format. Serving icons would mean
-// inventing a binary container, so every request is a logged 404: "no icon
-// data for this title", which the caller already has to handle.
-func (s *server) idbe(w http.ResponseWriter, r *http.Request, body []byte) {
-	p := r.URL.Path
-	if strings.HasPrefix(p, "/icondata/") && strings.HasSuffix(p, ".idbe") {
-		name := strings.TrimSuffix(p[strings.LastIndex(p, "/")+1:], ".idbe")
-		id, version, _ := strings.Cut(name, "-")
-		title := "not in the catalog"
-		if s.shopTitleByAppID(id) != nil {
-			title = "an OpenPak store title"
-		}
-		log.Printf("[shop] idbe %s %s title=%s version=%q (%s) -> 404: the .idbe format is not recovered, no icon data is served",
-			r.Method, p, id, version, title)
-	} else {
-		dump(r, body, "!! UNHANDLED idbe")
+// keepPearljamRequest writes one pearljam request, headers and body, to
+// $NX_DATA/pearljam/ so the first console run can settle the contract.
+func keepPearljamRequest(endpoint string, r *http.Request, body []byte) {
+	dir := filepath.Join(getenv("NX_DATA", "/data"), "pearljam")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		log.Printf("[shop] pearljam: keep request: %v", err)
+		return
 	}
-	writeJSON(w, 404, map[string]any{"status": 404, "title": "no icon data"})
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s %s%s", r.Method, hostOf(r), r.URL.RequestURI())
+	b.WriteString("\n")
+	for k, v := range r.Header {
+		fmt.Fprintf(&b, "%s: %s\n", k, strings.Join(v, ", "))
+	}
+	b.WriteString("\n")
+	b.Write(body)
+	name := fmt.Sprintf("%s-%d-%s.txt", time.Now().UTC().Format("20060102T150405"), time.Now().UnixNano()%1e9, endpoint)
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(b.String()), 0o600); err != nil {
+		log.Printf("[shop] pearljam: keep request: %v", err)
+	}
 }
 
 // bvc answers bvc-hac-<env>.cdn.nintendo.net/<major>-<minor>-<micro>, a check

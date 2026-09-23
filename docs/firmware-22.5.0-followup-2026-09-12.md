@@ -252,15 +252,15 @@ recorded and refused, because a plausible lie is worse than a clear no.
 | `/v1/accounts/vphym-borrowers/candidates` | `{"candidates": []}` | nobody can lend |
 | `/v1/accounts/in-same-family` | `{"inSameFamily": false}` | no family groups exist |
 | `/v1/nearness-checks`, `/prune` | `{"nearnessChecks": []}` | nothing brokers device-to-device transfer |
-| `/v1/devices/redeemed_status` | `{"redeemed": false}` | nothing has been redeemed. (2026-09-23: these live on beach, whose handler 404'd them, so this answer was unreachable until it moved into `beach.go`) |
-| `/v1/devices/target/{set,clear}` | 200 | accepted; no download targeting implemented (now in `beach.go`, as above) |
+| `/v1/devices/redeemed_status` | `{"redeemed": false}` | nothing has been redeemed. (2026-09-23: these live on beach, whose handler 404'd them, so this answer was unreachable until it moved into `beach.go`. Superseded after v0.16.0: `{digital_bundle, pre_install}` from the device's digital bundle, see `native-shop.md` "Digital bundles") |
+| `/v1/devices/target/{set,clear}` | 200 | superseded after v0.16.0: `target/set` redeems the device's digital bundle into entitlements, `target/clear` undoes it (`eshop_bundle.go`) |
 | `/v1/system_update_meta` (sun) | `{"system_update_metas": []}` | **"you are current"** — we serve no system images and must never point a console at an update it cannot get |
 | `/v1/direct-messages` | `{"messages": [], "count": 0}` | nothing produces store messages |
 | `/v1/accounts/notify[-to-family]` | 200 | accepted; nothing to fan out |
 | `/v1/acds/search` | **the shop catalog**, filtered by `q` | the console is asking what this store has, and this store knows; the ACD document's native field names are unrecovered, so the entries use our catalog's own vocabulary |
 | `/v1/apps/<appId>/catalog.json` | **the title's real name, localized names, publisher and version** from the shop catalog; an empty name map for a title we do not carry | the friends module fetches this itself for the title behind a friend's presence. The 128-bit application id's upper half is the catalog's 64-bit title id |
 | `/v1/apps/<appId>/<name>.jpg` | **the title's own icon**, or the shop's neutral mark when we have none | so a friend shown as PLAYING renders the game rather than a gap |
-| `pearljam…/civil`, `/sugar` | 404 with a pointer to this document, full request dumped | the only eShop endpoints in NIM whose contract is entirely unrecovered — the first console to ask writes the spec for us |
+| `pearljam…/civil`, `/sugar` | superseded after v0.16.0: any suffix and verb, auth checked, `200 {}`, full request kept (`native-shop.md` "pearljam") | NIM is a pass-through for its IPC caller; the first console to ask still writes the spec for us |
 
 `pearljam.hac.lp1.eshop.nintendo.net` is also on the fixed TLS certificate now.
 DNS needs nothing: `SSSL_DNS_DEFAULT_ADDRESS` already points every name at the

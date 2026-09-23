@@ -464,19 +464,80 @@ func TestDigitalBundleClearKeepsPurchases(t *testing.T) {
 	}
 }
 
-// idbe: the icon-data format is not recovered, so a store title and an unknown title both
-// get the logged 404, and the host never falls into the catch-all.
-func TestIdbeIsARecordedNotFound(t *testing.T) {
+// idbe relays Nintendo's own 3DS / Wii U files, checked the way cabinet checks them, and
+// caches them; a Switch id and an upstream miss are 404s.
+func TestIdbeRelaysNintendoFiles(t *testing.T) {
+	t.Setenv("NX_DATA", t.TempDir())
 	s := shopServerFor(t)
-	for _, p := range []string{
-		"/icondata/00/" + strings.ToUpper(testTitleID) + ".idbe",
-		"/icondata/00/" + strings.ToUpper(testTitleID) + "-65536.idbe",
-		"/icondata/10/0100000000011000.idbe",
-		"/other",
+	good := map[string][]byte{"ctr": make([]byte, 0x36d2), "wup": make([]byte, 0x12082)}
+	good["ctr"][1], good["wup"][1] = 1, 2
+	fetches := 0
+	defer func(f func(string, string) ([]byte, time.Time, error)) { idbeFetch = f }(idbeFetch)
+	idbeFetch = func(platform, name string) ([]byte, time.Time, error) {
+		fetches++
+		switch name {
+		case "0004000000030800", "0005000010101E00", "0005000010101E00-80":
+			return good[platform], time.Date(2014, 12, 15, 22, 37, 5, 0, time.UTC), nil
+		case "0004000000099900":
+			return make([]byte, 100), time.Time{}, nil // wrong size: never cached or served
+		}
+		return nil, time.Time{}, errIdbeMiss
+	}
+	const host = "idbe-hac.cdn.nintendo.net"
+	for _, tc := range []struct {
+		path string
+		want int
+		size int
+	}{
+		{"/icondata/08/0004000000030800.idbe", 200, 0x36d2},
+		{"/icondata/1e/0005000010101E00.idbe", 200, 0x12082},
+		{"/icondata/1e/0005000010101E00-80.idbe", 200, 0x12082},
+		{"/icondata/99/0004000000099900.idbe", 404, 0},
+		{"/icondata/00/0004000000011100.idbe", 404, 0},
+		{"/icondata/00/" + strings.ToUpper(testTitleID) + ".idbe", 404, 0},
+		{"/icondata/10/0100000000011000.idbe", 404, 0},
+		{"/other", 404, 0},
 	} {
-		rec := hostReq(s, "idbe-hac.cdn.nintendo.net", "GET", p, "", "")
-		if rec.Code != 404 || !strings.Contains(rec.Body.String(), "no icon data") {
-			t.Errorf("idbe %s = %d %s", p, rec.Code, rec.Body.String())
+		rec := hostReq(s, host, "GET", tc.path, "", "")
+		if rec.Code != tc.want || (tc.want == 200 && rec.Body.Len() != tc.size) {
+			t.Errorf("idbe %s = %d (%d bytes), want %d", tc.path, rec.Code, rec.Body.Len(), tc.want)
+		}
+		if tc.want == 200 {
+			if et := rec.Header().Get("ETag"); len(et) != 34 || et[0] != '"' || len(et) > 39 {
+				t.Errorf("idbe %s ETag = %q", tc.path, et)
+			}
+		}
+	}
+	// Served from the cache the second time, and If-None-Match is honoured.
+	n := fetches
+	rec := hostReq(s, host, "GET", "/icondata/08/0004000000030800.idbe", "", "")
+	req := httptest.NewRequest("GET", "https://"+host+"/icondata/08/0004000000030800.idbe", nil)
+	req.Host = host
+	req.Header.Set("If-None-Match", rec.Header().Get("ETag"))
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, req)
+	if w.Code != 304 {
+		t.Errorf("If-None-Match = %d, want 304", w.Code)
+	}
+	hostReq(s, host, "GET", "/icondata/99/0004000000099900.idbe", "", "") // a remembered miss
+	if fetches != n {
+		t.Errorf("cached files and misses were fetched again (%d -> %d)", n, fetches)
+	}
+}
+
+// Live check against Nintendo's CDN (NX_IDBE_LIVE=1): the pinned root, the path, and
+// cabinet's checks on a real file.
+func TestIdbeLiveFetch(t *testing.T) {
+	if os.Getenv("NX_IDBE_LIVE") == "" {
+		t.Skip("set NX_IDBE_LIVE=1 to fetch from Nintendo's CDN")
+	}
+	for platform, name := range map[string]string{"ctr": "0004000000030800", "wup": "0005000010101E00"} {
+		b, _, err := idbeFetch(platform, name)
+		if err == nil {
+			err = validIdbe(platform, b)
+		}
+		if err != nil {
+			t.Errorf("%s %s: %v", platform, name, err)
 		}
 	}
 }
@@ -504,14 +565,59 @@ func TestBvcServesTheOperatorBlocklist(t *testing.T) {
 	}
 }
 
-// pearljam stays a recorded refusal: neither path's contract is recovered.
-func TestPearljamStaysRefused(t *testing.T) {
+// pearljam accepts any suffix and verb under /civil and /sugar, checks the headers each
+// endpoint sends, keeps the full request, and answers the smallest success.
+func TestPearljamAnswersWithAuthAndKeepsRequests(t *testing.T) {
+	data := t.TempDir()
+	t.Setenv("NX_DATA", data)
 	s := shopServerFor(t)
-	for _, p := range []string{"/civil", "/sugar", "/civil/v1/x"} {
-		rec := hostReq(s, "pearljam.hac.lp1.eshop.nintendo.net", "POST", p, "", "{}")
-		if rec.Code != 404 || !strings.Contains(rec.Body.String(), "not implemented") {
-			t.Errorf("pearljam %s = %d %s", p, rec.Code, rec.Body.String())
+	const host = "pearljam.hac.lp1.eshop.nintendo.net"
+	dev := "Bearer " + s.deviceToken(testDevice, "test")
+	u := s.store.UserByPID(7)
+	nsa := "Bearer " + s.idToken(u, nil, "tester", map[string]any{})
+	send := func(method, path string, hdr map[string]string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, "https://"+host+path, strings.NewReader(`{"k":1}`))
+		req.Host = host
+		req.Header.Set("Content-Type", "application/json")
+		for k, v := range hdr {
+			req.Header.Set(k, v)
 		}
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, req)
+		return w
+	}
+	sugar := map[string]string{"X-DeviceAuthorization": dev, "X-NINTENDO-NSA-ID-TOKEN": nsa, "X-Nintendo-Application-Id": "0100000000010000"}
+	civil := map[string]string{"X-DeviceAuthorization": dev, "Authorization": nsa}
+	for _, tc := range []struct {
+		method, path string
+		hdr          map[string]string
+		want         int
+	}{
+		{"POST", "/sugar", sugar, 200},
+		{"PUT", "/sugar/v1/applications/0100000000010000/jp", sugar, 200},
+		{"DELETE", "/civil/v1/x", civil, 200},
+		{"POST", "/civil", sugar, 401}, // civil wants Authorization, not the NSA header
+		{"POST", "/sugar", civil, 401}, // and sugar the other way round
+		{"POST", "/sugar", nil, 401},
+		{"POST", "/other", sugar, 404},
+	} {
+		w := send(tc.method, tc.path, tc.hdr)
+		if w.Code != tc.want {
+			t.Errorf("%s %s = %d %s, want %d", tc.method, tc.path, w.Code, w.Body.String(), tc.want)
+			continue
+		}
+		var m map[string]any
+		json.Unmarshal(w.Body.Bytes(), &m)
+		switch {
+		case tc.want == 200 && len(m) != 0:
+			t.Errorf("%s success body = %s, want {}", tc.path, w.Body.String())
+		case tc.want != 200 && m["error"] == nil:
+			t.Errorf("%s error body = %s, want $.error.code", tc.path, w.Body.String())
+		}
+	}
+	kept, _ := os.ReadDir(filepath.Join(data, "pearljam"))
+	if len(kept) != 6 {
+		t.Errorf("kept %d request dumps, want 6", len(kept))
 	}
 }
 

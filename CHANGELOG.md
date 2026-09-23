@@ -20,6 +20,16 @@ and what stays unverified: `docs/native-shop.md`, "After v0.16.0"):
   `/internal/store/firmware-blocklist`, persisted. A listed version gets 200 (NIM refuses
   it with 2137-8164); anything else gets 404. Both answers copy Nintendo's Akamai headers
   and bodies.
+- **idbe**: icon files for 3DS and Wii U title ids (the only ones the console asks for —
+  its consumer is cabinet, the amiibo settings applet) are Nintendo's own, fetched once
+  from `idbe-ctr`/`idbe-wup.cdn.nintendo.net` over TLS pinned to Nintendo's CA, checked
+  for size and header the way cabinet checks them, cached under `$NX_DATA/idbe/` and
+  served with an ETag (304 on `If-None-Match`). Switch ids and upstream misses stay a
+  logged 404. No key is held; nothing is re-encrypted.
+- **pearljam** `/civil`, `/sugar`: any suffix and verb is answered `200 {}` when the
+  endpoint's device and account tokens verify, `401` with `$.error.code` otherwise; every
+  request is kept in full under `$NX_DATA/pearljam/`. NIM is a pass-through for its IPC
+  caller, so the shape is unverified until a console sends one.
 
 ## v0.16.0 — 2026-09-23
 

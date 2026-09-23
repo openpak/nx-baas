@@ -211,11 +211,11 @@ hardware-confirmed.
 | Surface | Answer | Evidence |
 | --- | --- | --- |
 | `web-<env>.znc.srv.nintendo.net/lobby/*` (voice-chat lobby) | **served**: a controller-first page, "Voice chat isn't available on OpenPak yet", Close navigates to `https://localhost/lobby/` (then `endApplet`, then `window.close` if nothing intercepts it). Other paths on the host: recorded 404. On-demand cert, no client-certificate request | systemWeb `ShimUsageLobby::overwriteInternalArgs` (`0x85c65c`): session `LobbyApplet`, start URL `https://web-%.znc.srv.nintendo.net/lobby/` plus `app_id` and, when the caller passed one, `param`; the callback URL `https://localhost/lobby/` and the allowed prefix `https://web-%.znc.srv.nintendo.net/` go through the same two setters the shop shim uses for its `eshop://` callback |
-| `idbe-hac.cdn.nintendo.net/icondata/%02x/%016llX[-%hu].idbe` | **refused**: logged 404 (`no icon data`), naming whether the title is in the store | NIM builders `0x1ecc50` (with version, `%hu`) and `0x1eccc0`; `%02x` is bits 8–15 of the id, the id is upper-case hex. The task (`0x28c5e0`, vtable `0x324830`) sends a device-token header, `Accept: application/json` and `If-None-Match`, and has no reply parser: the body goes back to the IPC caller (`0x1b9e60`, `0x1ba0b0`) unread. No other 22.5.0 module names `.idbe`, so the format is not recoverable from this firmware and none is invented |
+| `idbe-hac.cdn.nintendo.net/icondata/%02x/%016llX[-%hu].idbe` | v0.16.0: logged 404. **After v0.16.0: Nintendo's own 3DS / Wii U file relayed** (see "idbe" below); Switch ids stay a logged 404 | NIM builders `0x1ecc50` (with version, `%hu`) and `0x1eccc0`; `%02x` is bits 8–15 of the id, the id is upper-case hex. The task (`0x28c5e0`, vtable `0x324830`) sends a device-token header and `Accept: application/json` (shared by its base class) and hands the body back unread (`0x1b9e60`, `0x1ba0b0`). The consumer is cabinet, not NIM (below) |
 | `bvc-hac-<env>.cdn.nintendo.net/<major>-<minor>-<micro>` | **served from the operator blocklist** (after v0.16.0): a listed version gets Akamai's 200 (empty `text/plain`, ETag, Last-Modified), anything else Akamai's 10-byte 404 `Not found\n` with no Content-Type | NIM builder `0x1ed990` formats the first three bytes of `set:sys` GetFirmwareVersion; the check `0x238460` turns any success into NIM's own error `0x3fc89` (2137-8164) and an HTTP 404 (`0x39d889`, per the status map at `0x1a56f0`) into success. Headers and bodies copied from `bvc-hac-lp1.cdn.nintendo.net` on 2026-09-23 (see "Firmware blocklist" below) |
 | beach `/v1/devices/redeemed_status` | **served** (after v0.16.0 from the device's bundle): `{digital_bundle, pre_install:false}` | NIM `0x234540`: both keys required (else `0x15489`); the reply handler (`0x234a50`) stores each bool as sent, and `0x234540` sets caller flag bit 0 when `digital_bundle` is false and bit 1 when `pre_install` is false. The booleans read "redeemed"; false is the "not yet redeemed" signal |
 | beach `/v1/devices/digital_bundle/contents?shop_id=4` | **served** (after v0.16.0 from the catalog): the device's bundled applications | NIM `0x234bd0`, handler vtable `0x328ed8`: `$.contents[]` (max 64) of `{application_id (hex string, base-16), is_upgrade_edition (bool), redeemed (bool)}`, top-level `$.redeemed` (bool). `shop_id` is the constant 4. The IPC result copies the count, the 64 ids (+8), the 64 upgrade flags (+0x208) and the 64 redeemed flags (+0x248) |
-| pearljam `/civil`, `/sugar` | **still refused** (recorded 404) | Tried: both URLs are the bases of two endpoint objects (`0x22e430` sugar: 60 s, 10 attempts; `0x22eb70` civil: 60 s, 30 attempts) run by a templated request runner (`0x22d410`) that appends a caller-supplied `{name}` template path and POSTs `application/json`. sugar adds `X-DeviceAuthorization`, `X-NINTENDO-NSA-ID-TOKEN` and `X-Nintendo-Application-Id`; civil adds `X-DeviceAuthorization`, `Authorization: Bearer` and `X-Nintendo-Application-Id`. On error statuses the reply's `$.error.code` is read (`0x22e620`). The success body goes to a request-specific sink (`0x2314b0`) with no selector strings, and none of NIM's `/{version}/…` templates is bound to either endpoint (they belong to dragons' endpoint table at `0x327358`). The direct path `0x22b280` hands base + suffix + body to a persisted request store (`0x1a64e0`). No path or reply shape is recoverable from NIM alone |
+| pearljam `/civil`, `/sugar` | v0.16.0: recorded 404. **After v0.16.0: auth-checked `200 {}` for any suffix and verb, full request kept** (see "pearljam" below) | `0x22e430` sugar (60 s, 10 attempts), `0x22eb70` civil (60 s, 30 attempts), runner `0x22d410`, error reader `0x22e620`, success sink `0x2314b0`, persisted queue `0x1a64e0`; traced to its IPC caller below |
 
 
 ## After v0.16.0: the P2 leftovers made real
@@ -271,3 +271,66 @@ x.0.0 from 13.0.0 to 22.0.0 plus several point releases probed (13.1.0, 13.2.1, 
 17.0.1, 18.1.0, 19.0.1, 20.5.0, 21.2.0, 22.1.0), and 404 for 22.5.0 (current), 11.0.1,
 12.0.x and everything below. OpenPak's list starts empty: nothing is refused until the
 operator lists it.
+
+### idbe
+
+What the icon file is and who reads it (third pass, 2026-09-23; scratch in
+`ghidra-p2/out/id*`, cabinet imported separately):
+
+- NIM writes the reply body raw to a temporary file and returns it unchanged through ns
+  commands 5000 (versioned URL, `-%hu`) and 5001 (unversioned). It captures the reply's
+  ETag (quoted, at most 39 characters) but does not send `If-None-Match`. `Accept:
+  application/json` is the header every task of that base class sends; it says nothing
+  about the body.
+- The only 22.5.0 caller is **cabinet**, the amiibo settings applet (`0100000000001002`),
+  through ns 5001 (no caller of 5000 was found). It asks for the game an amiibo's save data
+  belongs to, and only for 3DS (`0004…`) or Wii U (`0005…`) title ids; a Switch id gets no
+  icon. Its check (`0x41a090` in cabinet) requires the exact size — `0x36d2` for 3DS,
+  `0x12082` for Wii U — then byte 0 = 0, byte 1 = key index 1–3, AES-128-CBC with the
+  per-index IDBE key and IV `a46987ae47d82bb4fa8abc0450285fa4`, and the SHA-256 in front
+  of the payload.
+- That is exactly the file `idbe-ctr` / `idbe-wup.cdn.nintendo.net` still serve. Verified on
+  `0004000000030800` (14034 bytes) and `0005000010101E00` (73858 bytes): header `00 01`,
+  the decrypted SHA-256 matches, and the payload is the title id and version, then 16
+  language slots of 0x200 bytes (short name 0x80, long name 0x100, publisher 0x80;
+  UTF-16LE on 3DS, UTF-16BE on Wii U), then the icon (3DS: the SMDH 24×24 and 48×48
+  RGB565 icons; Wii U: a 128×128 32-bit TGA). Nintendo's `idbe-hac` bucket answers S3
+  `AccessDenied` for everything.
+
+So OpenPak does not build icons (and holds no IDBE key): for a 3DS or Wii U id it fetches
+Nintendo's file once from the matching CDN (`/icondata/10/<NAME>.idbe`; the directory
+segment is not significant there, upper-case name), over TLS pinned to Nintendo Class 2 CA
+- G3 (the root the console itself trusts, verified by chain plus the certificate's Common
+Name, since the CDN leaf has no SAN), checks size and header the way cabinet does, caches
+it under `$NX_DATA/idbe/<ctr|wup>/`, and serves it with a quoted MD5 ETag (34 characters),
+`Last-Modified` from upstream and `If-None-Match` → 304. An upstream miss is remembered for
+an hour. A Switch id (catalog titles included), a malformed file or a miss is a logged
+404. **Unverified on hardware:** that cabinet renders the relayed icon.
+
+### pearljam
+
+Traced to its caller (scratch in `ghidra-p2/out/rpj1`–`rpj13`):
+
+- NIM is a pass-through. The IPC caller (`nim:eca` / `nim:ecas`, task
+  `nn.nim.ShopServiceAccessTask`; the live send is sf vtable `0x32a680` slot `0x32a6a8` →
+  `0x246090` → `0x22aec0` → `0x22afd0`) supplies the endpoint selector (0 = sugar,
+  1 = civil, `0x22ee40`), the path-suffix template (`ctx+0x50`), the method (an index into
+  `{2,4,5,6}` at `0x2c26e0`; the verb mapping is inferred) and the JSON body
+  (`ctx+0x60/0x68`). NIM expands only `{applicationid}` (16 hex digits) and `{country}`;
+  any other `{token}` is error `0x5089`. No suffix or body is hard-coded in NIM.
+- Headers: sugar sends `X-DeviceAuthorization`, `X-NINTENDO-NSA-ID-TOKEN`,
+  `X-Nintendo-Application-Id`; civil sends `X-DeviceAuthorization`, `Authorization: Bearer`,
+  `X-Nintendo-Application-Id`.
+- The success body goes back to the IPC caller opaque (`0x2314b0` only accumulates
+  chunks). On an error status NIM reads `$.error.code` and nothing else (NIM results
+  `0x905` for sugar, `0x904` for civil).
+- Failed sends are persisted in the savedata file `nim_eca_dbg` (`0x1a64e0`, filled by
+  `0x22b280` with base + suffix and the body) and retried.
+
+OpenPak therefore accepts every suffix and verb under `/civil` and `/sugar`, checks each
+endpoint's two tokens against its own keys, keeps the full request (log plus
+`$NX_DATA/pearljam/<time>-<endpoint>.txt`) and answers `200 {}`, the smallest success. Bad
+or missing tokens get `401 {"error":{"code":"0401","message":…}}`, the one field NIM reads.
+**Unverified on hardware:** which applet drives it, the suffixes and bodies it sends, and
+whether that applet expects fields in a success body. The kept requests are what settles
+it.
