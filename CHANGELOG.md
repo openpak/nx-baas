@@ -3,6 +3,39 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## Unreleased — 2026-09-23
+
+eShop, Switch Online and News against firmware 22.5.0
+(`../docs/switch/native-news-eshop-nso-gap-22.5.0-2026-09-23.md`):
+
+- The storefront answers on `hac.<env>.savanna.srv.nintendo.net`, where 22.5.0's systemWeb
+  opens the shop: `/top`, `/detail/…`, `/catalog_tickets/…`, `/search/result/conditions`,
+  `/my`, `/membership`, `/redeem/input`, `/shelf`; unknown query parameters are ignored;
+  `bugyo…/ashigaru/` stays an alias. Close navigates to `eshop://success`. Nintendo-only
+  scenes say "not available on OpenPak".
+- The bridge: identity through `requestNaIdToken` / `setNsaIdTokenAvailableCallback`
+  (looked up across `nx.shop`, `nx.ec`, `nx.account`, `nx.lhub`, `nx`); download is
+  task → `requestSyncRights` → `requestDownloadTaskListOnEnd`. The diag page probes the
+  22.5.0 names and drops the nine that do not exist. The shop accepts our NSA id token.
+- Updates: catalog titles can carry a `patch` (patch id = app id + `800`), picked up from
+  `catalog.json` without a restart. tagaya `/tagaya/hac_versionlist` lists every title's
+  newest version with an ETag; superfly `/v1/a/<id>/dv` answers the recovered
+  `[{title_id,title_type,version}]` array; atum serves patch content under the
+  application's edge token; veer `/v5/policy.json` picks atum.
+- pushmo `/pushmo/d/<id>.json` lists open download tasks (ns download-task-list shape,
+  unconfirmed) with ETag/304; `/p/` is empty; every request is dumped.
+- Rights replies carry `accepted_rights_ids` / `skipped_rights_ids`; the edge token is
+  issued on `dragons.` and `tigers.` too.
+- Routing: `sun.`, `aqua.`, `superfly.`, `atumn*` d4c hosts reach the NIM path table
+  instead of atum's 404; beach answers `redeemed_status`, `target/{set,clear}` and records
+  `digital_bundle/contents`; vermillion `gw.` tries the NIM routes before its `{}`.
+- Switch Online: an Lhub landing page on `*.nso.nintendo.net` (paywall launch included);
+  capi answers the Expansion Pack (`ex`) active; `fw-api…/v1/events` answers an empty list.
+- News: `NEWS_INTERNAL_URL` forwards `openpak_*` lists and title topics to the news service
+  verbatim (`NEWS_INTERNAL_CA`, `NEWS_INTERNAL_SERVER_NAME` for its TLS);
+  `POST /internal/news/push` delivers `{"type":"news",…}` to consoles subscribed to the
+  topic. A console's topic subscriptions now accumulate instead of keeping only the last.
+
 ## v0.13.0 — 2026-09-23
 
 Cross-network presence with client labels:

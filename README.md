@@ -103,15 +103,28 @@ openpak-account.
 | --- | --- | --- |
 | `POST /internal/photon-room` `{identity,room,app_id}` | Photon | `identity` is `nex:<openpak token>` or `bsdid:<bs:did>`, straight from the client's id_token; this server resolves it. The room becomes the player's friend presence (`app_field` = the title's own application parameter). |
 | `POST /internal/mint-token` `{pid}` | rig tooling | A bearer for any PID the backend knows, no password. Dev convenience. |
+| `POST /internal/news/push` `{topic_id,revision[,wait_range,subscription]}` | news service | Writes `{"type":"news",…}` to every live Penne connection subscribed to the topic (raw subscribed string). Live only; see `news.go`. |
 | `GET/POST /api/invitations` | emulator, console | Friend-invitation mailbox: opaque app-parameter bytes in, popped by the target. TTL 5 min, 8 queued per target, senders limited to their own friends. |
 
 `X-Internal-Key` must match `NX_INTERNAL_KEY` (or `OPENPAK_INTERNAL_KEY`) when set;
 `/api/*` uses the `nx2.` openpak bearer. Any other `/api/*` path is forwarded to
 `ACCOUNT_API` until the OpenPak core serves friends/presence/saves itself.
 
+## Switch Online and News
+
+`*.nso.nintendo.net` serves the HOME Menu's Switch Online page (Lhub, any path, the paywall
+`launch?from=paywall…` included): membership is always active, Expansion Pack too, because
+OpenPak sells nothing. `fw-api.<env>.nso.nintendo.net/v1/events` answers an empty list and
+logs the request. With `NEWS_INTERNAL_URL` (plus `NEWS_INTERNAL_CA` and
+`NEWS_INTERNAL_SERVER_NAME` when the news service speaks TLS under its own CA) the bcat hosts
+forward `/api/nx/v1/list/openpak_*` and `/api/nx/v1/titles/<tid>/topics` to it verbatim;
+unset, bcat.go's own answers stay. `news.go` has the details.
+
 ## Native OpenPak store
 
-The shop applet's surface: the storefront and its API on `bugyo.hac.lp1.eshop.nintendo.net`,
+The shop applet's surface: the storefront and its API on `hac.lp1.savanna.srv.nintendo.net`
+(where 22.5.0's systemWeb opens the shop; `bugyo.hac.lp1.eshop.nintendo.net/ashigaru/` stays
+an alias), NIM's download and update hosts (pushmo, tagaya, superfly, veer),
 device links and rights on `beach.`/`dragons.`/`dragonst.`/`tigers.`, content delivery with
 edge-token authorization and resumable ranges on `atum.hac.lp1.d4c.nintendo.net`. Catalog,
 entitlements and download tasks persist under `$NX_DATA/shop/` (`catalog.json` you author,

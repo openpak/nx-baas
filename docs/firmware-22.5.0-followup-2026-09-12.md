@@ -107,7 +107,8 @@ the notification work.
 From `nim/strings.txt`:
 
 - `https://pearljam.hac.%.eshop.nintendo.net/civil` and `/sugar` — unserved entirely.
-  Purpose unknown; they are the only eShop hosts in NIM besides dragons/tigers.
+  Purpose unknown. (Correction 2026-09-23: they are not the only other eShop hosts in NIM —
+  beach, pushmo and tagaya are eShop hosts too; see `docs/native-shop.md`, "22.5.0 surface".)
 - `/v1/acds/search` — ACD search, unserved.
 - Unserved NIM paths worth triaging against the chosen store journey:
   `/v1/accounts/in-same-family?accountIds=`, `/v1/accounts/vphyms`,
@@ -116,8 +117,11 @@ From `nim/strings.txt`:
   `/v1/system_update_meta?device_id=`, `/v5/policy.json?context=`, `/v1/direct-messages`,
   `/v1/accounts/notify[-to-family]`, `/v1/a/%016llx/dv`.
 - Served already: dragons rights/elicenses, tigers `/v1/etickets/publish` (501 by design),
-  beach device links and `digital_bundle`, `bugyo` (the applet host, confirmed in
+  beach device links, `bugyo` (the applet host on older firmware, confirmed in
   `offlineWeb` at `0x8301fc` beside `OfflineWebApplet`), vermillion `accounts/config`.
+  (Correction 2026-09-23: `digital_bundle` was not served — it fell to beach's 404 — and on
+  22.5.0 the shop is systemWeb on `hac.%.savanna.srv.nintendo.net`, not bugyo. Both are
+  handled now; see `docs/native-shop.md`, "22.5.0 surface".)
 
 The eticket gate is unchanged: `/v1/etickets/publish` is the one thing we cannot mint,
 and it stays a recorded 501 rather than a fake success.
@@ -198,8 +202,8 @@ invented.
 
 ## 12. eShop surface the modules reach and we do not answer
 
-- `pearljam.hac.<env>.eshop.nintendo.net/civil` and `/sugar` — the only eShop
-  hosts in NIM besides dragons and tigers. Unserved, purpose unrecovered.
+- `pearljam.hac.<env>.eshop.nintendo.net/civil` and `/sugar` — purpose unrecovered.
+  (Not the only other eShop hosts: beach, pushmo and tagaya are too.)
 - `/v1/acds/search`; `/v1/accounts/in-same-family?accountIds=`;
   `/v1/accounts/vphyms` and `/v1/accounts/vphym-borrowers/candidates`
   (family lending — the module parses a full `candidates[*]` shape including
@@ -248,9 +252,9 @@ recorded and refused, because a plausible lie is worse than a clear no.
 | `/v1/accounts/vphym-borrowers/candidates` | `{"candidates": []}` | nobody can lend |
 | `/v1/accounts/in-same-family` | `{"inSameFamily": false}` | no family groups exist |
 | `/v1/nearness-checks`, `/prune` | `{"nearnessChecks": []}` | nothing brokers device-to-device transfer |
-| `/v1/devices/redeemed_status` | `{"redeemed": false}` | nothing has been redeemed |
-| `/v1/devices/target/{set,clear}` | 200 | accepted; no download targeting implemented |
-| `/v1/system_update_meta` | `{"system_update_metas": []}` | **"you are current"** — we serve no system images and must never point a console at an update it cannot get |
+| `/v1/devices/redeemed_status` | `{"redeemed": false}` | nothing has been redeemed. (2026-09-23: these live on beach, whose handler 404'd them, so this answer was unreachable until it moved into `beach.go`) |
+| `/v1/devices/target/{set,clear}` | 200 | accepted; no download targeting implemented (now in `beach.go`, as above) |
+| `/v1/system_update_meta` (sun) | `{"system_update_metas": []}` | **"you are current"** — we serve no system images and must never point a console at an update it cannot get |
 | `/v1/direct-messages` | `{"messages": [], "count": 0}` | nothing produces store messages |
 | `/v1/accounts/notify[-to-family]` | 200 | accepted; nothing to fan out |
 | `/v1/acds/search` | **the shop catalog**, filtered by `q` | the console is asking what this store has, and this store knows; the ACD document's native field names are unrecovered, so the entries use our catalog's own vocabulary |
