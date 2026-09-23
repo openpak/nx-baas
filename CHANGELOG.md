@@ -3,6 +3,15 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.25.0 — 2026-09-23
+
+- The eShop and OpenPak Online follow the website's 2026-09 design language (tokens from
+  `website/web/src/input.css`): Inter, the indigo accent, pill navigation and buttons, the
+  gradient primary button, hairline-bordered 20 px cards, chip badges and eyebrow labels.
+  The eShop is light with the website's dark palette when the console asks for dark;
+  OpenPak Online stays blue in the website's hero style (indigo depth, glow, dot grid,
+  gradient wordmark, glass cards).
+
 ## v0.24.0 — 2026-09-23
 
 - OpenPak Online uses illustrated icons for its six features (grid and page headings),
