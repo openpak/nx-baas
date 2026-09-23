@@ -3,6 +3,11 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.24.0 — 2026-09-23
+
+- OpenPak Online uses illustrated icons for its six features (grid and page headings),
+  served from the binary at `/_openpak/icon/<name>.png`.
+
 ## v0.23.0 — 2026-09-23
 
 - OpenPak Online: the mark, Complete Guide and the wide button appear on the main page only;

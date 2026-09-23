@@ -79,6 +79,20 @@ func TestZncLobbyVoiceAsksTheWebsiteForTheRoom(t *testing.T) {
 	}
 }
 
+// The Switch Online pages' feature icons are served from the binary.
+func TestLhubIconsAreServed(t *testing.T) {
+	s := shopServerFor(t)
+	for _, n := range []string{"online", "cloud", "app", "consoles", "faq", "help"} {
+		rec := hostReq(s, "lp1.nso.nintendo.net", "GET", "/_openpak/icon/"+n+".png", "", "")
+		if rec.Code != 200 || rec.Header().Get("Content-Type") != "image/png" {
+			t.Errorf("icon %s = %d", n, rec.Code)
+		}
+	}
+	if rec := hostReq(s, "lp1.nso.nintendo.net", "GET", "/_openpak/icon/../../main.go", "", ""); rec.Code != 404 {
+		t.Errorf("path escape = %d, want 404", rec.Code)
+	}
+}
+
 // The badge feed answers an empty collection rather than the catch-all 404.
 func TestNsoEventsFeedAnswersEmpty(t *testing.T) {
 	s := shopServerFor(t)

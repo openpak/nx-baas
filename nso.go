@@ -30,12 +30,13 @@ package main
 // voice chat, so the page says so and offers that way out.
 
 import (
-	_ "embed"
+	"embed"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 	"time"
 )
@@ -50,6 +51,18 @@ func (s *server) nso(w http.ResponseWriter, r *http.Request, body []byte) {
 			return
 		}
 		writeJSON(w, 404, map[string]any{"status": 404, "title": "not found"})
+		return
+	}
+	if strings.HasPrefix(p, "/_openpak/icon/") {
+		// The feature icons of the Switch Online pages (assets/nso).
+		b, err := nsoIcons.ReadFile("assets/nso/" + path.Base(p))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Write(b)
 		return
 	}
 	if p == "/_openpak/membership" {
@@ -161,6 +174,9 @@ func writeJSONValue(w http.ResponseWriter, status int, v any) {
 	fmt.Fprint(w, mustJSON(v))
 }
 
+//go:embed assets/nso/*.png
+var nsoIcons embed.FS
+
 // lhubPage is the Switch Online landing page, laid out like Nintendo's: an all-blue page
 // with the OpenPak Online mark on the left, the page's content on the right, dots between
 // L and R, and one wide button at the bottom. L and R move between the pages. The console
@@ -202,7 +218,8 @@ button{font:inherit;color:inherit;cursor:pointer}
 .right.full .row span{font-size:2.5vh}
 .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:2.5vh 1.5vw}
 .it{background:none;border:.5vh solid transparent;border-radius:2vh;padding:1.4vh .5vw;text-align:center}
-.it .ic{font-size:7vh;line-height:1.1;display:block;margin-bottom:.8vh}
+.it .ico{display:block;width:12vh;height:12vh;margin:0 auto .8vh}
+h1 .ico{width:6vh;height:6vh;vertical-align:middle;margin-right:1.2vw}
 .it .t{font-size:2.6vh}
 h1{font-size:4.6vh;margin:0 0 1.4vh}
 .lead{margin:0 0 2vh;font-size:2.6vh;opacity:.9}
@@ -227,38 +244,39 @@ const lhubJS = `
 (function(){
 function param(k){var m=location.search.match(new RegExp('[?&]'+k+'=([^&]*)'));return m?decodeURIComponent(m[1]):'';}
 function $(id){return document.getElementById(id);}
-function it(ic,t,go){return '<button class="it" data-go="'+go+'"><span class="ic">'+ic+'</span><span class="t">'+t+'</span></button>';}
+function ic(name){return '<img class="ico" src="/_openpak/icon/'+name+'.png" alt="">';}
+function it(name,t,go){return '<button class="it" data-go="'+go+'">'+ic(name)+'<span class="t">'+t+'</span></button>';}
 function row(h,p){return '<div class="row" tabindex="0"><b>'+h+'</b><span>'+p+'</span></div>';}
 var PAGES=[
  {tag:'Everything is included',h:'<div class="grid">'+
-  it('🌐','Online Play',1)+it('☁️','Save Data Cloud',2)+it('📱','Smartphone App',3)+
-  it('🎮','Across Consoles',4)+it('❓','Questions',5)+it('📖','Help &amp; Guides',6)+'</div>'},
- {tag:'Play together',h:'<h1>🌐 Online Play</h1><p class="lead">OpenPak runs its own servers for the games it supports.</p><div class="rows">'+
+  it('online','Online Play',1)+it('cloud','Save Data Cloud',2)+it('app','Smartphone App',3)+
+  it('consoles','Across Consoles',4)+it('faq','Questions',5)+it('help','Help &amp; Guides',6)+'</div>'},
+ {tag:'Play together',h:'<h1>'+ic('online')+'Online Play</h1><p class="lead">OpenPak runs its own servers for the games it supports.</p><div class="rows">'+
   row('Matchmaking and rooms','Random matches, private rooms and invites, as the game offers them.')+
   row('Rankings and events','Leaderboards and events where the game has them.')+
   row('Supported games','The list and what works in each: <span class="url">openpak.org/titles</span>')+
   row('Fair play','Reports and bans apply across the whole network.')+'</div>'},
- {tag:'Never lose progress',h:'<h1>☁️ Save Data Cloud</h1><p class="lead">Your saves, kept safe on the OpenPak servers.</p><div class="rows">'+
+ {tag:'Never lose progress',h:'<h1>'+ic('cloud')+'Save Data Cloud</h1><p class="lead">Your saves, kept safe on the OpenPak servers.</p><div class="rows">'+
   row('Automatic backup','Saves of supported games go to your OpenPak account.')+
   row('Restore anywhere','Download a save to another console on the same account.')+
   row('See them on your phone','The OpenPak app and openpak.org list your saves.')+
   row('Only yours','Saves belong to your account and are never shared.')+'</div>'},
- {tag:'OpenPak in your pocket',h:'<h1>📱 Smartphone App</h1><p class="lead">Get it at <span class="url">openpak.org/app</span> and sign in with your OpenPak account.</p><div class="rows">'+
+ {tag:'OpenPak in your pocket',h:'<h1>'+ic('app')+'Smartphone App</h1><p class="lead">Get it at <span class="url">openpak.org/app</span> and sign in with your OpenPak account.</p><div class="rows">'+
   row('Voice chat','Talk with the players in your game room, or friends by room code.')+
   row('Friends','Requests, invitations and who is playing what, on every console.')+
   row('Messages','Chat with friends from your phone.')+
   row('Help','Open a ticket and read the replies.')+'</div>'},
- {tag:'One network',h:'<h1>🎮 Across Consoles</h1><p class="lead">One account and one friend list for Nintendo consoles old and new.</p><div class="rows">'+
+ {tag:'One network',h:'<h1>'+ic('consoles')+'Across Consoles</h1><p class="lead">One account and one friend list for Nintendo consoles old and new.</p><div class="rows">'+
   row('Nintendo Switch','Online play, friends, eShop, News and Save Data Cloud.')+
   row('Wii U and 3DS','Online play, friends, posts and chat.')+
   row('Wii and DS','Nintendo Wi-Fi Connection games online again.')+
   row('Emulators','Supported emulators join the same network as consoles.')+'</div>'},
- {tag:'Good to know',h:'<h1>❓ Questions</h1><div class="rows one">'+
+ {tag:'Good to know',h:'<h1>'+ic('faq')+'Questions</h1><div class="rows one">'+
   row('Does it cost anything?','No. Everything is included with a free OpenPak account.')+
   row('Is OpenPak made by Nintendo?','No. OpenPak is independent and not affiliated with Nintendo.')+
   row('Which games work online?','See openpak.org/titles for the list and what works in each.')+
   row('Can I use my Nintendo Account?','OpenPak uses its own accounts. Link your console to yours to play.')+'</div>'},
- {tag:'We are here to help',h:'<h1>📖 Help &amp; Guides</h1><p class="lead">Guides and support live on openpak.org.</p><div class="rows">'+
+ {tag:'We are here to help',h:'<h1>'+ic('help')+'Help &amp; Guides</h1><p class="lead">Guides and support live on openpak.org.</p><div class="rows">'+
   row('Guides','Setting up a console and getting online: <span class="url">openpak.org/help</span>')+
   row('Contact support','Open a ticket at openpak.org/help or in the app.')+
   row('Service status','Is something down? <span class="url">status.openpak.org</span>')+
