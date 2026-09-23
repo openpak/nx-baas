@@ -86,9 +86,15 @@ func (s *server) atum(w http.ResponseWriter, r *http.Request, body []byte) {
 	// Authorization (SHP-04): c2 needs a dragons token bound to this title; c1 accepts the
 	// dauth-style dtoken with a live exp and the requesting device in data=sub=...
 	device := ""
+	s.shop.reloadCatalog()
 	if parts[0] == "c2" {
+		// An update is fetched under its application's token: the token names
+		// application ids, and a patch id resolves to the title that owns it.
 		var ok bool
 		if device, ok = s.verifyDragonsEdgeToken(edge, titleID); !ok {
+			device, ok = s.verifyDragonsEdgeToken(edge, s.shop.applicationFor(titleID))
+		}
+		if !ok {
 			atumErr(w, r, 403, "403/edge_token_not_grantable", "edge token missing, expired, or not valid for this title")
 			return
 		}
@@ -145,15 +151,19 @@ func (s *server) atumHashes(w http.ResponseWriter, titleID, contentID string, c 
 
 // titleFile resolves the control/CNMT named file for a title.
 func (s *shopState) titleFile(titleID, which string) string {
-	s.mu.Lock()
-	title := s.Catalog[titleID]
-	s.mu.Unlock()
+	title, isPatch := s.meta(titleID)
 	if title == nil {
 		return ""
 	}
 	p := title.ControlPath
 	if which == "cnmt" {
 		p = title.CNMTPath
+	}
+	if isPatch {
+		p = title.Patch.ControlPath
+		if which == "cnmt" {
+			p = title.Patch.CNMTPath
+		}
 	}
 	if p == "" {
 		return ""

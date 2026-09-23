@@ -604,7 +604,10 @@ func (s *server) penneDispatch(sess *penneSession, frame []byte) {
 			log.Printf("[nx-baas] penne: SubscribeTopic without a readable topic (flags %v/%v); counted, not guessed", have[0], have[1])
 			return
 		}
-		store.SetSubscriptions(sess.user, sess.device, []string{strings.ToLower(topic)}, time.Now())
+		store.AddSubscription(sess.user, sess.device, strings.ToLower(topic), time.Now())
+		// Every topic is logged by name: which string a followed News channel is
+		// subscribed under is still unrecovered, and this line is how hardware
+		// answers it (news.go).
 		log.Printf("[nx-baas] penne: subscribed user=%s device=%s topic=%s", sess.user, sess.device, topic)
 		// Confirmation: SubscriptionUpdated carries one u64 (recovered shape);
 		// the value's meaning is not recovered -- we send the unix second as

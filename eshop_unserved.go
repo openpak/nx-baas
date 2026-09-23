@@ -77,17 +77,6 @@ func (s *server) nimUnserved(w http.ResponseWriter, r *http.Request, body []byte
 		writeJSON(w, 200, map[string]any{"nearnessChecks": []any{}})
 		return true
 
-	// "Has this device redeemed anything / which device am I targeting?"
-	// [nim: /v1/devices/redeemed_status, /v1/devices/target/{set,clear}].
-	case p == "/v1/devices/redeemed_status":
-		log.Printf("[shop] nim %s %s -> nothing redeemed", r.Method, p)
-		writeJSON(w, 200, map[string]any{"redeemed": false})
-		return true
-	case p == "/v1/devices/target/set", p == "/v1/devices/target/clear":
-		log.Printf("[shop] nim %s %s -> accepted, no download targeting implemented", r.Method, p)
-		w.WriteHeader(http.StatusOK)
-		return true
-
 	// "Is there a system update?" [nim: /v1/system_update_meta?device_id=].
 	// An empty list means "you are current", which is what we want a console
 	// on OpenPak to believe: we serve no system images and must never point
@@ -95,6 +84,14 @@ func (s *server) nimUnserved(w http.ResponseWriter, r *http.Request, body []byte
 	case strings.HasPrefix(p, "/v1/system_update_meta"):
 		log.Printf("[shop] nim %s %s -> no system update", r.Method, p)
 		writeJSON(w, 200, map[string]any{"system_update_metas": []any{}})
+		return true
+	// aqua asks the same question with a floor: "which system version must I have?"
+	// [nim: aqua.hac.%.d4c.nintendo.net/required_system_update_meta?device_id=]. The
+	// reply's fields are not recovered; 404 says there is no requirement on record,
+	// which is true, without inventing a version a console would try to reach.
+	case strings.HasPrefix(p, "/required_system_update_meta"):
+		dump(r, body, "!! ESHOP aqua required system update (response shape unrecovered)")
+		writeJSON(w, 404, map[string]any{"status": 404, "title": "no required system update"})
 		return true
 
 	// Messages the shop would show the player [nim: /v1/direct-messages] and
@@ -109,15 +106,11 @@ func (s *server) nimUnserved(w http.ResponseWriter, r *http.Request, body []byte
 		w.WriteHeader(http.StatusOK)
 		return true
 
-	// "What is the newest version of this application?" — NIM's update check
-	// [nim: /v1/a/%016llx/dv, built at 0x1ecbe0]. The response document's
-	// field names are not recovered, and a version record is exactly the kind
-	// of answer that must not be invented: a wrong version number starts a
-	// download of something that does not exist. 404 is how a server says it
-	// knows of no update, which is true here, and the request is recorded.
+	// "What versions of this application exist?" — NIM's update check on
+	// superfly [nim: /v1/a/%016llx/dv, built at 0x1ecbe0; the reply is read by
+	// the SAX handler at 0x3280e0]. Answered from the catalog (eshop_nim.go).
 	case strings.HasPrefix(p, "/v1/a/") && strings.HasSuffix(p, "/dv"):
-		dump(r, body, "!! ESHOP version lookup (response shape unrecovered)")
-		writeJSON(w, 404, map[string]any{"status": 404, "title": "no version record"})
+		s.versionLookup(w, r, body)
 		return true
 
 	// The eShop's own catalogue search [nim: /v1/acds/search]. Answered from

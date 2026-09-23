@@ -43,6 +43,12 @@ import (
 // route that returns 200 is indistinguishable from one that works.
 func (s *server) bcat(w http.ResponseWriter, r *http.Request, body []byte) {
 	p := r.URL.Path
+	if s.news != nil && newsForwardPath(hostOf(r), p) {
+		// OpenPak's News topics and the title topic lookups are the news
+		// service's signed documents (news.go).
+		s.news.forward(w, r)
+		return
+	}
 	switch {
 	// Per-title topic document. Read fields (module FUN_00215590): $.topic_id,
 	// $.na_required, $.test_distribution, $.service_status,

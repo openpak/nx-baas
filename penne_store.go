@@ -732,24 +732,42 @@ func (s *penneStore) LinkNSA(id, nsaID string, now time.Time) {
 
 // ---------- subscriptions ----------
 
-// SetSubscriptions replaces a device's topic subscriptions for one account.
-func (s *penneStore) SetSubscriptions(userID, deviceID string, topics []string, now time.Time) {
+// AddSubscription records one SubscribeTopic: the console subscribes topics one frame
+// at a time, so each adds to what the device already holds for the account instead of
+// replacing it (a replace kept only the last topic a device subscribed).
+func (s *penneStore) AddSubscription(userID, deviceID, topic string, now time.Time) {
+	if topic == "" {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	kept := s.d.Subs[userID][:0]
 	for _, sub := range s.d.Subs[userID] {
-		if sub.DeviceID != deviceID {
-			kept = append(kept, sub)
+		if sub.DeviceID == deviceID && sub.Topic == topic {
+			return
 		}
 	}
-	for _, t := range topics {
-		if t == "" {
-			continue
-		}
-		kept = append(kept, &penneSubRec{Topic: t, DeviceID: deviceID, CreatedAt: now.Unix()})
-	}
-	s.d.Subs[userID] = kept
+	s.d.Subs[userID] = append(s.d.Subs[userID], &penneSubRec{Topic: topic, DeviceID: deviceID, CreatedAt: now.Unix()})
 	s.saveLocked()
+}
+
+// topicSubscriber is one (account, device) holding a topic.
+type topicSubscriber struct {
+	UserID, DeviceID string
+}
+
+// TopicSubscribers lists who subscribed a topic, by its raw string.
+func (s *penneStore) TopicSubscribers(topic string) []topicSubscriber {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []topicSubscriber
+	for user, subs := range s.d.Subs {
+		for _, sub := range subs {
+			if sub.Topic == topic {
+				out = append(out, topicSubscriber{UserID: user, DeviceID: sub.DeviceID})
+			}
+		}
+	}
+	return out
 }
 
 func (s *penneStore) Subscriptions(userID string) []penneSubRec {

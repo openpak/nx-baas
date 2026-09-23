@@ -214,6 +214,21 @@ func (s *server) beach(w http.ResponseWriter, r *http.Request, body []byte) {
 		// OpenPak's catalog has no membership gate; availability false is the honest
 		// constant until a capture names the real shape.
 		writeJSON(w, 200, map[string]any{"is_available": false})
+	// "Has this device redeemed anything / which device am I targeting?"
+	// [nim: /v1/devices/redeemed_status -> $.redeemed, /v1/devices/target/{set,clear}].
+	// Nothing on OpenPak is redeemed: there are no codes to redeem.
+	case p == "/v1/devices/redeemed_status":
+		log.Printf("[shop] beach %s %s -> nothing redeemed", r.Method, p)
+		writeJSON(w, 200, map[string]any{"redeemed": false})
+	case p == "/v1/devices/target/set", p == "/v1/devices/target/clear":
+		log.Printf("[shop] beach %s %s -> accepted, no download targeting implemented", r.Method, p)
+		w.WriteHeader(http.StatusOK)
+	// Bundled-content lookup [nim: /v1/devices/digital_bundle/contents?shop_id=%d ->
+	// $.digital_bundle]. The value's type is not recovered, so no body is invented: a
+	// console that bought no bundle has nothing to look up, and the request is recorded.
+	case p == "/v1/devices/digital_bundle/contents":
+		dump(r, body, "!! ESHOP beach digital_bundle (response shape unrecovered)")
+		beachErr(w, 404, "1001", "no digital bundle: OpenPak sells no bundles")
 	case p == "/v1/rom_cards" && r.Method == "GET", p == "/v1/rom_cards" && r.Method == "POST",
 		p == "/v1/rom_cards/register" && r.Method == "POST":
 		// Physical-card registration is not part of the digital catalog journey.
@@ -257,9 +272,9 @@ func (s *server) deviceIdentity(r *http.Request) string {
 	return deviceIDFromUA(r.UserAgent())
 }
 
-// shopPrincipal resolves the account acting on a shop request: a verified NA id token in
-// Authorization or Nintendo-Nsa-Id-Token, corroborated by the Nintendo-Account-Id header
-// when present. A header id without a token is not trusted (principal binding).
+// shopPrincipal resolves the account acting on a shop request: a verified NA id token (or
+// our own BAAS-issued NSA id token) in Authorization or Nintendo-Nsa-Id-Token, corroborated
+// by the Nintendo-Account-Id header when present. A header id without a token is not trusted (principal binding).
 func (s *server) shopPrincipal(r *http.Request) (accountID, baasUserID string) {
 	headerID := r.Header.Get("Nintendo-Account-Id")
 	for _, h := range []string{"Authorization", "Nintendo-Nsa-Id-Token"} {
@@ -269,6 +284,19 @@ func (s *server) shopPrincipal(r *http.Request) (accountID, baasUserID string) {
 		}
 		sub := str(claims, "sub")
 		iss := str(claims, "iss")
+		// The shop page may hold the network service account's id token instead
+		// (systemWeb's setNsaIdTokenAvailableCallback): our BAAS signs it, its subject
+		// is the BAAS user, and that user carries the Nintendo Account id.
+		if iss == baasIssuer && str(claims, "typ") == "id_token" && s.store != nil {
+			if u := s.store.User(sub); u != nil && u.NaID != "" {
+				if headerID != "" && headerID != u.NaID {
+					log.Printf("[shop] principal: header %s disagrees with nsa token's account %s; refusing", headerID, u.NaID)
+					return "", ""
+				}
+				return u.NaID, u.ID
+			}
+			continue
+		}
 		// NA id tokens come from our accounts.nintendo.com surface; a token from anywhere
 		// else does not name an account here.
 		if sub == "" || iss != naIssuer {
@@ -371,11 +399,13 @@ func numf(m map[string]any, k string) float64 {
 
 // shopRightsRoute: the dragons rights routes the store workstream owns. Everything else on
 // the dragons host stays with the dauth handler's setup-critical answers (they keep the
-// working console link alive); these three are the acquisition surface (SHP-03).
+// working console link alive); these are the acquisition surface (SHP-03) and the edge
+// token issuer, which NIM may address on dragons. as well as dragonst.
 func shopRightsRoute(p string) bool {
 	p = strings.TrimPrefix(p, "/v2")
 	p = strings.TrimPrefix(p, "/v1")
-	return p == "/rights/publish_elicenses" || p == "/rights/available_elicenses" || p == "/elicenses/revoke"
+	return p == "/rights/publish_elicenses" || p == "/rights/available_elicenses" || p == "/elicenses/revoke" ||
+		p == "/edge_token/issue" || p == "/edge_token/issuable_titles"
 }
 
 // dragons serves the dragons family: dragons.hac.* (elicense/rights), dragonst.hac.*
@@ -394,7 +424,9 @@ func (s *server) dragons(w http.ResponseWriter, r *http.Request, body []byte) {
 	switch {
 	// dragonst: the edge token issuer for c2 content. wiki: {title_ids, na_id_tokens,
 	// vendor} -> {expires_in, dragons_edge_token, title_ids}.
-	case host == "dragonst.hac.lp1.dragons.nintendo.net" && p == "/edge_token/issue" && r.Method == "POST":
+	// Any of the three rights hosts: NIM names the issuer by configuration, and a token
+	// request that reached dragons. or tigers. used to fall to the 404 below.
+	case p == "/edge_token/issue" && r.Method == "POST":
 		var in struct {
 			TitleIDs []string `json:"title_ids"`
 		}
@@ -407,24 +439,26 @@ func (s *server) dragons(w http.ResponseWriter, r *http.Request, body []byte) {
 		// content delivery, SHP-04). An unlinked device gets nothing.
 		allowed := []string{}
 		for _, tid := range in.TitleIDs {
+			tid = strings.ToLower(tid)
 			if !validTitleID(tid) {
 				continue
 			}
-			if s.shop.deviceOwnsTitle(device, tid) {
+			// An update rides its application's entitlement.
+			if s.shop.deviceOwnsTitle(device, s.shop.applicationFor(tid)) {
 				allowed = append(allowed, tid)
 			}
 		}
 		writeJSON(w, 200, map[string]any{
 			"expires_in": 21600, "dragons_edge_token": s.dragonsEdgeToken(device, allowed), "title_ids": allowed,
 		})
-	case host == "dragonst.hac.lp1.dragons.nintendo.net" && p == "/edge_token/issuable_titles" && r.Method == "POST":
+	case p == "/edge_token/issuable_titles" && r.Method == "POST":
 		var in struct {
 			ApplicationIDs []string `json:"application_ids"`
 		}
 		json.Unmarshal(body, &in)
 		allowed := []string{}
 		for _, tid := range in.ApplicationIDs {
-			if validTitleID(tid) && s.shop.deviceOwnsTitle(device, tid) {
+			if validTitleID(tid) && s.shop.deviceOwnsTitle(device, s.shop.applicationFor(tid)) {
 				allowed = append(allowed, tid)
 			}
 		}
@@ -439,18 +473,29 @@ func (s *server) dragons(w http.ResponseWriter, r *http.Request, body []byte) {
 		json.Unmarshal(body, &in)
 		accounts := s.rightsAccounts(r)
 		out := []map[string]any{}
+		// NIM reads which of the rights ids it sent were taken and which were passed
+		// over [firmware, nim: $.accepted_rights_ids[*], $.skipped_rights_ids[*]]. Every
+		// id lands in exactly one of the two, in the order it was sent.
+		accepted, skipped := []string{}, []string{}
 		for _, rid := range in.RightsIDs {
 			tid := titleIDForRights(rid)
-			if tid == "" {
-				continue
-			}
+			published := false
 			for _, account := range accounts {
+				if tid == "" {
+					break
+				}
 				if e := s.shop.entitlementFor(account, tid); e != nil && e.Status == "active" {
 					out = append(out, elicenseObj(e))
+					published = true
 				}
 			}
+			if published {
+				accepted = append(accepted, rid)
+			} else {
+				skipped = append(skipped, rid)
+			}
 		}
-		writeJSON(w, 200, map[string]any{"elicenses": out})
+		writeJSON(w, 200, map[string]any{"elicenses": out, "accepted_rights_ids": accepted, "skipped_rights_ids": skipped})
 	case p == "/rights/available_elicenses" && r.Method == "POST":
 		var in struct {
 			RightsIDs []string `json:"rights_ids"`
@@ -458,6 +503,7 @@ func (s *server) dragons(w http.ResponseWriter, r *http.Request, body []byte) {
 		json.Unmarshal(body, &in)
 		accounts := s.rightsAccounts(r)
 		items := []map[string]any{}
+		accepted, skipped := []string{}, []string{}
 		for _, rid := range in.RightsIDs {
 			tid := titleIDForRights(rid)
 			available := false
@@ -486,8 +532,13 @@ func (s *server) dragons(w http.ResponseWriter, r *http.Request, body []byte) {
 				"rights_id": rid, "is_available": available, "reason": reason, "elicense_type": etype,
 				"account_id": matched, "come_back_after": 0,
 			})
+			if available {
+				accepted = append(accepted, rid)
+			} else {
+				skipped = append(skipped, rid)
+			}
 		}
-		writeJSON(w, 200, map[string]any{"available_elicenses": items})
+		writeJSON(w, 200, map[string]any{"available_elicenses": items, "accepted_rights_ids": accepted, "skipped_rights_ids": skipped})
 	case p == "/elicenses/revoke" && r.Method == "POST":
 		var in struct {
 			ELicenseIDs []string `json:"elicense_ids"`
@@ -509,7 +560,7 @@ func (s *server) dragons(w http.ResponseWriter, r *http.Request, body []byte) {
 		dragonsError(w, 501, "not_implemented",
 			"eticket publish requires console trust this service cannot mint",
 			"OpenPak records this request as packaging/trust evidence; see docs/native-shop.md SHP-04.")
-	case host == "tigers.hac.lp1.dragons.nintendo.net":
+	case strings.HasPrefix(host, "tigers."):
 		dump(r, body, "!! UNHANDLED tigers")
 		dragonsError(w, 501, "not_implemented", "not implemented by OpenPak", "")
 	default:

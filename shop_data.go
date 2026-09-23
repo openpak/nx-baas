@@ -54,6 +54,80 @@ type ShopTitle struct {
 	Localized    map[string]ShopText `json:"localized"`
 	DefaultLang  string              `json:"default_lang,omitempty"`
 	UpdatedAt    int64               `json:"updated_at"`
+	// Patch is the title's current update, when it has one: a content meta of its own
+	// under the patch id (the application id with 0x800 in its low bits), served on the
+	// same atum routes as the application's. Publishing a new version of a title is
+	// replacing this block in catalog.json with the new version's content and raising
+	// updated_at; the running server picks the file up on its next read (reloadCatalog).
+	// With a patch, Version is the patch's version (the one a download ends on) and
+	// BaseVersion is the application content meta's own, normally 0.
+	Patch       *ShopPatch `json:"patch,omitempty"`
+	BaseVersion uint32     `json:"base_version,omitempty"`
+}
+
+// ShopPatch is one title update: its version and the files that carry it.
+type ShopPatch struct {
+	Version      uint32        `json:"version"`
+	VersionLabel string        `json:"version_label,omitempty"`
+	Content      []ShopContent `json:"content"`
+	CNMTPath     string        `json:"cnmt_path,omitempty"`    // served on /c{1,2}/t/a/<patch id>/<ver>
+	ControlPath  string        `json:"control_path,omitempty"` // served on /c{1,2}/a/d/<patch id>[/<ver>]
+}
+
+// patchIDFor is the id a title's update is published under: the application id with
+// 0x800 in its low twelve bits (application ids end in 000).
+func patchIDFor(titleID string) string {
+	if !validTitleID(titleID) {
+		return ""
+	}
+	return titleID[:13] + "800"
+}
+
+// applicationVersion is the version of the application content meta itself: the base
+// when an update is published, else the title's only version.
+func (t *ShopTitle) applicationVersion() uint32 {
+	if t.Patch != nil {
+		return t.BaseVersion
+	}
+	return t.Version
+}
+
+// normalize keeps Version the newest version a download can reach, whichever block the
+// operator bumped.
+func (t *ShopTitle) normalize() {
+	if t.Patch != nil && t.Patch.Version > t.Version {
+		t.Version = t.Patch.Version
+		if t.Patch.VersionLabel != "" {
+			t.VersionLabel = t.Patch.VersionLabel
+		}
+	}
+}
+
+// meta resolves a content-meta id to its catalog title: the application id itself, or a
+// title's patch id. isPatch says which of the two was asked for.
+func (s *shopState) meta(id string) (t *ShopTitle, isPatch bool) {
+	id = strings.ToLower(id)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if t := s.Catalog[id]; t != nil {
+		return t, false
+	}
+	if validTitleID(id) && strings.HasSuffix(id, "800") {
+		if t := s.Catalog[id[:13]+"000"]; t != nil && t.Patch != nil {
+			return t, true
+		}
+	}
+	return nil, false
+}
+
+// applicationFor maps a content-meta id to the application id that owns it (itself for
+// an application, the parent for a patch). Entitlements and edge tokens are per
+// application, so an update is fetched under its application's licence.
+func (s *shopState) applicationFor(id string) string {
+	if t, _ := s.meta(id); t != nil {
+		return t.TitleID
+	}
+	return id
 }
 
 // ShopText is the localized part of a catalog entry. The struct exists so the language
@@ -121,6 +195,8 @@ type shopState struct {
 	// Links is the beach device-link table (beach.go): which device is linked to which
 	// account, plus the penne/notification registrations NIM pushes through beach.
 	Links deviceLinkTable `json:"links"`
+	// catalogMod is catalog.json's modification time at the last read (reloadCatalog).
+	catalogMod time.Time
 }
 
 func newShopState(dir string) *shopState {
@@ -171,6 +247,10 @@ func (s *shopState) loadCatalogFile() {
 	if s.dir == "" {
 		return
 	}
+	st, err := os.Stat(s.dir + "/catalog.json")
+	if err != nil {
+		return
+	}
 	b, err := os.ReadFile(s.dir + "/catalog.json")
 	if err != nil {
 		return
@@ -180,16 +260,41 @@ func (s *shopState) loadCatalogFile() {
 		log.Printf("[shop] catalog.json: %v", err)
 		return
 	}
+	s.catalogMod = st.ModTime()
 	for _, t := range entries {
 		if t.TitleID == "" || t.Distribution.Permission == "" {
 			log.Printf("[shop] catalog: dropping %q: no title_id or no recorded distribution permission", t.TitleID)
 			continue
+		}
+		t.TitleID = strings.ToLower(t.TitleID)
+		t.normalize()
+		if old := s.Catalog[t.TitleID]; old != nil && old.Version != t.Version {
+			log.Printf("[shop] catalog: %s published version %d (was %d)", t.TitleID, t.Version, old.Version)
 		}
 		s.Catalog[t.TitleID] = t
 	}
 	if len(entries) > 0 {
 		log.Printf("[shop] catalog: %d entr%s from catalog.json", len(entries), pluralY(len(entries)))
 	}
+}
+
+// reloadCatalog re-reads catalog.json when the operator changed it since the last read,
+// so publishing an update is editing the file, not restarting the server. The version
+// list, the download lists and the content routes all read through here first.
+func (s *shopState) reloadCatalog() {
+	if s == nil || s.dir == "" {
+		return
+	}
+	st, err := os.Stat(s.dir + "/catalog.json")
+	if err != nil {
+		return
+	}
+	s.mu.Lock()
+	changed := !st.ModTime().Equal(s.catalogMod)
+	if changed {
+		s.loadCatalogFile()
+	}
+	s.mu.Unlock()
 }
 
 func pluralY(n int) string {
@@ -456,13 +561,15 @@ func (s *shopState) tasksFor(accountID string) []*ShopTask {
 // contentFile resolves a content id to the bytes' location on this server. Hash
 // verification is the caller's job (it knows whether to stream or seek).
 func (s *shopState) contentFile(titleID, contentID string) (path string, c ShopContent, err error) {
-	s.mu.Lock()
-	title := s.Catalog[titleID]
-	s.mu.Unlock()
+	title, isPatch := s.meta(titleID)
 	if title == nil {
 		return "", c, errNoEntitlement
 	}
-	for _, c := range title.Content {
+	contents := title.Content
+	if isPatch {
+		contents = title.Patch.Content
+	}
+	for _, c := range contents {
 		if c.ContentID == contentID {
 			return s.dir + "/" + c.File, c, nil
 		}

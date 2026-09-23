@@ -81,6 +81,9 @@ type server struct {
 	// console's proven account attached. nil answers the empty-cloud fallback instead.
 	saves    *httputil.ReverseProxy
 	savesKey string
+	// news forwards the News list and topic routes to the news service
+	// (NEWS_INTERNAL_URL, news.go). nil keeps bcat.go's own answers.
+	news *newsForwarder
 	// liveSessions maps BAAS user id -> the core session the adapter registered
 	// for it, so the presence reconciler can renew and expire what it created.
 	// In-memory by design: a restart re-derives truth from the core (and local
@@ -2342,6 +2345,24 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.pearljam(w, r, body)
 	case strings.HasPrefix(host, "bugyo."):
 		s.shopHandler(w, r, body)
+	case strings.HasSuffix(host, ".savanna.srv.nintendo.net"):
+		// Where 22.5.0's systemWeb opens the shop (shop.go).
+		s.savanna(w, r, body)
+	case strings.HasPrefix(host, "pushmo."):
+		s.pushmo(w, r, body)
+	case strings.HasPrefix(host, "tagaya."):
+		s.tagaya(w, r, body)
+	case strings.HasPrefix(host, "veer."):
+		s.veer(w, r, body)
+	// NIM's other d4c hosts: system-update metadata (sun, aqua), the version
+	// lookup (superfly) and atumn. They share the content domain, so they
+	// must be claimed before the atum case below, which only knows content
+	// routes and 404'd every one of them.
+	case isNimMetaHost(host):
+		if !s.nimUnserved(w, r, body) {
+			dump(r, body, "!! UNHANDLED nim metadata host")
+			writeJSON(w, 404, map[string]any{"status": 404, "title": "not found"})
+		}
 	case strings.Contains(host, ".d4c.nintendo.net"):
 		s.atum(w, r, body)
 	case strings.HasPrefix(host, "dragonst.") || strings.HasPrefix(host, "tigers."):
@@ -2370,13 +2391,23 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"active": true, "expires_at": time.Now().Unix() + 365*86400,
 		}})
 	case strings.HasPrefix(host, "capi.") && strings.HasSuffix(r.URL.Path, "/memberships"):
-		// NSO membership check (VPS parity): every account has an active "default" membership.
+		// NSO membership check: every account has an active membership in both
+		// contexts. "default" is the base plan and "ex" the Expansion Pack
+		// [firmware, account module: the parser binds .user_id, .context and
+		// .membership.active]. OpenPak sells no tiers, so there is nothing an
+		// account could lack; answering ex inactive sent every Expansion Pack
+		// title to a paywall prompt for a purchase that does not exist.
 		seg := strings.Split(r.URL.Path, "/")
 		naID := seg[len(seg)-2]
+		expires := time.Now().Unix() + 365*86400
 		writeJSON(w, 200, map[string]any{"count": 2, "items": []any{
-			map[string]any{"context": "ex", "membership": map[string]any{"active": false}, "user_id": naID},
-			map[string]any{"context": "default", "membership": map[string]any{"active": true, "expires_at": time.Now().Unix() + 365*86400}, "user_id": naID},
+			map[string]any{"context": "ex", "membership": map[string]any{"active": true, "expires_at": expires}, "user_id": naID},
+			map[string]any{"context": "default", "membership": map[string]any{"active": true, "expires_at": expires}, "user_id": naID},
 		}, "total": 2})
+	case strings.HasSuffix(host, ".nso.nintendo.net"):
+		// The HOME Menu's Nintendo Switch Online button (Lhub) and its red-dot
+		// feed (nso.go).
+		s.nso(w, r, body)
 	case strings.Contains(host, "frs.srv.nintendo.net"):
 		s.frs(w, r, body)
 	case strings.HasPrefix(host, "bcat-"):
@@ -2502,6 +2533,14 @@ func main() {
 	if u := os.Getenv("SAVES_URL"); u != "" {
 		s.saves, s.savesKey = newSavesProxy(u), os.Getenv("SAVES_INTERNAL_KEY")
 		log.Printf("[nx-baas] save-data cloud: forwarding scsi hosts to %s", u)
+	}
+	if u := os.Getenv("NEWS_INTERNAL_URL"); u != "" {
+		f, err := newNewsForwarder(u, os.Getenv("NEWS_INTERNAL_CA"), os.Getenv("NEWS_INTERNAL_SERVER_NAME"))
+		if err != nil {
+			log.Fatalf("[nx-baas] NEWS_INTERNAL_URL: %v", err)
+		}
+		s.news = f
+		log.Printf("[nx-baas] news: forwarding openpak_* lists and title topics to %s", u)
 	}
 	s.jwks = jwksFor(&key.PublicKey, s.idKid, getenv("BAAS_ID_KID", "00000000-0000-0000-0000-000000000002"), s.accKid, s.naKid)
 	cert := selfSigned([]string{baasHost, "m-lp1.baas.nintendo.com", "cdn-image-e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com",
