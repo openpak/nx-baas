@@ -221,7 +221,9 @@ func (s *server) shopTitles() []*ShopTitle {
 	defer s.shop.mu.Unlock()
 	out := make([]*ShopTitle, 0, len(s.shop.Catalog))
 	for _, t := range s.shop.Catalog {
-		out = append(out, t)
+		if !t.Unpublished {
+			out = append(out, t)
+		}
 	}
 	return out
 }
@@ -237,9 +239,7 @@ func (s *server) shopTitleByAppID(appID string) *ShopTitle {
 	if len(id) >= 16 {
 		id = id[:16]
 	}
-	s.shop.mu.Lock()
-	defer s.shop.mu.Unlock()
-	return s.shop.Catalog[id]
+	return s.shop.listed(id)
 }
 
 // shopTitleText picks the display name and the localized name map for a title.

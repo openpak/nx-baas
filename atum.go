@@ -113,7 +113,7 @@ func (s *server) atum(w http.ResponseWriter, r *http.Request, body []byte) {
 	var path string
 	var c ShopContent
 	if namedFile != "" {
-		path = s.shop.titleFile(titleID, namedFile)
+		path, c = s.shop.titleFile(titleID, namedFile)
 		if path == "" {
 			atumErr(w, r, 404, "no such content", namedFile)
 			return
@@ -149,26 +149,37 @@ func (s *server) atumHashes(w http.ResponseWriter, titleID, contentID string, c 
 	})
 }
 
-// titleFile resolves the control/CNMT named file for a title.
-func (s *shopState) titleFile(titleID, which string) string {
+// titleFile resolves the control/CNMT named file for a title: the hand-placed file the
+// catalog names (control_path/cnmt_path), else the content entry of that type — which is
+// how an uploaded NSP is served (store_admin.go), straight out of the package at its offset.
+func (s *shopState) titleFile(titleID, which string) (string, ShopContent) {
 	title, isPatch := s.meta(titleID)
 	if title == nil {
-		return ""
+		return "", ShopContent{}
 	}
-	p := title.ControlPath
+	p, contents := title.ControlPath, title.Content
 	if which == "cnmt" {
 		p = title.CNMTPath
 	}
 	if isPatch {
-		p = title.Patch.ControlPath
+		p, contents = title.Patch.ControlPath, title.Patch.Content
 		if which == "cnmt" {
 			p = title.Patch.CNMTPath
 		}
 	}
-	if p == "" {
-		return ""
+	if p != "" {
+		return s.dir + "/" + p, ShopContent{}
 	}
-	return s.dir + "/" + p
+	want := "control"
+	if which == "cnmt" {
+		want = "meta"
+	}
+	for _, c := range contents {
+		if c.ContentType == want {
+			return s.dir + "/" + c.File, c
+		}
+	}
+	return "", ShopContent{}
 }
 
 // serveContentRange streams a file with Range support, refusing to serve bytes the catalog
@@ -190,11 +201,20 @@ func (s *server) serveContentRange(w http.ResponseWriter, r *http.Request, path 
 		atumErr(w, r, 500, "cannot stat content", path)
 		return
 	}
+	// A content entry may live inside a package (an uploaded NSP): its bytes are
+	// [Offset, Offset+Size) of the file. A file that no longer holds them is missing
+	// content, never a short read served as if whole.
 	size := c.Size
-	if size == 0 || size > st.Size() {
-		size = st.Size()
+	if size == 0 {
+		size = st.Size() - c.Offset
+	}
+	if c.Offset < 0 || size <= 0 || c.Offset+size > st.Size() {
+		atumErr(w, r, 404, "content file truncated", path)
+		s.shop.failOpenTasks(titleID, "missing_content")
+		return
 	}
 	start, end := int64(0), size-1
+	status := 200
 	if rh := r.Header.Get("Range"); rh != "" {
 		if start, end, err = parseRange(rh, size); err != nil {
 			w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", size))
@@ -202,20 +222,21 @@ func (s *server) serveContentRange(w http.ResponseWriter, r *http.Request, path 
 			return
 		}
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, size))
-		w.WriteHeader(206)
-	} else {
-		w.WriteHeader(200)
+		status = 206
 	}
+	// Headers before the status line: set after WriteHeader they are silently dropped.
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Content-Length", strconv.FormatInt(end-start+1, 10))
-	if _, err := f.Seek(start, io.SeekStart); err != nil {
+	w.WriteHeader(status)
+	if r.Method == http.MethodHead {
 		return
 	}
-	n, err := io.CopyN(w, f, end-start+1)
+	n, err := io.Copy(w, io.NewSectionReader(f, c.Offset+start, end-start+1))
 	if err != nil && n != end-start+1 {
 		log.Printf("[shop] atum: %s for %s/%s: %d/%d bytes (client %s)", err, titleID, c.ContentID, n, end-start+1, device)
 	}
+	s.shop.noteServed(titleID, c, start, n)
 }
 
 // parseRange handles the single byte range NIM sends: "bytes=start-end" or "bytes=start-".

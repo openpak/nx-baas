@@ -78,20 +78,16 @@ func (s *server) netdiag(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// telemetry accepts an upload and drops it: play reports from prepo
-// (`receive-<env>.dg…/post`, `…/api/v1/realtime_reports`, msgpack) and crash
-// reports from eupld (`receive.hac.<env>.er…/`, multipart/mixed with
-// X-Nintendo-Error-Report-Share-Permission). OpenPak keeps neither, and a
-// console whose upload is refused keeps the report in `prepo-sys:` / `erpt` and
-// retries; accepting it is what actually clears the spool. The size is logged
+// telemetry accepts a play report from prepo (`receive-<env>.dg…/post`,
+// `…/api/v1/realtime_reports`, msgpack) and drops it. OpenPak does not keep
+// them, and a console whose upload is refused keeps the report in `prepo-sys:`
+// and retries; accepting it is what actually clears the spool. eupld's crash
+// reports are kept and forwarded instead (errorreport.go). The size is logged
 // so an operator can see the surface is live, never the contents.
 func (s *server) telemetry(w http.ResponseWriter, r *http.Request, body []byte) {
 	host, p := hostOf(r), r.URL.Path
 	kind := "play report"
 	ok := p == "/post" || p == "/api/v1/realtime_reports"
-	if strings.Contains(host, ".er.srv.nintendo.net") {
-		kind, ok = "error report", p == "/"
-	}
 	if !ok {
 		log.Printf("[telemetry] UNMAPPED %s %s%s", r.Method, host, p)
 		http.Error(w, "no such route", 404)

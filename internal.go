@@ -53,11 +53,21 @@ func (s *server) switchIdentity(w http.ResponseWriter, r *http.Request) {
 		// fetches a fresh token and retries, so answering 401 for an unknown account is a
 		// refresh loop. Falling through gives the 404 that maps to ValidationFailed instead.
 	}
+	// A banned account's title-server login ends here: 403 account_banned, never 401
+	// (servers/nex maps 401 to TokenExpired and the console would refresh forever).
+	if lock := s.pidLock(pid); lock != "" {
+		internalLocked(w, lock)
+		return
+	}
 	id, err := s.acct.Identity(pid)
 	if err != nil {
 		logErr("identity", err)
 		apiErr(w, http.StatusNotFound, "unknown pid")
 		return
+	}
+	accountID := ""
+	if src := s.banSrc(); src != nil {
+		accountID = src.accountFor(pid)
 	}
 	friends := make([]switchPlayer, 0, len(id.Friends))
 	for _, f := range id.Friends {
@@ -65,6 +75,8 @@ func (s *server) switchIdentity(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"pid": id.PID, "baas_user_id": id.BaasUserID, "nickname": id.Nickname, "friends": friends,
+		// The core account, so a title server can ask the core about it directly.
+		"account_id": accountID,
 		// Where the player lives, so a game server can place their room on the region node for it.
 		"country": id.Country})
 }
@@ -166,6 +178,10 @@ func (s *server) switchEmulator(w http.ResponseWriter, r *http.Request) {
 	accountID := r.URL.Query().Get("account_id")
 	if accountID == "" {
 		apiErr(w, http.StatusBadRequest, "account_id required")
+		return
+	}
+	if lock := s.accountLock(accountID); lock != "" {
+		internalLocked(w, lock)
 		return
 	}
 	b, ok := s.acct.(*openpakBackend)
@@ -270,6 +286,10 @@ func (s *server) switchEmulatorLinkToken(w http.ResponseWriter, r *http.Request)
 		apiErr(w, http.StatusBadRequest, "account_id required")
 		return
 	}
+	if lock := s.accountLock(accountID); lock != "" {
+		internalLocked(w, lock)
+		return
+	}
 	b, ok := s.acct.(*openpakBackend)
 	if !ok {
 		apiErr(w, http.StatusNotImplemented, "openpak backend only")
@@ -308,6 +328,10 @@ func (s *server) switchEmulatorFriend(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in); err != nil || in.AccountID == "" {
 		apiErr(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if lock := s.accountLock(in.AccountID); lock != "" {
+		internalLocked(w, lock)
 		return
 	}
 	b, ok := s.acct.(*openpakBackend)

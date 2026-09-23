@@ -84,6 +84,17 @@ func (s *server) frontline(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 404, map[string]any{})
 		return
 	}
+	// A banned account gets no notification channel (bans.go); a ban that lands while the
+	// connection is open closes it (closeUser, from the core's account_banned event).
+	if s.store != nil {
+		if lock := s.userLock(s.store.User(s.sessionUser(rec))); lock != "" {
+			log.Printf("[nx-baas] penne frontline: account %s is %s; refusing", rec.UserID, lock)
+			writeJSON(w, 403, map[string]any{"status": 403, "errorCode": "forbidden",
+				"title": "Forbidden", "detail": "This account cannot use the OpenPak network",
+				"type": "https://penne.nintendo.net/errors/1.0.0/403/forbidden"})
+			return
+		}
+	}
 	if len(r.TransferEncoding) > 0 && r.TransferEncoding[0] == "chunked" {
 		s.frontlineStream(w, r, rec)
 		return

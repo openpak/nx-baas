@@ -153,6 +153,16 @@ Hardware results template: record branch/commit, firmware + Atmosphère build ID
 hosts file hash, sanitized request sequence, screen state per step, and restoration steps —
 per the coordination plan's test-slot rules.
 
+## Managing the catalog (store admin API)
+
+After v0.14.0 the catalog need not be hand-edited: the website's admin pages call
+`/internal/store/*` on the game-API port ([`store-admin-api.md`](store-admin-api.md)).
+An upload is an NSP plus the metadata its uploader supplies; the package is kept whole
+under `content/<title id>/` and atum serves each NCA from its offset inside it. The API
+writes `catalog.json` itself, so hand edits and API edits share one file (an entry with no
+`unpublished` key is published). Titles created through the API start unpublished;
+unpublished titles are invisible to the storefront, tagaya, superfly, pushmo and atum.
+
 ## 22.5.0 surface (2026-09-23)
 
 From `../docs/switch/native-news-eshop-nso-gap-22.5.0-2026-09-23.md` and a further read of

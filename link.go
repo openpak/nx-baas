@@ -19,6 +19,7 @@ package main
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"html"
 	"log"
@@ -377,6 +378,14 @@ func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) b
 		// approve anything on its own.
 		pair := form.Get("pair")
 		pid, username, err := s.acct.LoginPID(form.Get("email"), form.Get("password"))
+		lock := s.pidLock(pid)
+		if errors.Is(err, errAccountLocked) && lock == "" {
+			lock = lockBanned
+		}
+		if lock != "" {
+			s.phoneLoginPage(w, pair, lockedPageMessage(lock))
+			return true
+		}
 		if err != nil {
 			s.phoneLoginPage(w, pair, "Wrong e-mail or password.")
 			return true

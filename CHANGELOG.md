@@ -3,7 +3,34 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
-## Unreleased — 2026-09-23
+## Unreleased — after v0.14.0
+
+- **Store admin API** on the game-API listener (`/internal/store/*`, contract in
+  `docs/store-admin-api.md`): title CRUD, publish/unpublish, icon upload, NSP upload of a
+  base version or an update (streamed to disk, `NX_SHOP_UPLOAD_MAX_BYTES`, PFS0 parsed,
+  content id checked against each NCA's SHA-256, tickets refused, no decryption),
+  withdrawing an update, read-only entitlements/tasks per account, download stats.
+  Requires `NX_INTERNAL_KEY` (fail closed). Unpublished titles are hidden from every
+  console surface. atum now honors a content's offset inside a package, sets its headers
+  before the status line, answers HEAD, and counts downloads.
+- **Console error reports**: eupld uploads (`receive.hac.<env>.er.srv.nintendo.net/`) are
+  kept raw under `$NX_DATA/error-reports/raw/`, decoded (multipart/mixed, msgpack report
+  fields, attachment) and forwarded to the website's
+  `POST /api/v1/internal/crash-reports` (`X-Internal-Key`), spooled and retried; 4xx
+  refusals park in `spool/rejected/`. `NX_ERROR_REPORT_MAX_BYTES`,
+  `NX_ERROR_REPORT_KEEP_DAYS`. They used to be discarded.
+- **Bans everywhere**: a core account that is banned, deleted or pending deletion is
+  refused on BaaS login/federation and every user-scoped BaaS call (`403 banned_user`,
+  2124-5110; `404 deleted_user`), the NA token/refresh/authorize/users-me flows
+  (`invalid_grant`/`user_banned`; silent authorize redirects
+  `interaction_required`/`user_banned`), the link pages, the store principal, Penne
+  frontline, Five invitations, and the game API (`403 {"error":"account_banned"}` on
+  `/internal/switch/identity`, photon, mint-token, emulator routes, `/api/invitations`).
+  State from core `GetAccount`, cached `NX_BAN_CACHE_SECONDS` (30, max 60), dropped on the
+  core's ban/unban/delete events, which also close live Penne connections. Fails open when
+  the core is unreachable. `/internal/switch/identity` now returns `account_id`.
+
+## v0.14.0 — 2026-09-23
 
 eShop, Switch Online and News against firmware 22.5.0
 (`../docs/switch/native-news-eshop-nso-gap-22.5.0-2026-09-23.md`):

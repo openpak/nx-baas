@@ -70,7 +70,8 @@ Returned by list/get/create/update. Field names match the catalog file
 - `published`: only published titles appear in the console storefront, the version list
   (tagaya), superfly, pushmo and atum. New titles start **unpublished**.
 - `version`: the newest version a download reaches (the update's when there is one).
-- `application` / `update`: `null` when that version was never uploaded.
+- `application` / `update`: `null` when that version was never uploaded. Hand-written
+  `catalog.json` entries (no `unpublished` key) read as published.
 - ContentObject: `{"content_id": "32 hex", "content_type": "meta|program|control|legalinformation|htmldocument|data|deltafragment", "size": n, "sha256": "64 hex"}`.
 
 ## Endpoints
@@ -134,7 +135,8 @@ accepted; a request with the file first is refused `400 invalid_multipart`):
    ```
 
    - `kind`: `"base"` (the application content meta, under `title_id`) or `"update"` (the
-     patch, under the patch id).
+     patch, under the patch id). An update needs a base first (`409 no_base_version`).
+   - `title_id` (optional): when sent, must be the title's application id or its patch id.
    - `version`: the content meta version (u32, `major<<26|minor<<20|micro<<16|…`; base is
      normally 0). For an update it must be greater than the currently published update's.
    - `contents`: every NCA in the package with the type the CNMT records for it. `size`
@@ -206,7 +208,9 @@ Same addressing. `{"account_id", "na_id", "tasks": [{"id", "title_id", "version"
   "last_download_at": 1790000000, "entitlements": 5, "tasks": {"completed": 4, "failed": 1}}]}
 ```
 
-(the per-title route returns one element, not wrapped).
+(the per-title route returns one element, not wrapped; `tasks` only lists states that
+occur). Byte counters are saved with the state file; a crash can lose the bytes counted
+since the last download was recorded.
 
 - `downloads`: install starts — times the title's (or its update's) meta NCA was served
   from byte 0 by atum.

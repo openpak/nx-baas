@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -176,13 +177,13 @@ func (z *zeroLimit) Read(p []byte) (int, error) {
 }
 
 // eupld posts a crash report to the root of its own host. It shares nothing
-// with prepo's routes, so the handler must not judge it by prepo's path list.
+// with prepo's routes, so it is routed on its own (errorreport.go) and accepted.
 func TestErrorReportUploadIsAccepted(t *testing.T) {
-	s := &server{}
+	s := &server{reports: newReportSpool(t.TempDir())}
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest("POST", "https://receive.hac.lp1.er.srv.nintendo.net/", nil)
+	r := httptest.NewRequest("POST", "https://receive.hac.lp1.er.srv.nintendo.net/", strings.NewReader("--boundary"))
 	r.Host = "receive.hac.lp1.er.srv.nintendo.net"
-	s.telemetry(w, r, []byte("--boundary"))
+	s.ServeHTTP(w, r)
 	if w.Code != 200 {
 		t.Fatalf("a crash report was refused (%d); erpt will keep retrying it", w.Code)
 	}

@@ -63,6 +63,16 @@ type ShopTitle struct {
 	// BaseVersion is the application content meta's own, normally 0.
 	Patch       *ShopPatch `json:"patch,omitempty"`
 	BaseVersion uint32     `json:"base_version,omitempty"`
+	// Unpublished hides the title from every console surface (storefront, version list,
+	// superfly, pushmo, atum). The zero value is published, so hand-written catalog.json
+	// entries keep being listed; titles created through the admin API start unpublished.
+	Unpublished bool `json:"unpublished,omitempty"`
+	// Package names the stored NSP a version was uploaded as (store_admin.go), relative to
+	// the shop directory; empty for hand-placed content. The patch has its own.
+	Package string `json:"package,omitempty"`
+	// BaseVersionLabel is the application version's display label, kept beside
+	// VersionLabel (which follows the newest version) by the admin API.
+	BaseVersionLabel string `json:"base_version_label,omitempty"`
 }
 
 // ShopPatch is one title update: its version and the files that carry it.
@@ -72,6 +82,7 @@ type ShopPatch struct {
 	Content      []ShopContent `json:"content"`
 	CNMTPath     string        `json:"cnmt_path,omitempty"`    // served on /c{1,2}/t/a/<patch id>/<ver>
 	ControlPath  string        `json:"control_path,omitempty"` // served on /c{1,2}/a/d/<patch id>[/<ver>]
+	Package      string        `json:"package,omitempty"`      // the uploaded NSP, as ShopTitle.Package
 }
 
 // patchIDFor is the id a title's update is published under: the application id with
@@ -109,15 +120,26 @@ func (s *shopState) meta(id string) (t *ShopTitle, isPatch bool) {
 	id = strings.ToLower(id)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if t := s.Catalog[id]; t != nil {
+	if t := s.Catalog[id]; t != nil && !t.Unpublished {
 		return t, false
 	}
 	if validTitleID(id) && strings.HasSuffix(id, "800") {
-		if t := s.Catalog[id[:13]+"000"]; t != nil && t.Patch != nil {
+		if t := s.Catalog[id[:13]+"000"]; t != nil && t.Patch != nil && !t.Unpublished {
 			return t, true
 		}
 	}
 	return nil, false
+}
+
+// listed is a catalog title the console surfaces may show: present and not unpublished.
+// The admin API (store_admin.go) is the only reader that sees unpublished titles.
+func (s *shopState) listed(id string) *ShopTitle {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if t := s.Catalog[strings.ToLower(id)]; t != nil && !t.Unpublished {
+		return t
+	}
+	return nil
 }
 
 // applicationFor maps a content-meta id to the application id that owns it (itself for
@@ -195,6 +217,8 @@ type shopState struct {
 	// Links is the beach device-link table (beach.go): which device is linked to which
 	// account, plus the penne/notification registrations NIM pushes through beach.
 	Links deviceLinkTable `json:"links"`
+	// Stats counts what atum served per application id (store_admin.go).
+	Stats map[string]*ShopTitleStats `json:"stats,omitempty"`
 	// catalogMod is catalog.json's modification time at the last read (reloadCatalog).
 	catalogMod time.Time
 }
@@ -307,9 +331,11 @@ func pluralY(n int) string {
 // defaultShopCatalog is what a fresh deployment serves: one clearly synthetic test title.
 // It exists so SHP-01/02 have something deterministic to render before the operator places
 // a real redistributable package; its content is synthetic and says so.
+const defaultFixtureID = "0f9f0c0ffee00000"
+
 func defaultShopCatalog() map[string]*ShopTitle {
 	fixture := &ShopTitle{
-		TitleID:       "0f9f0c0ffee00000",
+		TitleID:       defaultFixtureID,
 		Publisher:     "OpenPak",
 		Category:      "test",
 		SizeBytes:     64,

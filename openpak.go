@@ -336,6 +336,11 @@ func (b *openpakBackend) LoginPID(email, password string) (uint64, string, error
 	if err != nil {
 		return 0, "", err
 	}
+	switch res.GetStatus() {
+	case accountv1.AccountStatus_ACCOUNT_STATUS_BANNED, accountv1.AccountStatus_ACCOUNT_STATUS_DELETION_PENDING,
+		accountv1.AccountStatus_ACCOUNT_STATUS_DELETED:
+		return 0, "", fmt.Errorf("console login: %w (%s)", errAccountLocked, res.GetStatus())
+	}
 	if res.GetStatus() != accountv1.AccountStatus_ACCOUNT_STATUS_ACTIVE || !res.GetEmailVerified() {
 		return 0, "", errors.New("account is not active/verified for console linking")
 	}

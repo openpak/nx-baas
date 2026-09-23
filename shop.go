@@ -138,6 +138,9 @@ func (s *server) shopAPI(w http.ResponseWriter, r *http.Request, body []byte) {
 		s.shop.mu.Lock()
 		items := []map[string]any{}
 		for _, t := range s.shop.Catalog {
+			if t.Unpublished {
+				continue
+			}
 			tx := t.text(lang)
 			item := map[string]any{
 				"title_id": t.TitleID, "name": tx.Name, "publisher": t.Publisher,
@@ -160,9 +163,7 @@ func (s *server) shopAPI(w http.ResponseWriter, r *http.Request, body []byte) {
 
 	case strings.HasPrefix(p, "/catalog/") && !strings.HasSuffix(p, "/acquire") && r.Method == "GET":
 		tid := strings.TrimPrefix(p, "/catalog/")
-		s.shop.mu.Lock()
-		t := s.shop.Catalog[tid]
-		s.shop.mu.Unlock()
+		t := s.shop.listed(tid)
 		if t == nil {
 			writeJSON(w, 404, map[string]any{"error": map[string]any{"code": "2001", "message": "no such title"}})
 			return
@@ -294,9 +295,7 @@ func (s *server) shopAcquire(w http.ResponseWriter, r *http.Request, tid string)
 		return
 	}
 	device := s.deviceIdentity(r)
-	s.shop.mu.Lock()
-	title := s.shop.Catalog[tid]
-	s.shop.mu.Unlock()
+	title := s.shop.listed(tid)
 	if title == nil {
 		writeJSON(w, 404, map[string]any{"error": map[string]any{"code": "2001", "message": "no such title"}})
 		return
@@ -320,9 +319,7 @@ func (s *server) shopIcon(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	s.shop.mu.Lock()
-	t := s.shop.Catalog[tid]
-	s.shop.mu.Unlock()
+	t := s.shop.listed(tid)
 	if t == nil || t.IconPath == "" {
 		// A neutral placeholder keeps grids usable when an icon is missing; never a
 		// third-party image, just the OpenPak mark the link pages already carry.
@@ -335,7 +332,7 @@ func (s *server) shopIcon(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Content-Type", http.DetectContentType(b))
 	w.Write(b)
 }
 

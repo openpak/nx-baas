@@ -276,6 +276,16 @@ func (s *server) deviceIdentity(r *http.Request) string {
 // our own BAAS-issued NSA id token) in Authorization or Nintendo-Nsa-Id-Token, corroborated
 // by the Nintendo-Account-Id header when present. A header id without a token is not trusted (principal binding).
 func (s *server) shopPrincipal(r *http.Request) (accountID, baasUserID string) {
+	accountID, baasUserID = s.shopPrincipalUnchecked(r)
+	// A banned account is nobody to the store: no acquisition, no tasks, no ownership.
+	if accountID != "" && s.naLock(accountID) != "" {
+		log.Printf("[shop] principal: account %s is locked; refusing", accountID)
+		return "", ""
+	}
+	return accountID, baasUserID
+}
+
+func (s *server) shopPrincipalUnchecked(r *http.Request) (accountID, baasUserID string) {
 	headerID := r.Header.Get("Nintendo-Account-Id")
 	for _, h := range []string{"Authorization", "Nintendo-Nsa-Id-Token"} {
 		claims := s.bearerHeader(r, h)

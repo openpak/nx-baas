@@ -137,6 +137,12 @@ type server struct {
 	// records, and its digests (penne_records.go).
 	recordStore *penneRecordStore
 	recordsOnce sync.Once
+	// Ban state (bans.go): a short cache of the core's answer, and a test stand-in for it.
+	bans      *banCache
+	bansOnce  sync.Once
+	banSource banSource
+	// reports is the console error-report spool (errorreport.go).
+	reports *reportSpool
 }
 
 type naCode struct {
@@ -707,6 +713,18 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 	form, _ := url.ParseQuery(string(body))
 	seg := strings.Split(strings.Trim(p, "/"), "/")
 
+	// A banned account's live access token stops working at once: every user-scoped call
+	// (profile, presence, friends) answers banned_user, which the console shows as
+	// 2124-5110 (bans.go). Pictures and key sets stay public.
+	if strings.HasPrefix(p, "/1.0.0/users/") || strings.HasPrefix(p, "/2.0.0/") {
+		if c := s.validBearer(r); c != nil {
+			if lock := s.userLock(s.store.User(str(c, "sub"))); lock != "" {
+				baasLocked(w, r, lock)
+				return
+			}
+		}
+	}
+
 	switch {
 	case strings.HasPrefix(p, "/1/") || strings.HasPrefix(p, "/2/") || strings.HasPrefix(p, "/avatar/"):
 		var pid uint64
@@ -870,10 +888,21 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		if p == "/1.0.0/federation" {
 			var err error
 			if u, err = s.link(u, form.Get("idToken")); err != nil {
+				if errors.Is(err, errAccountLocked) {
+					baasLocked(w, r, s.naLockOfToken(form.Get("idToken")))
+					return
+				}
 				log.Printf("[nx-baas] federation failed: %v", err)
 				baasErr(w, r, 400, "invalid_idp_account", "Invalid IdP Account", "IdP account is invalid")
 				return
 			}
+		}
+		// A console whose device account is linked to a banned account signs in to nothing:
+		// no token, no presence, no notification binding.
+		if lock := s.userLock(u); lock != "" {
+			log.Printf("[nx-baas] %s refused: user=%s pid=%d is %s", seg[1], u.ID, u.PID, lock)
+			baasLocked(w, r, lock)
+			return
 		}
 		app, _ := parseJWT(form.Get("appAuthNToken"), nil)
 		id := s.identity(u)
@@ -1334,6 +1363,9 @@ func (s *server) link(u *User, idTok string) (*User, error) {
 	pid := s.store.PIDForNA(naID)
 	if pid == 0 {
 		return nil, fmt.Errorf("unknown Nintendo-Account sub %q", naID)
+	}
+	if lock := s.pidLock(pid); lock != "" {
+		return nil, fmt.Errorf("link pid %d: %w (%s)", pid, errAccountLocked, lock)
 	}
 	id, err := s.acct.Identity(pid)
 	if err != nil {
@@ -1910,6 +1942,11 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			writeJSON(w, 401, map[string]any{"error": "login_required"})
 			return
 		}
+		if s.pidLock(pid) != "" {
+			log.Printf("[nx-baas] NA silent authorize refused: pid=%d is locked", pid)
+			naAuthorizeLocked(w, r, form.Get("redirect_uri"), form.Get("state"))
+			return
+		}
 		id, err := s.acct.Identity(pid)
 		if err != nil {
 			writeJSON(w, 401, map[string]any{"error": "login_required"})
@@ -1938,6 +1975,15 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 				}
 			}
 			pid, username, err := s.acct.LoginPID(form.Get("email"), form.Get("password"))
+			lock := s.pidLock(pid)
+			if errors.Is(err, errAccountLocked) && lock == "" {
+				lock = lockBanned
+			}
+			if lock != "" {
+				log.Printf("[nx-baas] NA login refused for %q: account is %s", form.Get("email"), lock)
+				s.authorizePage(w, r, q, `<p class="err">`+lockedPageMessage(lock)+`</p>`)
+				return
+			}
 			if err != nil {
 				log.Printf("[nx-baas] NA login failed for %q: %v", form.Get("email"), err)
 				s.authorizePage(w, r, q, `<p class="err">Wrong e-mail or password.</p>`)
@@ -1992,6 +2038,13 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			writeJSON(w, 400, map[string]any{"error": "invalid_grant", "error_description": "unknown code"})
 			return
 		}
+		// Codes and refresh tokens minted before a ban stop here: no token for a banned
+		// account, whichever grant it arrives on.
+		if lock := s.pidLock(c.PID); lock != "" {
+			log.Printf("[nx-baas] NA token refused: pid=%d is %s", c.PID, lock)
+			naTokenLocked(w, lock)
+			return
+		}
 		if p == "/connect/1.0.0/api/session_token" {
 			writeJSON(w, 200, map[string]any{"session_token": code, "code": code})
 			return
@@ -2022,6 +2075,10 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			return
 		}
 		pid := s.store.PIDForNA(str(c, "sub"))
+		if lock := s.pidLock(pid); lock != "" {
+			naTokenLocked(w, lock)
+			return
+		}
 		id, err := s.acct.Identity(pid)
 		if err != nil {
 			writeJSON(w, 404, map[string]any{"error": "not_found"})
@@ -2299,6 +2356,11 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "user transfer is not implemented by OpenPak", 501)
 		return
 	}
+	if strings.Contains(host, ".er.srv.nintendo.net") {
+		// eupld's error reports, before the shared 1 MiB body read (errorreport.go).
+		s.errorReport(w, r)
+		return
+	}
 	if s.saves != nil && strings.Contains(host, "scsi.srv.nintendo.net") {
 		// Before the body is read: a save can be hundreds of MB and streams through.
 		s.savesProxy(w, r)
@@ -2418,8 +2480,8 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// this it fell into the catch-all 404 and ACNH errored (2219-xxxx)
 		// before ever reaching NEX.
 		s.acbaa(w, r, body)
-	case strings.HasSuffix(host, ".dg.srv.nintendo.net"), strings.Contains(host, ".er.srv.nintendo.net"):
-		// prepo's play reports and eupld's error reports (netdiag.go).
+	case strings.HasSuffix(host, ".dg.srv.nintendo.net"):
+		// prepo's play reports (netdiag.go); eupld's error reports are routed above.
 		s.telemetry(w, r, body)
 	case strings.HasPrefix(host, "ctest") || strings.Contains(host, ".ctest.srv.nintendo.net"):
 		// The Internet connection test in System Settings (netdiag.go).
@@ -2530,6 +2592,8 @@ func main() {
 	// unchanged when the notification side is absent.
 	s.wireInvitationNotifications()
 	go s.penneSweep()
+	// Console error reports: kept raw, forwarded to the website, retried (errorreport.go).
+	go s.errorReports().run()
 	if u := os.Getenv("SAVES_URL"); u != "" {
 		s.saves, s.savesKey = newSavesProxy(u), os.Getenv("SAVES_INTERNAL_KEY")
 		log.Printf("[nx-baas] save-data cloud: forwarding scsi hosts to %s", u)

@@ -149,6 +149,10 @@ func (s *server) photonRoom(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, http.StatusBadRequest, "unknown identity")
 		return
 	}
+	if lock := s.pidLock(pid); lock != "" {
+		internalLocked(w, lock)
+		return
+	}
 	appParam := append([]byte{1, 0, 0, 0, byte(len(in.Room))}, in.Room...)
 	// A title's room is one device's claim, keyed by that identity, so a
 	// friend's list shows PLAYING for exactly as long as the room lives —
@@ -207,6 +211,10 @@ func (s *server) photonIdentity(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, http.StatusBadRequest, "unknown identity")
 		return
 	}
+	if lock := s.pidLock(pid); lock != "" {
+		internalLocked(w, lock)
+		return
+	}
 	id, err := s.acct.Identity(pid)
 	if err != nil {
 		apiErr(w, http.StatusNotFound, "unknown pid")
@@ -239,6 +247,10 @@ func (s *server) invitations(w http.ResponseWriter, r *http.Request) {
 	pid, name, ok := s.callerPID(r)
 	if !ok {
 		apiErr(w, http.StatusUnauthorized, "invalid or expired session")
+		return
+	}
+	if lock := s.pidLock(pid); lock != "" {
+		internalLocked(w, lock)
 		return
 	}
 	switch r.Method {
@@ -297,7 +309,7 @@ func (s *server) sendInvitation(w http.ResponseWriter, r *http.Request, from uin
 	sent := 0
 	for _, pid := range in.TargetPIDs {
 		target := s.store.UserByPID(pid)
-		if target == nil || !isFriend(id, pid) {
+		if target == nil || !isFriend(id, pid) || s.pidLock(pid) != "" {
 			continue
 		}
 		if core != nil {
@@ -357,6 +369,10 @@ func (s *server) mintToken(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&in); err != nil || in.PID == 0 {
 		apiErr(w, http.StatusBadRequest, "pid required")
+		return
+	}
+	if lock := s.pidLock(in.PID); lock != "" {
+		internalLocked(w, lock)
 		return
 	}
 	id, err := s.acct.Identity(in.PID)
@@ -424,6 +440,7 @@ func (s *server) gameAPI() http.Handler {
 	mux.HandleFunc("/api/invitations", s.invitations)
 	mux.HandleFunc("/internal/notifications/test", s.penneTestNotification)
 	mux.HandleFunc("/internal/news/push", s.newsPush)
+	mux.HandleFunc("/internal/store/", s.storeAdmin)
 	if base := os.Getenv("ACCOUNT_API"); base != "" {
 		if u, err := url.Parse(strings.TrimRight(base, "/")); err == nil {
 			proxy := httputil.NewSingleHostReverseProxy(u)

@@ -132,6 +132,29 @@ entitlements and download tasks persist under `$NX_DATA/shop/` (`catalog.json` y
 A needs, and the console-trust proposal for native install:
 [`docs/native-shop.md`](docs/native-shop.md).
 
+The website manages the catalog through the store admin API on the game-API port
+(`/internal/store/*`, `X-Internal-Key` required — these routes fail closed without
+`NX_INTERNAL_KEY`): title CRUD, publish, NSP upload of a base or update
+(`NX_SHOP_UPLOAD_MAX_BYTES`, default 8 GiB), per-account entitlements/tasks, stats.
+Contract: [`docs/store-admin-api.md`](docs/store-admin-api.md).
+
+## Console error reports
+
+eupld's uploads to `receive.hac.<env>.er.srv.nintendo.net/` are kept raw in
+`$NX_DATA/error-reports/raw/` (pruned after `NX_ERROR_REPORT_KEEP_DAYS`, default 30),
+decoded (msgpack fields, attachment) and forwarded to
+`${WEBSITE_INTERNAL_URL}/api/v1/internal/crash-reports` with `X-Internal-Key:
+${WEBSITE_INTERNAL_KEY}`; unsent ones wait in `error-reports/spool/` and retry every
+minute. Body cap `NX_ERROR_REPORT_MAX_BYTES` (16 MiB). `errorreport.go`.
+
+## Bans
+
+A core account that is banned (or deleted / pending deletion) is refused everywhere this
+adapter answers, in each client's own error shape: BaaS `403 banned_user` (2124-5110),
+NA `invalid_grant`/`user_banned`, game API `403 {"error":"account_banned"}` (never 401).
+The core's `GetAccount` status is cached `NX_BAN_CACHE_SECONDS` (default 30, max 60) and
+dropped on the core's ban/unban events. `bans.go` lists every surface.
+
 ## Known scaling ceilings (recorded, fine for one console)
 
 - `ensure` holds the global projection mutex across up to three core RPCs,
