@@ -25,13 +25,28 @@ import (
 
 // pearljam is the eShop host NIM names beside dragons and tigers
 // [firmware, nim strings: "https://pearljam.hac.%.eshop.nintendo.net/civil"
-// and "/sugar"]. What the two paths carry is not recovered: they are the only
-// eShop endpoints in NIM whose request and response shapes we have never seen,
-// and no console of ours has asked for one yet. Recording the full request is
-// the point — the first console that does ask writes the specification for us.
+// and "/sugar"]. What the two paths carry is still not recovered, after a
+// second pass over NIM (2026-09-23, docs/native-shop.md "P2 leftovers"):
+//
+//   - The two URLs are the bases of two endpoint objects (sugar: 60 s, 10
+//     attempts; civil: 60 s, 30 attempts). A caller-supplied suffix is
+//     appended to the base, the path is expanded from a "{name}" template, and
+//     the body is POSTed as application/json.
+//   - sugar sends X-DeviceAuthorization: Bearer <device token>,
+//     X-NINTENDO-NSA-ID-TOKEN: Bearer <nsa id token> and
+//     X-Nintendo-Application-Id; civil sends X-DeviceAuthorization,
+//     Authorization: Bearer and X-Nintendo-Application-Id.
+//   - On an error status (400, 401, 403, 404 and the other 4xx/5xx NIM lists)
+//     the reply's $.error.code is read. A success body goes to a
+//     request-specific sink that is not named anywhere in NIM, and no
+//     "/{version}/..." template in NIM is bound to either endpoint.
+//
+// So neither path's suffix nor its reply is known, and no body is invented.
+// Recording the full request is the point: the first console that asks
+// writes the specification.
 func (s *server) pearljam(w http.ResponseWriter, r *http.Request, body []byte) {
 	p := r.URL.Path
-	dump(r, body, "!! ESHOP pearljam (shape unrecovered; see docs/switch/firmware-22.5.0-followup-2026-09-12.md)")
+	dump(r, body, "!! ESHOP pearljam (shape unrecovered; see eshop_unserved.go)")
 	switch {
 	case strings.HasPrefix(p, "/civil"), strings.HasPrefix(p, "/sugar"):
 		// Answering 404 keeps the console's own error path intact rather than
@@ -41,6 +56,46 @@ func (s *server) pearljam(w http.ResponseWriter, r *http.Request, body []byte) {
 	default:
 		writeJSON(w, 404, map[string]any{"status": 404, "title": "not found"})
 	}
+}
+
+// idbe answers idbe-hac.cdn.nintendo.net, NIM's icon-data host
+// [firmware, nim: the URL builders at 0x1ecc50 and 0x1eccc0 write
+// https://idbe-hac.cdn.nintendo.net + /icondata/%02x/%016llX.idbe, or
+// .../%016llX-%hu.idbe with a version; %02x is bits 8-15 of the id, the id is
+// upper-case hex]. The request carries a device token header, Accept:
+// application/json and If-None-Match. NIM hands the body back to its IPC
+// caller without reading it (the task has no reply parser), and no other
+// module in the 22.5.0 package names the format. Serving icons would mean
+// inventing a binary container, so every request is a logged 404: "no icon
+// data for this title", which the caller already has to handle.
+func (s *server) idbe(w http.ResponseWriter, r *http.Request, body []byte) {
+	p := r.URL.Path
+	if strings.HasPrefix(p, "/icondata/") && strings.HasSuffix(p, ".idbe") {
+		name := strings.TrimSuffix(p[strings.LastIndex(p, "/")+1:], ".idbe")
+		id, version, _ := strings.Cut(name, "-")
+		title := "not in the catalog"
+		if s.shopTitleByAppID(id) != nil {
+			title = "an OpenPak store title"
+		}
+		log.Printf("[shop] idbe %s %s title=%s version=%q (%s) -> 404: the .idbe format is not recovered, no icon data is served",
+			r.Method, p, id, version, title)
+	} else {
+		dump(r, body, "!! UNHANDLED idbe")
+	}
+	writeJSON(w, 404, map[string]any{"status": 404, "title": "no icon data"})
+}
+
+// bvc answers bvc-hac-<env>.cdn.nintendo.net/<major>-<minor>-<micro>, a check
+// NIM makes against the running firmware version [firmware, nim: URL builder
+// 0x1ed990 formats the first three bytes of set:sys GetFirmwareVersion; the
+// check at 0x238460 turns a successful reply into its own error 0x3fc89
+// (2137-8164) and an HTTP 404 into success]. The file's existence is the
+// answer: a version listed there is refused. OpenPak lists no firmware, so
+// every version gets the 404 NIM treats as "not listed". Answering 200 would
+// block the console.
+func (s *server) bvc(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[shop] bvc %s %s%s -> 404: this firmware version is not listed", r.Method, hostOf(r), r.URL.Path)
+	w.WriteHeader(http.StatusNotFound)
 }
 
 // nimUnserved answers the NIM routes that had no handler. They are grouped by

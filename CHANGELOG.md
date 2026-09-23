@@ -3,7 +3,28 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
-## Unreleased — after v0.14.0
+## Unreleased — after v0.15.0
+
+The P2 leftovers from `../docs/switch/native-news-eshop-nso-gap-22.5.0-2026-09-23.md`
+(evidence and addresses in `docs/native-shop.md`, "P2 leftovers"):
+
+- **Voice-chat lobby**: `web-<env>.znc.srv.nintendo.net/lobby/*` serves a controller-first
+  page ("Voice chat isn't available on OpenPak yet"); Close navigates to the Lobby shim's
+  callback URL `https://localhost/lobby/`. It used to hit the catch-all 404.
+- **beach `redeemed_status`** answers `{"digital_bundle":false,"pre_install":false}`. NIM
+  requires both booleans; the old `{"redeemed":false}` failed the call.
+- **beach `digital_bundle/contents`** answers `{"contents":[],"redeemed":false}` (element
+  shape `application_id`/`is_upgrade_edition`/`redeemed` recovered). It was a recorded 404.
+- **bvc** (`bvc-hac-<env>.cdn.nintendo.net/<major>-<minor>-<micro>`): always 404. NIM treats a
+  200 as "this firmware is refused" (2137-8164), so the catch-all was the right status by
+  accident; now it is deliberate and logged.
+- **idbe** (`idbe-hac.cdn.nintendo.net/icondata/…idbe`): a logged 404. NIM passes the body to
+  its caller unread and no 22.5.0 module names the format, so no icon data is invented.
+- **pearljam** `/civil`, `/sugar`: still a recorded 404; what a second pass recovered (headers,
+  retry policy, `$.error.code`) is in `eshop_unserved.go`.
+- Docs: the `dispatchEvent` provenance now names systemWeb.
+
+## v0.15.0 — 2026-09-23
 
 - **Store admin API** on the game-API listener (`/internal/store/*`, contract in
   `docs/store-admin-api.md`): title CRUD, publish/unpublish, icon upload, NSP upload of a

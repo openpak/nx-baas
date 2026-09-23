@@ -62,7 +62,8 @@ func TestSavannaServesEverySceneAndTheSharedAPI(t *testing.T) {
 
 // The browser has no client certificate: savanna (and Lhub) must never be asked for one.
 func TestSavannaIsNotAskedForAClientCertificate(t *testing.T) {
-	for _, sni := range []string{savannaHost, "lp1.nso.nintendo.net", "pushmo.hac.lp1.eshop.nintendo.net"} {
+	for _, sni := range []string{savannaHost, "lp1.nso.nintendo.net", "pushmo.hac.lp1.eshop.nintendo.net",
+		"web-lp1.znc.srv.nintendo.net", "idbe-hac.cdn.nintendo.net", "bvc-hac-lp1.cdn.nintendo.net"} {
 		if c, _ := clientCertFor(&tls.ClientHelloInfo{ServerName: sni}, &tls.Config{}); c != nil {
 			t.Errorf("%s is asked for a client certificate", sni)
 		}
@@ -295,7 +296,10 @@ func TestNimMetadataHostsDoNotReachAtum(t *testing.T) {
 func TestBeachAnswersRedeemTargetAndBundleRoutes(t *testing.T) {
 	s := shopServerFor(t)
 	const host = "beach.hac.lp1.eshop.nintendo.net"
-	if rec := hostReq(s, host, "GET", "/v1/devices/redeemed_status", "", ""); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"redeemed":false`) {
+	// NIM requires both booleans in redeemed_status; missing either fails the call.
+	rec := hostReq(s, host, "GET", "/v1/devices/redeemed_status", "", "")
+	var st map[string]any
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &st) != nil || st["digital_bundle"] != false || st["pre_install"] != false {
 		t.Errorf("redeemed_status = %d %s", rec.Code, rec.Body.String())
 	}
 	for _, p := range []string{"/v1/devices/target/set", "/v1/devices/target/clear"} {
@@ -303,9 +307,53 @@ func TestBeachAnswersRedeemTargetAndBundleRoutes(t *testing.T) {
 			t.Errorf("%s = %d", p, rec.Code)
 		}
 	}
-	rec := hostReq(s, host, "GET", "/v1/devices/digital_bundle/contents?shop_id=4", "", "")
-	if rec.Code != 404 || !strings.Contains(rec.Body.String(), "bundle") {
+	// The bundle lookup is an empty collection: $.contents [] and $.redeemed false.
+	rec = hostReq(s, host, "GET", "/v1/devices/digital_bundle/contents?shop_id=4", "", "")
+	var b struct {
+		Contents []any `json:"contents"`
+		Redeemed *bool `json:"redeemed"`
+	}
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &b) != nil || b.Contents == nil || len(b.Contents) != 0 || b.Redeemed == nil || *b.Redeemed {
 		t.Errorf("digital_bundle = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// idbe: the icon-data format is not recovered, so a store title and an unknown title both
+// get the logged 404, and the host never falls into the catch-all.
+func TestIdbeIsARecordedNotFound(t *testing.T) {
+	s := shopServerFor(t)
+	for _, p := range []string{
+		"/icondata/00/" + strings.ToUpper(testTitleID) + ".idbe",
+		"/icondata/00/" + strings.ToUpper(testTitleID) + "-65536.idbe",
+		"/icondata/10/0100000000011000.idbe",
+		"/other",
+	} {
+		rec := hostReq(s, "idbe-hac.cdn.nintendo.net", "GET", p, "", "")
+		if rec.Code != 404 || !strings.Contains(rec.Body.String(), "no icon data") {
+			t.Errorf("idbe %s = %d %s", p, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// bvc: NIM treats a 200 as "this firmware is refused" and a 404 as "not listed", so every
+// version must get the 404.
+func TestBvcNeverListsTheFirmware(t *testing.T) {
+	s := shopServerFor(t)
+	for _, p := range []string{"/22-5-0", "/0-0-0", "/"} {
+		if rec := hostReq(s, "bvc-hac-lp1.cdn.nintendo.net", "GET", p, "", ""); rec.Code != 404 {
+			t.Errorf("bvc %s = %d, want 404 (a 200 blocks the console)", p, rec.Code)
+		}
+	}
+}
+
+// pearljam stays a recorded refusal: neither path's contract is recovered.
+func TestPearljamStaysRefused(t *testing.T) {
+	s := shopServerFor(t)
+	for _, p := range []string{"/civil", "/sugar", "/civil/v1/x"} {
+		rec := hostReq(s, "pearljam.hac.lp1.eshop.nintendo.net", "POST", p, "", "{}")
+		if rec.Code != 404 || !strings.Contains(rec.Body.String(), "not implemented") {
+			t.Errorf("pearljam %s = %d %s", p, rec.Code, rec.Body.String())
+		}
 	}
 }
 

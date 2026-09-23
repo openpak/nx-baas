@@ -19,6 +19,15 @@ package main
 // literals, so neither is recovered. The reply here is an empty collection — "you have no
 // events" is true — and the full request is logged so a console writes the specification.
 // This is unconfirmed: if the console rejects it, the badge simply stays off.
+//
+// The voice-chat lobby is a third web page. systemWeb's Lobby usage opens
+// https://web-<env>.znc.srv.nintendo.net/lobby/ with the calling title's app_id (and a
+// "param" when the caller passed one), tags the session LobbyApplet, sets
+// https://localhost/lobby/ as the callback URL and https://web-<env>.znc.srv.nintendo.net/
+// as the only prefix allowed to reach it [firmware, systemWeb ShimUsageLobby::
+// overwriteInternalArgs, 0x85c65c; the shop shim passes eshop:// through the same two
+// setters]. So the page ends the applet by navigating to the callback URL. OpenPak has no
+// voice chat, so the page says so and offers that way out.
 
 import (
 	"fmt"
@@ -54,6 +63,23 @@ func (s *server) nso(w http.ResponseWriter, r *http.Request, body []byte) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	fmt.Fprint(w, lhubPage)
+}
+
+// zncLobby answers web-<env>.znc.srv.nintendo.net: the voice-chat lobby page under
+// /lobby/, a recorded 404 for anything else on the host.
+func (s *server) zncLobby(w http.ResponseWriter, r *http.Request, body []byte) {
+	p := r.URL.Path
+	if p != "/lobby" && !strings.HasPrefix(p, "/lobby/") {
+		dump(r, body, "!! UNHANDLED znc (only /lobby/ is known)")
+		writeJSON(w, 404, map[string]any{"status": 404, "title": "not found"})
+		return
+	}
+	q := r.URL.Query()
+	log.Printf("[nso] znc lobby %s %s%s app_id=%q param=%q ua=%q -> voice chat not available",
+		r.Method, hostOf(r), p, q.Get("app_id"), q.Get("param"), r.UserAgent())
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	fmt.Fprint(w, lobbyPage)
 }
 
 // nsoMembership tells the page whose membership it is showing. The status itself is the
@@ -123,5 +149,33 @@ var asked=false;
 function take(r){var t=nxToken(r&&r.value);if(t&&!asked){asked=true;show(t);}}
 if(!nxCall('requestNaIdToken',[],take)){if(!nxCall('ensureNaIdToken',[],take)){nxCall('loadCachedNaIdToken',[],take);}}
 setTimeout(function(){if(!asked){asked=true;show(null);}},4000);
+})();
+`
+
+// lobbyCallback is the Lobby shim's callback URL: navigating to it ends the applet.
+const lobbyCallback = "https://localhost/lobby/"
+
+// lobbyPage is the voice-chat lobby, controller first like the Lhub page. Leaving
+// navigates to the callback URL; endApplet and the browser's own close are fallbacks for
+// a host that does not intercept it.
+var lobbyPage = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">` +
+	`<meta name="viewport" content="width=device-width,initial-scale=1"><title>Voice chat</title>` +
+	`<style>` + pageCSS + shopCSS + `</style></head>` +
+	`<body class="console"><main><div class="brand"><img src="` + logoDataURI + `" alt=""> OpenPak` +
+	`<button class="small close" id="lbclose" type="button">Close</button></div>` +
+	`<h1>Voice chat isn't available on OpenPak yet</h1>` +
+	`<p>Online play works without it: close this and keep playing.</p>` +
+	`<button class="small" id="done" type="button">Back to the game</button>` +
+	`</main><script>` + shopBridgeJS + lobbyJS + `</script></body></html>`
+
+const lobbyJS = `
+(function(){
+function leave(){
+ setTimeout(function(){if(!nxCall('endApplet',[],null)){try{window.close();}catch(e){}}},1500);
+ location.href='` + lobbyCallback + `';
+}
+document.getElementById('lbclose').addEventListener('click',leave);
+document.getElementById('done').addEventListener('click',leave);
+document.getElementById('done').focus();
 })();
 `

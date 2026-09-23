@@ -32,6 +32,23 @@ func TestLhubPageServesAnyPath(t *testing.T) {
 	}
 }
 
+// The voice-chat lobby: /lobby/ with the shim's query renders a page that leaves through the
+// Lobby callback URL; the rest of the znc host is a recorded 404.
+func TestZncLobbyPageLeavesThroughTheCallback(t *testing.T) {
+	s := shopServerFor(t)
+	for _, path := range []string{"/lobby/", "/lobby/?app_id=0100000000010000&param=abc", "/lobby"} {
+		rec := hostReq(s, "web-lp1.znc.srv.nintendo.net", "GET", path, "", "")
+		body := rec.Body.String()
+		if rec.Code != 200 || !strings.Contains(body, "Voice chat isn't available on OpenPak yet") ||
+			!strings.Contains(body, "lbclose") || !strings.Contains(body, "https://localhost/lobby/") {
+			t.Errorf("lobby %s = %d", path, rec.Code)
+		}
+	}
+	if rec := hostReq(s, "web-lp1.znc.srv.nintendo.net", "GET", "/other", "", ""); rec.Code != 404 {
+		t.Errorf("znc /other = %d, want 404", rec.Code)
+	}
+}
+
 // The badge feed answers an empty collection rather than the catch-all 404.
 func TestNsoEventsFeedAnswersEmpty(t *testing.T) {
 	s := shopServerFor(t)
