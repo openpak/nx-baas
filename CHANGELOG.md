@@ -3,7 +3,7 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
-## Unreleased — after v0.15.0
+## v0.16.0 — 2026-09-23
 
 The P2 leftovers from `../docs/switch/native-news-eshop-nso-gap-22.5.0-2026-09-23.md`
 (evidence and addresses in `docs/native-shop.md`, "P2 leftovers"):
