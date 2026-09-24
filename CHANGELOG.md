@@ -3,6 +3,15 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.25.2 — 2026-09-24
+
+- netdiag: `/v1/ip` carries `global_ip` and nothing else [26c23ef]
+
+## v0.25.1 — 2026-09-24
+
+- netdiag: answer the global IP probe under `global_ip` [cee3880]
+- ci: build scratch in the workspace/runner temp, not `/tmp` or the checkout
+
 ## v0.25.0 — 2026-09-23
 
 - The eShop and OpenPak Online follow the website's 2026-09 design language (tokens from
@@ -194,6 +203,75 @@ Cross-network presence with client labels:
   render). Unverified on hardware whether the system friend list shows the description for a
   friend with no title; `NX_FOREIGN_PRESENCE_DESCRIPTION=0` turns it off.
 - `/internal/switch/emulator` friends' presence gains `platform`, `client`, `label`.
+
+## v0.12.58 — 2026-09-23
+
+- Presence: an hourly console login keeps the game; core presence cached per account
+
+## v0.12.57 — 2026-09-22
+
+- ACNH user id is the NSA id; minted-pid records move back
+
+## v0.12.56 — 2026-09-22
+
+- ACNH best friends: friend requests, accept, friends list
+
+## v0.12.55 — 2026-09-22
+
+- ACNH `profile_status`: "ng" latches the Code-of-Conduct refusal; answer "ok" always (the
+  remembered failed upload gated Orville, not `profile_status`)
+
+## v0.12.54 — 2026-09-22
+
+- ACNH `profile_status`: "ok" is the reported verdict, answer "ng"
+
+## v0.12.53 — 2026-09-22
+
+- Serve ACNH's island and passport API, resolving warm-client ids
+- Emulator identity carries the account's country
+
+## v0.12.52 — 2026-09-20
+
+- Keep the game a console named, and stop counting the menu as a title
+- Emulator identity: say which platform a friend is on, and since when
+
+## v0.12.51 — 2026-09-20
+
+- Read presence back from the core, so other platforms show through
+- Tell the core which game a console is playing
+
+## v0.12.50 — 2026-09-20
+
+- Keep a presence claim alive while its console is connected
+
+## v0.12.49 — 2026-09-20
+
+- Answer a presence frame first, and mint hex device passwords
+- Answer the console again, with the strings it actually waits for
+- Invitations expire after 4 h (override read in seconds); a new invitation retires the
+  sender's older one for that game
+- Settle a delivery against the profile that owns it
+
+## v0.12.48 — 2026-09-20
+
+- Stop offering an invitation once its sender left the game
+
+## v0.12.47 — 2026-09-20
+
+- Stop answering the console's requests: it crashed npns
+
+## v0.12.46 — 2026-09-20
+
+- Answer the console, and build a message it can read
+
+## v0.12.45 — 2026-09-20
+
+- Serve INACTIVE as INACTIVE: a console at Home is not online
+
+## v0.12.44 — 2026-09-20
+
+- Push to each console profile, not to whoever signed in last
+- A friend PATCH always answers the whole relationship
 
 ## v0.12.43 — 2026-09-19
 
