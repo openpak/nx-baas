@@ -3,6 +3,10 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.25.3 — 2026-09-24
+
+- deps: grpc 1.83.2, x/net 0.59 (Dependabot)
+
 ## v0.25.2 — 2026-09-24
 
 - netdiag: `/v1/ip` carries `global_ip` and nothing else [26c23ef]
