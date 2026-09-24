@@ -79,6 +79,9 @@ func TestGlobalIPProbeReportsTheForwardedAddress(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatalf("not JSON: %v", err)
 	}
+	if got["global_ip"] != "203.0.113.7" {
+		t.Fatalf("global_ip = %v, want the console's address under the key qlaunch reads", got["global_ip"])
+	}
 	if got["ip"] != "203.0.113.7" {
 		t.Fatalf("ip = %v, want the first public address in the chain, not a proxy hop", got["ip"])
 	}
