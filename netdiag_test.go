@@ -82,8 +82,8 @@ func TestGlobalIPProbeReportsTheForwardedAddress(t *testing.T) {
 	if got["global_ip"] != "203.0.113.7" {
 		t.Fatalf("global_ip = %v, want the console's address under the key qlaunch reads", got["global_ip"])
 	}
-	if got["ip"] != "203.0.113.7" {
-		t.Fatalf("ip = %v, want the first public address in the chain, not a proxy hop", got["ip"])
+	if _, extra := got["ip"]; extra || len(got) != 1 {
+		t.Fatalf("body = %v, want global_ip alone: qlaunch's handler rejects any other key", got)
 	}
 }
 

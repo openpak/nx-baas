@@ -67,11 +67,14 @@ func (s *server) netdiag(w http.ResponseWriter, r *http.Request) {
 			// is what would carry the real one.
 			log.Printf("[netdiag] global IP probe -> %s (no public address visible; the console is hidden behind TLS passthrough)", ip)
 		}
-		// qlaunch's string table carries `global_ip` beside the netdiag
-		// strings [firmware 22.5.0, qlaunch main.elf], and a console given
-		// only `ip` failed its connection test right after this call
-		// (2160-6000, 2026-09-24). Both keys, so nothing that read `ip` breaks.
-		writeJSON(w, 200, map[string]any{"global_ip": ip, "ip": ip})
+		// Exactly one key. qlaunch parses this with a SAX handler [firmware
+		// 22.5.0, qlaunch 0x164240; handler vtable 0x1156828] whose Key()
+		// returns true only for "global_ip" and whose String() copies the
+		// value into a 16-byte buffer; any other key terminates the parse and
+		// the test fails with 2160-6000 (0x2ee0a0, the code the caller returns
+		// when nothing was extracted). A second key "ip" reproduced that on a
+		// console, 2026-09-24.
+		writeJSON(w, 200, map[string]any{"global_ip": ip})
 	default:
 		log.Printf("[netdiag] UNMAPPED %s %s%s", r.Method, host, r.URL.Path)
 		http.Error(w, "no such netdiag route", 404)
