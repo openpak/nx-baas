@@ -111,8 +111,10 @@ func TestT17GetTokenCarriesEveryRequiredField(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{"token", "websocketUrl", "displayName", "platformId",
-		"deviceId", "globalPlayerId", "blockList", "role", "exp", "ttl"} {
+	// The order PreInitialise looks them up in, including the `version` its fill pass reads
+	// without ever naming it in an error.
+	for _, field := range []string{"websocketUrl", "token", "exp", "ttl", "displayName",
+		"globalPlayerId", "role", "blockList", "deviceId", "platformId", "version"} {
 		if _, ok := got[field]; !ok {
 			t.Errorf("missing required field %q", field)
 		}

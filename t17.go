@@ -147,12 +147,17 @@ func (s *server) t17GetToken(w http.ResponseWriter, r *http.Request, body []byte
 		"role":           "client",
 		"exp":            time.Now().Add(ttl).Unix(),
 		"ttl":            int(ttl.Seconds()),
-		// Not in the native SDK's required list, but the C# layer that receives this reply and
-		// builds the native init from it — `SimpleCorePreInitData`, whose fields are
-		// `_websocketFullConnectionString _websocketUrl _role _blockList _apiVersion ttl
-		// bAllOK bKillSwitchActive` — carries apiVersion too, and `apiVersion` exists as a
-		// string in the C# metadata but nowhere in the native binary. The request asks with
-		// `Api-Version: 1`.
+		// The eleventh key. T17BE_Transport::PreInitialise (0x68f2c0 in the 1.3.315 binary)
+		// parses the root object and looks its keys up in a fixed order, twice: a validation
+		// pass that emits "Backend Missing required <field>" for the ten above, then a fill
+		// pass that re-reads them and ends at `version` (0x6901a4, key length 7) with no error
+		// string of its own — which is why the ten-field reply was accepted over HTTP and then
+		// dropped in silence. Copied as a string like its neighbours in that pass.
+		"version": "1",
+		// The C# layer in front of it (`SimpleCorePreInitData`: `_websocketFullConnectionString
+		// _websocketUrl _role _blockList _apiVersion ttl bAllOK bKillSwitchActive`) spells the
+		// same thing apiVersion; that name exists in the C# metadata and nowhere in the native
+		// binary, so send both.
 		"apiVersion": 1,
 	}
 	writeJSON(w, 200, fields)

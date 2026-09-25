@@ -3,6 +3,15 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.28.4 — 2026-09-25
+
+- t17: send `version`, the eleventh key. Recovered from the binary rather than guessed:
+  `T17BE_Transport::PreInitialise` (0x68f2c0 in 1.3.315) looks its keys up in a fixed order,
+  twice — a validation pass that names the ten it can complain about, then a fill pass ending at
+  `version` (0x6901a4), which has no error string of its own. That is why a ten-field reply was
+  accepted over HTTP and then dropped without a word and without the socket ever opening.
+  Tooling for the recovery lives in `scratch/arm64xref.py`.
+
 ## v0.28.3 — 2026-09-25
 
 - t17: back to a flat get-token reply, plus `apiVersion`. The envelope probe changed nothing, and
