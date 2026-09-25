@@ -198,9 +198,22 @@ Reading it needs an IL2CPP dump, and Il2CppDumper's auto mode cannot find
 `CodeRegistration`/`MetadataRegistration` in this build even at v6.7.46. The fingerprint is known —
 `typeDefinitionsSize 0x177d38 / 120 = 12828` type definitions, a count `MetadataRegistration`
 carries twice — but a scan of the raw file cannot confirm a candidate because **`.data` pointers in
-an NSO are unrelocated on disk**. The next step is to parse `MOD0` → `.dynamic` → `DT_RELA` and
-apply the `R_AARCH64_RELATIVE` entries; then the pointer scan works, manual mode runs, and
-`T17AuthTokenProvider` / `SendAuthRequest` become readable.
+an NSO are unrelocated on disk**. `scratch/nso_reloc.py` now does the relocation step: `MOD0` → `.dynamic` → `DT_RELA`, applying
+**615,417** `R_AARCH64_RELATIVE` entries, after which `.data` pointers are real and pointer scans can
+be validated. That was necessary but not sufficient — the registration structs still do not turn
+up:
+
+- No `{int32 count, pad, pointer}` run in `.data` or `.rodata` carries the type-definition count
+  (12828) twice 0x10 apart, which is the `fieldOffsetsCount`/`typeDefinitionsSizesCount`
+  signature of `Il2CppMetadataRegistration`. So either those counts differ in this build or the
+  struct is not laid out as assumed.
+- The NSO's dynamic symbol table is **imports only** (`nn::` SDK entries, value 0). IL2CPP is
+  statically linked with nothing exported, so there is no `il2cpp_init` to walk from.
+
+Two routes left, neither tried: **Il2CppInspectorRedux**, whose heuristics differ from
+Il2CppDumper's; or xref from the IL2CPP runtime's own error strings in `.rodata` (they are
+plain C++ literals, so `arm64xref.py` finds them) into `MetadataCache::Initialize`, which
+references both registration structs directly.
 
 ## Tooling
 
