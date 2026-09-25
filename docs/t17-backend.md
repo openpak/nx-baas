@@ -134,6 +134,85 @@ only readable as raw metadata strings so far.
 
 Working files (not in any repo): `~/REPOS/Openpak/scratch/mo2/`.
 
+## The live protocol, as captured 2026-09-25
+
+The directory is one GET and its reply is the whole of the addressing:
+
+```
+GET directory.t17service.com/
+  Api-Title: ProjectJourney   Api-Platform: nxswitch   Api-Tier: dev   Api-Version: 1
+  User-Agent: UnityPlayer/2021.3.16f1 (UnityWebRequest/1.0, libcurl/7.64.1)
+
+200 {"game":{"url":"http:///"},"xplayurl":"https://pd5d8994ze.execute-api.eu-west-1.amazonaws.com/prod/",
+     "AllowXPlay":"1","ga":{"ga":"0"}}
+```
+
+Team17's own `game.url` is **empty** for this title and tier, which is why the retail game stops at
+"An error has occurred connecting to T17 services" before it ever reaches Photon. Authentication
+goes to the **xplay** URL, not `game.url`:
+
+```
+POST <xplayurl>auth/get-token
+{"coreVersion":"1.0.6.0.0","platformId":"nintendo","deviceId":"nintendo-switch",
+ "gameId":"ProjectJourney","authType":"nintendo-switch","displayName":"<user-a>",
+ "nintendoSwitchAccessToken":"<JWT>"}
+```
+
+The JWT is one **OpenPak signed** (`kid: openpak-baas-key-1`, `sub` = the BAAS user id), so the
+backend verifies its own token instead of asking Nintendo — the `servers/demonware` pattern.
+
+### The get-token reply, read out of the binary
+
+`T17BE_Transport::PreInitialise` is at **0x68f2c0** (update 1.3.315). It parses the root object
+once (0x68f2f0), checks the root type at 0x68f310, then looks up keys in a fixed order **twice** —
+a validation pass that can name what is missing, then a fill pass that cannot:
+
+| key | pass | how the value is read |
+|---|---|---|
+| `websocketUrl` | both | string |
+| `token` | both | string |
+| `exp` | both | number — `ldr w8,[member+0x18]` → `str w8,[struct+0x108]` |
+| `ttl` | both | number — → `struct+0x10c` |
+| `displayName` | both | string (then split into full/short) |
+| `globalPlayerId` | both | string |
+| `role` | both | string, one of client / server / service |
+| `blockList` | validation | **string holding JSON** — `__ParseInitialBlockList` (0x669acc) hands it to 0x670180, the same parser used on the whole reply |
+| `deviceId` | validation | string |
+| `platformId` | validation | string |
+| `version` | **fill only** | string — assign helper 0x1f4b9f0 → `struct+0xf0` |
+
+`version` has **no "Backend Missing required" string of its own**, so omitting it is accepted over
+HTTP and then dropped in silence with no socket and no diagnostic. That cost several test rounds.
+
+### Still unresolved
+
+With all eleven fields correct the game still never dials the websocket — no DNS lookup for the
+`websocketUrl` host at all. The native transport is therefore not the one refusing: the **C# layer
+in front of it** never reaches the connection. That layer owns the socket (`websocket-sharp`,
+`Sec-WebSocket-Key` and the `wss://{0}:{1}` format strings are all in the C# metadata) and models
+the reply as `SimpleCorePreInitData` (`_websocketFullConnectionString _websocketUrl _role
+_blockList _apiVersion ttl bAllOK bKillSwitchActive`), handing the native side the raw JSON as
+`userStringyfiedJSONChunk`.
+
+Reading it needs an IL2CPP dump, and Il2CppDumper's auto mode cannot find
+`CodeRegistration`/`MetadataRegistration` in this build even at v6.7.46. The fingerprint is known —
+`typeDefinitionsSize 0x177d38 / 120 = 12828` type definitions, a count `MetadataRegistration`
+carries twice — but a scan of the raw file cannot confirm a candidate because **`.data` pointers in
+an NSO are unrelocated on disk**. The next step is to parse `MOD0` → `.dynamic` → `DT_RELA` and
+apply the `R_AARCH64_RELATIVE` entries; then the pointer scan works, manual mode runs, and
+`T17AuthTokenProvider` / `SendAuthRequest` become readable.
+
+## Tooling
+
+`scratch/arm64xref.py` — reconstructs every ADRP+ADD pair in `.text` (740,061 of them here) to
+answer "who references this string" and "which strings does this function reference". Anchor the
+needle to its NUL boundary first: these error messages are suffixes of longer literals, and
+xrefing the middle of a string finds nothing.
+
+`scratch/unityfs.py` — UnityFS bundle unpacker, needed for the localisation tables. Moving Out 2
+ships version 8 bundles with `BlockInfoNeedPaddingAtStart` (flags 0x243), where the block data is
+16-byte aligned after the block info; Moving Out 1's are version 6 with neither.
+
 ## Open questions
 
 1. What does `directory.t17service.com` actually answer, and does it still accept this
