@@ -3,6 +3,16 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.28.0 — 2026-09-25
+
+- t17: answer `POST <xplayurl>auth/get-token`. The console sends its own BAAS id_token (one we
+  signed), so the backend verifies its own token rather than asking Nintendo — the
+  `servers/demonware` pattern. The reply carries `token`, `websocketUrl`, `displayName`,
+  `platformId`, `globalID` and `blockList`: every one of those names is a standalone string in
+  the game's binary, where `authToken`, `globalId` and `blocklist` are not.
+- t17: accept the T17BE websocket and log its frames (RFC 6455 by hand, stdlib only). Nothing is
+  answered yet — this is how the message envelope gets read off a real client.
+
 ## v0.27.0 — 2026-09-25
 
 - t17: answer `directory.t17service.com` ourselves when `T17_SELF_HOST` is set, handing the game

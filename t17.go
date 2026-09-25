@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/tls"
+	"encoding/json"
 	"io"
 	"log"
 	"net/http"
@@ -26,7 +27,7 @@ import (
 // forwarding and answers 404, which still records what the game asked for.
 func (s *server) t17(w http.ResponseWriter, r *http.Request, body []byte) {
 	dump(r, body, ">>> t17")
-	if t17Directory(w, r) {
+	if t17Directory(w, r) || s.t17Socket(w, r) || s.t17GetToken(w, r, body) {
 		return
 	}
 	if os.Getenv("T17_PASSTHROUGH") == "0" {
@@ -84,6 +85,59 @@ func t17Directory(w http.ResponseWriter, r *http.Request) bool {
 		"xplayurl":   "https://xplay." + host + "/prod/",
 		"AllowXPlay": "1",
 		"ga":         map[string]any{"ga": "0"},
+	})
+	return true
+}
+
+// getToken is the whole of T17BE's authentication: one POST carrying the console's own BAAS
+// id_token, answered with the addressing the native SDK needs. Captured 2026-09-25 from
+// Moving Out 2:
+//
+//	POST <xplayurl>auth/get-token
+//	{"coreVersion":"1.0.6.0.0","platformId":"nintendo","deviceId":"nintendo-switch",
+//	 "gameId":"ProjectJourney","authType":"nintendo-switch","displayName":"hansolo",
+//	 "nintendoSwitchAccessToken":"<JWT>"}
+//
+// The JWT is one WE signed (`kid: openpak-baas-key-1`), because OpenPak is the BAAS the console
+// logged into — so the backend verifies its own token rather than asking Nintendo, the same way
+// servers/demonware does.
+//
+// The reply's field names are not guesses: `token`, `websocketUrl`, `displayName`, `platformId`,
+// `globalID` and `blockList` all exist as standalone strings in the game's binary, while
+// `authToken`, `globalId`, `blocklist` and `blockedPlayers` do not. T17BE_Transport::PreInitialise
+// refuses to start without the first five.
+func (s *server) t17GetToken(w http.ResponseWriter, r *http.Request, body []byte) bool {
+	if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/auth/get-token") {
+		return false
+	}
+	var in struct {
+		PlatformID  string `json:"platformId"`
+		GameID      string `json:"gameId"`
+		DisplayName string `json:"displayName"`
+		Token       string `json:"nintendoSwitchAccessToken"`
+	}
+	_ = json.Unmarshal(body, &in)
+
+	// The id_token names the player; without a readable one there is nobody to be.
+	claims, err := parseJWT(in.Token, &s.key.PublicKey)
+	if err != nil {
+		log.Printf("[t17] get-token: id_token rejected: %v", err)
+		writeJSON(w, 401, map[string]any{"error": "invalid token"})
+		return true
+	}
+	id := str(claims, "sub")
+	name := in.DisplayName
+	if name == "" {
+		name = id
+	}
+	log.Printf("[t17] get-token: game=%s player=%s (%s) platform=%s", in.GameID, name, id, in.PlatformID)
+	writeJSON(w, 200, map[string]any{
+		"token":        "t17-" + id + "-" + randHex(16),
+		"websocketUrl": "wss://game." + os.Getenv("T17_SELF_HOST") + "/socket",
+		"displayName":  name,
+		"platformId":   in.PlatformID,
+		"globalID":     id,
+		"blockList":    []any{},
 	})
 	return true
 }
