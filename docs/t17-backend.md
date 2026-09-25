@@ -210,10 +210,29 @@ up:
 - The NSO's dynamic symbol table is **imports only** (`nn::` SDK entries, value 0). IL2CPP is
   statically linked with nothing exported, so there is no `il2cpp_init` to walk from.
 
-Two routes left, neither tried: **Il2CppInspectorRedux**, whose heuristics differ from
-Il2CppDumper's; or xref from the IL2CPP runtime's own error strings in `.rodata` (they are
-plain C++ literals, so `arm64xref.py` finds them) into `MetadataCache::Initialize`, which
-references both registration structs directly.
+**Il2CppInspectorRedux has now been tried too, and fails the same way** ("No matches via data
+heuristics / No matches via code heuristics"), on both the compressed NSO and the decompressed,
+relocated one. Build notes if someone retries it: every project needs retargeting from `net10.0`
+to `net9.0` and `-p:AllowMissingPrunePackageData=true`, and the dumper is `Il2CppInspector.CLI` —
+`Il2CppInspector.Redux.CLI` is a SignalR/Kestrel host that just binds a port.
+
+One concrete lead from that run: Inspector reports `Global offset: 0x0000007100000000` for an
+image whose segments live around `0x62e0000`. That base is wrong by orders of magnitude, so its
+heuristics are searching addresses that do not exist. Whatever is confusing it about this NSO's
+layout is probably the same thing defeating Il2CppDumper — worth chasing before writing more
+scanners, because it suggests the tools are misparsing the container rather than the data being
+obfuscated. The metadata itself is plainly *not* obfuscated: `SimpleCorePreInitData`,
+`T17AuthTokenProvider` and friends are all clean names.
+
+Ruled out along the way: `fieldOffsetsCount`/`typeDefinitionsSizesCount` do **not** equal the
+type-definition count (12828) in this build — that value appears exactly once in the relocated
+`.data`, inside an index array — so the usual `MetadataRegistration` fingerprint does not apply
+here. The NSO exports nothing (`DT_SYMTAB` is imports only), so there is no `il2cpp_init` to walk
+from. And the game writes no T17BE log file: `pLogFilename` is an init parameter, but nothing
+appears anywhere under Ryujinx's save data.
+
+The remaining route is manual: locate `MetadataCache::Initialize` in a disassembler — there is a
+Ghidra setup in `scratch/home/ghidra-projects` — and read the registration pointers out of it.
 
 ## Tooling
 
