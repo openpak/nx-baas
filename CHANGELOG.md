@@ -3,6 +3,14 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.28.1 — 2026-09-25
+
+- t17: get-token answers all **ten** fields PreInitialise demands, not six. The game
+  authenticated against v0.28.0 and then went silent, never opening the socket, because
+  `deviceId`, `globalPlayerId`, `role`, `exp` and `ttl` were absent — and the player id key is
+  `globalPlayerId` here, not the `globalID` used elsewhere. The list is not guesswork: the
+  binary carries one "Backend Missing required <field>!!!!" string per field.
+
 ## v0.28.0 — 2026-09-25
 
 - t17: answer `POST <xplayurl>auth/get-token`. The console sends its own BAAS id_token (one we

@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Team17's backend (T17BE) is what Moving Out 2 asks for before it ever reaches Photon
@@ -102,16 +103,19 @@ func t17Directory(w http.ResponseWriter, r *http.Request) bool {
 // logged into — so the backend verifies its own token rather than asking Nintendo, the same way
 // servers/demonware does.
 //
-// The reply's field names are not guesses: `token`, `websocketUrl`, `displayName`, `platformId`,
-// `globalID` and `blockList` all exist as standalone strings in the game's binary, while
-// `authToken`, `globalId`, `blocklist` and `blockedPlayers` do not. T17BE_Transport::PreInitialise
-// refuses to start without the first five.
+// The reply's field names are not guesses, and neither is the list: T17BE_Transport::PreInitialise
+// carries one "Backend Missing required <field>!!!!" string per field it demands, and there are
+// exactly ten — token, websocketUrl, displayName, platformId, deviceId, globalPlayerId,
+// blockList, role, exp, ttl. Answering with only six left the game authenticated and then
+// silent: it never opened the socket. `role` is one of client / server / service
+// (T17BE_Account::Initialise refuses anything else).
 func (s *server) t17GetToken(w http.ResponseWriter, r *http.Request, body []byte) bool {
 	if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/auth/get-token") {
 		return false
 	}
 	var in struct {
 		PlatformID  string `json:"platformId"`
+		DeviceID    string `json:"deviceId"`
 		GameID      string `json:"gameId"`
 		DisplayName string `json:"displayName"`
 		Token       string `json:"nintendoSwitchAccessToken"`
@@ -131,13 +135,18 @@ func (s *server) t17GetToken(w http.ResponseWriter, r *http.Request, body []byte
 		name = id
 	}
 	log.Printf("[t17] get-token: game=%s player=%s (%s) platform=%s", in.GameID, name, id, in.PlatformID)
+	const ttl = 12 * time.Hour
 	writeJSON(w, 200, map[string]any{
-		"token":        "t17-" + id + "-" + randHex(16),
-		"websocketUrl": "wss://game." + os.Getenv("T17_SELF_HOST") + "/socket",
-		"displayName":  name,
-		"platformId":   in.PlatformID,
-		"globalID":     id,
-		"blockList":    []any{},
+		"token":          "t17-" + id + "-" + randHex(16),
+		"websocketUrl":   "wss://game." + os.Getenv("T17_SELF_HOST") + "/socket",
+		"displayName":    name,
+		"platformId":     in.PlatformID,
+		"deviceId":       in.DeviceID,
+		"globalPlayerId": id,
+		"blockList":      []any{},
+		"role":           "client",
+		"exp":            time.Now().Add(ttl).Unix(),
+		"ttl":            int(ttl.Seconds()),
 	})
 	return true
 }

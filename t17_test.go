@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
+	"crypto/rsa"
 	"encoding/binary"
 	"encoding/json"
 	"net/http/httptest"
@@ -81,5 +83,41 @@ func TestT17ReadFrameUnmasksEverySizeClass(t *testing.T) {
 		if op != 1 || !bytes.Equal(got, payload) {
 			t.Fatalf("len %d: op=%d, payload round-trip failed", n, op)
 		}
+	}
+}
+
+// PreInitialise names every field it demands in its own error strings; answering with a subset
+// leaves the game authenticated and silent, which is exactly what happened with six of them.
+func TestT17GetTokenCarriesEveryRequiredField(t *testing.T) {
+	t.Setenv("T17_SELF_HOST", "t17service.com")
+	s := testServer(t)
+	// testServer has no signing key; get-token verifies the console's id_token against ours.
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.key = key
+	claims := map[string]any{"sub": "aaaaaaaaaaaa0001", "typ": "id_token"}
+	tok := signJWT(map[string]any{"alg": "RS256", "kid": "openpak-baas-key-1", "typ": "JWT"}, claims, s.key)
+	body := []byte(`{"platformId":"nintendo","deviceId":"nintendo-switch","gameId":"ProjectJourney",` +
+		`"displayName":"hansolo","nintendoSwitchAccessToken":"` + tok + `"}`)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/prod/auth/get-token", bytes.NewReader(body))
+	if !s.t17GetToken(w, r, body) || w.Code != 200 {
+		t.Fatalf("get-token not answered: %d %s", w.Code, w.Body)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"token", "websocketUrl", "displayName", "platformId",
+		"deviceId", "globalPlayerId", "blockList", "role", "exp", "ttl"} {
+		if _, ok := got[field]; !ok {
+			t.Errorf("missing required field %q", field)
+		}
+	}
+	if got["globalPlayerId"] != "aaaaaaaaaaaa0001" || got["role"] != "client" {
+		t.Errorf("wrong identity or role: %s", w.Body)
 	}
 }
