@@ -143,10 +143,12 @@ func (s *server) t17GetToken(w http.ResponseWriter, r *http.Request, body []byte
 		"platformId":     in.PlatformID,
 		"deviceId":       in.DeviceID,
 		"globalPlayerId": id,
-		// A string holding JSON, not an array: T17BE_FriendSystem::__ParseInitialBlockList
-		// (0x669acc) hands this value to 0x670180, the same parser PreInitialise runs on the
-		// whole reply, and logs "Problem Parsing JSON Chunk" when it will not parse.
-		"blockList": "[]",
+		// An array. The C# field is declared `array[]` (metadata field table, Team17.CrossPlay.Auth)
+		// and `JsonUtility.FromJsonOverwrite` — the deserialiser, called from
+		// `WebRequest::UpdateWaitForResponse` at 0x4c0fefc — throws on a type mismatch, which
+		// kills the whole auth step silently. It is the *native* side that wants a stringified
+		// chunk, and it never sees this JSON: C# rebuilds one for it in GetT17AuthJson.
+		"blockList": []any{},
 		"role":      "client",
 		"exp":       time.Now().Add(ttl).Unix(),
 		"ttl":       int(ttl.Seconds()),

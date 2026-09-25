@@ -3,6 +3,18 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.29.1 — 2026-09-25
+
+- t17: `blockList` goes back to being a JSON **array**. v0.28.5 made it a string on the strength
+  of the native `__ParseInitialBlockList`, but the native side never sees this JSON — C# rebuilds
+  one for it. The C# field is declared `array[]` and the deserialiser is
+  `JsonUtility.FromJsonOverwrite` (called from `WebRequest::UpdateWaitForResponse`, 0x4c0fefc),
+  which **throws on a type mismatch** and takes the whole auth step down silently.
+- Field types now come from the metadata field table rather than inference: exp/ttl `int32`,
+  `killSwitchActive` bool, `blockList` array, the other eight strings. A test asserts each one.
+- Corrects v0.29.0's reasoning too: JsonUtility ignores unknown keys and defaults missing ones,
+  so the `apiVersion`/`killSwitchActive` changes were tidiness, not the fix.
+
 ## v0.29.0 — 2026-09-25
 
 - t17: the get-token reply now matches the **C# response class** exactly — twelve fields:

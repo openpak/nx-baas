@@ -129,3 +129,52 @@ func TestT17GetTokenCarriesEveryRequiredField(t *testing.T) {
 		t.Errorf("reply has %d fields, the C# response class has 12: %s", len(got), w.Body)
 	}
 }
+
+// JsonUtility.FromJsonOverwrite throws on a type mismatch and takes the whole auth step with it,
+// so each field has to match what Team17.CrossPlay.Auth declares. Types read from the metadata
+// field table: exp/ttl int32, killSwitchActive bool, blockList an array, the rest strings.
+func TestT17GetTokenFieldTypesMatchTheManagedClass(t *testing.T) {
+	t.Setenv("T17_SELF_HOST", "t17service.com")
+	s := testServer(t)
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.key = key
+	tok := signJWT(map[string]any{"alg": "RS256", "typ": "JWT"},
+		map[string]any{"sub": "aaaaaaaaaaaa0001"}, key)
+	body := []byte(`{"platformId":"nintendo","deviceId":"nintendo-switch","displayName":"t",` +
+		`"nintendoSwitchAccessToken":"` + tok + `"}`)
+	w := httptest.NewRecorder()
+	if !s.t17GetToken(w, httptest.NewRequest("POST", "/prod/auth/get-token", bytes.NewReader(body)), body) {
+		t.Fatal("not answered")
+	}
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	for field, want := range map[string]string{
+		"websocketUrl": "string", "token": "string", "displayName": "string",
+		"globalPlayerId": "string", "role": "string", "version": "string",
+		"deviceId": "string", "platformId": "string",
+		"exp": "number", "ttl": "number", "killSwitchActive": "bool", "blockList": "array",
+	} {
+		v := got[field]
+		var kind string
+		switch v.(type) {
+		case string:
+			kind = "string"
+		case float64:
+			kind = "number"
+		case bool:
+			kind = "bool"
+		case []any:
+			kind = "array"
+		default:
+			kind = "other"
+		}
+		if kind != want {
+			t.Errorf("%s is %s, the managed field is %s", field, kind, want)
+		}
+	}
+}
