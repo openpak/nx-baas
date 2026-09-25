@@ -136,7 +136,7 @@ func (s *server) t17GetToken(w http.ResponseWriter, r *http.Request, body []byte
 	}
 	log.Printf("[t17] get-token: game=%s player=%s (%s) platform=%s", in.GameID, name, id, in.PlatformID)
 	const ttl = 12 * time.Hour
-	writeJSON(w, 200, map[string]any{
+	fields := map[string]any{
 		"token":          "t17-" + id + "-" + randHex(16),
 		"websocketUrl":   "wss://game." + os.Getenv("T17_SELF_HOST") + "/socket",
 		"displayName":    name,
@@ -147,6 +147,21 @@ func (s *server) t17GetToken(w http.ResponseWriter, r *http.Request, body []byte
 		"role":           "client",
 		"exp":            time.Now().Add(ttl).Unix(),
 		"ttl":            int(ttl.Seconds()),
-	})
+	}
+	// ponytail: a probe, and deliberately three shapes at once. All ten fields flat was accepted
+	// by HTTP and then silently dropped — the game never dialled the socket and never named a
+	// missing field, which is what `__ParseJSONObject --> No Header for Response - REQUIRED FOR
+	// RESPONSES!! --> Ignoring!!!` does. `headers`, `body`, `subject`, `code` and `message` are
+	// all standalone strings in the binary, so the envelope is one of flat / body-wrapped /
+	// headers+body. Each guess costs a human relaunch, so send all three and prune to whichever
+	// opens the socket.
+	resp := map[string]any{
+		"headers": map[string]any{"subject": "auth/get-token", "code": 200, "message": "OK"},
+		"body":    fields,
+	}
+	for k, v := range fields {
+		resp[k] = v
+	}
+	writeJSON(w, 200, resp)
 	return true
 }

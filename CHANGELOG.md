@@ -3,6 +3,14 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.28.2 — 2026-09-25
+
+- t17: probe the get-token envelope. Ten flat fields were accepted over HTTP and then silently
+  discarded — the game neither opened the socket nor named a missing field, which is what
+  `__ParseJSONObject --> No Header for Response - REQUIRED FOR RESPONSES!!` does. The reply now
+  carries the same fields flat, under `body`, and beside a `headers` object at once, because
+  every guess costs a console relaunch. Prune to the shape that opens the socket.
+
 ## v0.28.1 — 2026-09-25
 
 - t17: get-token answers all **ten** fields PreInitialise demands, not six. The game
