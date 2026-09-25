@@ -3,6 +3,15 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.27.0 — 2026-09-25
+
+- t17: answer `directory.t17service.com` ourselves when `T17_SELF_HOST` is set, handing the game
+  `game.<host>` and `xplay.<host>` instead of Team17's addressing. The real service answers with
+  an **empty** `game.url` (`http:///`) for this title and tier, which is why Moving Out 2 stops
+  at "An error has occurred connecting to T17 services" before it ever reaches Photon. Because
+  the directory is the only address the game is given, this points it at OpenPak without
+  redirecting `*.execute-api.eu-west-1.amazonaws.com`. Unset keeps the passthrough capture.
+
 ## v0.26.0 — 2026-09-25
 
 - t17: Team17's backend (`*.t17service.com`) is redirected here and read — every request is

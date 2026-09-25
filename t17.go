@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"os"
+	"strings"
 	"sync"
 )
 
@@ -25,6 +26,9 @@ import (
 // forwarding and answers 404, which still records what the game asked for.
 func (s *server) t17(w http.ResponseWriter, r *http.Request, body []byte) {
 	dump(r, body, ">>> t17")
+	if t17Directory(w, r) {
+		return
+	}
 	if os.Getenv("T17_PASSTHROUGH") == "0" {
 		writeJSON(w, 404, map[string]any{})
 		return
@@ -53,3 +57,33 @@ var t17Proxy = sync.OnceValue(func() http.Handler {
 		},
 	}
 })
+
+// The directory is the whole of Team17's addressing: one GET, and its `game.url` is where the
+// game takes every other request. Answering it ourselves points the title at OpenPak without
+// redirecting anything else — notably not `*.execute-api.eu-west-1.amazonaws.com`, which is
+// far too broad a family to put in the ceiling.
+//
+// Captured from the real service 2026-09-25 (Moving Out 2, `Api-Title: ProjectJourney`,
+// `Api-Platform: nxswitch`, `Api-Tier: dev`): it answers `{"game":{"url":"http:///"},
+// "xplayurl":"https://<aws>/prod/","AllowXPlay":"1","ga":{"ga":"0"}}`. That `game.url` has an
+// empty host — Team17 has no backend configured for this tier, which is why the game stops
+// with "An error has occurred connecting to T17 services" before it ever reaches Photon.
+//
+// T17_SELF_HOST is the domain to hand back (e.g. `t17service.com` → `game.t17service.com`);
+// both land back here because the whole family is redirected and the cert is minted on demand.
+// Unset keeps the passthrough, which is how the capture above was taken.
+func t17Directory(w http.ResponseWriter, r *http.Request) bool {
+	host := os.Getenv("T17_SELF_HOST")
+	if host == "" || r.URL.Path != "/" || !strings.HasPrefix(hostOf(r), "directory.") {
+		return false
+	}
+	log.Printf("[t17] directory: title=%q platform=%q tier=%q -> game.%s", r.Header.Get("Api-Title"),
+		r.Header.Get("Api-Platform"), r.Header.Get("Api-Tier"), host)
+	writeJSON(w, 200, map[string]any{
+		"game":       map[string]any{"url": "https://game." + host + "/"},
+		"xplayurl":   "https://xplay." + host + "/prod/",
+		"AllowXPlay": "1",
+		"ga":         map[string]any{"ga": "0"},
+	})
+	return true
+}
