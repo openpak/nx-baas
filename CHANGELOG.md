@@ -3,6 +3,15 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.30.0 — 2026-09-25
+
+- t17: `displayName` carries a `#` tag. T17BE splits `displayNameFull` at `'#'` to derive the
+  short name, and the split helper (0x6975a0) **returns false when the separator is absent** —
+  which sends `PreInitialise` down "Problem splitting the displayNameFull into short!!" and fails
+  the entire init. That path has no error string of its own, so it produced exactly the observed
+  symptom: auth succeeds, then nothing, no socket and no diagnostic. A plain `"<user-a>"` could
+  never have worked. Names without a tag now get a stable four-digit one derived from the BAAS id.
+
 ## v0.29.1 — 2026-09-25
 
 - t17: `blockList` goes back to being a JSON **array**. v0.28.5 made it a string on the strength

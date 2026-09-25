@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"crypto/tls"
 	"encoding/json"
+	"fmt"
+	"hash/crc32"
 	"io"
 	"log"
 	"net/http"
@@ -133,6 +135,14 @@ func (s *server) t17GetToken(w http.ResponseWriter, r *http.Request, body []byte
 	name := in.DisplayName
 	if name == "" {
 		name = id
+	}
+	// T17BE splits displayNameFull at '#' to get the short name, and its helper (0x6975a0)
+	// returns FALSE when the separator is absent — which sends PreInitialise down
+	// "Problem splitting the displayNameFull into short!!" and fails the whole init with no
+	// error string of its own and no socket. A name with no '#' can never work, so give every
+	// player a stable four-digit tag the way Team17's own platform does.
+	if !strings.Contains(name, "#") {
+		name = fmt.Sprintf("%s#%04d", name, crc32.ChecksumIEEE([]byte(id))%10000)
 	}
 	log.Printf("[t17] get-token: game=%s player=%s (%s) platform=%s", in.GameID, name, id, in.PlatformID)
 	const ttl = 12 * time.Hour

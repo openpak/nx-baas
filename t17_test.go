@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"net/http/httputil"
+	"strings"
 	"testing"
 )
 
@@ -175,6 +176,38 @@ func TestT17GetTokenFieldTypesMatchTheManagedClass(t *testing.T) {
 		}
 		if kind != want {
 			t.Errorf("%s is %s, the managed field is %s", field, kind, want)
+		}
+	}
+}
+
+// The native split helper (0x6975a0) looks for '#' in displayNameFull and returns false when it
+// is absent, which fails PreInitialise with no error string and no socket. Every name we hand
+// out must therefore carry the separator.
+func TestT17DisplayNameAlwaysCarriesTheSeparator(t *testing.T) {
+	t.Setenv("T17_SELF_HOST", "t17service.com")
+	s := testServer(t)
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.key = key
+	for _, given := range []string{"hansolo", "", "already#1234"} {
+		tok := signJWT(map[string]any{"alg": "RS256", "typ": "JWT"},
+			map[string]any{"sub": "aaaaaaaaaaaa0001"}, key)
+		body := []byte(`{"platformId":"nintendo","displayName":"` + given +
+			`","nintendoSwitchAccessToken":"` + tok + `"}`)
+		w := httptest.NewRecorder()
+		s.t17GetToken(w, httptest.NewRequest("POST", "/prod/auth/get-token", bytes.NewReader(body)), body)
+		var got map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		name, _ := got["displayName"].(string)
+		if !strings.Contains(name, "#") {
+			t.Errorf("displayName %q for input %q has no '#'", name, given)
+		}
+		if given == "already#1234" && name != given {
+			t.Errorf("a name that already has a tag was rewritten to %q", name)
 		}
 	}
 }
