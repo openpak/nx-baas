@@ -147,21 +147,14 @@ func (s *server) t17GetToken(w http.ResponseWriter, r *http.Request, body []byte
 		"role":           "client",
 		"exp":            time.Now().Add(ttl).Unix(),
 		"ttl":            int(ttl.Seconds()),
+		// Not in the native SDK's required list, but the C# layer that receives this reply and
+		// builds the native init from it — `SimpleCorePreInitData`, whose fields are
+		// `_websocketFullConnectionString _websocketUrl _role _blockList _apiVersion ttl
+		// bAllOK bKillSwitchActive` — carries apiVersion too, and `apiVersion` exists as a
+		// string in the C# metadata but nowhere in the native binary. The request asks with
+		// `Api-Version: 1`.
+		"apiVersion": 1,
 	}
-	// ponytail: a probe, and deliberately three shapes at once. All ten fields flat was accepted
-	// by HTTP and then silently dropped — the game never dialled the socket and never named a
-	// missing field, which is what `__ParseJSONObject --> No Header for Response - REQUIRED FOR
-	// RESPONSES!! --> Ignoring!!!` does. `headers`, `body`, `subject`, `code` and `message` are
-	// all standalone strings in the binary, so the envelope is one of flat / body-wrapped /
-	// headers+body. Each guess costs a human relaunch, so send all three and prune to whichever
-	// opens the socket.
-	resp := map[string]any{
-		"headers": map[string]any{"subject": "auth/get-token", "code": 200, "message": "OK"},
-		"body":    fields,
-	}
-	for k, v := range fields {
-		resp[k] = v
-	}
-	writeJSON(w, 200, resp)
+	writeJSON(w, 200, fields)
 	return true
 }

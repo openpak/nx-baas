@@ -3,6 +3,14 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.28.3 — 2026-09-25
+
+- t17: back to a flat get-token reply, plus `apiVersion`. The envelope probe changed nothing, and
+  the C# side settles the shape: `SimpleCorePreInitData` — the class built from this reply — has
+  `_websocketFullConnectionString _websocketUrl _role _blockList _apiVersion ttl bAllOK
+  bKillSwitchActive`, and every one of the ten native field names also appears in the C#
+  metadata. So the names were right and the reply is flat; `apiVersion` is what was missing.
+
 ## v0.28.2 — 2026-09-25
 
 - t17: probe the get-token envelope. Ten flat fields were accepted over HTTP and then silently
