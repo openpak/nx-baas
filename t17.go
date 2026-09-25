@@ -17,6 +17,8 @@ import (
 // OpenPak answers none of it yet, so the redirect exists only to read the protocol: log the
 // request, pass it to the real service, log the reply.
 //
+// The protocol as far as it is known: docs/t17-backend.md.
+//
 // ponytail: a capture spike, not a service. It lives here because Traefik already sends
 // unrouted SNI to nx-baas and the on-demand cert already covers the name; it moves to
 // servers/t17 the moment OpenPak answers for itself. `T17_PASSTHROUGH=0` stops the
