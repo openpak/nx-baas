@@ -264,9 +264,38 @@ sees it.
 `WaitingForResponse` reads `exp` with `ldrsw` + `FromUnixTimeSeconds`, so that field is a signed
 32-bit unix time and ours is in range.
 
-**Next step:** read the C# field layout of the auth response class and the seven arguments at the
-`GetT17AuthJson` call site (`0x23f9268`) to see exactly which response fields survive into the
-native JSON. `scratch/addr2name.pkl` caches the address→name map for annotating disassembly.
+### The reply the C# actually wants
+
+The response class in `Team17.CrossPlay.Auth` has **twelve** fields. Names come from the metadata
+field table (a class's fields are contiguous there, so finding one known name yields the class);
+types come from each field's `typeIndex` into the `types` array at `MetadataRegistration+0x38`:
+
+| field | managed type | | field | managed type |
+|---|---|---|---|---|
+| `websocketUrl` | string | | `role` | string |
+| `token` | string | | `blockList` | **array** |
+| `exp` | int32 | | `version` | string |
+| `ttl` | int32 | | `deviceId` | string |
+| `displayName` | string | | `platformId` | string |
+| `globalPlayerId` | string | | `killSwitchActive` | bool |
+
+The deserialiser is **`JsonUtility.FromJsonOverwrite`**, called from
+`Team17.CrossPlay.WebRequest::UpdateWaitForResponse` (`0x4c0fefc`) once the request reports
+`Result.Success` (`w0 == 1` at `0x4c0fe40`, which sets state 3). That matters for what can and
+cannot break it:
+
+- **Unknown keys are ignored** and **missing keys keep their default**. So sending `apiVersion`
+  (a field of `SimpleCorePreInitData`, not of this class) was harmless, and omitting
+  `killSwitchActive` was harmless. Neither was ever the bug.
+- **A type mismatch throws**, and the throw takes the whole auth step down with no diagnostic and
+  no socket. Sending `blockList` as the string `"[]"` into an `array[]` field does exactly that —
+  which is what v0.28.5 did, on the strength of the *native* `__ParseInitialBlockList` wanting a
+  stringified chunk. The native side never sees this JSON: `GetT17AuthJson` rebuilds one for it.
+
+That is the whole lesson of this file: **there are two JSON contracts, not one.** The native
+`PreInitialise` contract (eleven keys, `blockList` a stringified chunk) describes the string C#
+hands to `BE_PreInitialise`. The HTTP reply only has to satisfy the managed class above. Matching
+the reply to the native contract is what cost the most time here.
 
 ## Tooling
 
