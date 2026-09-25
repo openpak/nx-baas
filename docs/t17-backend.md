@@ -210,29 +210,63 @@ up:
 - The NSO's dynamic symbol table is **imports only** (`nn::` SDK entries, value 0). IL2CPP is
   statically linked with nothing exported, so there is no `il2cpp_init` to walk from.
 
-**Il2CppInspectorRedux has now been tried too, and fails the same way** ("No matches via data
-heuristics / No matches via code heuristics"), on both the compressed NSO and the decompressed,
-relocated one. Build notes if someone retries it: every project needs retargeting from `net10.0`
-to `net9.0` and `-p:AllowMissingPrunePackageData=true`, and the dumper is `Il2CppInspector.CLI` —
-`Il2CppInspector.Redux.CLI` is a SignalR/Kestrel host that just binds a port.
+**Both dumpers are a dead end on this build, and neither is needed.** Il2CppDumper and
+Il2CppInspectorRedux both fail to locate `CodeRegistration` ("No matches via data heuristics / no
+matches via code heuristics"). The reason is now understood: the compiler **constant-folded**
+`g_CodeRegistration->codeGenModules` into a direct address, so no pointer to the struct exists
+anywhere in the image for a heuristic to find. Inspector also reports `Global offset:
+0x0000007100000000` for an image whose segments live near `0x62e0000`, so it searches addresses
+that do not exist.
 
-One concrete lead from that run: Inspector reports `Global offset: 0x0000007100000000` for an
-image whose segments live around `0x62e0000`. That base is wrong by orders of magnitude, so its
-heuristics are searching addresses that do not exist. Whatever is confusing it about this NSO's
-layout is probably the same thing defeating Il2CppDumper — worth chasing before writing more
-scanners, because it suggests the tools are misparsing the container rather than the data being
-obfuscated. The metadata itself is plainly *not* obfuscated: `SimpleCorePreInitData`,
-`T17AuthTokenProvider` and friends are all clean names.
+None of that matters, because the two things a name→address map actually needs are reachable
+without `CodeRegistration`:
 
-Ruled out along the way: `fieldOffsetsCount`/`typeDefinitionsSizesCount` do **not** equal the
-type-definition count (12828) in this build — that value appears exactly once in the relocated
-`.data`, inside an index array — so the usual `MetadataRegistration` fingerprint does not apply
-here. The NSO exports nothing (`DT_SYMTAB` is imports only), so there is no `il2cpp_init` to walk
-from. And the game writes no T17BE log file: `pLogFilename` is an init parameter, but nothing
-appears anywhere under Ryujinx's save data.
+1. **The code-gen module** is findable from its own name string: locate `"MO2.Client.Runtime.dll"`
+   in `.rodata`, find the 8-byte slot in `.data` holding that address — that slot is the
+   `Il2CppCodeGenModule`, whose fields are `{const char* moduleName; uint32 methodPointerCount;
+   const Il2CppMethodPointer* methodPointers;}`. For this title: 3984 method pointers at
+   `0x8f17ec0`, all in `.text`.
+2. **The index** is the metadata token: `methodPointerIndex == (token & 0xFFFFFF) - 1`, and a
+   method belongs to an assembly when its `declaringType` falls inside that image's
+   `typeStart..typeStart+typeCount`. No type struct parsing is needed.
 
-The remaining route is manual: locate `MetadataCache::Initialize` in a disassembler — there is a
-Ghidra setup in `scratch/home/ghidra-projects` — and read the registration pointers out of it.
+`scratch/il2cpp_methods.py` does this. It resolves **117,803 method addresses across 155
+assemblies** — everything a dump would have given us for this purpose.
+
+Two metadata facts worth keeping, both of which cost time by being assumed instead of measured:
+`sizeof(Il2CppTypeDefinition)` here is **88**, not the 120 the field list implies, giving
+**17493** type definitions — which is exactly the `fieldOffsetsCount`/`typeDefinitionsSizesCount`
+in `MetadataRegistration` (`0x8ff0078`, found via the same route). And the documented
+`Il2CppTypeDefinition` field order does **not** match this build: no `(u32 start, u16 count)` pair
+satisfies `start[t+1] == start[t] + count[t]`, so do not trust it for `methodStart`.
+
+### What this revealed about the C# gate, so far
+
+The auth path lives in `Team17.CrossPlay.Core.dll` and `Team17.CrossPlay.Auth.dll`:
+
+| Method | Address |
+|---|---|
+| `Team17.CrossPlay.Core::SendAuthRequest` | `0x23f6460` |
+| `Team17.CrossPlay.Core::GetT17AuthJson` | `0x23f8130` |
+| `Team17.CrossPlay.Core::BE_PreInitialise` | `0x23f8000` |
+| `Team17.CrossPlay.Core::GetCorePreInitData` | `0x23f8050` |
+| `Team17.CrossPlay.Auth::WaitingForResponse` | `0x4c25930` |
+| `Team17.CrossPlay.Auth::GetFullResponse` / `GetGlobalPlayerID` | `0x4c25450` / `0x4c254d0` |
+
+`BE_PreInitialise` is a **P/Invoke stub**: it marshals one managed string and calls native
+`0x45a930`. The string is **not our HTTP response** — `GetT17AuthJson` (seven parameters, called
+from `Core::<Update>b__142_0` and `Core::<_Authorise>b__0`) **rebuilds** the JSON from the C#
+model. So the eleven fields `T17BE_Transport::PreInitialise` demands are produced by C#, and our
+reply only has to satisfy *C#'s* parser — which likely explains why adding `version` to the HTTP
+response changed nothing: if the C# model has no such field, it is dropped before native ever
+sees it.
+
+`WaitingForResponse` reads `exp` with `ldrsw` + `FromUnixTimeSeconds`, so that field is a signed
+32-bit unix time and ours is in range.
+
+**Next step:** read the C# field layout of the auth response class and the seven arguments at the
+`GetT17AuthJson` call site (`0x23f9268`) to see exactly which response fields survive into the
+native JSON. `scratch/addr2name.pkl` caches the address→name map for annotating disassembly.
 
 ## Tooling
 
