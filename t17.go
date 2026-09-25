@@ -150,18 +150,21 @@ func (s *server) t17GetToken(w http.ResponseWriter, r *http.Request, body []byte
 		"role":      "client",
 		"exp":       time.Now().Add(ttl).Unix(),
 		"ttl":       int(ttl.Seconds()),
-		// The eleventh key. T17BE_Transport::PreInitialise (0x68f2c0 in the 1.3.315 binary)
+		// The C# model is the real gate, not the native SDK: `BE_PreInitialise` is a P/Invoke
+		// stub that hands native ONE string, and `GetT17AuthJson` rebuilds that string from the
+		// managed object. So this reply has to match the C# response class in
+		// Team17.CrossPlay.Auth exactly — its twelve fields, read out of the metadata field
+		// table, are websocketUrl, token, exp, ttl, displayName, globalPlayerId, role,
+		// blockList, version, deviceId, platformId, killSwitchActive. Nothing else belongs
+		// here: `apiVersion` is a field of SimpleCorePreInitData, a different class.
+		"killSwitchActive": false,
+		// T17BE_Transport::PreInitialise (0x68f2c0 in the 1.3.315 binary)
 		// parses the root object and looks its keys up in a fixed order, twice: a validation
 		// pass that emits "Backend Missing required <field>" for the ten above, then a fill
 		// pass that re-reads them and ends at `version` (0x6901a4, key length 7) with no error
 		// string of its own — which is why the ten-field reply was accepted over HTTP and then
 		// dropped in silence. Copied as a string like its neighbours in that pass.
 		"version": "1",
-		// The C# layer in front of it (`SimpleCorePreInitData`: `_websocketFullConnectionString
-		// _websocketUrl _role _blockList _apiVersion ttl bAllOK bKillSwitchActive`) spells the
-		// same thing apiVersion; that name exists in the C# metadata and nowhere in the native
-		// binary, so send both.
-		"apiVersion": 1,
 	}
 	writeJSON(w, 200, fields)
 	return true

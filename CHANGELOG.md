@@ -3,6 +3,23 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.29.0 — 2026-09-25
+
+- t17: the get-token reply now matches the **C# response class** exactly — twelve fields:
+  websocketUrl, token, exp, ttl, displayName, globalPlayerId, role, blockList, version, deviceId,
+  platformId, **killSwitchActive**. Two corrections fall out of reading it: `killSwitchActive` was
+  never sent, and `apiVersion` was sent but belongs to a *different* class
+  (`SimpleCorePreInitData`), not to this reply.
+- The C# is the real gate, not the native SDK. `BE_PreInitialise` is a P/Invoke stub that passes
+  native a single string, and `GetT17AuthJson` **rebuilds** that string from the managed object —
+  so the eleven fields `T17BE_Transport::PreInitialise` demands are produced by C#, and our reply
+  only ever had to satisfy the C# model.
+- Read without a working IL2CPP dump: both Il2CppDumper and Il2CppInspectorRedux fail on this
+  build because the compiler folded `g_CodeRegistration->codeGenModules` into a constant.
+  `scratch/il2cpp_methods.py` maps 117,803 method names to addresses from the code-gen module and
+  metadata tokens instead; the class fields come from the metadata field table, where a class's
+  fields are contiguous.
+
 ## v0.28.5 — 2026-09-25
 
 - t17: `blockList` is a **string** holding JSON (`"[]"`), not a JSON array.

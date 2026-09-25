@@ -114,12 +114,18 @@ func TestT17GetTokenCarriesEveryRequiredField(t *testing.T) {
 	// The order PreInitialise looks them up in, including the `version` its fill pass reads
 	// without ever naming it in an error.
 	for _, field := range []string{"websocketUrl", "token", "exp", "ttl", "displayName",
-		"globalPlayerId", "role", "blockList", "deviceId", "platformId", "version"} {
+		"globalPlayerId", "role", "blockList", "deviceId", "platformId", "version",
+		"killSwitchActive"} {
 		if _, ok := got[field]; !ok {
 			t.Errorf("missing required field %q", field)
 		}
 	}
 	if got["globalPlayerId"] != "aaaaaaaaaaaa0001" || got["role"] != "client" {
 		t.Errorf("wrong identity or role: %s", w.Body)
+	}
+	// The C# class has exactly twelve fields and JSON that carries anything else is a different
+	// shape than the one it models; `apiVersion` in particular belongs to another class.
+	if len(got) != 12 {
+		t.Errorf("reply has %d fields, the C# response class has 12: %s", len(got), w.Body)
 	}
 }
