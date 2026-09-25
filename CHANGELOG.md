@@ -3,6 +3,14 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.26.0 — 2026-09-25
+
+- t17: Team17's backend (`*.t17service.com`) is redirected here and read — every request is
+  logged and passed to the real service, whose reply is logged too. Moving Out 2 asks
+  `directory.t17service.com` for an auth token and a `websocketUrl` before it ever reaches
+  Photon Fusion; this records that exchange. `T17_PASSTHROUGH=0` answers 404 instead.
+  A capture spike: it moves to `servers/t17` once OpenPak answers for itself.
+
 ## v0.25.3 — 2026-09-24
 
 - deps: grpc 1.83.2, x/net 0.59 (Dependabot)

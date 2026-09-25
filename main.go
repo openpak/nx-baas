@@ -2499,6 +2499,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.olsc(w, r, body)
 	case strings.Contains(host, "pctl.srv.nintendo.net") || strings.HasPrefix(host, "app.lp1.srv"):
 		s.serviceStatus(w, r, body)
+	case strings.HasSuffix(host, ".t17service.com") || strings.HasSuffix(host, ".execute-api.eu-west-1.amazonaws.com"):
+		// Team17's backend (Moving Out 2 and the other T17 titles), redirected here
+		// only to be read: t17.go logs it and passes it to the real service.
+		s.t17(w, r, body)
 	// Answered by path rather than host, and only after every host-specific
 	// handler above has declined: the NIM surfaces that had no handler
 	// (eshop_unserved.go). It returns false when the path is not one of them.
