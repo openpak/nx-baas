@@ -184,6 +184,33 @@ a validation pass that can name what is missing, then a fill pass that cannot:
 `version` has **no "Backend Missing required" string of its own**, so omitting it is accepted over
 HTTP and then dropped in silence with no socket and no diagnostic. That cost several test rounds.
 
+### The socket opens (2026-09-25 21:43)
+
+`wss://game.t17service.com/socket?token=<token>` — the token rides as a **query parameter**, which
+is what the bare `?token=` literal in the binary was for. The client offers
+`Sec-WebSocket-Extensions: permessage-deflate`; declining it (simply not echoing the header) is
+fine. `[t17] socket: open` with `player=<user-a>#7016`.
+
+**The gate that held this up all evening was `displayName`.** T17BE splits `displayNameFull` at
+`'#'`; the split helper at `0x6975a0` loads the literal `"#"` (`0x7138d52`), calls find, and
+**returns false when it is absent**, which fails `PreInitialise` through
+"Problem splitting the displayNameFull into short!!" — a path with **no** "Backend Missing
+required" string, so it produced auth-succeeds-then-silence. A name without a tag could never
+have worked regardless of every other field.
+
+### The request envelope
+
+Read from the strings around `InternalRequest_GoOnline` (`0x695388`): a request is
+
+```json
+{"action": "/websocket/go-online",
+ "headers": {"request-id": "...", "Authorization": "Bearer <token>"},
+ "body": { … }}
+```
+
+with `chunk` and `null` also in that table, and **every response requires a `headers` object**
+(`__ParseJSONObject --> No Header for Response - REQUIRED FOR RESPONSES!!`).
+
 ### Still unresolved
 
 With all eleven fields correct the game still never dials the websocket — no DNS lookup for the
