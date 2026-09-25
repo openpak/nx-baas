@@ -143,10 +143,13 @@ func (s *server) t17GetToken(w http.ResponseWriter, r *http.Request, body []byte
 		"platformId":     in.PlatformID,
 		"deviceId":       in.DeviceID,
 		"globalPlayerId": id,
-		"blockList":      []any{},
-		"role":           "client",
-		"exp":            time.Now().Add(ttl).Unix(),
-		"ttl":            int(ttl.Seconds()),
+		// A string holding JSON, not an array: T17BE_FriendSystem::__ParseInitialBlockList
+		// (0x669acc) hands this value to 0x670180, the same parser PreInitialise runs on the
+		// whole reply, and logs "Problem Parsing JSON Chunk" when it will not parse.
+		"blockList": "[]",
+		"role":      "client",
+		"exp":       time.Now().Add(ttl).Unix(),
+		"ttl":       int(ttl.Seconds()),
 		// The eleventh key. T17BE_Transport::PreInitialise (0x68f2c0 in the 1.3.315 binary)
 		// parses the root object and looks its keys up in a fixed order, twice: a validation
 		// pass that emits "Backend Missing required <field>" for the ten above, then a fill

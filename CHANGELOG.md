@@ -3,6 +3,14 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.28.5 — 2026-09-25
+
+- t17: `blockList` is a **string** holding JSON (`"[]"`), not a JSON array.
+  `T17BE_FriendSystem::__ParseInitialBlockList` (0x669acc) passes the value to 0x670180 — the
+  same parser `PreInitialise` runs on the whole reply — so an array is a JSON chunk it cannot
+  parse. `exp` and `ttl` are confirmed numbers (read with `ldr w8,[member+0x18]`) and `version`
+  a string (string-assign helper 0x1f4b9f0), so the rest of the reply matches the code.
+
 ## v0.28.4 — 2026-09-25
 
 - t17: send `version`, the eleventh key. Recovered from the binary rather than guessed:
