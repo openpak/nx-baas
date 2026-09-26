@@ -57,7 +57,7 @@ func (s *server) penneNotePresence(p penne.Table) bool {
 
 	state, appID, appField, groupID, acdIndex := presenceFromExtras(doc, stateByte)
 	// Only a real console speaks Penne: emulators publish over REST.
-	s.noteClientPresence(u, device, "switch", state, appID, appField, groupID, acdIndex)
+	s.noteClientPresence(u, device, "switch", "", state, appID, appField, groupID, acdIndex)
 	log.Printf("[nx-baas] penne: presence user=%s device=%s byte=%d %s app=%s field=%q", userID, device, stateByte, state, appID, appField)
 	return true
 }

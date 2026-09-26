@@ -96,6 +96,8 @@ type server struct {
 	// liveSessionClient is the client each session was registered with, for
 	// the same reason: a heartbeat cannot change it.
 	liveSessionClient map[string]string
+	// liveSessionOS is the OS each session was registered with, likewise.
+	liveSessionOS map[string]string
 	// corePresence caches what the core last said about other platforms.
 	corePresence *corePresenceCache
 	coreSeenOnce sync.Once
@@ -685,15 +687,17 @@ func (s *server) searchUserObj(f Friend, now int64) map[string]any {
 // client is what the request said it came from (X-OpenPak-Client). When it
 // said nothing, the client of the account's live claim is used, so a real
 // console's title-less session says "switch" once Penne has told us so.
-func (s *server) reportOnline(ctx context.Context, u *User, client string) {
+// clientOS travels with client and is taken from the same claim when client is.
+func (s *server) reportOnline(ctx context.Context, u *User, client, clientOS string) {
 	if u == nil || u.PID == 0 {
 		return
 	}
 	if client == "" {
-		client = aggregatePresence(u, time.Now().Unix(), presenceLease()).Client
+		agg := aggregatePresence(u, time.Now().Unix(), presenceLease())
+		client, clientOS = agg.Client, agg.OS
 	}
 	if b, ok := s.acct.(*openpakBackend); ok {
-		b.Online(ctx, u.PID, client)
+		b.Online(ctx, u.PID, client, clientOS)
 	}
 }
 
@@ -922,11 +926,11 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		// A console re-logs in every hour while it plays; the login knows no
 		// title, so it must not overwrite the one the device already published
 		// (2026-09-22: a game dropping off the friend list at each login).
-		client := requestClient(r)
+		client, clientOS := requestClient(r), requestClientOS(r)
 		if !s.deviceClaimLive(u, form.Get("id")) {
-			s.noteClientPresence(u, form.Get("id"), client, "ONLINE", "", "", "", -1)
+			s.noteClientPresence(u, form.Get("id"), client, clientOS, "ONLINE", "", "", "", -1)
 		}
-		s.reportOnline(r.Context(), u, client)
+		s.reportOnline(r.Context(), u, client, clientOS)
 		res := map[string]any{
 			"expiresIn": 10800, "user": s.userObj(u, id, ""), "idToken": s.idToken(u, id, username, app),
 			"accessToken": s.accessToken(u.ID, 2, func() string {
@@ -1222,16 +1226,16 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				baasErr(w, r, 400, "invalid_params", "Invalid Params", "no presence state in patch")
 				return
 			}
-			client := requestClient(r)
-			s.noteClientPresence(u, device, client, state, appID, appField, groupID, acdIndex)
+			client, clientOS := requestClient(r), requestClientOS(r)
+			s.noteClientPresence(u, device, client, clientOS, state, appID, appField, groupID, acdIndex)
 			// This is what keeps someone counted as online: the lease the core holds is short,
 			// and a client that has gone away stops renewing it.
 			if state == "OFFLINE" {
 				s.reportOffline(r.Context(), u)
 			} else {
-				s.reportOnline(r.Context(), u, client)
+				s.reportOnline(r.Context(), u, client, clientOS)
 			}
-			log.Printf("[nx-baas] presence user=%s pid=%d device=%s client=%q %s app=%s field=%q", u.ID, u.PID, device, client, state, appID, appField)
+			log.Printf("[nx-baas] presence user=%s pid=%d device=%s client=%q os=%q %s app=%s field=%q", u.ID, u.PID, device, client, clientOS, state, appID, appField)
 			writeJSON(w, 200, s.userObj(u, s.identity(u), ""))
 		default:
 			dump(r, body, "!! UNHANDLED device_accounts")

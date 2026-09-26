@@ -133,7 +133,7 @@ func aggregatePresence(u *User, now int64, lease time.Duration) Presence {
 	}
 	return Presence{State: best.State, AppID: best.AppID, AppField: best.AppField,
 		PresenceGroupID: best.PresenceGroupID, ACDIndex: best.ACDIndex,
-		UpdatedAt: best.UpdatedAt, LogoutAt: out.LogoutAt, Client: best.Client}
+		UpdatedAt: best.UpdatedAt, LogoutAt: out.LogoutAt, Client: best.Client, OS: best.OS}
 }
 
 // devicePresenceWins picks between two live claims: higher rank first, then
@@ -157,14 +157,15 @@ func devicePresenceWins(a, b *DevicePresence) bool {
 // noteDevicePresence records one device's claim when nothing says what the
 // device is (a Photon game session, tests).
 func (s *server) noteDevicePresence(u *User, deviceID, state, appID, appField, groupID string, acdIndex int) {
-	s.noteClientPresence(u, deviceID, "", state, appID, appField, groupID, acdIndex)
+	s.noteClientPresence(u, deviceID, "", "", state, appID, appField, groupID, acdIndex)
 }
 
 // noteClientPresence records one device's claim. state OFFLINE ends the
 // device's live claim (kept as remembered departure evidence, not as a live
 // one). Whether the account as a whole is anywhere is the aggregate's call.
-// client is what the device is (see Presence.Client).
-func (s *server) noteClientPresence(u *User, deviceID, client, state, appID, appField, groupID string, acdIndex int) {
+// client is what the device is (see Presence.Client), clientOS what it runs on
+// (see Presence.OS).
+func (s *server) noteClientPresence(u *User, deviceID, client, clientOS, state, appID, appField, groupID string, acdIndex int) {
 	// An all-zero title id is "no game", not a game whose id is zero: the
 	// emulator publishes it at the menu, and it reached the core as a title
 	// with players on it (2026-09-20, the status page listing
@@ -189,7 +190,7 @@ func (s *server) noteClientPresence(u *User, deviceID, client, state, appID, app
 		} else {
 			u.DevicePresence[deviceID] = &DevicePresence{DeviceID: deviceID, State: strings.ToUpper(state),
 				AppID: appID, AppField: appField, PresenceGroupID: groupID, ACDIndex: acdIndex,
-				UpdatedAt: now, ExpiresAt: now + lease, Client: client}
+				UpdatedAt: now, ExpiresAt: now + lease, Client: client, OS: clientOS}
 		}
 		// Shadow the old field for anything that still reads it (rollback
 		// builds, scripts). The aggregate never trusts it over device entries.
@@ -370,15 +371,16 @@ func (s *server) reconcilePresenceOnce(now time.Time, lease time.Duration) {
 				// switching game (or putting one down, or moving from the
 				// emulator to the console) has to be re-registered: a
 				// heartbeat cannot change what it says.
-				if s.liveSessionTitle[u.ID] != agg.AppID || s.liveSessionClient[u.ID] != agg.Client {
+				if s.liveSessionTitle[u.ID] != agg.AppID || s.liveSessionClient[u.ID] != agg.Client ||
+					s.liveSessionOS[u.ID] != agg.OS {
 					s.expireCoreSession(b, u)
-					s.registerCoreSession(b, u, agg.AppID, agg.Client)
+					s.registerCoreSession(b, u, agg.AppID, agg.Client, agg.OS)
 					continue
 				}
 				s.renewCoreSession(b, u)
 				continue
 			}
-			s.registerCoreSession(b, u, agg.AppID, agg.Client)
+			s.registerCoreSession(b, u, agg.AppID, agg.Client, agg.OS)
 		default:
 			// The aggregate is offline: end the core session at once instead
 			// of waiting out its lease, and stop showing the claim locally.
@@ -413,7 +415,7 @@ func (s *server) expireLocalPresence(u *User, now int64, lease time.Duration) {
 // it from there -- the website, the app, another console's emulator -- so a
 // title left empty is the difference between "Leia is online" and "Leia is
 // playing Kirby on a Switch" everywhere at once (2026-09-20).
-func (s *server) registerCoreSession(b *openpakBackend, u *User, titleID, client string) {
+func (s *server) registerCoreSession(b *openpakBackend, u *User, titleID, client, clientOS string) {
 	accountID := b.accountFor(u.PID)
 	if accountID == "" {
 		return
@@ -422,7 +424,7 @@ func (s *server) registerCoreSession(b *openpakBackend, u *User, titleID, client
 	defer cancel()
 	resp, err := b.sessions.RegisterSession(ctx, &accountv1.RegisterSessionRequest{
 		AccountId: accountID, Namespace: b.namespace, TitleId: titleID,
-		EndpointRef: "baas", LeaseSeconds: int32(onlineLease.Seconds()), Client: client,
+		EndpointRef: "baas", LeaseSeconds: int32(onlineLease.Seconds()), Client: client, Os: clientOS,
 	})
 	if err != nil {
 		logErr("presence register", err)
@@ -439,8 +441,12 @@ func (s *server) registerCoreSession(b *openpakBackend, u *User, titleID, client
 	}
 	s.liveSessions[u.ID] = resp.GetSessionId()
 	s.liveSessionTitle[u.ID] = titleID
+	if s.liveSessionOS == nil {
+		s.liveSessionOS = map[string]string{}
+	}
 	s.liveSessionClient[u.ID] = client
-	log.Printf("[nx-baas] presence: core session for %s namespace=%s title=%q client=%q", accountID, b.namespace, titleID, client)
+	s.liveSessionOS[u.ID] = clientOS
+	log.Printf("[nx-baas] presence: core session for %s namespace=%s title=%q client=%q os=%q", accountID, b.namespace, titleID, client, clientOS)
 }
 
 // renewCoreSession heartbeats the account's session so the core's shorter
@@ -455,7 +461,7 @@ func (s *server) renewCoreSession(b *openpakBackend, u *User) {
 		return
 	}
 	delete(s.liveSessions, u.ID)
-	s.registerCoreSession(b, u, s.liveSessionTitle[u.ID], s.liveSessionClient[u.ID])
+	s.registerCoreSession(b, u, s.liveSessionTitle[u.ID], s.liveSessionClient[u.ID], s.liveSessionOS[u.ID])
 }
 
 // expireCoreSession ends the core session for an account that is offline.
@@ -467,6 +473,7 @@ func (s *server) expireCoreSession(b *openpakBackend, u *User) {
 	delete(s.liveSessions, u.ID)
 	delete(s.liveSessionTitle, u.ID)
 	delete(s.liveSessionClient, u.ID)
+	delete(s.liveSessionOS, u.ID)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if _, err := b.sessions.ExpireSession(ctx, &accountv1.ExpireSessionRequest{SessionId: id}); err != nil {

@@ -21,6 +21,25 @@ func TestParseClient(t *testing.T) {
 	}
 }
 
+func TestParseClientOS(t *testing.T) {
+	for in, want := range map[string]string{
+		"ryujinx/1.3.2 (macOS)": "macos",
+		"eden/0.1 (Windows)":    "windows",
+		"citron/0.7 ( linux )":  "linux",
+		"ryujinx/1.3.2":         "",
+		"ryujinx/1.3.2 (beos)":  "",
+		"ryujinx/1.3.2 (ios":    "",
+		"":                      "",
+	} {
+		if got := parseClientOS(in); got != want {
+			t.Errorf("parseClientOS(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := parseClient("ryujinx/1.3.2 (macOS)"); got != "ryujinx" {
+		t.Errorf("parseClient with os = %q", got)
+	}
+}
+
 func TestClientLabels(t *testing.T) {
 	for _, c := range []struct{ ns, client, want string }{
 		{"switch", "", "Switch"}, {"switch", "switch", "Switch"}, {"switch", "ryujinx", "Ryujinx"},
@@ -52,33 +71,35 @@ func TestClientHeaderReachesTheCore(t *testing.T) {
 	r := authed("PATCH", "/1.0.0/users/"+u.ID+"/device_accounts/dev-emu",
 		`[{"op":"replace","path":"/presence/state","value":"PLAYING"},
 		  {"op":"add","path":"/presence/extras/friends/appInfo:appId","value":"01004d300c5ae000"}]`, u, s)
-	r.Header.Set("X-OpenPak-Client", "ryujinx/1.3.0")
+	r.Header.Set("X-OpenPak-Client", "ryujinx/1.3.0 (macOS)")
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
 	if w.Code != 200 {
 		t.Fatalf("patch: %d %s", w.Code, w.Body.String())
 	}
-	if got := s.store.User(u.ID).DevicePresence["dev-emu"].Client; got != "ryujinx" {
-		t.Fatalf("claim client = %q", got)
+	if got := s.store.User(u.ID).DevicePresence["dev-emu"]; got.Client != "ryujinx" || got.OS != "macos" {
+		t.Fatalf("claim client = %q os = %q", got.Client, got.OS)
 	}
 	client := func() string {
 		sess.mu.Lock()
 		defer sess.mu.Unlock()
-		return sess.clients[account]
+		return sess.clients[account] + "/" + sess.oses[account]
 	}
-	if got := client(); got != "ryujinx" {
+	if got := client(); got != "ryujinx/macos" {
 		t.Fatalf("title-less core session client = %q", got)
 	}
+	// The reconciler re-registers from the stored claim: the OS survives it.
+	delete(s.liveSessions, u.ID)
 	s.reconcilePresenceOnce(time.Now(), presenceLease())
-	if got := client(); got != "ryujinx" {
+	if got := client(); got != "ryujinx/macos" {
 		t.Fatalf("reconciled core session client = %q", got)
 	}
 
 	// The same person moves to a real console (Penne): the session is
 	// re-registered with the new client, not heartbeaten with the old one.
-	s.noteClientPresence(s.store.User(u.ID), "dev-emu", "switch", "PLAYING", "01004d300c5ae000", "{}", "01004d300c5ae000", -1)
+	s.noteClientPresence(s.store.User(u.ID), "dev-emu", "switch", "", "PLAYING", "01004d300c5ae000", "{}", "01004d300c5ae000", -1)
 	s.reconcilePresenceOnce(time.Now().Add(time.Second), presenceLease())
-	if got := client(); got != "switch" {
+	if got := client(); got != "switch/" {
 		t.Fatalf("after moving to the console, core client = %q", got)
 	}
 }

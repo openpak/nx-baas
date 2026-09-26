@@ -3,8 +3,9 @@ package main
 
 // Which client a person is on, and how every surface names it.
 //
-// Emulators send `X-OpenPak-Client: <client>/<version>` (ryujinx, eden,
-// citron) on their BAAS requests. A real console sends nothing over REST and
+// Emulators send `X-OpenPak-Client: <client>/<version> (<os>)` (ryujinx, eden,
+// citron; os one of windows, macos, linux, android, ios) on their BAAS
+// requests. Older builds leave the "(os)" part off. A real console sends nothing over REST and
 // is recognised by speaking Penne instead. The client rides with the device
 // claim into the core session, so the website, the app, a Wii U and a 3DS can
 // all say "Playing Kirby on Ryujinx" rather than only "online".
@@ -25,6 +26,30 @@ const clientHeader = "X-OpenPak-Client"
 // screens.
 func requestClient(r *http.Request) string {
 	return parseClient(r.Header.Get(clientHeader))
+}
+
+// requestClientOS reads the OS from X-OpenPak-Client (see parseClientOS).
+func requestClientOS(r *http.Request) string {
+	return parseClientOS(r.Header.Get(clientHeader))
+}
+
+// parseClientOS returns the OS in the header's trailing "(<os>)", lower case,
+// when it is one the core knows; "" otherwise (a real console, an older
+// emulator, or anything unrecognised).
+func parseClientOS(v string) string {
+	_, rest, ok := strings.Cut(v, "(")
+	if !ok {
+		return ""
+	}
+	os, _, ok := strings.Cut(rest, ")")
+	if !ok {
+		return ""
+	}
+	switch os = strings.ToLower(strings.TrimSpace(os)); os {
+	case "windows", "macos", "linux", "android", "ios":
+		return os
+	}
+	return ""
 }
 
 func parseClient(v string) string {

@@ -26,6 +26,10 @@ service Sessions {
   // as presence, so a status page and a friends list can never disagree about
   // who is online. Counts accounts, not sessions.
   rpc GetPlayerCounts(GetPlayerCountsRequest) returns (GetPlayerCountsResponse);
+  // How long each title has been played online, per client and OS: every
+  // finished session plus the live ones. The website marks a title tested on a
+  // console or emulator from this. Aggregates only, no accounts.
+  rpc GetPlaytime(GetPlaytimeRequest) returns (GetPlaytimeResponse);
 }
 
 service Invitations {
@@ -66,6 +70,10 @@ message RegisterSessionRequest {
   // "ryujinx", "eden", "citron", "wiiu", "3ds", "cemu", "azahar". Optional;
   // empty means the adapter could not tell. Capped at 64 bytes.
   string client = 6;
+  // The OS an emulator said it runs on: "windows", "macos", "linux",
+  // "android", "ios". Empty for a real console and when the emulator did not
+  // say; anything else is stored as empty.
+  string os = 7;
 }
 
 message RegisterSessionResponse {
@@ -149,6 +157,7 @@ message Presence {
   int64 since_unix = 4;    // when the session was registered
   string node_id = 5;      // the federation node the session came through; "home" for the core's own adapters
   string client = 6;       // RegisterSessionRequest.client of that session; empty when unknown
+  string os = 7;           // RegisterSessionRequest.os of that session; empty when unknown
 }
 
 message ListInvitationsRequest {
@@ -177,6 +186,23 @@ message RejectInvitationRequest {
 }
 
 message RejectInvitationResponse { bool rejected = 1; }
+
+message GetPlaytimeRequest {}
+
+message GetPlaytimeResponse {
+  repeated PlaytimeTally tallies = 1;
+}
+
+// Playtime of one title on one client and OS, across every account.
+message PlaytimeTally {
+  string namespace = 1;
+  string title_id = 2;
+  string client = 3;
+  string os = 4;
+  int64 total_seconds = 5;   // every session added up
+  int64 longest_seconds = 6; // the longest single session
+  int32 sessions = 7;
+}
 
 message GetPlayerCountsRequest {}
 

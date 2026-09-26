@@ -3,6 +3,18 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.32.0 — 2026-09-26
+
+- presence: the emulator's OS rides into the core session. `X-OpenPak-Client` is now
+  `<client>/<version> (<os>)`; the `(<os>)` part (windows, macos, linux, android, ios, any case,
+  stored lower case; anything else or missing is "") is kept on the device claim beside the
+  client and sent as `RegisterSessionRequest.os` on every registration — the login's title-less
+  session, the presence PATCH and the reconciler's re-registrations — so the website can mark a
+  title tested per emulator and OS from playtime. A change of OS re-registers the session like a
+  change of client does. Real consoles and older emulators send no OS.
+- accountpb: refreshed `sessions_invitations` from account v0.11.0 (`os` on
+  `RegisterSessionRequest`/`Presence`, `Sessions.GetPlaytime`).
+
 ## v0.31.0 — 2026-09-26
 
 - t17: removed. Team17's backend now has its own service, **`servers/t17`**, which Traefik routes
