@@ -11,6 +11,10 @@ editing anything here.
 - [B: Penne and notifications](native-switch-penne-notifications-prd.md)
 - [C: native invitations](native-switch-invitations-prd.md)
 - [D: native OpenPak store](native-switch-store-prd.md)
-- [Native Switch parental controls](native-switch-parental-controls-prd.md) — pctl/moon pairing and settings sync; evidence-gated phases, outside the A–D split.
+
+Parental controls (pctl/moon pairing and settings sync) is documented in the
+[docs repo](https://github.com/openpak/docs) — `switch/native-switch-parental-controls-prd.md`,
+beside the firmware study it is written against — because documentation lives
+there, not in the repo it happens to describe.
 
 Isolated worktrees for A–D sit beside this repository as `nx-baas-<workstream>`.

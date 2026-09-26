@@ -5,9 +5,9 @@ package main
 // server. Everything the console does on its own -- the PIN, the restriction
 // level, the play timer, the bedtime alarm -- lives in pctl's system savedata and
 // works offline. What dies without a server is pairing with the parent app and
-// the settings sync. Contract: docs/switch/parental-controls-firmware-2026-09-26.md.
+// the settings sync. Contract: the docs repo, switch/parental-controls-firmware-2026-09-26.md.
 //
-// Phase 0 of nx-baas/prds/native-switch-parental-controls-prd.md: log what the
+// Phase 0 of the PRD (docs repo, switch/native-switch-parental-controls-prd.md): log what the
 // console sends and refuse in the shape it recognises. The ten paths, their
 // verbs and their bodies are not invented here -- one on-console pairing attempt
 // against this handler prints them, and the phases after this are written against
