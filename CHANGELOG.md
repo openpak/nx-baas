@@ -3,6 +3,13 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.31.0 — 2026-09-26
+
+- t17: removed. Team17's backend now has its own service, **`servers/t17`**, which Traefik routes
+  the three `*.t17service.com` names to directly. The capture spike here said from its first commit
+  that it should move once the protocol was known; it is known (`servers/t17/docs/protocol.md`),
+  so it has. `T17_SELF_HOST` is no longer read.
+
 ## v0.30.0 — 2026-09-25
 
 - t17: `displayName` carries a `#` tag. T17BE splits `displayNameFull` at `'#'` to derive the
