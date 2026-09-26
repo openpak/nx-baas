@@ -52,9 +52,17 @@ func (s *server) olsc(w http.ResponseWriter, r *http.Request, body []byte) {
 // frs is the friend recommendation service the friends applet calls when it
 // opens. The module parses the reply as JSON (auth kind 1: none): $.items[*]
 // with required requestedClientFriendId, clientFriend.nickname and createdAt,
-// and errors in $.errors[0].{code,message}. An empty gRPC body left the parse
-// without its items[] close, so 20300 failed; the honest empty answer is
-// {"items":[]} [friends-contract-22.5.0 §A.9, C18].
+// and errors in $.errors[0].{code,message}. An empty body is not the failure it
+// was once written up as: rapidjson error 1 (document empty) is mapped to
+// success with 0 items by the result table at 0x222448. What does fail is a
+// *malformed* body (2121-0101/-0102/-0103), so the reply must be valid JSON.
+// {"items":[]} is that, and it states the emptiness rather than implying it
+// [friends-contract-22.5.0 §A.9, C18].
+//
+// Two constraints the parser imposes on any real list we serve later: an item
+// missing one required field is skipped silently, and mii_image_url_param is
+// truncated to 15 chars with the item still counted — so an over-long param
+// becomes a broken image URL on the console rather than an error here.
 //
 // Only the recommendations operation is evidenced. Everything else FRS could
 // serve is answered with an explicit gRPC UNIMPLEMENTED and a NOTICE log

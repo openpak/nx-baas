@@ -1962,7 +1962,23 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			frag.Set("id_token", s.naIDToken(c, ""))
 		}
 		dest := form.Get("redirect_uri") + "#" + frag.Encode()
-		log.Printf("[nx-baas] NA silent authorize pid=%d client=%s -> %s", pid, c.ClientID, form.Get("redirect_uri"))
+		// The whole fragment, not just the redirect_uri: the friends module's
+		// NxFriends token fetch dies between this 302 and its own GET, and the
+		// account module's fragment parser is the only thing in between. It
+		// accepts exactly state, error, error_detail, code, id_token,
+		// access_token and expires_in, and silently ignores anything else
+		// (dispatcher 0x20d840 falls through to a plain return), so what is
+		// left to see is the literal text we hand it. An empty NaID would also
+		// explain it: the module caches the token per NA id.
+		// The inbound form matters as much as the answer: we only attach an
+		// id_token when response_type mentions one, and no /api/token exchange
+		// was ever seen either, so "what did it ask for" is still an
+		// assumption taken from the firmware rather than from this server.
+		// ponytail: a diagnostic, and it puts a 15-minute id_token in the
+		// journal. Drop it once the NxFriends fetch is understood.
+		log.Printf("[nx-baas] NA silent authorize pid=%d client=%s naID=%q response_type=%q scope=%q state=%q nonce=%q -> %s",
+			pid, c.ClientID, c.NaID, form.Get("response_type"), form.Get("scope"),
+			form.Get("state"), form.Get("nonce"), dest)
 		http.Redirect(w, r, dest, http.StatusFound)
 		return
 
@@ -2497,7 +2513,11 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.netdiag(w, r)
 	case strings.Contains(host, "scsi.srv.nintendo.net"):
 		s.olsc(w, r, body)
-	case strings.Contains(host, "pctl.srv.nintendo.net") || strings.HasPrefix(host, "app.lp1.srv"):
+	case strings.Contains(host, "pctl.srv.nintendo.net"):
+		// Parental controls: the pctl sysmodule's moon API (moon.go). Anything
+		// outside /moon/v1 on this host still gets the service-status answer.
+		s.moon(w, r, body)
+	case strings.HasPrefix(host, "app.lp1.srv"):
 		s.serviceStatus(w, r, body)
 	// Answered by path rather than host, and only after every host-specific
 	// handler above has declined: the NIM surfaces that had no handler
