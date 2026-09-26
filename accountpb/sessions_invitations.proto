@@ -30,12 +30,6 @@ service Sessions {
   // finished session plus the live ones. The website marks a title tested on a
   // console or emulator from this. Aggregates only, no accounts.
   rpc GetPlaytime(GetPlaytimeRequest) returns (GetPlaytimeResponse);
-  // A game server saying these players are connected to it right now. Sent
-  // every ~30 s for everyone connected; each mark adds the time since the
-  // player's previous mark (up to 90 s) to their live presence session in that
-  // namespace, which is what GetPlaytime counts. A player with no live titled
-  // session is skipped: the client and OS come from presence.
-  rpc MarkOnline(MarkOnlineRequest) returns (MarkOnlineResponse);
 }
 
 service Invitations {
@@ -193,20 +187,6 @@ message RejectInvitationRequest {
 
 message RejectInvitationResponse { bool rejected = 1; }
 
-message MarkOnlineRequest {
-  repeated OnlinePlayer players = 1; // capped at 1000 per call
-}
-
-message OnlinePlayer {
-  string account_id = 1;
-  string namespace = 2; // "switch", "wiiu", "3ds"
-  string title_id = 3;  // optional; empty marks whichever titled session the account has there
-}
-
-message MarkOnlineResponse {
-  int32 marked = 1; // players that had a live titled session to mark
-}
-
 message GetPlaytimeRequest {}
 
 message GetPlaytimeResponse {
@@ -219,8 +199,6 @@ message PlaytimeTally {
   string title_id = 2;
   string client = 3;
   string os = 4;
-  // Seconds a game server confirmed the player online (MarkOnline), not the
-  // time the title was merely open.
   int64 total_seconds = 5;   // every session added up
   int64 longest_seconds = 6; // the longest single session
   int32 sessions = 7;

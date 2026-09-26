@@ -431,7 +431,6 @@ func (s *server) gameAPI() http.Handler {
 	mux.HandleFunc("/internal/photon-identity", s.photonIdentity)
 	mux.HandleFunc("/internal/mint-token", s.mintToken)
 	mux.HandleFunc("/internal/switch/identity", s.switchIdentity)
-	mux.HandleFunc("/internal/switch/online", s.switchOnline)
 	mux.HandleFunc("/internal/switch/friend-code", s.switchFriendCode)
 	mux.HandleFunc("/internal/switch/account-by-friend-code", s.switchAccountByFriendCode)
 	mux.HandleFunc("/internal/switch/emulator", s.switchEmulator)
