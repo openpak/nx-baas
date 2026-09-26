@@ -14,8 +14,16 @@ package main
 // that log.
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"log"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // The error identities pctl carries as literals (study §5). A refusal that does
@@ -74,4 +82,231 @@ func (s *server) moon(w http.ResponseWriter, r *http.Request, body []byte) {
 	// the bearer truncated -- it is a device token, not a secret we need whole.
 	dump(r, body, "[moon] pctl")
 	moonError(w, moonNotFound)
+}
+
+// ---------- the pairing store ----------
+//
+// Phase 1's data model, and only the part the wire cannot change. A device
+// record, an owner, a pairing code with a deadline, and the setting document
+// held as received: the console-facing envelope is still unknown (study §7 P1),
+// but what has to be *remembered* is not, and the ETag is computed over whatever
+// the parent side stores rather than over named fields.
+
+// PctlDevice is one console's parental-controls record. Nintendo's flow creates
+// it on the parent side first -- a record with a pairing code and no console --
+// and the console adopts it: it searches by code
+// (`/devices?filter.links.pairingCode.code.$eq=`) and then calls
+// `/devices/{id}/activate`. So DauthID is empty until a console claims it.
+type PctlDevice struct {
+	// MoonID is the id in every path after the search. The console formats it
+	// with `%016llx`, so it is a u64 here and rendered at the edge -- whether
+	// the JSON carries it as a number or a hex string is P2, and one line.
+	MoonID uint64 `json:"moonId"`
+	// DauthID is the device id dauth issued ("cert-<8 bytes>"), which is what
+	// the bearer on every moon request proves. Empty until activation.
+	DauthID string `json:"dauthId,omitempty"`
+	// Owners are the parents, as the NaIDs the store already keys accounts by.
+	Owners []string `json:"owners,omitempty"`
+	// PairingCode is live until PairingExpires; both are cleared on activation
+	// so a code is good exactly once.
+	PairingCode    string `json:"pairingCode,omitempty"`
+	PairingExpires int64  `json:"pairingExpires,omitempty"`
+	ActivatedAt    int64  `json:"activatedAt,omitempty"`
+	// Setting is the parental_control_setting document, stored as the parent
+	// side wrote it. Opaque on purpose: the field names are known (study §4) but
+	// which of them a phase-2 editor sends is not, and nothing here needs to
+	// read them to serve a conditional GET.
+	Setting map[string]any `json:"setting,omitempty"`
+	// ETag is what `If-None-Match` is compared against, derived from Setting so
+	// it cannot drift from the document it describes.
+	ETag      string `json:"etag,omitempty"`
+	UpdatedAt int64  `json:"updatedAt,omitempty"`
+}
+
+// Hex renders MoonID the way the console's own paths spell it.
+func (d *PctlDevice) Hex() string { return fmt.Sprintf("%016x", d.MoonID) }
+
+// pctlPairingTTL: long enough to walk to the console, short enough that an
+// abandoned code stops being a way in.
+const pctlPairingTTL = 15 * time.Minute
+
+// pctlPairingAlphabet has no O/0 or I/1 to confuse, and no lowercase. The real
+// alphabet and length are P3 and arrive with the first hardware log; this is one
+// const to change when they do.
+const pctlPairingAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+// randU64 is the moon device id: random, not a counter, so a record cannot be
+// guessed from another one.
+func randU64() uint64 {
+	var b [8]byte
+	rand.Read(b[:])
+	return binary.BigEndian.Uint64(b[:])
+}
+
+func pctlPairingCode() string {
+	b := make([]byte, 6)
+	rand.Read(b)
+	for i, c := range b {
+		b[i] = pctlPairingAlphabet[int(c)%len(pctlPairingAlphabet)]
+	}
+	return string(b)
+}
+
+// pctlDevices is the map, created on first use so no migration is needed for a
+// store written before parental controls existed. Called with mu held.
+func (s *Store) pctlDevices() map[string]*PctlDevice {
+	if s.PctlDevices == nil {
+		s.PctlDevices = map[string]*PctlDevice{}
+	}
+	return s.PctlDevices
+}
+
+// PctlNewPairing mints the record a console can adopt, owned by one NA account.
+func (s *Store) PctlNewPairing(ownerNaID string) *PctlDevice {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	d := &PctlDevice{
+		MoonID:         randU64(),
+		PairingCode:    pctlPairingCode(),
+		PairingExpires: now.Add(pctlPairingTTL).Unix(),
+		UpdatedAt:      now.Unix(),
+	}
+	if ownerNaID != "" {
+		d.Owners = []string{ownerNaID}
+	}
+	s.pctlDevices()[d.Hex()] = d
+	s.save()
+	return d
+}
+
+// PctlByPairingCode answers the console's search. An expired code is not found:
+// the record stays (the parent can see it went stale) but it is no longer a way
+// to claim a console.
+func (s *Store) PctlByPairingCode(code string) *PctlDevice {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().Unix()
+	for _, d := range s.pctlDevices() {
+		if d.PairingCode != "" && d.PairingCode == code && d.PairingExpires > now {
+			return d
+		}
+	}
+	return nil
+}
+
+// PctlByDauth finds the record a bearer belongs to.
+// ponytail: a scan, because a household has a handful of consoles. An index if
+// that ever stops being true.
+func (s *Store) PctlByDauth(dauthID string) *PctlDevice {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if dauthID == "" {
+		return nil
+	}
+	for _, d := range s.pctlDevices() {
+		if d.DauthID == dauthID {
+			return d
+		}
+	}
+	return nil
+}
+
+// PctlActivate binds a console to the record its code found and burns the code.
+// Activating twice with the same console is not an error -- a retried request
+// must not lose the console -- but another console cannot take the record.
+func (s *Store) PctlActivate(moonHex, dauthID string) *PctlDevice {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d := s.pctlDevices()[moonHex]
+	if d == nil || dauthID == "" || (d.DauthID != "" && d.DauthID != dauthID) {
+		return nil
+	}
+	d.DauthID = dauthID
+	d.PairingCode, d.PairingExpires = "", 0
+	if d.ActivatedAt == 0 {
+		d.ActivatedAt = time.Now().Unix()
+	}
+	d.UpdatedAt = time.Now().Unix()
+	s.save()
+	return d
+}
+
+// PctlSetSetting stores the setting document and recomputes its ETag. An
+// unchanged document keeps its ETag, which is what makes the console's
+// `If-None-Match` answer 304 instead of re-downloading every poll.
+func (s *Store) PctlSetSetting(moonHex string, doc map[string]any) *PctlDevice {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d := s.pctlDevices()[moonHex]
+	if d == nil {
+		return nil
+	}
+	tag := pctlETag(doc)
+	if tag == d.ETag {
+		return d
+	}
+	d.Setting, d.ETag, d.UpdatedAt = doc, tag, time.Now().Unix()
+	s.save()
+	return d
+}
+
+// pctlETag is a strong validator over the document's canonical JSON. Go's
+// encoder sorts map keys, so the same document always hashes the same.
+func pctlETag(doc map[string]any) string {
+	b, err := json.Marshal(doc)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(b)
+	return `"` + hex.EncodeToString(sum[:16]) + `"`
+}
+
+// POST /internal/pctl/pairing {"na_id":"…"} -> the code to type on the console.
+// The parent surface is a screen in the app; this is the call behind it, and
+// until that screen exists it is also how a pairing attempt gets a real code to
+// type -- which is what turns the phase-0 log from "unknown code" into the
+// matched path.
+func (s *server) pctlPairing(w http.ResponseWriter, r *http.Request) {
+	if !s.internalOK(r) {
+		apiErr(w, http.StatusUnauthorized, "internal")
+		return
+	}
+	if r.Method != http.MethodPost {
+		apiErr(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	var in struct {
+		NaID string `json:"na_id"`
+	}
+	json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in)
+	d := s.store.PctlNewPairing(in.NaID)
+	log.Printf("[moon] pairing code %s for na=%q device=%s (expires %ds)",
+		d.PairingCode, in.NaID, d.Hex(), int(pctlPairingTTL.Seconds()))
+	writeJSON(w, 200, map[string]any{
+		"moon_id": d.Hex(), "pairing_code": d.PairingCode, "expires_at": d.PairingExpires,
+	})
+}
+
+// ---------- the explainer video ----------
+
+// pctlMovie serves `parentalcontrols-movie-<env>.cdn.nintendo.net/default/
+// switchpc_<lang>.mp4`, the clip the Parental Controls setup screen offers
+// (firmware follow-up §22c; study §7 P5). Whether the screen *blocks* on it is
+// unproven, so this stays a file we hand over when there is one and a logged 404
+// when there is not -- no invented video, and no guess at a codec the console
+// would then have to decode.
+//
+// ponytail: one env var, no asset in the repo. PCTL_MOVIE=/path/to.mp4 and
+// http.ServeFile does the Range handling a video player needs.
+func (s *server) pctlMovie(w http.ResponseWriter, r *http.Request) {
+	path := getenv("PCTL_MOVIE", "")
+	if path == "" {
+		log.Printf("[moon] movie %s%s -- no PCTL_MOVIE configured, answering 404", hostOf(r), r.URL.Path)
+		http.NotFound(w, r)
+		return
+	}
+	log.Printf("[moon] movie %s%s -> %s", hostOf(r), r.URL.Path, path)
+	w.Header().Set("Content-Type", "video/mp4")
+	http.ServeFile(w, r, path)
 }

@@ -1,6 +1,7 @@
 # Native Switch parental controls
 
-Status: phase 0 implemented, awaiting hardware evidence. Date: 2026-09-26.
+Status: phase 0 implemented plus phase 1's store, awaiting hardware evidence.
+Date: 2026-09-26.
 
 Normative evidence:
 [docs/switch/parental-controls-firmware-2026-09-26.md](../../docs/switch/parental-controls-firmware-2026-09-26.md)
@@ -44,11 +45,14 @@ verb per endpoint, device-id shape on the wire, pairing-code alphabet, and
 whether `activate` precedes `AuthorizePairing`. **Until this log exists, no
 request body in phases 1–3 may be invented.**
 
-**Phase 1 — pairing works end to end.** Device record keyed on the dauth device
-id (`dauth.go`) with a server-assigned u64 moon id; owners are existing
-`User.NaID`; pairing codes have a TTL. Endpoints: code lookup, `activate`,
-`owners`, `GET parental_control_setting`. Parent side: one screen in `app/lib/`
-that issues a code and shows the console once it pairs.
+**Phase 1 — pairing works end to end.** *The shape-independent half is done
+ahead of the log (`moon.go`, `Store.PctlDevices`):* the record, a pairing code
+with a 15-minute TTL that a console burns on activation, owners as `User.NaID`,
+the setting document held as received with an ETag computed over it, and
+`POST /internal/pctl/pairing` to mint a code. What is left is the console-facing
+envelope — code lookup, `activate`, `owners`, `GET parental_control_setting` —
+which the phase-0 log supplies, plus the screen in `app/lib/` that calls the
+internal route and shows the console once it pairs.
 *Gate:* on hardware the Parental Controls screen shows the console as managed and
 names the paired account; no reboot needed.
 
@@ -88,7 +92,7 @@ document. Phase 2 stores it; the check is one predicate per feature.
 No game patches (the standing rule). No new service or repository: the handler
 lives in nx-baas beside the other console surfaces, and the parent UI in the
 existing app. The explainer video
-`parentalcontrols-movie-<env>.cdn.nintendo.net/default/switchpc_en.mp4` is a
-static file, served only if the setup screen turns out to block on it (study §7
-P5). Verbs and bodies for phases 1–3 stay unwritten until the phase-0 log
+`parentalcontrols-movie-<env>.cdn.nintendo.net/default/switchpc_en.mp4` is routed
+and serves whatever `PCTL_MOVIE` points at, logging a 404 while that is unset —
+no clip is invented, because whether the setup screen blocks on it is still P5. Verbs and bodies for phases 1–3 stay unwritten until the phase-0 log
 supplies them.

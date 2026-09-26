@@ -172,6 +172,10 @@ type Store struct {
 	Users    map[string]*User                `json:"users"`
 	NaToPID  map[string]uint64               `json:"naToPid"` // Nintendo-Account id_token sub -> OpenPak PID
 	Requests map[string]*FriendRequestRecord `json:"requests,omitempty"`
+	// PctlDevices are the parental-controls records, keyed by the moon device id
+	// as the console spells it (moon.go). Nil in a store written before they
+	// existed; created on first use rather than migrated.
+	PctlDevices map[string]*PctlDevice `json:"pctlDevices,omitempty"`
 }
 
 func loadStore(path string) *Store {

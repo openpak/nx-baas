@@ -2517,6 +2517,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Parental controls: the pctl sysmodule's moon API (moon.go). Anything
 		// outside /moon/v1 on this host still gets the service-status answer.
 		s.moon(w, r, body)
+	case strings.HasPrefix(host, "parentalcontrols-movie-"):
+		// The Parental Controls explainer clip (moon.go).
+		s.pctlMovie(w, r)
 	case strings.HasPrefix(host, "app.lp1.srv"):
 		s.serviceStatus(w, r, body)
 	// Answered by path rather than host, and only after every host-specific

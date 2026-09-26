@@ -15,7 +15,8 @@ Everything unknown is logged in full (`!! UNHANDLED`), which is how the undocume
 (friend invitations) get discovered.
 
 Env: `NX_ADDR`, `NX_DATA`, `ACCOUNT_API`, `OPENPAK_SECRET`, `OPENPAK_ADMIN_KEY`,
-`BAAS_SIGNING_KEY`, `BAAS_KID`, `NX_CA_DIR` (optional `ca.pem`/`ca.key` to sign the server cert).
+`BAAS_SIGNING_KEY`, `BAAS_KID`, `NX_CA_DIR` (optional `ca.pem`/`ca.key` to sign the server cert),
+`PCTL_MOVIE` (optional mp4 served as the Parental Controls explainer clip; 404 while unset).
 
 ## OpenPak backend (`ACCOUNT_BACKEND=openpak`)
 
@@ -104,6 +105,7 @@ openpak-account.
 | `POST /internal/photon-room` `{identity,room,app_id}` | Photon | `identity` is `nex:<openpak token>` or `bsdid:<bs:did>`, straight from the client's id_token; this server resolves it. The room becomes the player's friend presence (`app_field` = the title's own application parameter). |
 | `POST /internal/mint-token` `{pid}` | rig tooling | A bearer for any PID the backend knows, no password. Dev convenience. |
 | `POST /internal/news/push` `{topic_id,revision[,wait_range,subscription]}` | news service | Writes `{"type":"news",…}` to every live Penne connection subscribed to the topic (raw subscribed string). Live only; see `news.go`. |
+| `POST /internal/pctl/pairing` `{na_id}` | parent surface (app) | Mints the parental-controls pairing code to type on the console, 15 min TTL, and the moon device record behind it (`moon.go`). |
 | `GET/POST /api/invitations` | emulator, console | Friend-invitation mailbox: opaque app-parameter bytes in, popped by the target. TTL 5 min, 8 queued per target, senders limited to their own friends. |
 
 `X-Internal-Key` must match `NX_INTERNAL_KEY` (or `OPENPAK_INTERNAL_KEY`) when set;
