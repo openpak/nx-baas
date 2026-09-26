@@ -3,6 +3,16 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.33.0 — 2026-09-26
+
+- internal: `POST /internal/switch/online` — game servers' roll call for playtime. Body
+  `{"title_id":"<16 hex, optional>","players":[{"pid":…}|{"account_id":"…"}|{"baas_user_id":"…"}]}`
+  (at most 1000, else 400); each entry is resolved to its OpenPak account through the projection
+  (unknown ones skipped) and sent to the core's `Sessions.MarkOnline` in one call under namespace
+  `switch`. Answers `{"marked":N,"unknown":M}`. Same `X-Internal-Key` guard as the other
+  `/internal` routes. Playtime on openpak.org now counts only time a game server confirmed.
+- accountpb: refreshed `sessions_invitations` from account v0.12.0 (`Sessions.MarkOnline`).
+
 ## v0.32.0 — 2026-09-26
 
 - presence: the emulator's OS rides into the core session. `X-OpenPak-Client` is now
