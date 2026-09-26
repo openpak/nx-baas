@@ -697,7 +697,7 @@ const onlineLease = 30 * time.Second
 // client is carried to the core with the session (see Presence.Client). The
 // core prefers a titled session over this title-less one when answering
 // presence, so a login landing after the game was registered does not hide it.
-func (b *openpakBackend) Online(ctx context.Context, pid uint64, client string) {
+func (b *openpakBackend) Online(ctx context.Context, pid uint64, client, clientOS string) {
 	if b == nil || b.sessions == nil {
 		return
 	}
@@ -707,7 +707,7 @@ func (b *openpakBackend) Online(ctx context.Context, pid uint64, client string) 
 	}
 	resp, err := b.sessions.RegisterSession(ctx, &accountv1.RegisterSessionRequest{
 		AccountId: accountID, Namespace: b.namespace, TitleId: "", EndpointRef: "baas",
-		LeaseSeconds: int32(onlineLease.Seconds()), Client: client,
+		LeaseSeconds: int32(onlineLease.Seconds()), Client: client, Os: clientOS,
 	})
 	if err != nil {
 		logErr("presence register", err)

@@ -25,6 +25,7 @@ const (
 	Sessions_ResolveSession_FullMethodName  = "/openpak.account.v1.Sessions/ResolveSession"
 	Sessions_GetPresence_FullMethodName     = "/openpak.account.v1.Sessions/GetPresence"
 	Sessions_GetPlayerCounts_FullMethodName = "/openpak.account.v1.Sessions/GetPlayerCounts"
+	Sessions_GetPlaytime_FullMethodName     = "/openpak.account.v1.Sessions/GetPlaytime"
 )
 
 // SessionsClient is the client API for Sessions service.
@@ -53,6 +54,10 @@ type SessionsClient interface {
 	// as presence, so a status page and a friends list can never disagree about
 	// who is online. Counts accounts, not sessions.
 	GetPlayerCounts(ctx context.Context, in *GetPlayerCountsRequest, opts ...grpc.CallOption) (*GetPlayerCountsResponse, error)
+	// How long each title has been played online, per client and OS: every
+	// finished session plus the live ones. The website marks a title tested on a
+	// console or emulator from this. Aggregates only, no accounts.
+	GetPlaytime(ctx context.Context, in *GetPlaytimeRequest, opts ...grpc.CallOption) (*GetPlaytimeResponse, error)
 }
 
 type sessionsClient struct {
@@ -123,6 +128,16 @@ func (c *sessionsClient) GetPlayerCounts(ctx context.Context, in *GetPlayerCount
 	return out, nil
 }
 
+func (c *sessionsClient) GetPlaytime(ctx context.Context, in *GetPlaytimeRequest, opts ...grpc.CallOption) (*GetPlaytimeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetPlaytimeResponse)
+	err := c.cc.Invoke(ctx, Sessions_GetPlaytime_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SessionsServer is the server API for Sessions service.
 // All implementations must embed UnimplementedSessionsServer
 // for forward compatibility.
@@ -149,6 +164,10 @@ type SessionsServer interface {
 	// as presence, so a status page and a friends list can never disagree about
 	// who is online. Counts accounts, not sessions.
 	GetPlayerCounts(context.Context, *GetPlayerCountsRequest) (*GetPlayerCountsResponse, error)
+	// How long each title has been played online, per client and OS: every
+	// finished session plus the live ones. The website marks a title tested on a
+	// console or emulator from this. Aggregates only, no accounts.
+	GetPlaytime(context.Context, *GetPlaytimeRequest) (*GetPlaytimeResponse, error)
 	mustEmbedUnimplementedSessionsServer()
 }
 
@@ -176,6 +195,9 @@ func (UnimplementedSessionsServer) GetPresence(context.Context, *GetPresenceRequ
 }
 func (UnimplementedSessionsServer) GetPlayerCounts(context.Context, *GetPlayerCountsRequest) (*GetPlayerCountsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetPlayerCounts not implemented")
+}
+func (UnimplementedSessionsServer) GetPlaytime(context.Context, *GetPlaytimeRequest) (*GetPlaytimeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetPlaytime not implemented")
 }
 func (UnimplementedSessionsServer) mustEmbedUnimplementedSessionsServer() {}
 func (UnimplementedSessionsServer) testEmbeddedByValue()                  {}
@@ -306,6 +328,24 @@ func _Sessions_GetPlayerCounts_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Sessions_GetPlaytime_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetPlaytimeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SessionsServer).GetPlaytime(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Sessions_GetPlaytime_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SessionsServer).GetPlaytime(ctx, req.(*GetPlaytimeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Sessions_ServiceDesc is the grpc.ServiceDesc for Sessions service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -336,6 +376,10 @@ var Sessions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetPlayerCounts",
 			Handler:    _Sessions_GetPlayerCounts_Handler,
+		},
+		{
+			MethodName: "GetPlaytime",
+			Handler:    _Sessions_GetPlaytime_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

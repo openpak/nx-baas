@@ -29,6 +29,9 @@ type Presence struct {
 	// real console, "ryujinx"/"eden"/"citron" for an emulator that says so, ""
 	// when nothing said. Never rendered to a console; carried to the core.
 	Client string `json:"client,omitempty"`
+	// OS is what the emulator said it runs on (X-OpenPak-Client "(<os>)"):
+	// windows, macos, linux, android, ios; "" for a console or when unsaid.
+	OS string `json:"os,omitempty"`
 }
 
 // DevicePresence is one console's claim about where its user is, with the
@@ -50,6 +53,7 @@ type DevicePresence struct {
 	ExpiresAt       int64  `json:"expiresAt"` // lease deadline; 0 = not leased (explicit offline)
 	LogoutAt        int64  `json:"logoutAt"`  // set when this device said it is done
 	Client          string `json:"client,omitempty"` // see Presence.Client
+	OS              string `json:"os,omitempty"`     // see Presence.OS
 }
 
 // FriendPreference is one viewer's per-relationship state (SOC-02): what the

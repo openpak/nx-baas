@@ -29,6 +29,7 @@ type fakeSessions struct {
 	byAcct map[string]string
 	titles map[string]string // the title each account's session was registered with
 	clients map[string]string // the client each account's session was registered with
+	oses    map[string]string // the OS each account's session was registered with
 	// namespace is what the core reports these sessions under; another
 	// platform's namespace is how a Wii U friend reads on a Switch.
 	namespace string
@@ -57,6 +58,10 @@ func (x *fakeSessions) RegisterSession(ctx context.Context, r *accountv1.Registe
 		x.clients = map[string]string{}
 	}
 	x.clients[r.GetAccountId()] = r.GetClient()
+	if x.oses == nil {
+		x.oses = map[string]string{}
+	}
+	x.oses[r.GetAccountId()] = r.GetOs()
 	return &accountv1.RegisterSessionResponse{SessionId: id, LeaseSeconds: r.GetLeaseSeconds()}, nil
 }
 
