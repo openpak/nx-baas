@@ -23,6 +23,7 @@ import (
 	"log"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -33,6 +34,7 @@ import (
 const (
 	moonErrorBase        = "https://moon.nintendo.com/errors/v1/"
 	moonNotFound         = "404/resource_is_not_found"
+	moonForbidden        = "403/forbidden"
 	moonMethodNotAllowed = "405/method_not_allowed"
 	moonInvalidToken     = "401/invalid_token"
 	moonOverTheTimeLimit = "409/over_the_time_limit"
@@ -74,15 +76,233 @@ func statusOf(s string) int {
 // moon answers the pctl host. Anything under /moon/v1 is the parental-controls
 // API; anything else on this host keeps the service-status answer it got before
 // this handler existed, so nothing regresses while the surface is being learned.
+//
+// Every request is still dumped in full. The shapes below are built from the
+// firmware's own field names (study §4) and are not yet runtime-confirmed: the
+// log beside each answer is what corrects them, so it stays on.
 func (s *server) moon(w http.ResponseWriter, r *http.Request, body []byte) {
 	if !strings.HasPrefix(r.URL.Path, "/moon/v1") {
 		s.serviceStatus(w, r, body)
 		return
 	}
-	// The whole point of phase 0: the request, in full, in the log. dump keeps
-	// the bearer truncated -- it is a device token, not a secret we need whole.
 	dump(r, body, "[moon] pctl")
-	moonError(w, moonNotFound)
+
+	// The bearer is a dauth device token, signed by this server, so its `sub`
+	// is the device id (dauth.go). A request without one can still search for a
+	// pairing code -- the console has nothing else to identify itself with
+	// before it has claimed a record -- but nothing else.
+	device := ""
+	if claims := s.bearer(r); claims != nil {
+		device = str(claims, "sub")
+	}
+
+	rest := strings.TrimPrefix(r.URL.Path, "/moon/v1")
+	switch {
+	case rest == "/devices" && r.Method == http.MethodGet:
+		s.moonSearch(w, r)
+	case strings.HasPrefix(rest, "/devices/"):
+		s.moonDevice(w, r, body, device, strings.TrimPrefix(rest, "/devices/"))
+	default:
+		log.Printf("[moon] no handler for %s %s", r.Method, r.URL.Path)
+		moonError(w, moonNotFound)
+	}
+}
+
+// moonSearch is the console's first call: find the record whose pairing code
+// this is. Nothing is claimed here -- the console follows with `activate`.
+func (s *server) moonSearch(w http.ResponseWriter, r *http.Request) {
+	// The query is `filter.links.pairingCode.code.$eq=<code>`. Read it by
+	// suffix rather than by exact key, so a different filter spelling still
+	// finds the code instead of answering an empty list.
+	code := ""
+	for k, v := range r.URL.Query() {
+		if strings.HasSuffix(k, "pairingCode.code.$eq") && len(v) > 0 {
+			code = v[0]
+		}
+	}
+	if code == "" {
+		log.Printf("[moon] search with no pairing-code filter: %s", r.URL.RawQuery)
+		moonItems(w, nil)
+		return
+	}
+	d := s.store.PctlByPairingCode(strings.ToUpper(strings.TrimSpace(code)))
+	if d == nil {
+		// An empty list, not a 404: the console asked a question ("which device
+		// has this code"), and "none" is an answer to it.
+		log.Printf("[moon] pairing code %q: no record", code)
+		moonItems(w, nil)
+		return
+	}
+	log.Printf("[moon] pairing code %q -> device %s", code, d.Hex())
+	moonItems(w, []any{moonDeviceObj(d)})
+}
+
+// moonDevice routes everything under /devices/{id}. The id the console sends is
+// whatever it read out of our own search answer, so it is matched tolerantly:
+// hex as we spell it, and decimal in case it re-rendered the number.
+func (s *server) moonDevice(w http.ResponseWriter, r *http.Request, body []byte, device, rest string) {
+	id, tail, _ := strings.Cut(rest, "/")
+	d := s.store.PctlByMoonID(id)
+	if d == nil {
+		log.Printf("[moon] device id %q not found (console spelled it that way)", id)
+		moonError(w, moonNotFound)
+		return
+	}
+
+	switch {
+	// activate is where a console claims the record the code found, and the
+	// only call that may arrive before this device is bound to it.
+	case tail == "activate" && r.Method == http.MethodPost:
+		if device == "" {
+			moonError(w, moonInvalidToken)
+			return
+		}
+		bound := s.store.PctlActivate(d.Hex(), device)
+		if bound == nil {
+			log.Printf("[moon] activate refused: %s is claimed by another console", d.Hex())
+			moonError(w, moonForbidden)
+			return
+		}
+		log.Printf("[moon] device %s activated by %s", bound.Hex(), device)
+		writeJSON(w, 200, moonDeviceObj(bound))
+		return
+	}
+
+	// Everything else needs this console to be the one that claimed the record.
+	if device == "" || d.DauthID != device {
+		log.Printf("[moon] %s %s: bearer device %q is not %q", r.Method, r.URL.Path, device, d.DauthID)
+		moonError(w, moonForbidden)
+		return
+	}
+
+	switch {
+	case tail == "" && r.Method == http.MethodGet:
+		writeJSON(w, 200, moonDeviceObj(d))
+	case tail == "" && (r.Method == http.MethodPut || r.Method == http.MethodPost):
+		// The console renaming itself or reporting its firmware. Stored as sent.
+		s.store.PctlUpdateDevice(d.Hex(), jsonObj(body))
+		writeJSON(w, 200, moonDeviceObj(d))
+	case tail == "" && r.Method == http.MethodDelete:
+		s.store.PctlUnlink(d.Hex())
+		log.Printf("[moon] device %s unlinked by the console", d.Hex())
+		w.WriteHeader(http.StatusNoContent)
+	case tail == "parental_control_setting" && r.Method == http.MethodGet:
+		s.moonSetting(w, r, d)
+	case strings.HasPrefix(tail, "parental_control_setting") && (r.Method == http.MethodPut || r.Method == http.MethodPost):
+		// Includes .../whitelisted_applications: both write the document the
+		// parent side owns, and the console only writes when a parent changed
+		// something on the console itself.
+		s.store.PctlSetSetting(d.Hex(), jsonObj(body))
+		s.moonSetting(w, r, s.store.PctlByMoonID(d.Hex()))
+	case tail == "owners" && r.Method == http.MethodGet:
+		moonItems(w, moonOwners(d))
+	case strings.HasPrefix(tail, "owners/"):
+		na := strings.TrimPrefix(tail, "owners/")
+		switch r.Method {
+		case http.MethodPut, http.MethodPost:
+			s.store.PctlAddOwner(d.Hex(), na)
+			log.Printf("[moon] device %s owner %s linked", d.Hex(), na)
+			writeJSON(w, 200, map[string]any{"nintendoAccountId": na})
+		case http.MethodDelete:
+			s.store.PctlRemoveOwner(d.Hex(), na)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			moonError(w, moonMethodNotAllowed)
+		}
+	case tail == "events" && r.Method == http.MethodPost:
+		// Play-time and state events. Stored as sent and not interpreted: the
+		// parent side has nothing to show from them yet, and a console that
+		// cannot hand them over spools retries instead.
+		n := s.store.PctlAddEvents(d.Hex(), body)
+		log.Printf("[moon] device %s uploaded events (%d bytes, %d held)", d.Hex(), len(body), n)
+		writeJSON(w, 200, map[string]any{"result": "ok"})
+	case strings.HasPrefix(tail, "players") && r.Method == http.MethodGet:
+		// The console's players, for the parent app's icons. Empty until the
+		// app asks for them.
+		moonItems(w, nil)
+	case tail == "copy" && r.Method == http.MethodPost:
+		// Copying settings from another paired console. There is never a source
+		// to copy from on a first console, and inventing one would be a lie.
+		moonError(w, moonNotFound)
+	default:
+		log.Printf("[moon] no handler for %s %s (tail %q)", r.Method, r.URL.Path, tail)
+		moonError(w, moonNotFound)
+	}
+}
+
+// moonSetting answers the conditional GET the console polls with. The ETag is
+// the store's, so a document that has not changed costs a 304 and no body.
+func (s *server) moonSetting(w http.ResponseWriter, r *http.Request, d *PctlDevice) {
+	if d == nil {
+		moonError(w, moonNotFound)
+		return
+	}
+	doc := d.Setting
+	if doc == nil {
+		// Nothing set by a parent: an empty document, which is what "no
+		// restrictions" is. Every field name the console reads is known (study
+		// §4), but naming one here would assert a restriction nobody asked for.
+		doc = map[string]any{}
+	}
+	tag := d.ETag
+	if tag == "" {
+		tag = pctlETag(doc)
+	}
+	w.Header().Set("ETag", tag)
+	if match := r.Header.Get("If-None-Match"); match != "" && match == tag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	writeJSON(w, 200, doc)
+}
+
+// moonItems is the `{items,count}` envelope pctl's strings carry (992493, 986719).
+func moonItems(w http.ResponseWriter, items []any) {
+	if items == nil {
+		items = []any{}
+	}
+	writeJSON(w, 200, map[string]any{"items": items, "count": len(items)})
+}
+
+// moonDeviceObj is one device as the console reads it. The names are the
+// firmware's (study §4); the id is spelled the way the console spells it in its
+// own paths, `%016llx`, which is the one shape we know it can render.
+func moonDeviceObj(d *PctlDevice) map[string]any {
+	obj := map[string]any{
+		"deviceId":      d.Hex(),
+		"nickname":      d.Nickname,
+		"pairingActive": d.DauthID == "" && d.PairingCode != "",
+		"updatedAt":     d.UpdatedAt,
+		"etag":          d.ETag,
+		"owners":        moonOwners(d),
+	}
+	if d.ActivatedAt != 0 {
+		obj["synchronizedAt"] = d.ActivatedAt
+	}
+	if d.PairingCode != "" {
+		// The console found the record by this code; echoing the link back is
+		// how the shape it filtered on reads.
+		obj["links"] = map[string]any{"pairingCode": map[string]any{"code": d.PairingCode}}
+	}
+	return obj
+}
+
+func moonOwners(d *PctlDevice) []any {
+	out := []any{}
+	for _, na := range d.Owners {
+		out = append(out, map[string]any{"nintendoAccountId": na})
+	}
+	return out
+}
+
+// jsonObj reads a request body as an object, or nil when it is not one. A body
+// we cannot parse is logged by dump already; it must not panic a handler.
+func jsonObj(body []byte) map[string]any {
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		return nil
+	}
+	return m
 }
 
 // ---------- the pairing store ----------
@@ -109,6 +329,12 @@ type PctlDevice struct {
 	// ManagedBy is the OpenPak account that created the record and manages it
 	// from the app. It is ours, and the console never sees it.
 	ManagedBy string `json:"managedBy,omitempty"`
+	// Nickname is what the console calls itself, as it sent it.
+	Nickname string `json:"nickname,omitempty"`
+	// Events are the play-time uploads, held as received. Not interpreted: the
+	// parent side has nothing to show from them yet, and a console that cannot
+	// hand them over spools retries instead of moving on.
+	Events []json.RawMessage `json:"events,omitempty"`
 	// Owners are what the console spells in `owners/%016llx`: Nintendo-Account
 	// -shaped ids. They are learned when the console links an owner, which is
 	// why a record can be managed by an account and own none yet.
@@ -233,6 +459,114 @@ func (s *Store) PctlDevicesFor(managedBy string) []*PctlDevice {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt > out[j].UpdatedAt })
 	return out
+}
+
+// PctlByMoonID finds a record by the id the console put in the path. The console
+// echoes back whatever our search answer gave it, so both spellings of a u64 are
+// accepted: hex as we send it, and decimal in case it re-rendered the number.
+// ponytail: try hex, then decimal. One of the two is right, and the log says
+// which the first time a console asks.
+func (s *Store) PctlByMoonID(id string) *PctlDevice {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if d := s.pctlDevices()[strings.ToLower(id)]; d != nil {
+		return d
+	}
+	n, err := strconv.ParseUint(id, 10, 64)
+	if err != nil {
+		return nil
+	}
+	return s.pctlDevices()[fmt.Sprintf("%016x", n)]
+}
+
+// PctlUpdateDevice keeps the few fields a console sends about itself. Unknown
+// keys are ignored rather than stored: this record is read by the parent app,
+// and a console cannot be allowed to invent fields in it.
+func (s *Store) PctlUpdateDevice(moonHex string, doc map[string]any) *PctlDevice {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d := s.pctlDevices()[moonHex]
+	if d == nil {
+		return nil
+	}
+	if v, ok := doc["nickname"].(string); ok && v != "" {
+		d.Nickname = v
+	}
+	d.UpdatedAt = time.Now().Unix()
+	s.save()
+	return d
+}
+
+// PctlUnlink is the console saying it is no longer managed. The record stays so
+// the parent app can see it happened; what goes is the binding.
+func (s *Store) PctlUnlink(moonHex string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d := s.pctlDevices()[moonHex]
+	if d == nil {
+		return
+	}
+	d.DauthID, d.ActivatedAt, d.Setting, d.ETag = "", 0, nil, ""
+	d.UpdatedAt = time.Now().Unix()
+	s.save()
+}
+
+// PctlAddOwner links a Nintendo-Account-shaped owner id, once.
+func (s *Store) PctlAddOwner(moonHex, naID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d := s.pctlDevices()[moonHex]
+	if d == nil || naID == "" {
+		return
+	}
+	for _, o := range d.Owners {
+		if o == naID {
+			return
+		}
+	}
+	d.Owners = append(d.Owners, naID)
+	d.UpdatedAt = time.Now().Unix()
+	s.save()
+}
+
+func (s *Store) PctlRemoveOwner(moonHex, naID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d := s.pctlDevices()[moonHex]
+	if d == nil {
+		return
+	}
+	kept := d.Owners[:0]
+	for _, o := range d.Owners {
+		if o != naID {
+			kept = append(kept, o)
+		}
+	}
+	d.Owners = kept
+	d.UpdatedAt = time.Now().Unix()
+	s.save()
+}
+
+// pctlEventsKept bounds the upload log: a console re-sends what it thinks was
+// not accepted, and an unbounded list would grow with every session.
+// ponytail: newest 200, dropped oldest first. A real events API replaces this.
+const pctlEventsKept = 200
+
+// PctlAddEvents holds one upload as received and returns how many are held.
+func (s *Store) PctlAddEvents(moonHex string, body []byte) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d := s.pctlDevices()[moonHex]
+	if d == nil || len(body) == 0 {
+		return 0
+	}
+	d.Events = append(d.Events, json.RawMessage(append([]byte(nil), body...)))
+	if len(d.Events) > pctlEventsKept {
+		d.Events = d.Events[len(d.Events)-pctlEventsKept:]
+	}
+	d.UpdatedAt = time.Now().Unix()
+	s.save()
+	return len(d.Events)
 }
 
 // PctlActivate binds a console to the record its code found and burns the code.

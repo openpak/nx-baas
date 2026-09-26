@@ -5,11 +5,14 @@ package main
 // wrong makes the hardware log -- the whole point of the phase -- unreadable.
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,7 +20,7 @@ import (
 
 func moonCall(t *testing.T, method, path string) (*httptest.ResponseRecorder, map[string]any) {
 	t.Helper()
-	s := &server{}
+	s := &server{store: pctlStore(t)}
 	r := httptest.NewRequest(method, "https://api-lp1.pctl.srv.nintendo.net"+path, nil)
 	r.Host = "api-lp1.pctl.srv.nintendo.net"
 	w := httptest.NewRecorder()
@@ -31,18 +34,34 @@ func moonCall(t *testing.T, method, path string) (*httptest.ResponseRecorder, ma
 }
 
 func TestMoonRefusalNamesAnIdentityPctlCarries(t *testing.T) {
-	w, got := moonCall(t, "GET", "/moon/v1/devices?filter.links.pairingCode.code.$eq=ABCDEF")
+	// A path with no handler at all: the refusal must name a literal the
+	// firmware carries, or the client cannot classify what went wrong.
+	w, got := moonCall(t, "GET", "/moon/v1/nothing-here")
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status %d, want 404", w.Code)
 	}
-	// The literal in the firmware, byte for byte: a different string is a
-	// refusal the client cannot classify.
 	if got["type"] != "https://moon.nintendo.com/errors/v1/404/resource_is_not_found" {
 		t.Fatalf("type %q -- must be the firmware's own literal", got["type"])
 	}
 	if got["status"] != float64(http.StatusNotFound) {
 		t.Fatalf("status field %v, want 404 -- the type URI and the status line must agree", got["status"])
+	}
+}
+
+func TestUnknownPairingCodeIsAnEmptyListNotAnError(t *testing.T) {
+	// "Which device has this code" is a question; "none" answers it. A 404 here
+	// would read to the console as the service being broken.
+	w, got := moonCall(t, "GET", "/moon/v1/devices?filter.links.pairingCode.code.$eq=NOSUCH")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", w.Code)
+	}
+	if got["count"] != float64(0) {
+		t.Fatalf("count %v, want 0", got["count"])
+	}
+	if items, ok := got["items"].([]any); !ok || len(items) != 0 {
+		t.Fatalf("items %v -- must be an empty list, never absent", got["items"])
 	}
 }
 
@@ -255,5 +274,153 @@ func TestDeviceListIsScopedAndHidesADeadCode(t *testing.T) {
 	s.pctlDeviceList(w, r)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status %d -- a list with no account would be every household's", w.Code)
+	}
+}
+
+// ---------- the console's own flow ----------
+
+// moonServer is a server a console can actually talk to: the bearer on every
+// moon request is a dauth device token this key signed, so it needs one.
+func moonServer(t *testing.T) (*server, func(device string) string) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &server{key: key, idKid: "test-kid", store: pctlStore(t)}
+	return s, func(device string) string { return s.deviceToken(device, "pctl-test") }
+}
+
+func moonReq(t *testing.T, s *server, method, path, token, body string) (*httptest.ResponseRecorder, map[string]any) {
+	t.Helper()
+	r := httptest.NewRequest(method, "https://api-lp1.pctl.srv.nintendo.net"+path, strings.NewReader(body))
+	r.Host = "api-lp1.pctl.srv.nintendo.net"
+	if token != "" {
+		r.Header.Set("Authorization", "Bearer "+token)
+	}
+	w := httptest.NewRecorder()
+	s.moon(w, r, []byte(body))
+	out := map[string]any{}
+	if w.Body.Len() > 0 {
+		_ = json.Unmarshal(w.Body.Bytes(), &out)
+	}
+	return w, out
+}
+
+// The whole pairing walk, in the order the console's executors run it.
+func TestAConsolePairsAndSyncs(t *testing.T) {
+	s, token := moonServer(t)
+	tok := token("cert-aaaaaaaaaaaaaaaa")
+	minted := s.store.PctlNewPairing("acct-parent")
+
+	// 1. RequestPairing: find the record by the code typed on the console.
+	_, found := moonReq(t, s, "GET", "/moon/v1/devices?filter.links.pairingCode.code.$eq="+minted.PairingCode, tok, "")
+	items, _ := found["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("search found %v", found)
+	}
+	id, _ := items[0].(map[string]any)["deviceId"].(string)
+	if id != minted.Hex() {
+		t.Fatalf("deviceId %q, want %q", id, minted.Hex())
+	}
+
+	// 2. AuthorizePairing/activate: the console claims it, using the id our own
+	// answer gave it.
+	if w, _ := moonReq(t, s, "POST", "/moon/v1/devices/"+id+"/activate", tok, "{}"); w.Code != 200 {
+		t.Fatalf("activate status %d", w.Code)
+	}
+	if got := s.store.PctlByDauth("cert-aaaaaaaaaaaaaaaa"); got == nil {
+		t.Fatalf("activation did not bind the console")
+	}
+
+	// 3. RetrieveSettings: an empty document means no restrictions, and it
+	// carries an ETag so the next poll can be a 304.
+	w, doc := moonReq(t, s, "GET", "/moon/v1/devices/"+id+"/parental_control_setting", tok, "")
+	etag := w.Header().Get("ETag")
+	if w.Code != 200 || etag == "" {
+		t.Fatalf("setting status %d etag %q", w.Code, etag)
+	}
+	if len(doc) != 0 {
+		t.Fatalf("doc %v -- nothing was set, so nothing may be asserted", doc)
+	}
+
+	// 4. The same poll again, with the validator: no body, no restriction churn.
+	r := httptest.NewRequest("GET", "https://api-lp1.pctl.srv.nintendo.net/moon/v1/devices/"+id+"/parental_control_setting", nil)
+	r.Host = "api-lp1.pctl.srv.nintendo.net"
+	r.Header.Set("Authorization", "Bearer "+tok)
+	r.Header.Set("If-None-Match", etag)
+	w = httptest.NewRecorder()
+	s.moon(w, r, nil)
+	if w.Code != http.StatusNotModified {
+		t.Fatalf("status %d, want 304 -- an unchanged document must not be re-sent every poll", w.Code)
+	}
+
+	// 5. A parent sets a limit: the ETag moves, so the console's next poll is a
+	// 200 with the new document.
+	s.store.PctlSetSetting(id, map[string]any{"ratingAge": 12})
+	w, doc = moonReq(t, s, "GET", "/moon/v1/devices/"+id+"/parental_control_setting", tok, "")
+	if w.Header().Get("ETag") == etag {
+		t.Fatalf("ETag did not move after a parent changed the setting")
+	}
+	if doc["ratingAge"] != float64(12) {
+		t.Fatalf("doc %v", doc)
+	}
+
+	// 6. Owners and events, the two writes the console makes on its own.
+	if w, _ := moonReq(t, s, "PUT", "/moon/v1/devices/"+id+"/owners/bbbbbbbbbbbb0001", tok, "{}"); w.Code != 200 {
+		t.Fatalf("owner link status %d", w.Code)
+	}
+	_, owners := moonReq(t, s, "GET", "/moon/v1/devices/"+id+"/owners", tok, "")
+	if owners["count"] != float64(1) {
+		t.Fatalf("owners %v", owners)
+	}
+	if w, _ := moonReq(t, s, "POST", "/moon/v1/devices/"+id+"/events", tok, `{"items":[{"eventType":"AppEvent"}]}`); w.Code != 200 {
+		t.Fatalf("events status %d", w.Code)
+	}
+	if got := s.store.PctlByMoonID(id); len(got.Events) != 1 {
+		t.Fatalf("%d events held", len(got.Events))
+	}
+}
+
+func TestAnotherConsoleCannotReadOrTakeAPairedRecord(t *testing.T) {
+	s, token := moonServer(t)
+	mine, theirs := token("cert-aaaaaaaaaaaaaaaa"), token("cert-bbbbbbbbbbbbbbbb")
+	d := s.store.PctlNewPairing("acct-parent")
+	id := d.Hex()
+
+	if w, _ := moonReq(t, s, "POST", "/moon/v1/devices/"+id+"/activate", mine, "{}"); w.Code != 200 {
+		t.Fatalf("first activate %d", w.Code)
+	}
+	// A second console with a valid token of its own: the record is not its.
+	if w, got := moonReq(t, s, "POST", "/moon/v1/devices/"+id+"/activate", theirs, "{}"); w.Code != http.StatusForbidden {
+		t.Fatalf("second activate %d %v -- a claimed record must not change hands", w.Code, got)
+	}
+	if w, _ := moonReq(t, s, "GET", "/moon/v1/devices/"+id+"/parental_control_setting", theirs, ""); w.Code != http.StatusForbidden {
+		t.Fatalf("stranger read %d -- one household would read another's restrictions", w.Code)
+	}
+	// No bearer at all is not a way in either.
+	if w, _ := moonReq(t, s, "GET", "/moon/v1/devices/"+id, "", ""); w.Code != http.StatusForbidden {
+		t.Fatalf("anonymous read %d", w.Code)
+	}
+}
+
+// The id shape is the one thing the firmware's strings could not settle (study
+// §7 P2): the path is `%016llx`, but whether the console re-renders our number
+// as decimal is unproven. Both resolve, so a wrong guess costs a log line and
+// not a failed pairing.
+func TestADeviceIdResolvesInEitherSpelling(t *testing.T) {
+	s, token := moonServer(t)
+	tok := token("cert-aaaaaaaaaaaaaaaa")
+	d := s.store.PctlNewPairing("acct-parent")
+
+	if got := s.store.PctlByMoonID(d.Hex()); got == nil {
+		t.Fatalf("hex id did not resolve")
+	}
+	decimal := strconv.FormatUint(d.MoonID, 10)
+	if got := s.store.PctlByMoonID(decimal); got == nil {
+		t.Fatalf("decimal id %q did not resolve", decimal)
+	}
+	if w, _ := moonReq(t, s, "POST", "/moon/v1/devices/"+decimal+"/activate", tok, "{}"); w.Code != 200 {
+		t.Fatalf("activate by decimal id %d", w.Code)
 	}
 }

@@ -1,6 +1,7 @@
 # Native Switch parental controls
 
-Status: phase 0 implemented plus phase 1's store, awaiting hardware evidence.
+Status: phases 0 and 1 implemented end to end; the console-facing shapes are
+inferred from the firmware and await one on-console pairing to confirm.
 Date: 2026-09-26.
 
 Normative evidence:
@@ -45,16 +46,26 @@ verb per endpoint, device-id shape on the wire, pairing-code alphabet, and
 whether `activate` precedes `AuthorizePairing`. **Until this log exists, no
 request body in phases 1–3 may be invented.**
 
-**Phase 1 — pairing works end to end.** *The shape-independent half is done
-ahead of the log (`moon.go`, `Store.PctlDevices`):* the record, a pairing code
-with a 15-minute TTL that a console burns on activation, owners as `User.NaID`,
-the setting document held as received with an ETag computed over it, and
-`POST /internal/pctl/pairing` to mint a code. What is left is the console-facing
-envelope — code lookup, `activate`, `owners`, `GET parental_control_setting` —
-which the phase-0 log supplies, plus the screen in `app/lib/` that calls the
-internal route and shows the console once it pairs.
+**Phase 1 — pairing works end to end.** *Implemented, unconfirmed.* The store
+(`moon.go`, `Store.PctlDevices`): a record, a pairing code with a 15-minute TTL
+that activation burns, owners, and the setting document held as received with an
+ETag over it. The parent surface: `app/lib/parental_controls_page.dart` on the
+Account tab (app v0.15.0) through
+`GET`/`POST /api/v1/me/parental-controls[/pairing]` on the website (v0.61.0),
+which relays to the internal API with `X-Internal-Key`
+(`website/internal/pctl`). The console-facing endpoints: the code search,
+`activate`, device read/update/unlink, owners, the setting document with `304`,
+`whitelisted_applications`, events and `players`; `copy` still refuses, because
+there is no second console to copy from.
+
+Their shapes come from the firmware's field names, not from a log, so they are
+**unproven** and the phase-0 dump stays on beside every answer. Two unknowns are
+made self-correcting rather than fatal: a device id resolves whether the console
+spells it hex or decimal (§7 P2), and an unknown code answers an empty
+`{items,count}` list rather than a 404, because "none" answers the question asked.
 *Gate:* on hardware the Parental Controls screen shows the console as managed and
-names the paired account; no reboot needed.
+names the paired account; no reboot needed. Everything above is the guess that
+gate tests.
 
 **Phase 2 — the setting restricts.** `PUT parental_control_setting` and
 `whitelisted_applications`, ETag on the setting document, `304` for

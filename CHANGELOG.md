@@ -3,6 +3,28 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.35.0 — 2026-09-26
+
+- **moon: a console can pair.** The console-facing endpoints of the parental-controls API are
+  served, not just logged: the pairing-code search, `activate`, the device read/update/unlink, the
+  owners pair, the `parental_control_setting` document with an ETag and a `304` for
+  `If-None-Match`, `whitelisted_applications`, the events upload and `players`. Only `copy` still
+  refuses — there is no second console to copy from yet, and inventing a source would be a lie.
+  Field names come from the firmware's own strings (the docs repo's switch study, §4); the shapes
+  are **unproven**, so the phase-0 dump stays on beside every answer and the first on-console
+  pairing is what corrects them.
+- Two unknowns are made self-correcting instead of fatal. A device id resolves whether the console
+  spells it as the hex its own paths use or as decimal, so a wrong guess costs a log line rather
+  than a failed pairing. An unknown pairing code answers an empty `{items,count}` list rather than
+  a 404: "which device has this code" is a question, and "none" answers it — a 404 reads as an
+  outage.
+- Authorisation is the dauth device token, whose `sub` this server already mints. `activate` is the
+  only call a console may make before it has claimed a record; afterwards a record answers only to
+  the console bound to it, so one household cannot read another's restrictions, and a claimed
+  record does not change hands on a second `activate`.
+- Play-time uploads are kept as received, newest 200, and not interpreted: the parent side has
+  nothing to show from them yet, and a console that cannot hand them over spools retries forever.
+
 ## v0.34.1 — 2026-09-26
 
 - tls: `api-lp1.pctl.srv.nintendo.net` joins the fixed multi-SAN cert, for the same reason
