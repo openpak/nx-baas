@@ -364,6 +364,45 @@ func (s *server) bindNotificationChannel(deviceAuthenticationToken, baasUserID s
 	}
 }
 
+// naLinks is the NA account's linked-account block. The account module reads
+// $.links.nintendoNetwork.{id,createdAt} out of this document, alongside the
+// facebook/google/twitter/nintendoAccount siblings it also knows [firmware,
+// account module: path table at 0x1c2010, entries +0x128 and +0x138].
+//
+// We advertise a Nintendo Network link because the Add Friend applet is the
+// suspected gate on the "Nintendo 3DS" and "Wii U" friend panes: over 30 days
+// the console has only ever asked FRS for type=nintendo_account, never
+// nintendo_3ds or nintendo_network_id, while IPC 20301 is perfectly reachable
+// in the firmware. An empty links object is the only precondition we were
+// visibly failing. If the panes appear after this, the gate is confirmed.
+//
+// ponytail: the id is the core PID as a decimal string, which is a stand-in.
+// The real Wii U/3DS identity is the shadow PNID nn-account mints per core
+// account, and nx-baas has no field for it (Identity carries no PNID) — wiring
+// that through is the follow-up once the gate is proven, not before. The type
+// matches every other links.*.id we already serve as a string and the console
+// accepts.
+//
+// There is a second, larger NNID surface we do NOT serve: the account module
+// can open a web authorize at
+// "%s?response_type=id_token&claims=%s&scope=%s&client_id=%016llx&state=%.*s&id_token_hint="
+// with scope "user.links user.links[].id" and claims
+// {"links.nintendoNetwork.id":{"essential":true}} — the real linking flow. If
+// something in System Settings starts reaching for that, this is why.
+func naLinks(id *Identity) map[string]any {
+	if id == nil || id.PID == 0 {
+		return map[string]any{}
+	}
+	created := int64(1524557701)
+	return map[string]any{
+		"nintendoNetwork": map[string]any{
+			"id":        strconv.FormatUint(id.PID, 10),
+			"createdAt": created,
+			"updatedAt": created,
+		},
+	}
+}
+
 func (s *server) naIDToken(c naCode, accessToken string) string {
 	now := time.Now().Unix()
 	sum := sha256.Sum256([]byte(accessToken))
@@ -2121,7 +2160,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			"eachEmailOptedIn": map[string]any{"deals": map[string]any{"optedIn": false, "updatedAt": int64(1524557701)}, "survey": map[string]any{"optedIn": false, "updatedAt": int64(1524557701)}},
 			"email":            "legacy@example.com", "emailOptedIn": false, "emailOptedInUpdatedAt": int64(1524557701), "emailVerified": true,
 			"gender": "unknown", "iconUri": avatarURL(id.PID, id.Avatar, id.ImageUpdatedAt), "id": strings.ToLower(id.NaID), "isChild": false, "language": "en-GB",
-			"links": map[string]any{}, "loginId": nil, "nickname": nick, "phoneNumberEnabled": false, "region": nil,
+			"links": naLinks(id), "loginId": nil, "nickname": nick, "phoneNumberEnabled": false, "region": nil,
 			"screenName": "ne•••@e••••", "termsAgreementRequired": false,
 			"timezone":  map[string]any{"id": "Europe/London", "name": "Europe/London", "utcOffset": "+01:00", "utcOffsetSeconds": 3600},
 			"updatedAt": now,
