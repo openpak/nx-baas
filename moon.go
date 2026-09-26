@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 )
@@ -105,7 +106,12 @@ type PctlDevice struct {
 	// DauthID is the device id dauth issued ("cert-<8 bytes>"), which is what
 	// the bearer on every moon request proves. Empty until activation.
 	DauthID string `json:"dauthId,omitempty"`
-	// Owners are the parents, as the NaIDs the store already keys accounts by.
+	// ManagedBy is the OpenPak account that created the record and manages it
+	// from the app. It is ours, and the console never sees it.
+	ManagedBy string `json:"managedBy,omitempty"`
+	// Owners are what the console spells in `owners/%016llx`: Nintendo-Account
+	// -shaped ids. They are learned when the console links an owner, which is
+	// why a record can be managed by an account and own none yet.
 	Owners []string `json:"owners,omitempty"`
 	// PairingCode is live until PairingExpires; both are cleared on activation
 	// so a code is good exactly once.
@@ -161,8 +167,9 @@ func (s *Store) pctlDevices() map[string]*PctlDevice {
 	return s.PctlDevices
 }
 
-// PctlNewPairing mints the record a console can adopt, owned by one NA account.
-func (s *Store) PctlNewPairing(ownerNaID string) *PctlDevice {
+// PctlNewPairing mints the record a console can adopt, managed by one OpenPak
+// account.
+func (s *Store) PctlNewPairing(managedBy string) *PctlDevice {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now()
@@ -172,9 +179,7 @@ func (s *Store) PctlNewPairing(ownerNaID string) *PctlDevice {
 		PairingExpires: now.Add(pctlPairingTTL).Unix(),
 		UpdatedAt:      now.Unix(),
 	}
-	if ownerNaID != "" {
-		d.Owners = []string{ownerNaID}
-	}
+	d.ManagedBy = managedBy
 	s.pctlDevices()[d.Hex()] = d
 	s.save()
 	return d
@@ -210,6 +215,24 @@ func (s *Store) PctlByDauth(dauthID string) *PctlDevice {
 		}
 	}
 	return nil
+}
+
+// PctlDevicesFor is what the app lists: every record this account manages,
+// newest first so a code just minted is at the top.
+func (s *Store) PctlDevicesFor(managedBy string) []*PctlDevice {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := []*PctlDevice{}
+	if managedBy == "" {
+		return out
+	}
+	for _, d := range s.pctlDevices() {
+		if d.ManagedBy == managedBy {
+			out = append(out, d)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt > out[j].UpdatedAt })
+	return out
 }
 
 // PctlActivate binds a console to the record its code found and burns the code.
@@ -262,7 +285,7 @@ func pctlETag(doc map[string]any) string {
 	return `"` + hex.EncodeToString(sum[:16]) + `"`
 }
 
-// POST /internal/pctl/pairing {"na_id":"…"} -> the code to type on the console.
+// POST /internal/pctl/pairing {"account_id":"…"} -> the code to type on the console.
 // The parent surface is a screen in the app; this is the call behind it, and
 // until that screen exists it is also how a pairing attempt gets a real code to
 // type -- which is what turns the phase-0 log from "unknown code" into the
@@ -277,12 +300,12 @@ func (s *server) pctlPairing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		NaID string `json:"na_id"`
+		AccountID string `json:"account_id"`
 	}
 	json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in)
-	d := s.store.PctlNewPairing(in.NaID)
-	log.Printf("[moon] pairing code %s for na=%q device=%s (expires %ds)",
-		d.PairingCode, in.NaID, d.Hex(), int(pctlPairingTTL.Seconds()))
+	d := s.store.PctlNewPairing(in.AccountID)
+	log.Printf("[moon] pairing code %s for account=%q device=%s (expires %ds)",
+		d.PairingCode, in.AccountID, d.Hex(), int(pctlPairingTTL.Seconds()))
 	writeJSON(w, 200, map[string]any{
 		"moon_id": d.Hex(), "pairing_code": d.PairingCode, "expires_at": d.PairingExpires,
 	})
@@ -309,4 +332,37 @@ func (s *server) pctlMovie(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[moon] movie %s%s -> %s", hostOf(r), r.URL.Path, path)
 	w.Header().Set("Content-Type", "video/mp4")
 	http.ServeFile(w, r, path)
+}
+
+// GET /internal/pctl/devices?account_id=… -> the records that account manages,
+// as the app's list. The pairing code travels only while it is still live: a
+// dead code on a screen is worse than none, because someone types it.
+func (s *server) pctlDeviceList(w http.ResponseWriter, r *http.Request) {
+	if !s.internalOK(r) {
+		apiErr(w, http.StatusUnauthorized, "internal")
+		return
+	}
+	account := r.URL.Query().Get("account_id")
+	if account == "" {
+		apiErr(w, http.StatusBadRequest, "account_id required")
+		return
+	}
+	now := time.Now().Unix()
+	out := []map[string]any{}
+	for _, d := range s.store.PctlDevicesFor(account) {
+		item := map[string]any{
+			"moon_id":      d.Hex(),
+			"paired":       d.DauthID != "",
+			"activated_at": d.ActivatedAt,
+			"updated_at":   d.UpdatedAt,
+			"owners":       d.Owners,
+			"has_setting":  len(d.Setting) > 0,
+		}
+		if d.PairingCode != "" && d.PairingExpires > now {
+			item["pairing_code"] = d.PairingCode
+			item["expires_at"] = d.PairingExpires
+		}
+		out = append(out, item)
+	}
+	writeJSON(w, 200, map[string]any{"devices": out})
 }

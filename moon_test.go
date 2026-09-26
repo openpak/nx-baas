@@ -86,7 +86,7 @@ func pctlStore(t *testing.T) *Store {
 
 func TestPairingCodeIsGoodOnceAndOnlyBeforeItExpires(t *testing.T) {
 	st := pctlStore(t)
-	d := st.PctlNewPairing("naid-parent")
+	d := st.PctlNewPairing("acct-parent")
 
 	if got := st.PctlByPairingCode(d.PairingCode); got == nil || got.MoonID != d.MoonID {
 		t.Fatalf("a live code must find its record")
@@ -130,7 +130,7 @@ func TestExpiredPairingCodeIsNotAWayIn(t *testing.T) {
 
 func TestSettingETagTracksTheDocument(t *testing.T) {
 	st := pctlStore(t)
-	d := st.PctlNewPairing("naid-parent")
+	d := st.PctlNewPairing("acct-parent")
 
 	// The store hands back the live record, so hold the tag as a string: reading
 	// it off the pointer later would only ever show the newest value.
@@ -155,7 +155,7 @@ func TestSettingETagTracksTheDocument(t *testing.T) {
 
 func TestPairingRouteMintsACodeTheConsoleCouldType(t *testing.T) {
 	s := &server{store: pctlStore(t)}
-	r := httptest.NewRequest("POST", "/internal/pctl/pairing", strings.NewReader(`{"na_id":"naid-parent"}`))
+	r := httptest.NewRequest("POST", "/internal/pctl/pairing", strings.NewReader(`{"account_id":"acct-parent"}`))
 	w := httptest.NewRecorder()
 	s.pctlPairing(w, r)
 
@@ -202,5 +202,58 @@ func TestMovieIsA404UntilOneIsConfigured(t *testing.T) {
 	}
 	if ct := w.Header().Get("Content-Type"); ct != "video/mp4" {
 		t.Fatalf("Content-Type %q", ct)
+	}
+}
+
+func TestDeviceListIsScopedAndHidesADeadCode(t *testing.T) {
+	st := pctlStore(t)
+	mine := st.PctlNewPairing("acct-parent")
+	st.PctlNewPairing("acct-someone-else")
+
+	s := &server{store: st}
+	list := func() []map[string]any {
+		r := httptest.NewRequest("GET", "/internal/pctl/devices?account_id=acct-parent", nil)
+		w := httptest.NewRecorder()
+		s.pctlDeviceList(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status %d", w.Code)
+		}
+		var got struct {
+			Devices []map[string]any `json:"devices"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatalf("body: %v", err)
+		}
+		return got.Devices
+	}
+
+	devices := list()
+	if len(devices) != 1 {
+		t.Fatalf("%d devices -- another account's record leaked into this list", len(devices))
+	}
+	if devices[0]["pairing_code"] != mine.PairingCode {
+		t.Fatalf("a live code must be shown: %v", devices[0]["pairing_code"])
+	}
+	if devices[0]["paired"] != false {
+		t.Fatalf("an unclaimed record must not read as paired")
+	}
+
+	// Expired: the record stays, the code does not travel -- a dead code on a
+	// screen is worse than none, because someone types it.
+	mine.PairingExpires = time.Now().Add(-time.Minute).Unix()
+	if _, shown := list()[0]["pairing_code"]; shown {
+		t.Fatalf("an expired code was still sent to the app")
+	}
+
+	st.PctlActivate(mine.Hex(), "cert-aaaaaaaaaaaaaaaa")
+	if list()[0]["paired"] != true {
+		t.Fatalf("an activated record must read as paired")
+	}
+
+	r := httptest.NewRequest("GET", "/internal/pctl/devices", nil)
+	w := httptest.NewRecorder()
+	s.pctlDeviceList(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status %d -- a list with no account would be every household's", w.Code)
 	}
 }
