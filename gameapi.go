@@ -220,6 +220,7 @@ func (s *server) photonIdentity(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, http.StatusNotFound, "unknown pid")
 		return
 	}
+	s.markLoginOnline(pid) // the Photon master authenticated this player: playtime starts here
 	writeJSON(w, 200, map[string]any{"pid": pid, "country": id.Country})
 }
 
