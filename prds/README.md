@@ -11,5 +11,6 @@ editing anything here.
 - [B: Penne and notifications](native-switch-penne-notifications-prd.md)
 - [C: native invitations](native-switch-invitations-prd.md)
 - [D: native OpenPak store](native-switch-store-prd.md)
+- [Native Switch parental controls](native-switch-parental-controls-prd.md) — pctl/moon pairing and settings sync; evidence-gated phases, outside the A–D split.
 
 Isolated worktrees for A–D sit beside this repository as `nx-baas-<workstream>`.
