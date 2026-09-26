@@ -3,6 +3,19 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.33.1 — 2026-09-26
+
+- tls: `api-lp1.frs.srv.nintendo.net` joins the fixed multi-SAN cert. It was never on it, so
+  every process minted the FRS host a fresh self-signed leaf on demand — and the friends module
+  authenticates that name strictly. On 2026-09-26 the id_token step finally started working and
+  the suggestions chain completed once at 05:08; by 16:23, after a restart regenerated the cert,
+  the console opened TLS and answered `TLS handshake error: EOF` without sending a request. The
+  same lesson is already recorded here twice, for the dauth names (2123-0013) and pearljam.
+- na: `/2.0.0/users/me` advertises a `links.nintendoNetwork` entry. The Add Friend applet has
+  never asked FRS for `type=nintendo_3ds` or `nintendo_network_id` in 30 days although IPC 20301
+  is reachable, and an empty `links` object was the one precondition we were visibly failing. The
+  id is the core PID as a stand-in; the real shadow PNID is the follow-up if the panes appear.
+
 ## v0.33.0 — 2026-09-26
 
 - presence: a game server's login is the playtime signal. After a successful
