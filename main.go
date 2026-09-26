@@ -2681,7 +2681,14 @@ func main() {
 		"bcat-list-lp1.cdn.nintendo.net", "bcat-topics-lp1.cdn.nintendo.net",
 		"api.hac.lp1.ctest.srv.nintendo.net", "fw-api.lp1.nso.nintendo.net",
 		"receive-lp1.dg.srv.nintendo.net", "realtime-receive-lp1.dg.srv.nintendo.net",
-		"receive.hac.lp1.er.srv.nintendo.net"}, getenv("NX_CA_DIR", "/data/ca"))
+		"receive.hac.lp1.er.srv.nintendo.net",
+		// Friend suggestions (FRS). The friends module authenticates this name
+		// strictly, exactly like the dauth names above: on 2026-09-26 05:08 the
+		// on-demand cert happened to be accepted and the GET landed, and at
+		// 16:23 — after a restart regenerated it — the console answered the
+		// handshake with EOF and the suggestions pane failed with no request
+		// ever sent. A fixed SAN is the difference between those two runs.
+		"api-lp1.frs.srv.nintendo.net"}, getenv("NX_CA_DIR", "/data/ca"))
 	var handler http.Handler = s
 	if up := os.Getenv("NX_UPSTREAM"); up != "" {
 		log.Printf("[nx-baas] CAPTURE MODE: forwarding everything to %s and logging bodies", up)
