@@ -4,7 +4,7 @@ Status: phase 0 implemented plus phase 1's store, awaiting hardware evidence.
 Date: 2026-09-26.
 
 Normative evidence:
-[docs/switch/parental-controls-firmware-2026-09-26.md](../../docs/switch/parental-controls-firmware-2026-09-26.md)
+[docs/parental-controls-firmware-2026-09-26.md](../docs/parental-controls-firmware-2026-09-26.md)
 — the pctl firmware study. This PRD does not restate the endpoints, the JSON
 vocabulary or the error identities; that document is the contract.
 
