@@ -3,6 +3,17 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.33.0 — 2026-09-26
+
+- presence: a game server's login is the playtime signal. After a successful
+  `POST /internal/switch/identity` (NEX, NPLN, Demonware) or `POST /internal/photon-identity`
+  (Photon), the player is sent to the core's `Sessions.MarkOnline` (account id, namespace
+  `switch`, no title), which starts the playtime clock on their live titled session. Fire and
+  forget on its own goroutine with a 5 s timeout, so a login is never slowed or failed by it;
+  failures are logged at most once a minute. Nothing is sent without a core client or for a pid
+  with no account, and a failed lookup marks nobody.
+- accountpb: refreshed `sessions_invitations` from account v0.12.0 (`Sessions.MarkOnline`).
+
 ## v0.32.0 — 2026-09-26
 
 - presence: the emulator's OS rides into the core session. `X-OpenPak-Client` is now

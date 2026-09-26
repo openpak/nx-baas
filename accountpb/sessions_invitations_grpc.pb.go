@@ -26,6 +26,7 @@ const (
 	Sessions_GetPresence_FullMethodName     = "/openpak.account.v1.Sessions/GetPresence"
 	Sessions_GetPlayerCounts_FullMethodName = "/openpak.account.v1.Sessions/GetPlayerCounts"
 	Sessions_GetPlaytime_FullMethodName     = "/openpak.account.v1.Sessions/GetPlaytime"
+	Sessions_MarkOnline_FullMethodName      = "/openpak.account.v1.Sessions/MarkOnline"
 )
 
 // SessionsClient is the client API for Sessions service.
@@ -58,6 +59,12 @@ type SessionsClient interface {
 	// finished session plus the live ones. The website marks a title tested on a
 	// console or emulator from this. Aggregates only, no accounts.
 	GetPlaytime(ctx context.Context, in *GetPlaytimeRequest, opts ...grpc.CallOption) (*GetPlaytimeResponse, error)
+	// A game server (through nx-baas or nn-account, at the player's login) saying
+	// these players reached it. Their live titled presence session in that
+	// namespace counts playtime from the first such mark until it ends; a session
+	// that never reached a game server counts none. A player with no live titled
+	// session is skipped: the client and OS come from presence.
+	MarkOnline(ctx context.Context, in *MarkOnlineRequest, opts ...grpc.CallOption) (*MarkOnlineResponse, error)
 }
 
 type sessionsClient struct {
@@ -138,6 +145,16 @@ func (c *sessionsClient) GetPlaytime(ctx context.Context, in *GetPlaytimeRequest
 	return out, nil
 }
 
+func (c *sessionsClient) MarkOnline(ctx context.Context, in *MarkOnlineRequest, opts ...grpc.CallOption) (*MarkOnlineResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MarkOnlineResponse)
+	err := c.cc.Invoke(ctx, Sessions_MarkOnline_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SessionsServer is the server API for Sessions service.
 // All implementations must embed UnimplementedSessionsServer
 // for forward compatibility.
@@ -168,6 +185,12 @@ type SessionsServer interface {
 	// finished session plus the live ones. The website marks a title tested on a
 	// console or emulator from this. Aggregates only, no accounts.
 	GetPlaytime(context.Context, *GetPlaytimeRequest) (*GetPlaytimeResponse, error)
+	// A game server (through nx-baas or nn-account, at the player's login) saying
+	// these players reached it. Their live titled presence session in that
+	// namespace counts playtime from the first such mark until it ends; a session
+	// that never reached a game server counts none. A player with no live titled
+	// session is skipped: the client and OS come from presence.
+	MarkOnline(context.Context, *MarkOnlineRequest) (*MarkOnlineResponse, error)
 	mustEmbedUnimplementedSessionsServer()
 }
 
@@ -198,6 +221,9 @@ func (UnimplementedSessionsServer) GetPlayerCounts(context.Context, *GetPlayerCo
 }
 func (UnimplementedSessionsServer) GetPlaytime(context.Context, *GetPlaytimeRequest) (*GetPlaytimeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetPlaytime not implemented")
+}
+func (UnimplementedSessionsServer) MarkOnline(context.Context, *MarkOnlineRequest) (*MarkOnlineResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method MarkOnline not implemented")
 }
 func (UnimplementedSessionsServer) mustEmbedUnimplementedSessionsServer() {}
 func (UnimplementedSessionsServer) testEmbeddedByValue()                  {}
@@ -346,6 +372,24 @@ func _Sessions_GetPlaytime_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Sessions_MarkOnline_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MarkOnlineRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SessionsServer).MarkOnline(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Sessions_MarkOnline_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SessionsServer).MarkOnline(ctx, req.(*MarkOnlineRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Sessions_ServiceDesc is the grpc.ServiceDesc for Sessions service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -380,6 +424,10 @@ var Sessions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetPlaytime",
 			Handler:    _Sessions_GetPlaytime_Handler,
+		},
+		{
+			MethodName: "MarkOnline",
+			Handler:    _Sessions_MarkOnline_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

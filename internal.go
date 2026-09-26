@@ -69,6 +69,8 @@ func (s *server) switchIdentity(w http.ResponseWriter, r *http.Request) {
 	if src := s.banSrc(); src != nil {
 		accountID = src.accountFor(pid)
 	}
+	// A game server just proved who this player is: they are on it (playtime starts here).
+	s.markLoginOnline(pid)
 	friends := make([]switchPlayer, 0, len(id.Friends))
 	for _, f := range id.Friends {
 		friends = append(friends, switchPlayer{PID: f.PID, BaasUserID: f.BaasUserID, Nickname: f.Nickname})
