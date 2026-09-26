@@ -3,6 +3,15 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.34.1 — 2026-09-26
+
+- tls: `api-lp1.pctl.srv.nintendo.net` joins the fixed multi-SAN cert, for the same reason
+  `api-lp1.frs.srv.nintendo.net` did one release ago. It was still on the on-demand path, and a
+  console that authenticates the name strictly answers an on-demand leaf with a handshake EOF
+  before sending anything — which would leave moon's phase-0 gate waiting for a log that can
+  never arrive, looking like a console that never tried. Added ahead of the first on-console
+  pairing attempt rather than after it.
+
 ## v0.34.0 — 2026-09-26
 
 Merges the two lines that had diverged since v0.31.0: the presence releases (v0.32.0, v0.33.0)

@@ -2711,7 +2711,14 @@ func main() {
 		// 16:23 — after a restart regenerated it — the console answered the
 		// handshake with EOF and the suggestions pane failed with no request
 		// ever sent. A fixed SAN is the difference between those two runs.
-		"api-lp1.frs.srv.nintendo.net"}, getenv("NX_CA_DIR", "/data/ca"))
+		"api-lp1.frs.srv.nintendo.net",
+		// Parental controls (moon, moon.go). Added before the first on-console
+		// pairing attempt rather than after: this name was on the on-demand
+		// path too, and if pctl authenticates it the way friends does, that
+		// attempt would produce a handshake EOF and no log at all — which
+		// reads as "the console never tried" and would send phase 0's gate
+		// hunting the wrong thing. Firmware template: api-%.pctl.srv.nintendo.net.
+		"api-lp1.pctl.srv.nintendo.net"}, getenv("NX_CA_DIR", "/data/ca"))
 	var handler http.Handler = s
 	if up := os.Getenv("NX_UPSTREAM"); up != "" {
 		log.Printf("[nx-baas] CAPTURE MODE: forwarding everything to %s and logging bodies", up)
