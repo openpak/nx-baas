@@ -3,6 +3,40 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.34.0 — 2026-09-26
+
+Merges the two lines that had diverged since v0.31.0: the presence releases (v0.32.0, v0.33.0)
+were tagged off a branch that never reached `main`, so `main` and the released images each held
+work the other lacked. Everything is on one line again and the released content is unchanged —
+this release adds to it rather than replacing anything.
+
+- moon: parental controls, phase 0. `api-<env>.pctl.srv.nintendo.net/moon/v1/…` is the only thing
+  the pctl sysmodule needs from a server; the PIN, restriction level, play timer and bedtime alarm
+  all live in pctl's own savedata and work offline, so what dies without us is pairing with the
+  parent app and the settings sync. This phase logs what the console sends and refuses in the
+  shape pctl recognises, including its literal error identities, plus the pairing store and the
+  app's two calls. The ten paths and their bodies are meant to be *read off* one on-console
+  pairing attempt, not invented — later phases are written against that log.
+  Contract: `docs/switch/parental-controls-firmware-2026-09-26.md`, PRD
+  `prds/native-switch-parental-controls-prd.md`.
+- ci: the release workflow pins its runner image and moves to `actions/checkout@v5`.
+- frs: the comment claiming an empty recommendations body failed the console's parse is corrected.
+  The result table at `0x222448` maps rapidjson error 1 (document empty) to success with 0 items;
+  a *malformed* body is what fails, as 2121-0101/-0102/-0103.
+
+## v0.33.1 — 2026-09-26
+
+- tls: `api-lp1.frs.srv.nintendo.net` joins the fixed multi-SAN cert. It was never on it, so
+  every process minted the FRS host a fresh self-signed leaf on demand — and the friends module
+  authenticates that name strictly. On 2026-09-26 the id_token step finally started working and
+  the suggestions chain completed once at 05:08; by 16:23, after a restart regenerated the cert,
+  the console opened TLS and answered `TLS handshake error: EOF` without sending a request. The
+  same lesson is already recorded here twice, for the dauth names (2123-0013) and pearljam.
+- na: `/2.0.0/users/me` advertises a `links.nintendoNetwork` entry. The Add Friend applet has
+  never asked FRS for `type=nintendo_3ds` or `nintendo_network_id` in 30 days although IPC 20301
+  is reachable, and an empty `links` object was the one precondition we were visibly failing. The
+  id is the core PID as a stand-in; the real shadow PNID is the follow-up if the panes appear.
+
 ## v0.33.0 — 2026-09-26
 
 - presence: a game server's login is the playtime signal. After a successful
