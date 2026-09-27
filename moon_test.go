@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 )
 
 func moonCall(t *testing.T, method, path string) (*httptest.ResponseRecorder, map[string]any) {
@@ -100,6 +102,11 @@ func TestMoonStatusComesFromTheIdentity(t *testing.T) {
 
 func pctlStore(t *testing.T) *Store {
 	t.Helper()
+	// The guessing cap is process-wide, so every test starts with a clean minute
+	// rather than inheriting the previous one's misses.
+	pctlSearchMisses.Lock()
+	pctlSearchMisses.window, pctlSearchMisses.n = time.Now(), 0
+	pctlSearchMisses.Unlock()
 	return &Store{path: filepath.Join(t.TempDir(), "store.json")}
 }
 
@@ -191,8 +198,10 @@ func TestPairingRouteMintsACodeTheConsoleCouldType(t *testing.T) {
 	if len(got.MoonID) != 16 {
 		t.Fatalf("moon_id %q -- the console's paths spell it as 16 hex digits", got.MoonID)
 	}
-	if got.Code == "" || strings.ContainsAny(got.Code, "OI01") {
-		t.Fatalf("code %q -- must exist and stay out of the ambiguous glyphs", got.Code)
+	// The console's entry field takes six digits and nothing else, so a letter
+	// here is a code nobody can type (hardware, 2026-09-27).
+	if len(got.Code) != pctlPairingCodeDigits || strings.TrimFunc(got.Code, unicode.IsDigit) != "" {
+		t.Fatalf("code %q -- must be exactly %d digits", got.Code, pctlPairingCodeDigits)
 	}
 	if s.store.PctlByPairingCode(got.Code) == nil {
 		t.Fatalf("the minted code does not resolve in the store")
@@ -422,5 +431,60 @@ func TestADeviceIdResolvesInEitherSpelling(t *testing.T) {
 	}
 	if w, _ := moonReq(t, s, "POST", "/moon/v1/devices/"+decimal+"/activate", tok, "{}"); w.Code != 200 {
 		t.Fatalf("activate by decimal id %d", w.Code)
+	}
+}
+
+func TestPairingCodesAreTypableAndSpreadAcrossTheSpace(t *testing.T) {
+	seen := map[string]int{}
+	first := map[byte]int{}
+	for i := 0; i < 300; i++ {
+		c := pctlPairingCode()
+		if len(c) != pctlPairingCodeDigits || strings.TrimFunc(c, unicode.IsDigit) != "" {
+			t.Fatalf("code %q is not %d digits", c, pctlPairingCodeDigits)
+		}
+		seen[c]++
+		first[c[0]]++
+	}
+	if len(seen) < 295 {
+		t.Fatalf("%d distinct codes in 300 -- too many collisions for a million-wide space", len(seen))
+	}
+	// Leading zeros must survive, and the first digit must not favour a slice of
+	// the range: modulo over random bytes would show up here.
+	if len(first) < 8 {
+		t.Fatalf("first digit only took %d of 10 values across 300 codes", len(first))
+	}
+}
+
+func TestBlindGuessingIsCapped(t *testing.T) {
+	st := pctlStore(t)
+	mine := st.PctlNewPairing("acct-parent")
+	s := &server{store: st}
+
+	search := func(code string) map[string]any {
+		r := httptest.NewRequest("GET", "https://api-lp1.pctl.srv.nintendo.net/moon/v1/devices?filter.links.pairingCode.code.$eq="+code, nil)
+		r.Host = "api-lp1.pctl.srv.nintendo.net"
+		w := httptest.NewRecorder()
+		s.moon(w, r, nil)
+		out := map[string]any{}
+		_ = json.Unmarshal(w.Body.Bytes(), &out)
+		return out
+	}
+
+	// A household's own mistakes stay well inside the budget.
+	for i := 0; i < pctlSearchMissBudget; i++ {
+		search(fmt.Sprintf("%06d", i))
+	}
+	// Past it, even the right code is refused for the rest of the minute: the
+	// guesser learns nothing, and the parent can mint another in a moment.
+	if got := search(mine.PairingCode); got["count"] != float64(0) {
+		t.Fatalf("a real code answered %v while throttled -- enumeration would walk the whole space", got)
+	}
+
+	// The window is what lifts it, so a later minute works again.
+	pctlSearchMisses.Lock()
+	pctlSearchMisses.window = time.Now().Add(-2 * time.Minute)
+	pctlSearchMisses.Unlock()
+	if got := search(mine.PairingCode); got["count"] != float64(1) {
+		t.Fatalf("after the window the real code must resolve: %v", got)
 	}
 }

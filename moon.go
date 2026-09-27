@@ -21,10 +21,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/big"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -125,8 +127,20 @@ func (s *server) moonSearch(w http.ResponseWriter, r *http.Request) {
 		moonItems(w, nil)
 		return
 	}
-	d := s.store.PctlByPairingCode(strings.ToUpper(strings.TrimSpace(code)))
+	if !pctlSearchAllowed() {
+		// Six digits is a million codes, and this host is reachable from the
+		// internet: without a cap, a guesser gets the whole space in minutes and
+		// attaches their console to someone else's record.
+		// ponytail: one global counter per minute, not per-IP -- Traefik splices
+		// the console connection so no handler here sees a source address
+		// (docs/switch, §U3). Per-IP when PROXY protocol lands.
+		log.Printf("[moon] pairing-code lookups throttled; refusing %q", code)
+		moonItems(w, nil)
+		return
+	}
+	d := s.store.PctlByPairingCode(strings.TrimSpace(code))
 	if d == nil {
+		pctlSearchMiss()
 		// An empty list, not a 404: the console asked a question ("which device
 		// has this code"), and "none" is an answer to it.
 		log.Printf("[moon] pairing code %q: no record", code)
@@ -362,10 +376,11 @@ func (d *PctlDevice) Hex() string { return fmt.Sprintf("%016x", d.MoonID) }
 // abandoned code stops being a way in.
 const pctlPairingTTL = 15 * time.Minute
 
-// pctlPairingAlphabet has no O/0 or I/1 to confuse, and no lowercase. The real
-// alphabet and length are P3 and arrive with the first hardware log; this is one
-// const to change when they do.
-const pctlPairingAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+// pctlPairingCodeDigits: the console's entry field takes six digits and nothing
+// else (observed on hardware 2026-09-27, which settles study §7 P3). A letter in
+// the code is a code that cannot be typed, so the space is 10^6 and leading
+// zeros are kept.
+const pctlPairingCodeDigits = 6
 
 // randU64 is the moon device id: random, not a counter, so a record cannot be
 // guessed from another one.
@@ -375,13 +390,49 @@ func randU64() uint64 {
 	return binary.BigEndian.Uint64(b[:])
 }
 
+// pctlPairingCode is uniform over the whole six-digit space: modulo over random
+// bytes would lean on the low digits, and a code an attacker can predict is a
+// console they can attach to someone else's record.
 func pctlPairingCode() string {
-	b := make([]byte, 6)
-	rand.Read(b)
-	for i, c := range b {
-		b[i] = pctlPairingAlphabet[int(c)%len(pctlPairingAlphabet)]
+	max := big.NewInt(1)
+	for i := 0; i < pctlPairingCodeDigits; i++ {
+		max.Mul(max, big.NewInt(10))
 	}
-	return string(b)
+	n, err := rand.Int(rand.Reader, max)
+	if err != nil {
+		// Never serve a guessable code: an empty one fails the mint instead.
+		return ""
+	}
+	return fmt.Sprintf("%0*d", pctlPairingCodeDigits, n)
+}
+
+// pctlSearchMisses caps blind guessing at the pairing-code search. A miss is
+// cheap for a console typing a real code once; a guesser makes nothing but
+// misses, so the misses are what is counted.
+var pctlSearchMisses = struct {
+	sync.Mutex
+	window time.Time
+	n      int
+}{}
+
+// pctlSearchMissBudget is generous for a household -- a mistyped code, a retry,
+// a second console -- and useless for enumeration: at 30 a minute, a million
+// codes take a year.
+const pctlSearchMissBudget = 30
+
+func pctlSearchAllowed() bool {
+	pctlSearchMisses.Lock()
+	defer pctlSearchMisses.Unlock()
+	if time.Since(pctlSearchMisses.window) > time.Minute {
+		pctlSearchMisses.window, pctlSearchMisses.n = time.Now(), 0
+	}
+	return pctlSearchMisses.n < pctlSearchMissBudget
+}
+
+func pctlSearchMiss() {
+	pctlSearchMisses.Lock()
+	defer pctlSearchMisses.Unlock()
+	pctlSearchMisses.n++
 }
 
 // pctlDevices is the map, created on first use so no migration is needed for a

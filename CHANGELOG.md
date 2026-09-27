@@ -3,6 +3,20 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.35.1 — 2026-09-27
+
+- **The pairing code is six digits.** The console's entry field takes nothing else — the first
+  hardware finding of the parental-controls work, and it settles the open question the firmware's
+  strings could not (the base32 and base64 tables in pctl's rodata belong to something else). The
+  first cut minted six characters from a no-ambiguous-glyphs alphabet, which produced codes that
+  could not be typed at all. Codes are now drawn uniformly over the whole 10^6 range, leading
+  zeros kept.
+- **The code search caps blind guessing** at 30 misses a minute, refusing even a valid code for
+  the rest of the minute once tripped. A million codes is small when the host is reachable from
+  the internet, and a guessed code attaches a stranger's console to someone else's record. One
+  global counter, not per-IP: Traefik splices the console connection, so no handler here sees a
+  source address. Per-IP when PROXY protocol lands.
+
 ## v0.35.0 — 2026-09-26
 
 - **moon: a console can pair.** The console-facing endpoints of the parental-controls API are
