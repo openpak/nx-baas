@@ -280,16 +280,14 @@ func moonItems(w http.ResponseWriter, items []any) {
 // own paths, `%016llx`, which is the one shape we know it can render.
 func moonDeviceObj(d *PctlDevice) map[string]any {
 	obj := map[string]any{
-		// A number, not the hex string this once sent: the console read that
-		// string as zero and asked for `/devices/0000000000000000/owners`, which
-		// is the 404 behind error 2142-2009 (hardware, 2026-09-27).
-		//
-		// Nothing else goes in this object. The same build that made the id a
-		// number also added an `id` key beside it, and the console stopped
-		// asking anything at all -- 2142-0234, raised with no request behind it,
-		// which is a parse and not a network failure. Two changes at once, so
-		// the extra key is now removed on its own: pctl's reader looks strict,
-		// and a field it has no slot for is the likeliest thing it refused.
+		// `id` is the field the console reads, and it reads it as a number.
+		// Three hardware attempts settled this: a hex string in `deviceId` was
+		// read as zero, a number in `deviceId` alone was still read as zero, and
+		// only the build that also carried `id` got past the id and on to judging
+		// the setting. `deviceId` is not in pctl's device field table at all,
+		// which fits -- it stays because pctl's strings carry the name and it
+		// costs nothing.
+		"id":       d.MoonID,
 		"deviceId": d.MoonID,
 		"nickname": d.Nickname,
 		// `activated` and `parentalControlSetting` sit beside each other in

@@ -330,9 +330,12 @@ func TestAConsolePairsAndSyncs(t *testing.T) {
 	}
 	// A number, not a string: the console read a hex string as zero and asked
 	// for /devices/0000000000000000/owners (hardware, 2026-09-27).
-	num, ok := items[0].(map[string]any)["deviceId"].(float64)
+	num, ok := items[0].(map[string]any)["id"].(float64)
 	if !ok {
-		t.Fatalf("deviceId %#v is not a JSON number -- the console parses it as one", items[0].(map[string]any)["deviceId"])
+		t.Fatalf("id %#v is not a JSON number -- it is the field the console reads the device id from", items[0].(map[string]any)["id"])
+	}
+	if items[0].(map[string]any)["deviceId"] != num {
+		t.Fatalf("deviceId and id must carry the same value")
 	}
 	if uint64(num) != minted.MoonID {
 		t.Fatalf("deviceId %v, want %d", num, minted.MoonID)
@@ -537,6 +540,9 @@ func TestTheDeviceObjectHasNoFieldPctlDoesNotName(t *testing.T) {
 		"deviceId": true, "nickname": true, "pairingActive": true, "updatedAt": true,
 		"etag": true, "owners": true, "synchronizedAt": true, "links": true,
 		"activated": true, "unlockCode": true, "parentalControlSetting": true,
+		// `id` is what the console actually reads the device id from: the build
+		// without it asked for /devices/0000000000000000/owners.
+		"id": true,
 	}
 	for k := range obj {
 		if !known[k] {

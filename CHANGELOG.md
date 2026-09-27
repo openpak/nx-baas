@@ -3,6 +3,24 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.37.0 — 2026-09-27
+
+- **`id` is the field the console reads the device id from**, and v0.36.0 removed it on a wrong
+  hunch. Three attempts on hardware settle it: a hex string in `deviceId` was read as zero; a
+  number in `deviceId` alone was *still* read as zero; only the build that also carried `id` got
+  past the id and on to judging the setting. `deviceId` does not appear in pctl's device field
+  table at all, which fits. Both keys now travel, carrying the same number.
+- **A record states "nothing is restricted" instead of leaving it absent.** 2142-0234 is pctl's own
+  restriction refusal, raised locally with no request behind it: its check returns success while the
+  PIN slot is empty, and past that it reads an allowed age and refuses when the byte is unset. So
+  silence reads as block-everything. The record now embeds `parental_control_setting`, because the
+  console read it from the search answer and made no second call, with names and values from pctl's
+  own tables — `safetyLevel` NONE, `ratingOrganization` PEGI, `ratingAge` 18, the three booleans
+  false. `activated` travels too; it sits beside the setting in the same table.
+- **Each record mints an eight-digit `unlockCode`.** pctl copies at most eight bytes into its PIN
+  slot and validates the eighth as a digit. Because the parent side holds that code, a forgotten
+  console PIN is recoverable through OpenPak rather than through Nintendo support.
+
 ## v0.36.0 — 2026-09-27
 
 - **One live pairing code per account.** Asking for a code now replaces the last unclaimed one
