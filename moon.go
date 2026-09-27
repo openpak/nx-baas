@@ -30,6 +30,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // The error identities pctl carries as literals (study §5). A refusal that does
@@ -104,6 +105,8 @@ func (s *server) moon(w http.ResponseWriter, r *http.Request, body []byte) {
 	switch {
 	case rest == "/devices" && r.Method == http.MethodGet:
 		s.moonSearch(w, r)
+	case strings.HasPrefix(rest, "/mii/") && r.Method == http.MethodGet:
+		s.moonMii(w, strings.TrimPrefix(rest, "/mii/"))
 	case strings.HasPrefix(rest, "/devices/"):
 		s.moonDevice(w, r, body, device, strings.TrimPrefix(rest, "/devices/"))
 	default:
@@ -180,6 +183,11 @@ func (s *server) moonDevice(w http.ResponseWriter, r *http.Request, body []byte,
 			return
 		}
 		log.Printf("[moon] device %s activated by %s", bound.Hex(), device)
+		// The console hands over its whole state here, setting and PIN included
+		// (hardware, v0.42.0). That is the document the parent side edits from.
+		if set, ok := jsonObj(body)["parentalControlSetting"].(map[string]any); ok {
+			bound = s.store.PctlSetSetting(bound.Hex(), set)
+		}
 		writeJSON(w, 200, moonDeviceObj(bound))
 		return
 	}
@@ -189,7 +197,7 @@ func (s *server) moonDevice(w http.ResponseWriter, r *http.Request, body []byte,
 	// a 403 here is 2142-2008). An unclaimed record answers any console holding
 	// a device token; the id is only known to one that typed the code.
 	if tail == "owners" && r.Method == http.MethodGet && d.DauthID == "" && device != "" {
-		moonItems(w, moonOwners(d))
+		moonItems(w, moonOwners(d, hostOf(r)))
 		return
 	}
 
@@ -220,7 +228,7 @@ func (s *server) moonDevice(w http.ResponseWriter, r *http.Request, body []byte,
 		s.store.PctlSetSetting(d.Hex(), jsonObj(body))
 		s.moonSetting(w, r, s.store.PctlByMoonID(d.Hex()))
 	case tail == "owners" && r.Method == http.MethodGet:
-		moonItems(w, moonOwners(d))
+		moonItems(w, moonOwners(d, hostOf(r)))
 	case strings.HasPrefix(tail, "owners/"):
 		na := strings.TrimPrefix(tail, "owners/")
 		switch r.Method {
@@ -241,6 +249,22 @@ func (s *server) moonDevice(w http.ResponseWriter, r *http.Request, body []byte,
 		n := s.store.PctlAddEvents(d.Hex(), body)
 		log.Printf("[moon] device %s uploaded events (%d bytes, %d held)", d.Hex(), len(body), n)
 		writeJSON(w, 200, map[string]any{"result": "ok"})
+	case strings.HasPrefix(tail, "players/") && (r.Method == http.MethodPut || r.Method == http.MethodDelete):
+		// The console's own users, one call each after pairing: a nickname and
+		// a 256px JPEG in base64, about 40 KiB (hardware, v0.42.0). Kept so the
+		// parent side can show who plays; removed when the console says so.
+		player := strings.TrimPrefix(tail, "players/")
+		if r.Method == http.MethodDelete {
+			s.store.PctlSetPlayer(d.Hex(), player, nil)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		doc := jsonObj(body)
+		nick, _ := doc["nickname"].(string)
+		img, _ := doc["imageData"].(string)
+		s.store.PctlSetPlayer(d.Hex(), player, &PctlPlayer{Nickname: nick, ImageData: img})
+		log.Printf("[moon] device %s player %s is %q", d.Hex(), player, nick)
+		writeJSON(w, 200, map[string]any{"nickname": nick})
 	case strings.HasPrefix(tail, "players") && r.Method == http.MethodGet:
 		// The console's players, for the parent app's icons. Empty until the
 		// app asks for them.
@@ -324,7 +348,7 @@ func moonDeviceObj(d *PctlDevice) map[string]any {
 		// activation.
 		"updatedAt": d.UpdatedAt,
 		"etag":      d.ETag,
-		"owners":    moonOwners(d),
+		"owners":    moonOwners(d, ""),
 	}
 	if d.ActivatedAt != 0 {
 		obj["synchronizedAt"] = d.ActivatedAt
@@ -451,26 +475,60 @@ func pctlConform(v, schema any) any {
 //
 // A record nobody has been linked to yet is owned by the account that minted
 // its code: that is who the console is about to be paired with.
-// ponytail: every owner is called "OpenPak" and has no miiUri. Pass the
-// account's display name through /internal/pctl/pairing when the console's
-// confirmation screen should name the parent.
-func moonOwners(d *PctlDevice) []any {
+// Every owner carries the managing account's name, since that is the only
+// account behind a record.
+// `miiUri.small` is a URL the console downloads the picture from (at most 255
+// bytes; it keeps the file under the URL's last path segment). It points back
+// at this host so it resolves and authenticates like every other moon call;
+// host is empty where no console will follow the link.
+func moonOwners(d *PctlDevice, host string) []any {
 	owners := d.Owners
 	if len(owners) == 0 && d.ManagedBy != "" {
 		sum := sha256.Sum256([]byte(d.ManagedBy))
 		owners = []string{hex.EncodeToString(sum[:8])}
+	}
+	name := d.ParentName
+	if name == "" {
+		name = "OpenPak"
 	}
 	out := []any{}
 	for _, na := range owners {
 		if !pctlHexID(na) {
 			continue
 		}
-		out = append(out, map[string]any{
-			"deviceId": d.Hex(),
-			"user":     map[string]any{"nintendoAccountId": na, "nickname": "OpenPak"},
-		})
+		user := map[string]any{"nintendoAccountId": na, "nickname": name}
+		if host != "" && pctlAccountID(d.ManagedBy) {
+			user["miiUri"] = map[string]any{"small": "https://" + host + "/moon/v1/mii/" + d.ManagedBy + "/console.jpg"}
+		}
+		out = append(out, map[string]any{"deviceId": d.Hex(), "user": user})
 	}
 	return out
+}
+
+// pctlAccountID reports whether s is safe to put in a path: an OpenPak account
+// id is a UUID, and nothing else is forwarded to the website.
+func pctlAccountID(s string) bool {
+	return s != "" && len(s) <= 36 && strings.Trim(s, "0123456789abcdef-") == ""
+}
+
+// moonMii is the parent's picture, relayed from the website's media store: the
+// same console JPEG a profile picture uses. The console keeps at most 64 KiB
+// (pctl .text 0x4d060), so anything larger is refused here rather than cut there.
+func (s *server) moonMii(w http.ResponseWriter, path string) {
+	account, _, _ := strings.Cut(path, "/")
+	site := getenv("WEBSITE_INTERNAL_URL", "")
+	if site == "" || !pctlAccountID(account) {
+		moonError(w, moonNotFound)
+		return
+	}
+	img, err := fetchAvatar(site + "/media/avatars/" + account + "/console.jpg")
+	if err != nil || len(img) > 64<<10 {
+		log.Printf("[moon] mii %s: %d bytes, err %v", account, len(img), err)
+		moonError(w, moonNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Write(img)
 }
 
 // pctlHexID is what the console's id parser accepts (.text 0x50f00): one to
@@ -517,6 +575,12 @@ type PctlDevice struct {
 	// ManagedBy is the OpenPak account that created the record and manages it
 	// from the app. It is ours, and the console never sees it.
 	ManagedBy string `json:"managedBy,omitempty"`
+	// Players are the console's users as it reported them, by its own ids.
+	Players map[string]*PctlPlayer `json:"players,omitempty"`
+	// ParentName is the managing account's display name, as the app's user
+	// had it when the code was minted. It is what the console shows as the
+	// parent; "OpenPak" stands in when there is none.
+	ParentName string `json:"parentName,omitempty"`
 	// Nickname is what the console calls itself, as it sent it.
 	Nickname string `json:"nickname,omitempty"`
 	// UnlockCode is the eight digits that lift a restriction on the console --
@@ -708,6 +772,52 @@ func (s *Store) PctlNewPairing(managedBy string) *PctlDevice {
 	return d
 }
 
+// PctlPlayer is one user on a paired console.
+type PctlPlayer struct {
+	Nickname  string `json:"nickname"`
+	ImageData string `json:"imageData,omitempty"` // base64 JPEG, as sent
+}
+
+// PctlSetPlayer stores a console user, or forgets one when p is nil.
+// ponytail: capped at 8 players, the number of users a Switch holds, so a
+// console cannot grow the store without bound.
+func (s *Store) PctlSetPlayer(moonHex, id string, p *PctlPlayer) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d := s.pctlDevices()[moonHex]
+	if d == nil {
+		return
+	}
+	if p == nil {
+		delete(d.Players, id)
+	} else if _, known := d.Players[id]; known || len(d.Players) < 8 {
+		if d.Players == nil {
+			d.Players = map[string]*PctlPlayer{}
+		}
+		d.Players[id] = p
+	}
+	s.save()
+}
+
+// PctlNameParent records what the console should call the account behind a
+// record. The console copies at most 32 bytes of a nickname, so it is cut on a
+// rune boundary here rather than mid-character there.
+func (s *Store) PctlNameParent(moonHex, name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d := s.pctlDevices()[moonHex]
+	if d == nil {
+		return
+	}
+	name = strings.TrimSpace(name)
+	for len(name) > 32 {
+		_, n := utf8.DecodeLastRuneInString(name)
+		name = name[:len(name)-n]
+	}
+	d.ParentName = name
+	s.save()
+}
+
 // PctlByPairingCode answers the console's search. An expired code is not found:
 // the record stays (the parent can see it went stale) but it is no longer a way
 // to claim a console. It is dropped the next time that account asks for a code.
@@ -896,8 +1006,14 @@ func (s *Store) PctlSetSetting(moonHex string, doc map[string]any) *PctlDevice {
 	if d == nil {
 		return nil
 	}
+	// The console's own PIN replaces the one minted with the record: the parent
+	// has to be shown the code that actually unlocks the console.
+	if code, ok := doc["unlockCode"].(string); ok && len(code) >= 4 && len(code) <= 8 && strings.Trim(code, "0123456789") == "" {
+		d.UnlockCode = code
+	}
 	tag := pctlETag(doc)
 	if tag == d.ETag {
+		s.save()
 		return d
 	}
 	d.Setting, d.ETag, d.UpdatedAt = doc, tag, time.Now().Unix()
@@ -931,10 +1047,12 @@ func (s *server) pctlPairing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		AccountID string `json:"account_id"`
+		AccountID   string `json:"account_id"`
+		DisplayName string `json:"display_name"`
 	}
 	json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in)
 	d := s.store.PctlNewPairing(in.AccountID)
+	s.store.PctlNameParent(d.Hex(), in.DisplayName)
 	log.Printf("[moon] pairing code %s for account=%q device=%s (expires %ds)",
 		d.PairingCode, in.AccountID, d.Hex(), int(pctlPairingTTL.Seconds()))
 	writeJSON(w, 200, map[string]any{

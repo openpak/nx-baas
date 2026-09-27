@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 func moonCall(t *testing.T, method, path string) (*httptest.ResponseRecorder, map[string]any) {
@@ -674,5 +675,94 @@ func TestTheDefaultSettingHasTheTypesPctlParses(t *testing.T) {
 	}
 	if age := custom["ageRestriction"].(map[string]any)["ratingAge"]; age != 18 {
 		t.Fatalf("ratingAge %v", age)
+	}
+}
+
+// The activate body is the console's own state, in the shape hardware sent it
+// (v0.42.0): its setting is kept, and its PIN replaces the minted one.
+func TestActivateKeepsTheConsolesSettingAndPin(t *testing.T) {
+	s, token := moonServer(t)
+	d := s.store.PctlNewPairing("acct-parent")
+	body := `{"activated":true,"parentalControlSetting":{"unlockCode":"8759","functionalRestrictionLevel":"NONE",
+		"customSettings":{"ageRestriction":{"restriction":"UNRESTRICTED","ratingAge":2},
+		"ugcRestriction":{"restriction":"UNRESTRICTED","applications":{"0100B3C014BDA000":{"applicationId":"0100B3C014BDA000","restriction":"RESTRICTED"}}},
+		"snsPostRestriction":"UNRESTRICTED","ratingOrganization":"PEGI_BBFC","vrRestriction":"UNRESTRICTED"}}}`
+	if w, _ := moonReq(t, s, "POST", "/moon/v1/devices/"+d.Hex()+"/activate", token("cert-aaaaaaaaaaaaaaaa"), body); w.Code != 200 {
+		t.Fatalf("activate status %d", w.Code)
+	}
+	got := s.store.PctlByMoonID(d.Hex())
+	if got.UnlockCode != "8759" {
+		t.Fatalf("unlock code %q, want the console's own", got.UnlockCode)
+	}
+	custom := pctlSettingOf(got)["customSettings"].(map[string]any)
+	if custom["ratingOrganization"] != "PEGI_BBFC" || custom["ageRestriction"].(map[string]any)["ratingAge"] != 2 {
+		t.Fatalf("served setting %v is not the console's", custom)
+	}
+}
+
+// The console shows the owner's nickname as the parent, so it is the name of
+// the account that minted the code, within the 32 bytes the console copies.
+func TestTheOwnerIsNamedAfterTheParentAccount(t *testing.T) {
+	st := pctlStore(t)
+	d := st.PctlNewPairing("acct-parent")
+	nick := func() string {
+		return moonOwners(st.PctlByMoonID(d.Hex()), "")[0].(map[string]any)["user"].(map[string]any)["nickname"].(string)
+	}
+	if nick() != "OpenPak" {
+		t.Fatalf("unnamed parent is %q", nick())
+	}
+	st.PctlNameParent(d.Hex(), " Alexis ")
+	if nick() != "Alexis" {
+		t.Fatalf("nickname %q", nick())
+	}
+	st.PctlNameParent(d.Hex(), strings.Repeat("é", 20))
+	if got := nick(); len(got) > 32 || !utf8.ValidString(got) {
+		t.Fatalf("nickname %q is %d bytes", got, len(got))
+	}
+}
+
+// The parent's picture is a link back to this host, and the relay behind it
+// forwards only a well-formed account id to the website.
+func TestTheOwnerCarriesAPictureLink(t *testing.T) {
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/media/avatars/10c5a846-9005-474b-8e60-494fad24bdf8/console.jpg" {
+			t.Errorf("website asked for %s", r.URL.Path)
+		}
+		w.Write([]byte{0xFF, 0xD8, 0xFF, 0xD9})
+	}))
+	defer site.Close()
+	t.Setenv("WEBSITE_INTERNAL_URL", site.URL)
+
+	s, _ := moonServer(t)
+	d := s.store.PctlNewPairing("10c5a846-9005-474b-8e60-494fad24bdf8")
+	user := moonOwners(d, "api-lp1.pctl.srv.nintendo.net")[0].(map[string]any)["user"].(map[string]any)
+	link, _ := user["miiUri"].(map[string]any)["small"].(string)
+	if link != "https://api-lp1.pctl.srv.nintendo.net/moon/v1/mii/10c5a846-9005-474b-8e60-494fad24bdf8/console.jpg" || len(link) > 255 {
+		t.Fatalf("link %q", link)
+	}
+	if w, _ := moonReq(t, s, "GET", strings.TrimPrefix(link, "https://api-lp1.pctl.srv.nintendo.net"), "", ""); w.Code != 200 || w.Header().Get("Content-Type") != "image/jpeg" {
+		t.Fatalf("picture status %d type %q", w.Code, w.Header().Get("Content-Type"))
+	}
+	if w, _ := moonReq(t, s, "GET", "/moon/v1/mii/..%2Fadmin/console.jpg", "", ""); w.Code != 404 {
+		t.Fatalf("a malformed account id answered %d", w.Code)
+	}
+}
+
+// After pairing the console reports each of its users; refusing that was a 404
+// on hardware (v0.42.0).
+func TestTheConsoleReportsItsPlayers(t *testing.T) {
+	s, token := moonServer(t)
+	tok := token("cert-aaaaaaaaaaaaaaaa")
+	d := s.store.PctlNewPairing("acct-parent")
+	s.store.PctlActivate(d.Hex(), "cert-aaaaaaaaaaaaaaaa")
+	path := "/moon/v1/devices/" + d.Hex() + "/players/10000000_00a10001_00000000_00000001"
+	if w, _ := moonReq(t, s, "PUT", path, tok, `{"nickname":"hansolo","imageData":"/9j/4AAQ"}`); w.Code != 200 {
+		t.Fatalf("player put status %d", w.Code)
+	}
+	if p := s.store.PctlByMoonID(d.Hex()).Players["10000000_00a10001_00000000_00000001"]; p == nil || p.Nickname != "hansolo" {
+		t.Fatalf("player %v", p)
+	}
+	if w, _ := moonReq(t, s, "DELETE", path, tok, ""); w.Code != 204 || len(s.store.PctlByMoonID(d.Hex()).Players) != 0 {
+		t.Fatalf("player delete status %d", w.Code)
 	}
 }

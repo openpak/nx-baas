@@ -3,6 +3,23 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.43.0 — 2026-09-27
+
+- **Confirmed on hardware: a console pairs.** With v0.42.0 the console ran search, owners and
+  `activate`, and reported itself managed. Its activate body is its whole state, and its
+  `parentalControlSetting` matches the parse table key for key.
+- **The activate body is kept.** It was read for nothing but the bearer. The setting in it is now
+  stored as the record's document, and the console's own `unlockCode` replaces the one minted with
+  the record — that is the PIN the console asks for, so it is the one the parent has to be shown.
+- **The parent is named, and pictured.** The owner the console shows as Parent/Guardian was the
+  placeholder "OpenPak". `/internal/pctl/pairing` takes `display_name`, the owner carries it (cut
+  to the 32 bytes the console copies), and `user.miiUri.small` links to
+  `/moon/v1/mii/<account>/console.jpg` on the same host, which relays the account's console JPEG
+  from the website. The console keeps at most 64 KiB of it.
+- **The console's players are accepted.** After pairing it PUTs each of its users to
+  `/devices/<id>/players/<user>` with a nickname and a base64 JPEG; that was answered 404.
+  `PUT` stores one, `DELETE` forgets one, eight at most per console.
+
 ## v0.42.0 — 2026-09-27
 
 - **Confirmed on hardware: `id` as a hex string gets the console past the search.** With v0.41.0
