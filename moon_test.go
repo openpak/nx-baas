@@ -1019,3 +1019,49 @@ func TestBoundsPinLengthAndTheLoggedPin(t *testing.T) {
 		t.Fatalf("masked body %s", masked)
 	}
 }
+
+// Play time per day in the console's calendar, from running totals: the gain
+// between events, the whole value after a restart, never more than the clock
+// allows, and nothing from an event of another shape.
+func TestActivityIsTheGainBetweenEventsPerConsoleDay(t *testing.T) {
+	at := func(s string) int64 { // console-local time in London summer time
+		tm, _ := time.Parse("2006-01-02 15:04", s)
+		return tm.Unix() - 3600
+	}
+	ev := func(when string, elapsed int, apps string) json.RawMessage {
+		return json.RawMessage(fmt.Sprintf(`{"eventType":"IDLE","eventTimestamp":%d,"timeZoneUtcOffsetSeconds":3600,"elapsedTime":%d,"applicationTimes":{%s}}`, at(when), elapsed, apps))
+	}
+	events := []json.RawMessage{
+		ev("2026-09-26 21:00", 4200, `"0100B3C014BDA000":{"elapsedTime":3000},"01001B300B9BE000":{"elapsedTime":1000}`),
+		ev("2026-09-10 12:00", 900, ``),
+		ev("2026-09-26 20:00", 600, `"0100B3C014BDA000":{"elapsedTime":500}`), // restarted since 09-10
+		ev("2026-09-27 09:00", 120, ``),                                       // restarted overnight
+		ev("2026-09-27 09:01", 100000, ``),                                    // no more than the minute that passed
+		json.RawMessage(`{"eventType":"IDLE","eventTimestamp":"x","elapsedTime":5}`),
+		json.RawMessage(fmt.Sprintf(`{"eventTimestamp":%d,"elapsedTime":5,"applicationTimes":[]}`, at("2026-09-27 10:00"))),
+		json.RawMessage(`[1]`),
+	}
+	now := time.Unix(at("2026-09-27 12:00"), 0)
+	got, _ := json.Marshal(pctlActivity(events, 7, now))
+	want := `[{"date":"2026-09-27","titles":[],"total_minutes":3},` +
+		`{"date":"2026-09-26","titles":[{"minutes":50,"title_id":"0100b3c014bda000"},{"minutes":17,"title_id":"01001b300b9be000"}],"total_minutes":70}]`
+	if string(got) != want {
+		t.Fatalf("activity\n got %s\nwant %s", got, want)
+	}
+	if all := pctlActivity(events, 30, now); len(all) != 3 || all[2]["date"] != "2026-09-10" || all[2]["total_minutes"] != int64(15) {
+		t.Fatalf("30 days: %v", all)
+	}
+
+	s, _ := moonServer(t)
+	d := s.store.PctlNewPairing("acct-parent")
+	for path, want := range map[string]int{
+		"/activity?account_id=acct-parent": 200, "/activity?account_id=acct-parent&days=30": 200,
+		"/activity?account_id=acct-parent&days=31": 400, "/activity?account_id=acct-other": 404,
+	} {
+		w := httptest.NewRecorder()
+		s.pctlDeviceRoute(w, httptest.NewRequest("GET", "/internal/pctl/devices/"+d.Hex()+path, nil))
+		if w.Code != want || (want == 200 && w.Body.String() != "{\"days\":[]}\n") {
+			t.Fatalf("%s: status %d body %q", path, w.Code, w.Body.String())
+		}
+	}
+}

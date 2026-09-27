@@ -3,6 +3,24 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.46.0 — 2026-09-27
+
+- **Play time per day, for the parent.** `GET /internal/pctl/devices/<moon_id>/activity?account_id=…&days=1..30`
+  (default 7) answers `{"days":[{"date","total_minutes","titles":[{"title_id","minutes"}]}]}`:
+  newest day first, the date in the console's own calendar (each event carries its UTC offset),
+  title ids in lowercase hex, titles by minutes descending, and a day with nothing counted left
+  out. Another account's console, or an unknown one, is a 404.
+- **What the console's times mean, from its uploads.** Every event carries running totals in
+  seconds, not the time since the last event: `elapsedTime` grows second for second with the
+  timestamps, stands still while the console is temporarily unlocked (`disabledTime` grows
+  instead), and restarts near zero shortly after pairing. A day's time is therefore the gain
+  between consecutive events — the whole value after a restart — and never more than the clock
+  allows between them. `total_minutes` is `elapsedTime`, what the play timer counts, HOME menu
+  included. Per-title times come from `applicationTimes`, which has been empty in every upload so
+  far because nothing was played; its shape (title id as `%016llX`, each with an `elapsedTime` in
+  seconds) is read from the firmware and is unproven until a console uploads one. An event of any
+  other shape counts for nothing.
+
 ## v0.45.2 — 2026-09-27
 
 - **Confirmed on hardware: a PIN and a restriction set on the server both reach the console.**

@@ -261,8 +261,8 @@ func (s *server) moonDevice(w http.ResponseWriter, r *http.Request, body []byte,
 		}
 	case tail == "events" && r.Method == http.MethodPost:
 		// Play-time and state events, a JSON array per upload. Stored as sent;
-		// only wrong-PIN attempts are read, for the parent side. A console that
-		// cannot hand them over spools retries instead.
+		// the parent side reads wrong-PIN attempts and play time out of them. A
+		// console that cannot hand them over spools retries instead.
 		n := s.store.PctlAddEvents(d.Hex(), body)
 		log.Printf("[moon] device %s uploaded events (%d bytes, %d held)", d.Hex(), len(body), n)
 		writeJSON(w, 200, map[string]any{"result": "ok"})
@@ -686,8 +686,8 @@ type PctlDevice struct {
 	SyncedAt   int64  `json:"syncedAt,omitempty"`
 	// Events are the console's play-time and state events, one entry each, as
 	// received. An upload is a JSON array of them (hardware, v0.43.0); a store
-	// written before v0.45.0 holds whole uploads, which pctlEvents splits. Only
-	// DID_WRONG_UNLOCK_CODE is read so far.
+	// written before v0.45.0 holds whole uploads, which pctlEvents splits. Read
+	// for wrong-PIN attempts and for play time (pctlActivity).
 	Events []json.RawMessage `json:"events,omitempty"`
 	// Owners are what the console spells in `owners/%016llx`: Nintendo-Account
 	// -shaped ids. They are learned when the console links an owner, which is
@@ -1148,6 +1148,126 @@ func (s *Store) PctlWrongUnlocks(moonHex string) []int64 {
 	return out[:min(len(out), 20)]
 }
 
+// PctlEventList is a copy of a record's events, one each, read under the lock.
+func (s *Store) PctlEventList(moonHex string) []json.RawMessage {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if d := s.pctlDevices()[moonHex]; d != nil {
+		return pctlEvents(d.Events)
+	}
+	return nil
+}
+
+// pctlActivity is play time per day, in the console's own calendar, newest day
+// first: `{date, total_minutes, titles: [{title_id, minutes}]}`, for the last
+// `days` dates counting today. A day with nothing counted is left out.
+//
+// Every event carries the console's counters as they stand, not what happened
+// since the last event. Evidence (hardware, 2026-09-27, 20 events over two
+// pairings): `elapsedTime` grows second for second with `eventTimestamp`
+// (447 at 13:04:53, 767 at 13:10:13, 320 s apart), stands still while the
+// console is temporarily unlocked (299 at DID_UNLOCK and DID_LOCK 27 s later,
+// when `disabledTime` went 0 -> 27), and restarted near zero about 24 s after
+// each `activate`. So they are running totals in seconds, and a total that goes
+// down is a counter that restarted. Whether it also restarts at the console's
+// midnight has not been seen; the reading below holds either way.
+//
+// `applicationTimes` has been `{}` in every event seen, because nothing was
+// played. Its shape is the firmware's (pctl 22.5.0 serialiser, vaddr 0x13875c
+// and 0x139228): keys are title ids as `%016llX`, each value an object whose
+// `elapsedTime` is that title's seconds, capped at the event's own
+// `elapsedTime` -- read as the same kind of running total, which is unproven
+// until a console uploads one.
+//
+// So a day's time is the sum of the increases between consecutive events, the
+// whole value after a restart, each bounded by the wall-clock gap since the
+// previous event (a counter cannot gain more than that); the first event is
+// bounded by the time since its own midnight. It is credited to the day of the
+// later event. `total_minutes` is `elapsedTime`, which is what the play timer
+// counts (HOME menu included); `titles` are the per-title times. An event of
+// any other shape counts for nothing.
+func pctlActivity(events []json.RawMessage, days int, now time.Time) []map[string]any {
+	type counters struct {
+		at, offset, elapsed int64
+		titles              map[string]int64
+	}
+	var evs []counters
+	for _, raw := range events {
+		var e struct {
+			EventTimestamp   *float64                   `json:"eventTimestamp"`
+			Offset           float64                    `json:"timeZoneUtcOffsetSeconds"`
+			ElapsedTime      *float64                   `json:"elapsedTime"`
+			ApplicationTimes map[string]json.RawMessage `json:"applicationTimes"`
+		}
+		if json.Unmarshal(raw, &e) != nil || e.EventTimestamp == nil || e.ElapsedTime == nil || *e.ElapsedTime < 0 {
+			continue
+		}
+		c := counters{at: int64(*e.EventTimestamp), offset: int64(e.Offset), elapsed: int64(*e.ElapsedTime), titles: map[string]int64{}}
+		for id, v := range e.ApplicationTimes {
+			var app struct {
+				ElapsedTime float64 `json:"elapsedTime"`
+			}
+			if len(id) == 16 && pctlHexID(id) && json.Unmarshal(v, &app) == nil && app.ElapsedTime > 0 {
+				c.titles[strings.ToLower(id)] = int64(app.ElapsedTime)
+			}
+		}
+		evs = append(evs, c)
+	}
+	slices.SortStableFunc(evs, func(a, b counters) int { return int(a.at - b.at) })
+
+	total, titles := map[string]int64{}, map[string]map[string]int64{}
+	for i, e := range evs {
+		local := time.Unix(e.at+e.offset, 0).UTC()
+		day := local.Format("2006-01-02")
+		gap := int64(local.Hour()*3600 + local.Minute()*60 + local.Second())
+		prev := counters{}
+		if i > 0 {
+			gap = e.at - evs[i-1].at
+			if e.elapsed >= evs[i-1].elapsed {
+				prev = evs[i-1]
+			}
+		}
+		gain := func(cur, before int64) int64 {
+			if cur < before {
+				before = 0
+			}
+			return max(0, min(cur-before, gap))
+		}
+		total[day] += gain(e.elapsed, prev.elapsed)
+		for id, secs := range e.titles {
+			if titles[day] == nil {
+				titles[day] = map[string]int64{}
+			}
+			titles[day][id] += gain(secs, prev.titles[id])
+		}
+	}
+
+	offset := int64(0)
+	if len(evs) > 0 {
+		offset = evs[len(evs)-1].offset
+	}
+	first := now.Add(time.Duration(offset)*time.Second).UTC().AddDate(0, 0, 1-days).Format("2006-01-02")
+	out := []map[string]any{}
+	for _, day := range slices.Sorted(maps.Keys(total)) {
+		list := []map[string]any{}
+		for id, secs := range titles[day] {
+			if m := (secs + 30) / 60; m > 0 {
+				list = append(list, map[string]any{"title_id": id, "minutes": m})
+			}
+		}
+		slices.SortFunc(list, func(a, b map[string]any) int {
+			if d := b["minutes"].(int64) - a["minutes"].(int64); d != 0 {
+				return int(d)
+			}
+			return strings.Compare(a["title_id"].(string), b["title_id"].(string))
+		})
+		if m := (total[day] + 30) / 60; day >= first && (m > 0 || len(list) > 0) {
+			out = append([]map[string]any{{"date": day, "total_minutes": m, "titles": list}}, out...)
+		}
+	}
+	return out
+}
+
 // PctlActivate binds a console to the record its code found and burns the code.
 // Activating twice with the same console is not an error -- a retried request
 // must not lose the console -- but another console cannot take the record.
@@ -1373,6 +1493,17 @@ func (s *server) pctlDeviceRoute(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	case len(parts) == 2 && parts[1] == "setting" && r.Method == http.MethodPut:
 		s.pctlPutSetting(w, r, d)
+	case len(parts) == 2 && parts[1] == "activity" && r.Method == http.MethodGet:
+		days := 7
+		if v := r.URL.Query().Get("days"); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 1 || n > pctlEventsDays {
+				apiErr(w, http.StatusBadRequest, "days must be 1 to 30")
+				return
+			}
+			days = n
+		}
+		writeJSON(w, 200, map[string]any{"days": pctlActivity(s.store.PctlEventList(d.Hex()), days, time.Now())})
 	case len(parts) == 4 && parts[1] == "players" && parts[3] == "image" && r.Method == http.MethodGet:
 		s.pctlPlayerImage(w, d, parts[2])
 	default:
