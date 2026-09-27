@@ -515,3 +515,27 @@ func TestDeviceIdsStayExactInADouble(t *testing.T) {
 		}
 	}
 }
+
+// The device object carries what pctl's own strings name and nothing else. The
+// build that added an `id` key beside `deviceId` came back as 2142-0234 with no
+// request behind it -- a parse, not a network failure -- so an unknown field is
+// treated as a fault here rather than as harmless generosity.
+func TestTheDeviceObjectHasNoFieldPctlDoesNotName(t *testing.T) {
+	st := pctlStore(t)
+	d := st.PctlNewPairing("acct-parent")
+	obj := moonDeviceObj(d)
+
+	// Every name here appears in pctl's rodata (the docs-repo study, §4).
+	known := map[string]bool{
+		"deviceId": true, "nickname": true, "pairingActive": true, "updatedAt": true,
+		"etag": true, "owners": true, "synchronizedAt": true, "links": true,
+	}
+	for k := range obj {
+		if !known[k] {
+			t.Fatalf("field %q is not one pctl names -- it is what 2142-0234 looked like", k)
+		}
+	}
+	if _, ok := obj["deviceId"].(uint64); !ok {
+		t.Fatalf("deviceId is %T, must stay a number", obj["deviceId"])
+	}
+}

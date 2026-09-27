@@ -3,6 +3,18 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.36.0 — 2026-09-27
+
+- **One live pairing code per account.** Asking for a code now replaces the last unclaimed one
+  instead of adding another record: the app was listing four, only the newest was being typed, and
+  every one of them was a way to attach a console. Records a console has already claimed are
+  consoles, not codes, and are left alone.
+- **The extra `id` key is gone from the device object.** v0.35.2 made `deviceId` a number *and*
+  added `id` beside it; the console answered 2142-0234 with no request behind it, which is a parse
+  failure rather than a network one. Two changes in one build, so the guess is being unwound one at
+  a time — pctl's reader looks strict, and a field it has no slot for is the likeliest thing it
+  refused. A test now fails on any field pctl's own strings do not name.
+
 ## v0.35.2 — 2026-09-27
 
 - **`deviceId` is a number, and that is what error 2142-2009 was.** On hardware the pairing-code
