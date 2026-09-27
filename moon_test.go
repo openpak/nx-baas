@@ -965,3 +965,23 @@ func TestOnlyAParentSetCodeIsServed(t *testing.T) {
 		t.Fatalf("after a receipt naming the old code: code %q, reported %q", got.UnlockCode, got.SyncedUnlockCode)
 	}
 }
+
+// A parent can remove a console from their list, and only their own.
+func TestAParentRemovesAConsole(t *testing.T) {
+	s, _ := moonServer(t)
+	t.Setenv("NX_INTERNAL_KEY", "k")
+	d := s.store.PctlNewPairing("acct-parent")
+	del := func(account string) int {
+		r := httptest.NewRequest("DELETE", "/internal/pctl/devices/"+d.Hex()+"?account_id="+account, nil)
+		r.Header.Set("X-Internal-Key", "k")
+		w := httptest.NewRecorder()
+		s.pctlDeviceRoute(w, r)
+		return w.Code
+	}
+	if code := del("acct-other"); code != 404 || s.store.PctlByMoonID(d.Hex()) == nil {
+		t.Fatalf("another account: status %d", code)
+	}
+	if code := del("acct-parent"); code != 204 || s.store.PctlByMoonID(d.Hex()) != nil {
+		t.Fatalf("own console: status %d, record still there: %v", code, s.store.PctlByMoonID(d.Hex()) != nil)
+	}
+}

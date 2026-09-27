@@ -5,6 +5,13 @@ of truth; this file is the readable summary.
 
 ## v0.45.1 — 2026-09-27
 
+- **Confirmed on hardware: a restriction set on the server blocks games on the console.** Level
+  `CUSTOM` with `ageRestriction{RESTRICTED, ratingAge 3}` was fetched by the console's "update
+  settings" button, the receipt carried the served ETag, and titles stopped launching. The
+  receipt's `synchronizedAt` is the document's `updatedAt` echoed back, not the time of the sync.
+- **A parent can remove a console.** `DELETE /internal/pctl/devices/<moon_id>?account_id=…` drops
+  the record. The console is not told; it is for one that has already left or been reset, such as
+  a record stranded by an unlink made before v0.43.1.
 - **Confirmed on hardware: the console names the parent.** With v0.43.0 the pairing screen showed
   the account's display name instead of "OpenPak".
 - **The parent's picture is a 128 px PNG, under a new name.** The console showed no picture for

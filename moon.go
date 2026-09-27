@@ -1356,6 +1356,13 @@ func (s *server) pctlDeviceRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
+	case len(parts) == 1 && r.Method == http.MethodDelete:
+		// The parent removing a console from their list. The console is not
+		// told: it stays linked on its own side and gets a 404 at its next
+		// sync, so this is for a console that is already gone or reset.
+		s.store.PctlUnlink(d.Hex())
+		log.Printf("[moon] device %s removed by account %q", d.Hex(), account)
+		w.WriteHeader(http.StatusNoContent)
 	case len(parts) == 2 && parts[1] == "setting" && r.Method == http.MethodPut:
 		s.pctlPutSetting(w, r, d)
 	case len(parts) == 4 && parts[1] == "players" && parts[3] == "image" && r.Method == http.MethodGet:
