@@ -1046,7 +1046,8 @@ func TestActivityIsTheGainBetweenEventsPerConsoleDay(t *testing.T) {
 	now := time.Unix(at("2026-09-27 12:00"), 0)
 	got, _ := json.Marshal(pctlActivity(events, 7, now))
 	want := `[{"date":"2026-09-27","titles":[],"total_minutes":3},` +
-		`{"date":"2026-09-26","titles":[{"minutes":50,"title_id":"0100b3c014bda000"},{"minutes":17,"title_id":"01001b300b9be000"}],"total_minutes":70}]`
+		`{"date":"2026-09-26","titles":[{"anonymous_minutes":0,"minutes":50,"players":[],"title_id":"0100b3c014bda000"},` +
+		`{"anonymous_minutes":0,"minutes":17,"players":[],"title_id":"01001b300b9be000"}],"total_minutes":70}]`
 	if string(got) != want {
 		t.Fatalf("activity\n got %s\nwant %s", got, want)
 	}
