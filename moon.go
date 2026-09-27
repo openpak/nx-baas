@@ -250,8 +250,8 @@ func (s *server) moonDevice(w http.ResponseWriter, r *http.Request, body []byte,
 			moonError(w, moonMethodNotAllowed)
 		}
 	case tail == "events" && r.Method == http.MethodPost:
-		// Play-time and state events. Stored as sent and not interpreted: the
-		// parent side has nothing to show from them yet, and a console that
+		// Play-time and state events, a JSON array per upload. Stored as sent;
+		// only wrong-PIN attempts are read, for the parent side. A console that
 		// cannot hand them over spools retries instead.
 		n := s.store.PctlAddEvents(d.Hex(), body)
 		log.Printf("[moon] device %s uploaded events (%d bytes, %d held)", d.Hex(), len(body), n)
@@ -286,8 +286,9 @@ func (s *server) moonDevice(w http.ResponseWriter, r *http.Request, body []byte,
 	}
 }
 
-// moonSetting answers the conditional GET the console polls with. The ETag is
-// the store's, so a document that has not changed costs a 304 and no body.
+// moonSetting answers the conditional GET the console polls with. The ETag is a
+// hash of the document as served, so one that has not changed costs a 304 and
+// no body, and a changed PIN alone is a changed document.
 func (s *server) moonSetting(w http.ResponseWriter, r *http.Request, d *PctlDevice) {
 	if d == nil {
 		moonError(w, moonNotFound)
@@ -296,8 +297,8 @@ func (s *server) moonSetting(w http.ResponseWriter, r *http.Request, d *PctlDevi
 	// The same document the record embeds: an empty one refuses everything on
 	// the console rather than nothing (2142-0234), so "no restrictions" is
 	// stated in full.
-	doc := pctlSettingOf(d)
-	tag := pctlServedETag(d)
+	doc := pctlServedSetting(d)
+	tag := pctlETag(doc)
 	w.Header().Set("ETag", tag)
 	if match := r.Header.Get("If-None-Match"); match != "" && match == tag {
 		w.WriteHeader(http.StatusNotModified)
@@ -310,13 +311,25 @@ func (s *server) moonSetting(w http.ResponseWriter, r *http.Request, d *PctlDevi
 	writeJSON(w, 200, body)
 }
 
-// pctlServedETag is the validator moonSetting answers with. A receipt naming it
-// is a console holding the document the parent side sees.
-func pctlServedETag(d *PctlDevice) string {
-	if d.ETag != "" {
-		return d.ETag
+// pctlServedSetting is the document the setting GET answers: the setting, and
+// `unlockCode` only once a parent has set one. A code the console reported is
+// its own already, and sending it back is the untested half of Q2 (the
+// parent-surface PRD), so a console nobody has set a code for gets exactly the
+// document it got before codes could be set.
+func pctlServedSetting(d *PctlDevice) map[string]any {
+	doc := pctlSettingOf(d)
+	if d.UnlockCodeSet && pctlValidUnlockCode(d.UnlockCode) {
+		doc = maps.Clone(doc)
+		doc["unlockCode"] = d.UnlockCode
 	}
-	return pctlETag(pctlSettingOf(d))
+	return doc
+}
+
+// pctlServedETag is the validator moonSetting answers with, over the document
+// as served (without its own etag and updatedAt). A receipt naming it is a
+// console holding the document the parent side sees.
+func pctlServedETag(d *PctlDevice) string {
+	return pctlETag(pctlServedSetting(d))
 }
 
 // pctlSynced reports whether the console's last receipt names the served
@@ -374,7 +387,7 @@ func moonDeviceObj(d *PctlDevice) map[string]any {
 		// What the console reads from the activate answer, and all it reads
 		// (parse table vaddr 0x13c580): a string and an integer.
 		obj["synchronizedParentalControlSetting"] = map[string]any{
-			"synchronizedEtag": pctlETag(pctlSettingOf(d)),
+			"synchronizedEtag": pctlServedETag(d),
 			"synchronizedAt":   d.ActivatedAt,
 		}
 		// Once the console has claimed the record it is managed, and the unlock
@@ -611,15 +624,22 @@ type PctlDevice struct {
 	// Until then the code is the minted one, which unlocks nothing, so the
 	// parent side is not shown it.
 	UnlockCodeReported bool `json:"unlockCodeReported,omitempty"`
+	// UnlockCodeSet is a code the parent set. From then on UnlockCode is served
+	// in the setting document, and a console reporting another code has not
+	// applied it yet: its report never overwrites the parent's.
+	UnlockCodeSet bool `json:"unlockCodeSet,omitempty"`
+	// SyncedUnlockCode is the code the console's last receipt reported.
+	SyncedUnlockCode string `json:"syncedUnlockCode,omitempty"`
 	// SyncedEtag and SyncedAt are the console's last receipt: after a setting
 	// GET it POSTs /devices/{id} naming the etag it applied (hardware, v0.43.1).
 	// SyncedEtag equal to the served ETag is a console holding the current
 	// document.
 	SyncedEtag string `json:"syncedEtag,omitempty"`
 	SyncedAt   int64  `json:"syncedAt,omitempty"`
-	// Events are the play-time uploads, held as received. Not interpreted: the
-	// parent side has nothing to show from them yet, and a console that cannot
-	// hand them over spools retries instead of moving on.
+	// Events are the console's play-time and state events, one entry each, as
+	// received. An upload is a JSON array of them (hardware, v0.43.0); a store
+	// written before v0.45.0 holds whole uploads, which pctlEvents splits. Only
+	// DID_WRONG_UNLOCK_CODE is read so far.
 	Events []json.RawMessage `json:"events,omitempty"`
 	// Owners are what the console spells in `owners/%016llx`: Nintendo-Account
 	// -shaped ids. They are learned when the console links an owner, which is
@@ -932,7 +952,12 @@ func (s *Store) PctlUpdateDevice(moonHex string, doc map[string]any) *PctlDevice
 	// exists yet, so the console's is authoritative, and it corrects a record
 	// paired before activate was kept (docs repo, the parent-surface PRD).
 	if code, ok := doc["synchronizedUnlockCode"].(string); ok && pctlValidUnlockCode(code) {
-		d.UnlockCode, d.UnlockCodeReported = code, true
+		d.SyncedUnlockCode = code
+		// A parent-set code the console reports otherwise is "not applied yet",
+		// never "revert ours".
+		if !d.UnlockCodeSet {
+			d.UnlockCode, d.UnlockCodeReported = code, true
+		}
 	}
 	if sync, ok := doc["synchronizedParentalControlSetting"].(map[string]any); ok {
 		if tag, ok := sync["synchronizedEtag"].(string); ok && tag != "" {
@@ -947,18 +972,13 @@ func (s *Store) PctlUpdateDevice(moonHex string, doc map[string]any) *PctlDevice
 	return d
 }
 
-// PctlUnlink is the console saying it is no longer managed. The record stays so
-// the parent app can see it happened; what goes is the binding.
+// PctlUnlink is the console saying it is no longer managed. The record goes
+// with everything in it -- players, events, setting and PIN -- so the parent's
+// list stops showing the console and pairing again starts fresh.
 func (s *Store) PctlUnlink(moonHex string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	d := s.pctlDevices()[moonHex]
-	if d == nil {
-		return
-	}
-	d.DauthID, d.ActivatedAt, d.Setting, d.ETag = "", 0, nil, ""
-	d.Players, d.SyncedEtag, d.SyncedAt = nil, "", 0
-	d.UpdatedAt = time.Now().Unix()
+	delete(s.pctlDevices(), moonHex)
 	s.save()
 }
 
@@ -1000,12 +1020,43 @@ func (s *Store) PctlRemoveOwner(moonHex, naID string) int {
 	return len(kept)
 }
 
-// pctlEventsKept bounds the upload log: a console re-sends what it thinks was
-// not accepted, and an unbounded list would grow with every session.
-// ponytail: newest 200, dropped oldest first. A real events API replaces this.
-const pctlEventsKept = 200
+// Play activity is kept 30 days, and pctlEventsCap bounds a console that
+// uploads far more than a household's play: 5000 is about one event every nine
+// minutes around the clock for the whole 30 days.
+const (
+	pctlEventsDays = 30
+	pctlEventsCap  = 5000
+)
 
-// PctlAddEvents holds one upload as received and returns how many are held.
+// pctlEvents splits held entries into single events: an entry that is a JSON
+// array is an upload a store before v0.45.0 kept whole. Anything else is one
+// entry, kept as it came.
+func pctlEvents(held []json.RawMessage) []json.RawMessage {
+	out := []json.RawMessage{}
+	for _, raw := range held {
+		var each []json.RawMessage
+		if json.Unmarshal(raw, &each) == nil {
+			out = append(out, each...)
+		} else {
+			out = append(out, raw)
+		}
+	}
+	return out
+}
+
+// pctlEvent reads the two fields the parent side uses; a zero timestamp is an
+// event that did not carry one.
+func pctlEvent(raw json.RawMessage) (kind string, at int64) {
+	var e struct {
+		EventType      string  `json:"eventType"`
+		EventTimestamp float64 `json:"eventTimestamp"`
+	}
+	json.Unmarshal(raw, &e)
+	return e.EventType, int64(e.EventTimestamp)
+}
+
+// PctlAddEvents holds one upload, event by event, drops what is older than
+// pctlEventsDays and the oldest past pctlEventsCap, and returns how many are held.
 func (s *Store) PctlAddEvents(moonHex string, body []byte) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1013,13 +1064,40 @@ func (s *Store) PctlAddEvents(moonHex string, body []byte) int {
 	if d == nil || len(body) == 0 {
 		return 0
 	}
-	d.Events = append(d.Events, json.RawMessage(append([]byte(nil), body...)))
-	if len(d.Events) > pctlEventsKept {
-		d.Events = d.Events[len(d.Events)-pctlEventsKept:]
+	cut := time.Now().AddDate(0, 0, -pctlEventsDays).Unix()
+	kept := []json.RawMessage{}
+	for _, e := range pctlEvents(append(d.Events, json.RawMessage(append([]byte(nil), body...)))) {
+		// An event with no timestamp cannot age out; the cap still bounds it.
+		if _, at := pctlEvent(e); at == 0 || at >= cut {
+			kept = append(kept, e)
+		}
 	}
+	if len(kept) > pctlEventsCap {
+		kept = kept[len(kept)-pctlEventsCap:]
+	}
+	d.Events = kept
 	d.UpdatedAt = time.Now().Unix()
 	s.save()
 	return len(d.Events)
+}
+
+// PctlWrongUnlocks is when someone typed a wrong PIN on the console, newest
+// first, at most 20: the DID_WRONG_UNLOCK_CODE events it uploaded.
+func (s *Store) PctlWrongUnlocks(moonHex string) []int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := []int64{}
+	d := s.pctlDevices()[moonHex]
+	if d == nil {
+		return out
+	}
+	for _, e := range pctlEvents(d.Events) {
+		if kind, at := pctlEvent(e); kind == "DID_WRONG_UNLOCK_CODE" && at > 0 {
+			out = append(out, at)
+		}
+	}
+	slices.SortFunc(out, func(a, b int64) int { return int(b - a) })
+	return out[:min(len(out), 20)]
 }
 
 // PctlActivate binds a console to the record its code found and burns the code.
@@ -1054,7 +1132,7 @@ func (s *Store) PctlSetSetting(moonHex string, doc map[string]any) *PctlDevice {
 	}
 	// The console's own PIN replaces the one minted with the record: the parent
 	// has to be shown the code that actually unlocks the console.
-	if code, ok := doc["unlockCode"].(string); ok && pctlValidUnlockCode(code) {
+	if code, ok := doc["unlockCode"].(string); ok && pctlValidUnlockCode(code) && !d.UnlockCodeSet {
 		d.UnlockCode, d.UnlockCodeReported = code, true
 	}
 	tag := pctlETag(doc)
@@ -1065,6 +1143,18 @@ func (s *Store) PctlSetSetting(moonHex string, doc map[string]any) *PctlDevice {
 	d.Setting, d.ETag, d.UpdatedAt = doc, tag, time.Now().Unix()
 	s.save()
 	return d
+}
+
+// PctlSetUnlockCode is a parent setting the console's PIN.
+func (s *Store) PctlSetUnlockCode(moonHex, code string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d := s.pctlDevices()[moonHex]
+	if d == nil {
+		return
+	}
+	d.UnlockCode, d.UnlockCodeSet, d.UpdatedAt = code, true, time.Now().Unix()
+	s.save()
 }
 
 // pctlValidUnlockCode is what the console's parse table accepts for a PIN: four
@@ -1183,21 +1273,22 @@ func (s *server) pctlDeviceList(w http.ResponseWriter, r *http.Request) {
 	out := []map[string]any{}
 	for _, d := range s.store.PctlDevicesFor(account) {
 		item := map[string]any{
-			"moon_id":      d.Hex(),
-			"paired":       d.DauthID != "",
-			"activated_at": d.ActivatedAt,
-			"updated_at":   d.UpdatedAt,
-			"owners":       d.Owners,
-			"has_setting":  len(d.Setting) > 0,
-			"nickname":     d.Nickname,
-			"setting":      pctlSettingOf(d),
-			"players":      s.store.PctlPlayerList(d.Hex()),
-			"etag":         pctlServedETag(d),
-			"synced_etag":  d.SyncedEtag,
-			"synced_at":    d.SyncedAt,
-			"synced":       pctlSynced(d),
+			"moon_id":            d.Hex(),
+			"paired":             d.DauthID != "",
+			"activated_at":       d.ActivatedAt,
+			"updated_at":         d.UpdatedAt,
+			"owners":             d.Owners,
+			"has_setting":        len(d.Setting) > 0,
+			"nickname":           d.Nickname,
+			"setting":            pctlSettingOf(d),
+			"players":            s.store.PctlPlayerList(d.Hex()),
+			"etag":               pctlServedETag(d),
+			"synced_etag":        d.SyncedEtag,
+			"synced_at":          d.SyncedAt,
+			"synced":             pctlSynced(d),
+			"wrong_pin_attempts": s.store.PctlWrongUnlocks(d.Hex()),
 		}
-		if d.DauthID != "" && d.UnlockCodeReported {
+		if d.DauthID != "" && (d.UnlockCodeReported || d.UnlockCodeSet) {
 			item["unlock_code"] = d.UnlockCode
 		}
 		if d.PairingCode != "" && d.PairingExpires > now {
@@ -1209,31 +1300,114 @@ func (s *server) pctlDeviceList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"devices": out})
 }
 
-// GET /internal/pctl/devices/{moon_id}/players/{id}/image?account_id=… -> the
-// player's JPEG, decoded from what the console uploaded. A record another
-// account manages is a 404, the same as one that does not exist, so ids cannot
-// be probed.
-func (s *server) pctlPlayerImage(w http.ResponseWriter, r *http.Request) {
+// /internal/pctl/devices/{moon_id}/…?account_id=… is one record, for the account
+// that manages it. Another account's record is a 404, the same as one that does
+// not exist, so ids cannot be probed.
+func (s *server) pctlDeviceRoute(w http.ResponseWriter, r *http.Request) {
 	if !s.internalOK(r) {
 		apiErr(w, http.StatusUnauthorized, "internal")
 		return
 	}
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/internal/pctl/devices/"), "/")
 	account := r.URL.Query().Get("account_id")
-	if r.Method != http.MethodGet || len(parts) != 4 || parts[1] != "players" || parts[3] != "image" || account == "" {
-		apiErr(w, http.StatusNotFound, "not found")
-		return
-	}
 	d := s.store.PctlByMoonID(parts[0])
-	if d == nil || d.ManagedBy != account {
+	if d == nil || account == "" || d.ManagedBy != account {
 		apiErr(w, http.StatusNotFound, "not found")
 		return
 	}
-	img, err := base64.StdEncoding.DecodeString(s.store.PctlPlayerImage(d.Hex(), parts[2]))
+	switch {
+	case len(parts) == 2 && parts[1] == "setting" && r.Method == http.MethodPut:
+		s.pctlPutSetting(w, r, d)
+	case len(parts) == 4 && parts[1] == "players" && parts[3] == "image" && r.Method == http.MethodGet:
+		s.pctlPlayerImage(w, d, parts[2])
+	default:
+		apiErr(w, http.StatusNotFound, "not found")
+	}
+}
+
+// GET …/players/{id}/image -> the player's JPEG, decoded from what the console
+// uploaded.
+func (s *server) pctlPlayerImage(w http.ResponseWriter, d *PctlDevice, player string) {
+	img, err := base64.StdEncoding.DecodeString(s.store.PctlPlayerImage(d.Hex(), player))
 	if err != nil || len(img) == 0 {
 		apiErr(w, http.StatusNotFound, "not found")
 		return
 	}
 	w.Header().Set("Content-Type", "image/jpeg")
 	w.Write(img)
+}
+
+// PUT …/setting {"setting": {…}, "unlock_code": "1234"}, either key optional ->
+// {"etag", "updated_at"}. The parent's write. A document is refused, not
+// thinned: anything the console's parse table would not take is a 400 naming
+// its path, and nothing is stored -- a parent who set a limit must not be shown
+// a save that quietly dropped it. The code is never logged.
+func (s *server) pctlPutSetting(w http.ResponseWriter, r *http.Request, d *PctlDevice) {
+	var in struct {
+		Setting    map[string]any `json:"setting"`
+		UnlockCode *string        `json:"unlock_code"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256<<10)).Decode(&in); err != nil {
+		apiErr(w, http.StatusBadRequest, "body is not a JSON object")
+		return
+	}
+	if in.Setting == nil && in.UnlockCode == nil {
+		apiErr(w, http.StatusBadRequest, "setting or unlock_code required")
+		return
+	}
+	var doc map[string]any
+	if in.Setting != nil {
+		if in.Setting["functionalRestrictionLevel"] == nil {
+			apiErr(w, http.StatusBadRequest, "setting.functionalRestrictionLevel required")
+			return
+		}
+		doc, _ = pctlConform(in.Setting, pctlSettingSchema).(map[string]any)
+		if bad := pctlDropped(in.Setting, doc, ""); bad != "" {
+			apiErr(w, http.StatusBadRequest, "not in the console's parse table: "+bad)
+			return
+		}
+	}
+	if in.UnlockCode != nil && !pctlValidUnlockCode(*in.UnlockCode) {
+		apiErr(w, http.StatusBadRequest, "unlock_code must be 4 to 8 digits")
+		return
+	}
+	if doc != nil {
+		s.store.PctlSetSetting(d.Hex(), doc)
+	}
+	if in.UnlockCode != nil {
+		s.store.PctlSetUnlockCode(d.Hex(), *in.UnlockCode)
+	}
+	d = s.store.PctlByMoonID(d.Hex())
+	tag := pctlServedETag(d)
+	log.Printf("[moon] device %s: parent set setting=%t code=%t, served etag %s", d.Hex(), doc != nil, in.UnlockCode != nil, tag)
+	writeJSON(w, 200, map[string]any{"etag": tag, "updated_at": d.UpdatedAt})
+}
+
+// pctlDropped names the first path (sorted, dotted) where the conformed
+// document differs from what was sent, or "" when nothing was dropped or
+// changed.
+func pctlDropped(in, out any, path string) string {
+	m, ok := in.(map[string]any)
+	if !ok {
+		a, _ := json.Marshal(in)
+		b, _ := json.Marshal(out)
+		if out == nil || string(a) != string(b) {
+			return path
+		}
+		return ""
+	}
+	o, _ := out.(map[string]any)
+	if o == nil {
+		return path
+	}
+	for _, k := range slices.Sorted(maps.Keys(m)) {
+		sub := k
+		if path != "" {
+			sub = path + "." + k
+		}
+		if bad := pctlDropped(m[k], o[k], sub); bad != "" {
+			return bad
+		}
+	}
+	return ""
 }

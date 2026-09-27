@@ -779,8 +779,13 @@ func TestDeletingTheLastOwnerUnlinks(t *testing.T) {
 	if w, _ := moonReq(t, s, "DELETE", "/moon/v1/devices/"+d.Hex()+"/owners/"+na, tok, ""); w.Code != 204 {
 		t.Fatalf("owner delete status %d", w.Code)
 	}
-	if got := s.store.PctlByMoonID(d.Hex()); got.DauthID != "" || got.ActivatedAt != 0 {
-		t.Fatalf("record is still bound to %q", got.DauthID)
+	// The record goes, not just the binding: re-pairing starts fresh and the
+	// parent's list stops showing the console.
+	if got := s.store.PctlByMoonID(d.Hex()); got != nil {
+		t.Fatalf("record is still held, bound to %q", got.DauthID)
+	}
+	if n := len(s.store.PctlDevicesFor("acct-parent")); n != 0 {
+		t.Fatalf("the parent still lists %d consoles", n)
 	}
 }
 
@@ -838,7 +843,7 @@ func TestAPlayerImageIsTheManagingAccountsOnly(t *testing.T) {
 	get := func(account string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest("GET", "/internal/pctl/devices/"+d.Hex()+"/players/10000000_00a10001/image?account_id="+account, nil)
 		w := httptest.NewRecorder()
-		s.pctlPlayerImage(w, r)
+		s.pctlDeviceRoute(w, r)
 		return w
 	}
 	if w := get("acct-parent"); w.Code != 200 || w.Header().Get("Content-Type") != "image/jpeg" || w.Body.String() != "\xff\xd8\xff\xd9" {
@@ -849,5 +854,109 @@ func TestAPlayerImageIsTheManagingAccountsOnly(t *testing.T) {
 	}
 	if w := get(""); w.Code != 404 {
 		t.Fatalf("no account got %d, want 404", w.Code)
+	}
+}
+
+// Uploads are JSON arrays of events. They are held one event each, 30 days, and
+// a store from before that change -- whole uploads -- still reads. Wrong-PIN
+// attempts come out newest first; anything not shaped like an event adds none.
+func TestEventsAgeOutAndWrongPinsAreListed(t *testing.T) {
+	st := pctlStore(t)
+	d := st.PctlNewPairing("acct-parent")
+	now := time.Now().Unix()
+	old := now - 31*24*3600
+	// As v0.44.0 stored it: one entry per upload.
+	d.Events = []json.RawMessage{json.RawMessage(fmt.Sprintf(
+		`[{"eventType":"DID_WRONG_UNLOCK_CODE","eventTimestamp":%d},{"eventType":"IDLE","eventTimestamp":%d}]`, now-60, now-50))}
+	if got := st.PctlWrongUnlocks(d.Hex()); !reflect.DeepEqual(got, []int64{now - 60}) {
+		t.Fatalf("from a whole upload: %v", got)
+	}
+
+	st.PctlAddEvents(d.Hex(), []byte(fmt.Sprintf(
+		`[{"eventType":"DID_WRONG_UNLOCK_CODE","eventTimestamp":%d},{"eventType":"DID_WRONG_UNLOCK_CODE","eventTimestamp":%d}]`, now-10, old)))
+	st.PctlAddEvents(d.Hex(), []byte(`{"not":"an array"}`))
+	st.PctlAddEvents(d.Hex(), []byte(`[1, "two"]`))
+	if got := st.PctlWrongUnlocks(d.Hex()); !reflect.DeepEqual(got, []int64{now - 10, now - 60}) {
+		t.Fatalf("wrong-PIN attempts %v, want the two inside 30 days, newest first", got)
+	}
+	// 2 kept from the old upload, 1 new inside the window, the object, and the
+	// two stray array elements: the 31-day-old one is gone.
+	if n := len(st.PctlByMoonID(d.Hex()).Events); n != 6 {
+		t.Fatalf("%d events held", n)
+	}
+}
+
+// The parent's write: refused whole rather than thinned, for the managing
+// account only, and a code of the console's own shape.
+func TestTheParentSettingIsRefusedRatherThanThinned(t *testing.T) {
+	s := &server{store: pctlStore(t)}
+	d := s.store.PctlNewPairing("acct-parent")
+	put := func(account, body string) (*httptest.ResponseRecorder, map[string]any) {
+		r := httptest.NewRequest("PUT", "/internal/pctl/devices/"+d.Hex()+"/setting?account_id="+account, strings.NewReader(body))
+		w := httptest.NewRecorder()
+		s.pctlDeviceRoute(w, r)
+		out := map[string]any{}
+		json.Unmarshal(w.Body.Bytes(), &out)
+		return w, out
+	}
+	good := `{"setting":{"functionalRestrictionLevel":"CUSTOM","customSettings":{"ageRestriction":{"restriction":"RESTRICTED","ratingAge":3}}}}`
+	if w, _ := put("acct-someone-else", good); w.Code != 404 {
+		t.Fatalf("another account: status %d, want 404", w.Code)
+	}
+	w, out := put("acct-parent", `{"setting":{"functionalRestrictionLevel":"CUSTOM","customSettings":{"snsPostRestriction":{"restriction":"RESTRICTED"}}}}`)
+	if w.Code != 400 || !strings.HasSuffix(out["error"].(string), "customSettings.snsPostRestriction") {
+		t.Fatalf("thinned document: status %d %v", w.Code, out)
+	}
+	if w, _ := put("acct-parent", `{"unlock_code":"12a4"}`); w.Code != 400 {
+		t.Fatalf("bad code: status %d", w.Code)
+	}
+	if got := s.store.PctlByMoonID(d.Hex()); got.Setting != nil || got.UnlockCodeSet {
+		t.Fatalf("a refused write stored something: %v %v", got.Setting, got.UnlockCodeSet)
+	}
+	w, out = put("acct-parent", good)
+	if w.Code != 200 || out["etag"] != pctlServedETag(s.store.PctlByMoonID(d.Hex())) {
+		t.Fatalf("good write: status %d %v", w.Code, out)
+	}
+}
+
+// A console's own code is not sent back to it; a parent's is, the ETag covers
+// it, and a receipt still naming the old code does not undo it.
+func TestOnlyAParentSetCodeIsServed(t *testing.T) {
+	s, token := moonServer(t)
+	tok := token("cert-aaaaaaaaaaaaaaaa")
+	d := s.store.PctlNewPairing("acct-parent")
+	activate := `{"parentalControlSetting":{"unlockCode":"8759","functionalRestrictionLevel":"NONE"}}`
+	moonReq(t, s, "POST", "/moon/v1/devices/"+d.Hex()+"/activate", tok, activate)
+	path := "/moon/v1/devices/" + d.Hex() + "/parental_control_setting"
+
+	w, doc := moonReq(t, s, "GET", path, tok, "")
+	before := w.Header().Get("ETag")
+	if _, sent := doc["unlockCode"]; sent {
+		t.Fatalf("the console's own code was served back to it")
+	}
+
+	s.store.PctlSetUnlockCode(d.Hex(), "1234")
+	w, doc = moonReq(t, s, "GET", path, tok, "")
+	after := w.Header().Get("ETag")
+	if doc["unlockCode"] != "1234" || after == before || doc["etag"] != after {
+		t.Fatalf("parent code: served %v, etag %s -> %s", doc["unlockCode"], before, after)
+	}
+	// The tag is over the document as served, so it is what activate reports too.
+	if pctlServedETag(s.store.PctlByMoonID(d.Hex())) != after {
+		t.Fatalf("served etag and computed etag disagree")
+	}
+	r := httptest.NewRequest("GET", "https://api-lp1.pctl.srv.nintendo.net"+path, nil)
+	r.Header.Set("Authorization", "Bearer "+tok)
+	r.Header.Set("If-None-Match", after)
+	rec := httptest.NewRecorder()
+	s.moon(rec, r, nil)
+	if rec.Code != http.StatusNotModified {
+		t.Fatalf("unchanged document: status %d, want 304", rec.Code)
+	}
+
+	receipt := `{"synchronizedUnlockCode":"8759","synchronizedParentalControlSetting":{"synchronizedEtag":` + strconv.Quote(after) + `}}`
+	moonReq(t, s, "POST", "/moon/v1/devices/"+d.Hex(), tok, receipt)
+	if got := s.store.PctlByMoonID(d.Hex()); got.UnlockCode != "1234" || got.SyncedUnlockCode != "8759" {
+		t.Fatalf("after a receipt naming the old code: code %q, reported %q", got.UnlockCode, got.SyncedUnlockCode)
 	}
 }

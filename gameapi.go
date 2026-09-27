@@ -443,7 +443,7 @@ func (s *server) gameAPI() http.Handler {
 	mux.HandleFunc("/internal/news/push", s.newsPush)
 	mux.HandleFunc("/internal/pctl/pairing", s.pctlPairing)
 	mux.HandleFunc("/internal/pctl/devices", s.pctlDeviceList)
-	mux.HandleFunc("/internal/pctl/devices/", s.pctlPlayerImage)
+	mux.HandleFunc("/internal/pctl/devices/", s.pctlDeviceRoute)
 	mux.HandleFunc("/internal/store/", s.storeAdmin)
 	if base := os.Getenv("ACCOUNT_API"); base != "" {
 		if u, err := url.Parse(strings.TrimRight(base, "/")); err == nil {

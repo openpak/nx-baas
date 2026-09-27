@@ -3,6 +3,33 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.45.0 — 2026-09-27
+
+- **A parent can set the setting and the PIN**, for the hardware experiments first (the
+  parent-surface PRD's Q1–Q3): `PUT /internal/pctl/devices/<moon_id>/setting?account_id=` takes
+  `{setting, unlock_code}`, either optional. A document is refused, not thinned: anything the
+  console's parse table would drop or change is a 400 naming its path, and nothing is stored. A
+  code must be four to eight digits. Answers `{etag, updated_at}`; another account's record is a
+  404. The code is never logged.
+- **The setting GET carries `unlockCode` only once a parent has set one.** A console whose code
+  came from the console itself gets exactly the document it got before.
+- **The ETag is a hash of the document as served**, `unlockCode` included, so a new code alone
+  moves it; the activate answer's `synchronizedEtag` is computed the same way. It was a hash of
+  the stored document, which differed from the served one whenever the console's own document was
+  stored; no record in production had one.
+- **A parent-set code survives the console.** A receipt naming another code means the console has
+  not applied it yet, and neither the receipt nor the console's own setting `PUT` overwrites it.
+  The code a receipt reports is kept beside it.
+- **A console that unlinks is removed.** Deleting its last owner, or the device, deletes the
+  record with its players, events, setting and PIN; pairing again starts fresh and the parent's
+  list no longer shows it. The console gets the same 204.
+- **Events are held one each, for 30 days**, with a hard cap of 5000 per console, instead of the
+  newest 200 uploads. An upload is a JSON array; a store holding whole uploads still loads and is
+  split on the next upload.
+- **Wrong-PIN attempts reach the parent.** The internal device list adds `wrong_pin_attempts`: the
+  `eventTimestamp` of each `DID_WRONG_UNLOCK_CODE` event, newest first, at most 20. No other event
+  type is read.
+
 ## v0.44.0 — 2026-09-27
 
 - **The sync receipt is kept.** After a setting `GET` the console `POST`s `/devices/<id>` with
