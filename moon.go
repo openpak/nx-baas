@@ -16,6 +16,7 @@ package main
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -296,10 +297,7 @@ func (s *server) moonSetting(w http.ResponseWriter, r *http.Request, d *PctlDevi
 	// the console rather than nothing (2142-0234), so "no restrictions" is
 	// stated in full.
 	doc := pctlSettingOf(d)
-	tag := d.ETag
-	if tag == "" {
-		tag = pctlETag(doc)
-	}
+	tag := pctlServedETag(d)
 	w.Header().Set("ETag", tag)
 	if match := r.Header.Get("If-None-Match"); match != "" && match == tag {
 		w.WriteHeader(http.StatusNotModified)
@@ -310,6 +308,21 @@ func (s *server) moonSetting(w http.ResponseWriter, r *http.Request, d *PctlDevi
 	body := maps.Clone(doc)
 	body["etag"], body["updatedAt"] = tag, d.UpdatedAt
 	writeJSON(w, 200, body)
+}
+
+// pctlServedETag is the validator moonSetting answers with. A receipt naming it
+// is a console holding the document the parent side sees.
+func pctlServedETag(d *PctlDevice) string {
+	if d.ETag != "" {
+		return d.ETag
+	}
+	return pctlETag(pctlSettingOf(d))
+}
+
+// pctlSynced reports whether the console's last receipt names the served
+// document. The quotes are the header's, so they are not what is compared.
+func pctlSynced(d *PctlDevice) bool {
+	return d.SyncedEtag != "" && strings.Trim(d.SyncedEtag, `"`) == strings.Trim(pctlServedETag(d), `"`)
 }
 
 // moonItems is the `{items,count}` envelope pctl's strings carry (992493, 986719).
@@ -589,11 +602,21 @@ type PctlDevice struct {
 	ParentName string `json:"parentName,omitempty"`
 	// Nickname is what the console calls itself, as it sent it.
 	Nickname string `json:"nickname,omitempty"`
-	// UnlockCode is the eight digits that lift a restriction on the console --
-	// pctl copies at most eight bytes into its PIN slot and validates the eighth
-	// as a digit, so eight digits it is. The parent side holds it, which is why a
+	// UnlockCode is the console's PIN, four to eight digits. It is minted with
+	// the record and replaced by the console's own as soon as the console names
+	// it (activate, or a sync receipt). The parent side holds it, which is why a
 	// forgotten PIN is recoverable here rather than through Nintendo support.
 	UnlockCode string `json:"unlockCode,omitempty"`
+	// UnlockCodeReported is set once the console itself has named UnlockCode.
+	// Until then the code is the minted one, which unlocks nothing, so the
+	// parent side is not shown it.
+	UnlockCodeReported bool `json:"unlockCodeReported,omitempty"`
+	// SyncedEtag and SyncedAt are the console's last receipt: after a setting
+	// GET it POSTs /devices/{id} naming the etag it applied (hardware, v0.43.1).
+	// SyncedEtag equal to the served ETag is a console holding the current
+	// document.
+	SyncedEtag string `json:"syncedEtag,omitempty"`
+	SyncedAt   int64  `json:"syncedAt,omitempty"`
 	// Events are the play-time uploads, held as received. Not interpreted: the
 	// parent side has nothing to show from them yet, and a console that cannot
 	// hand them over spools retries instead of moving on.
@@ -905,6 +928,20 @@ func (s *Store) PctlUpdateDevice(moonHex string, doc map[string]any) *PctlDevice
 	if v, ok := doc["nickname"].(string); ok && v != "" {
 		d.Nickname = v
 	}
+	// The sync receipt names the console's PIN as it stands. No parent-set code
+	// exists yet, so the console's is authoritative, and it corrects a record
+	// paired before activate was kept (docs repo, the parent-surface PRD).
+	if code, ok := doc["synchronizedUnlockCode"].(string); ok && pctlValidUnlockCode(code) {
+		d.UnlockCode, d.UnlockCodeReported = code, true
+	}
+	if sync, ok := doc["synchronizedParentalControlSetting"].(map[string]any); ok {
+		if tag, ok := sync["synchronizedEtag"].(string); ok && tag != "" {
+			d.SyncedEtag, d.SyncedAt = tag, time.Now().Unix()
+			if at, ok := sync["synchronizedAt"].(float64); ok && at > 0 {
+				d.SyncedAt = int64(at)
+			}
+		}
+	}
 	d.UpdatedAt = time.Now().Unix()
 	s.save()
 	return d
@@ -920,7 +957,7 @@ func (s *Store) PctlUnlink(moonHex string) {
 		return
 	}
 	d.DauthID, d.ActivatedAt, d.Setting, d.ETag = "", 0, nil, ""
-	d.Players = nil
+	d.Players, d.SyncedEtag, d.SyncedAt = nil, "", 0
 	d.UpdatedAt = time.Now().Unix()
 	s.save()
 }
@@ -1017,8 +1054,8 @@ func (s *Store) PctlSetSetting(moonHex string, doc map[string]any) *PctlDevice {
 	}
 	// The console's own PIN replaces the one minted with the record: the parent
 	// has to be shown the code that actually unlocks the console.
-	if code, ok := doc["unlockCode"].(string); ok && len(code) >= 4 && len(code) <= 8 && strings.Trim(code, "0123456789") == "" {
-		d.UnlockCode = code
+	if code, ok := doc["unlockCode"].(string); ok && pctlValidUnlockCode(code) {
+		d.UnlockCode, d.UnlockCodeReported = code, true
 	}
 	tag := pctlETag(doc)
 	if tag == d.ETag {
@@ -1028,6 +1065,38 @@ func (s *Store) PctlSetSetting(moonHex string, doc map[string]any) *PctlDevice {
 	d.Setting, d.ETag, d.UpdatedAt = doc, tag, time.Now().Unix()
 	s.save()
 	return d
+}
+
+// pctlValidUnlockCode is what the console's parse table accepts for a PIN: four
+// to eight digits.
+func pctlValidUnlockCode(code string) bool {
+	return len(code) >= 4 && len(code) <= 8 && strings.Trim(code, "0123456789") == ""
+}
+
+// PctlPlayerList is a record's players by id, read under the lock: the console
+// adds and removes them while the parent side lists them.
+func (s *Store) PctlPlayerList(moonHex string) []map[string]any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := []map[string]any{}
+	d := s.pctlDevices()[moonHex]
+	if d == nil {
+		return out
+	}
+	for _, id := range slices.Sorted(maps.Keys(d.Players)) {
+		out = append(out, map[string]any{"id": id, "nickname": d.Players[id].Nickname})
+	}
+	return out
+}
+
+// PctlPlayerImage is one player's picture as the console sent it, in base64.
+func (s *Store) PctlPlayerImage(moonHex, id string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if d := s.pctlDevices()[moonHex]; d != nil && d.Players[id] != nil {
+		return d.Players[id].ImageData
+	}
+	return ""
 }
 
 // pctlETag is a strong validator over the document's canonical JSON. Go's
@@ -1095,6 +1164,11 @@ func (s *server) pctlMovie(w http.ResponseWriter, r *http.Request) {
 // GET /internal/pctl/devices?account_id=… -> the records that account manages,
 // as the app's list. The pairing code travels only while it is still live: a
 // dead code on a screen is worse than none, because someone types it.
+//
+// A paired record also carries what the parent reads: the setting as served,
+// the players (their pictures are a separate call), the last receipt and
+// whether it names the served document, and the PIN once the console has named
+// it. The PIN is never logged.
 func (s *server) pctlDeviceList(w http.ResponseWriter, r *http.Request) {
 	if !s.internalOK(r) {
 		apiErr(w, http.StatusUnauthorized, "internal")
@@ -1115,6 +1189,16 @@ func (s *server) pctlDeviceList(w http.ResponseWriter, r *http.Request) {
 			"updated_at":   d.UpdatedAt,
 			"owners":       d.Owners,
 			"has_setting":  len(d.Setting) > 0,
+			"nickname":     d.Nickname,
+			"setting":      pctlSettingOf(d),
+			"players":      s.store.PctlPlayerList(d.Hex()),
+			"etag":         pctlServedETag(d),
+			"synced_etag":  d.SyncedEtag,
+			"synced_at":    d.SyncedAt,
+			"synced":       pctlSynced(d),
+		}
+		if d.DauthID != "" && d.UnlockCodeReported {
+			item["unlock_code"] = d.UnlockCode
 		}
 		if d.PairingCode != "" && d.PairingExpires > now {
 			item["pairing_code"] = d.PairingCode
@@ -1123,4 +1207,33 @@ func (s *server) pctlDeviceList(w http.ResponseWriter, r *http.Request) {
 		out = append(out, item)
 	}
 	writeJSON(w, 200, map[string]any{"devices": out})
+}
+
+// GET /internal/pctl/devices/{moon_id}/players/{id}/image?account_id=… -> the
+// player's JPEG, decoded from what the console uploaded. A record another
+// account manages is a 404, the same as one that does not exist, so ids cannot
+// be probed.
+func (s *server) pctlPlayerImage(w http.ResponseWriter, r *http.Request) {
+	if !s.internalOK(r) {
+		apiErr(w, http.StatusUnauthorized, "internal")
+		return
+	}
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/internal/pctl/devices/"), "/")
+	account := r.URL.Query().Get("account_id")
+	if r.Method != http.MethodGet || len(parts) != 4 || parts[1] != "players" || parts[3] != "image" || account == "" {
+		apiErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	d := s.store.PctlByMoonID(parts[0])
+	if d == nil || d.ManagedBy != account {
+		apiErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	img, err := base64.StdEncoding.DecodeString(s.store.PctlPlayerImage(d.Hex(), parts[2]))
+	if err != nil || len(img) == 0 {
+		apiErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Write(img)
 }

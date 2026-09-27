@@ -3,6 +3,24 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.44.0 — 2026-09-27
+
+- **The sync receipt is kept.** After a setting `GET` the console `POST`s `/devices/<id>` with
+  `synchronizedUnlockCode` and `synchronizedParentalControlSetting{synchronizedEtag,
+  synchronizedAt}`; only `nickname` was read from it. The etag and time are stored, and the
+  console's code replaces the record's: there is no parent-set code yet, so the console's is
+  authoritative. A record paired before v0.43.0 held a minted code; its first receipt corrects it.
+  Nothing the console is answered changes, except that such a record's device object now names
+  the console's own code instead of the minted one.
+- **The parent side reads what it needs.** `GET /internal/pctl/devices` adds, per record,
+  `nickname`, `setting` (the document as served), `players` as `{id, nickname}`, the served
+  `etag`, `synced_etag`, `synced_at`, and `synced` (the receipt names the served etag). A paired
+  record carries `unlock_code` once the console itself has named it, at `activate` or in a receipt;
+  a minted code unlocks nothing and is not shown. The code is never logged.
+- **`GET /internal/pctl/devices/<moon_id>/players/<id>/image?account_id=`** returns the player's
+  JPEG, decoded from the console's upload. A record another account manages is a 404, like one
+  that does not exist.
+
 ## v0.43.1 — 2026-09-27
 
 - **Confirmed on hardware: the console's `unlockCode` is its PIN** (8759 unlocked it), the owner's

@@ -106,7 +106,8 @@ openpak-account.
 | `POST /internal/mint-token` `{pid}` | rig tooling | A bearer for any PID the backend knows, no password. Dev convenience. |
 | `POST /internal/news/push` `{topic_id,revision[,wait_range,subscription]}` | news service | Writes `{"type":"news",…}` to every live Penne connection subscribed to the topic (raw subscribed string). Live only; see `news.go`. |
 | `POST /internal/pctl/pairing` `{account_id}` | parent surface (app, via the website) | Mints the parental-controls pairing code to type on the console, 15 min TTL, and the moon device record behind it (`moon.go`). |
-| `GET /internal/pctl/devices?account_id=` | parent surface (app, via the website) | The records that account manages: `moon_id`, `paired`, owners, and the pairing code only while it is still live. |
+| `GET /internal/pctl/devices?account_id=` | parent surface (app, via the website) | The records that account manages: `moon_id`, `paired`, owners, and the pairing code only while it is still live. A paired record adds `nickname`, `setting` (as served), `players` `{id, nickname}`, `etag`, `synced_etag`, `synced_at`, `synced`, and `unlock_code` once the console has named its PIN. |
+| `GET /internal/pctl/devices/{moon_id}/players/{id}/image?account_id=` | parent surface (app, via the website) | The player's JPEG as the console uploaded it; 404 unless that account manages the record. |
 | `GET/POST /api/invitations` | emulator, console | Friend-invitation mailbox: opaque app-parameter bytes in, popped by the target. TTL 5 min, 8 queued per target, senders limited to their own friends. |
 
 `X-Internal-Key` must match `NX_INTERNAL_KEY` (or `OPENPAK_INTERNAL_KEY`) when set;

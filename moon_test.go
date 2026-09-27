@@ -783,3 +783,71 @@ func TestDeletingTheLastOwnerUnlinks(t *testing.T) {
 		t.Fatalf("record is still bound to %q", got.DauthID)
 	}
 }
+
+// The receipt POST after a setting GET is the console naming what it holds.
+// It is kept, its PIN replaces a minted one, and a parent-side change makes the
+// record read as not synced until the next receipt.
+func TestTheReceiptIsKeptAndThePinComesFromTheConsole(t *testing.T) {
+	s, token := moonServer(t)
+	tok := token("cert-aaaaaaaaaaaaaaaa")
+	d := s.store.PctlNewPairing("acct-parent")
+	s.store.PctlActivate(d.Hex(), "cert-aaaaaaaaaaaaaaaa")
+	list := func() map[string]any {
+		r := httptest.NewRequest("GET", "/internal/pctl/devices?account_id=acct-parent", nil)
+		w := httptest.NewRecorder()
+		s.pctlDeviceList(w, r)
+		var got struct {
+			Devices []map[string]any `json:"devices"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &got)
+		return got.Devices[0]
+	}
+	// A record paired before activate was kept holds a minted code, which
+	// unlocks nothing: the parent is not shown it.
+	if _, shown := list()["unlock_code"]; shown {
+		t.Fatalf("a minted code was shown as the console's PIN")
+	}
+
+	w, _ := moonReq(t, s, "GET", "/moon/v1/devices/"+d.Hex()+"/parental_control_setting", tok, "")
+	etag := w.Header().Get("ETag")
+	receipt := `{"synchronizedUnlockCode":"4321","synchronizedParentalControlSetting":{"synchronizedEtag":` +
+		strconv.Quote(etag) + `,"synchronizedAt":1790512000}}`
+	if w, _ := moonReq(t, s, "POST", "/moon/v1/devices/"+d.Hex(), tok, receipt); w.Code != 200 {
+		t.Fatalf("receipt status %d", w.Code)
+	}
+	got := list()
+	if got["unlock_code"] != "4321" || got["synced"] != true || got["synced_at"] != float64(1790512000) {
+		t.Fatalf("after the receipt: pin %v synced %v at %v", got["unlock_code"], got["synced"], got["synced_at"])
+	}
+	if got["setting"].(map[string]any)["functionalRestrictionLevel"] != "NONE" {
+		t.Fatalf("setting %v is not the served one", got["setting"])
+	}
+
+	s.store.PctlSetSetting(d.Hex(), map[string]any{"functionalRestrictionLevel": "CHILDREN"})
+	if list()["synced"] != false {
+		t.Fatalf("a changed document still reads as held by the console")
+	}
+}
+
+// A player's picture goes only to the account that manages the console, and
+// another account cannot tell the record exists.
+func TestAPlayerImageIsTheManagingAccountsOnly(t *testing.T) {
+	s := &server{store: pctlStore(t)}
+	d := s.store.PctlNewPairing("acct-parent")
+	s.store.PctlSetPlayer(d.Hex(), "10000000_00a10001", &PctlPlayer{Nickname: "hansolo", ImageData: "/9j/2Q=="})
+	get := func(account string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("GET", "/internal/pctl/devices/"+d.Hex()+"/players/10000000_00a10001/image?account_id="+account, nil)
+		w := httptest.NewRecorder()
+		s.pctlPlayerImage(w, r)
+		return w
+	}
+	if w := get("acct-parent"); w.Code != 200 || w.Header().Get("Content-Type") != "image/jpeg" || w.Body.String() != "\xff\xd8\xff\xd9" {
+		t.Fatalf("own image: status %d type %q body %q", w.Code, w.Header().Get("Content-Type"), w.Body.String())
+	}
+	if w := get("acct-someone-else"); w.Code != 404 {
+		t.Fatalf("another account got %d, want 404", w.Code)
+	}
+	if w := get(""); w.Code != 404 {
+		t.Fatalf("no account got %d, want 404", w.Code)
+	}
+}
