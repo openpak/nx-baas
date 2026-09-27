@@ -3,6 +3,20 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.35.2 — 2026-09-27
+
+- **`deviceId` is a number, and that is what error 2142-2009 was.** On hardware the pairing-code
+  search succeeded — the console accepted the `{items,count}` envelope and read the record — and
+  then asked for `/moon/v1/devices/0000000000000000/owners`. It had parsed the hex *string* we sent
+  as zero, got a 404, and raised 2142-2009 (module 142 is pctl). The id now travels as a JSON
+  number, and `id` carries the same value beside `deviceId` in case that is the field it reads: an
+  extra key costs nothing, another trip to the console costs a day. This settles §7 P2.
+- New device ids are capped at 48 bits. A reader that keeps JSON numbers in a double rounds
+  anything past 2^53, which would send the console after a device that does not exist. 2^48 is
+  still 281 trillion ids and formats as the same sixteen hex digits its paths use.
+- Confirmed on hardware and not changed: the search envelope, the `filter.links.pairingCode.code.$eq`
+  query, six-digit codes, and the bearer being the dauth device token.
+
 ## v0.35.1 — 2026-09-27
 
 - **The pairing code is six digits.** The console's entry field takes nothing else — the first

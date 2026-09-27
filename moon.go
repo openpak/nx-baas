@@ -283,7 +283,13 @@ func moonItems(w http.ResponseWriter, items []any) {
 // own paths, `%016llx`, which is the one shape we know it can render.
 func moonDeviceObj(d *PctlDevice) map[string]any {
 	obj := map[string]any{
-		"deviceId":      d.Hex(),
+		// A number, not the hex string this once sent: the console read that
+		// string as zero and asked for `/devices/0000000000000000/owners`, which
+		// is the 404 behind error 2142-2009 (hardware, 2026-09-27). `id` carries
+		// the same value in case the field it actually reads is that one -- an
+		// extra key costs nothing, another walk to the console costs a day.
+		"deviceId":      d.MoonID,
+		"id":            d.MoonID,
 		"nickname":      d.Nickname,
 		"pairingActive": d.DauthID == "" && d.PairingCode != "",
 		"updatedAt":     d.UpdatedAt,
@@ -383,11 +389,14 @@ const pctlPairingTTL = 15 * time.Minute
 const pctlPairingCodeDigits = 6
 
 // randU64 is the moon device id: random, not a counter, so a record cannot be
-// guessed from another one.
+// guessed from another one. Capped at 48 bits because the console reads the id
+// as a JSON *number* (hardware, 2026-09-27) and a reader that keeps numbers in a
+// double would silently round anything past 2^53. 2^48 is still 281 trillion
+// ids, and it formats as the same sixteen hex digits the console's paths use.
 func randU64() uint64 {
 	var b [8]byte
 	rand.Read(b[:])
-	return binary.BigEndian.Uint64(b[:])
+	return binary.BigEndian.Uint64(b[:]) >> 16
 }
 
 // pctlPairingCode is uniform over the whole six-digit space: modulo over random

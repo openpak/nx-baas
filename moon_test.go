@@ -328,9 +328,19 @@ func TestAConsolePairsAndSyncs(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("search found %v", found)
 	}
-	id, _ := items[0].(map[string]any)["deviceId"].(string)
+	// A number, not a string: the console read a hex string as zero and asked
+	// for /devices/0000000000000000/owners (hardware, 2026-09-27).
+	num, ok := items[0].(map[string]any)["deviceId"].(float64)
+	if !ok {
+		t.Fatalf("deviceId %#v is not a JSON number -- the console parses it as one", items[0].(map[string]any)["deviceId"])
+	}
+	if uint64(num) != minted.MoonID {
+		t.Fatalf("deviceId %v, want %d", num, minted.MoonID)
+	}
+	// And the console asks with %016llx of that number, which must resolve.
+	id := fmt.Sprintf("%016x", uint64(num))
 	if id != minted.Hex() {
-		t.Fatalf("deviceId %q, want %q", id, minted.Hex())
+		t.Fatalf("hex of the number is %q, want %q", id, minted.Hex())
 	}
 
 	// 2. AuthorizePairing/activate: the console claims it, using the id our own
@@ -486,5 +496,22 @@ func TestBlindGuessingIsCapped(t *testing.T) {
 	pctlSearchMisses.Unlock()
 	if got := search(mine.PairingCode); got["count"] != float64(1) {
 		t.Fatalf("after the window the real code must resolve: %v", got)
+	}
+}
+
+// The id must survive a reader that keeps JSON numbers in a double: past 2^53
+// the console would round it and ask for a device that does not exist.
+func TestDeviceIdsStayExactInADouble(t *testing.T) {
+	for i := 0; i < 200; i++ {
+		id := randU64()
+		if id > 1<<53 {
+			t.Fatalf("id %d is past the exact range of a double", id)
+		}
+		if float64(id) != float64(uint64(float64(id))) || uint64(float64(id)) != id {
+			t.Fatalf("id %d does not round-trip through a double", id)
+		}
+		if len(fmt.Sprintf("%016x", id)) != 16 {
+			t.Fatalf("id %d is not sixteen hex digits", id)
+		}
 	}
 }
