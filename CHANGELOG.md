@@ -3,6 +3,15 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.43.1 — 2026-09-27
+
+- **Confirmed on hardware: the console's `unlockCode` is its PIN** (8759 unlocked it), the owner's
+  picture link is followed (`GET /moon/v1/mii/…/console.jpg`), and players upload.
+- **A console that removes its last owner is unlinked.** Unlinking on the console is not a
+  `DELETE` of the device: it lists the owners, deletes each, and says nothing more. The record
+  stayed bound to the console after the 204. It is now released when no owner is left, and its
+  players go with it.
+
 ## v0.43.0 — 2026-09-27
 
 - **Confirmed on hardware: a console pairs.** With v0.42.0 the console ran search, owners and

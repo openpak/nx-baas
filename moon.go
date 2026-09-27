@@ -237,7 +237,13 @@ func (s *server) moonDevice(w http.ResponseWriter, r *http.Request, body []byte,
 			log.Printf("[moon] device %s owner %s linked", d.Hex(), na)
 			writeJSON(w, 200, map[string]any{"nintendoAccountId": na})
 		case http.MethodDelete:
-			s.store.PctlRemoveOwner(d.Hex(), na)
+			// This is how a console unlinks: it lists the owners and deletes
+			// each one, and sends nothing after the last (hardware, v0.43.0).
+			// So a record left with no owner is a console that has left.
+			if s.store.PctlRemoveOwner(d.Hex(), na) == 0 {
+				s.store.PctlUnlink(d.Hex())
+				log.Printf("[moon] device %s unlinked: its last owner %s was removed", d.Hex(), na)
+			}
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			moonError(w, moonMethodNotAllowed)
@@ -914,6 +920,7 @@ func (s *Store) PctlUnlink(moonHex string) {
 		return
 	}
 	d.DauthID, d.ActivatedAt, d.Setting, d.ETag = "", 0, nil, ""
+	d.Players = nil
 	d.UpdatedAt = time.Now().Unix()
 	s.save()
 }
@@ -936,12 +943,13 @@ func (s *Store) PctlAddOwner(moonHex, naID string) {
 	s.save()
 }
 
-func (s *Store) PctlRemoveOwner(moonHex, naID string) {
+// PctlRemoveOwner reports how many owners are left.
+func (s *Store) PctlRemoveOwner(moonHex, naID string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	d := s.pctlDevices()[moonHex]
 	if d == nil {
-		return
+		return 0
 	}
 	kept := d.Owners[:0]
 	for _, o := range d.Owners {
@@ -952,6 +960,7 @@ func (s *Store) PctlRemoveOwner(moonHex, naID string) {
 	d.Owners = kept
 	d.UpdatedAt = time.Now().Unix()
 	s.save()
+	return len(kept)
 }
 
 // pctlEventsKept bounds the upload log: a console re-sends what it thinks was

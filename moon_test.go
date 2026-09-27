@@ -766,3 +766,20 @@ func TestTheConsoleReportsItsPlayers(t *testing.T) {
 		t.Fatalf("player delete status %d", w.Code)
 	}
 }
+
+// A console unlinks by deleting its owners; the record must stop being a
+// paired console when the last one goes (hardware, v0.43.0).
+func TestDeletingTheLastOwnerUnlinks(t *testing.T) {
+	s, token := moonServer(t)
+	tok := token("cert-aaaaaaaaaaaaaaaa")
+	d := s.store.PctlNewPairing("acct-parent")
+	s.store.PctlActivate(d.Hex(), "cert-aaaaaaaaaaaaaaaa")
+	_, owners := moonReq(t, s, "GET", "/moon/v1/devices/"+d.Hex()+"/owners", tok, "")
+	na := owners["items"].([]any)[0].(map[string]any)["user"].(map[string]any)["nintendoAccountId"].(string)
+	if w, _ := moonReq(t, s, "DELETE", "/moon/v1/devices/"+d.Hex()+"/owners/"+na, tok, ""); w.Code != 204 {
+		t.Fatalf("owner delete status %d", w.Code)
+	}
+	if got := s.store.PctlByMoonID(d.Hex()); got.DauthID != "" || got.ActivatedAt != 0 {
+		t.Fatalf("record is still bound to %q", got.DauthID)
+	}
+}
