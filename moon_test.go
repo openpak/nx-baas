@@ -1140,3 +1140,27 @@ func TestAParentNamesAConsole(t *testing.T) {
 		t.Fatalf("clearing the name: status %d", code)
 	}
 }
+
+// Who played: the event shape is the one a console uploaded (hardware,
+// 2026-09-27), and the times are running totals like the rest.
+func TestActivityNamesWhoPlayed(t *testing.T) {
+	ev := func(at, total, title, anon, leia int) json.RawMessage {
+		return json.RawMessage(fmt.Sprintf(`{"eventType":"DID_APP_PLAY","eventTimestamp":%d,"timeZoneUtcOffsetSeconds":3600,
+			"elapsedTime":%d,"applicationTimes":{"010065D018172000":{"elapsedTime":%d,"anonymousPlayTime":%d,
+			"devicePlayers":{"10000000_00b20002_00000000_00000001":{"elapsedTime":%d}}}}}`, at, total, title, anon, leia))
+	}
+	base := 1790532000
+	days := pctlActivity([]json.RawMessage{ev(base, 18000, 0, 0, 0), ev(base+400, 18400, 400, 21, 379), ev(base+790, 18790, 790, 21, 769)},
+		7, time.Unix(int64(base+790), 0))
+	if len(days) != 1 {
+		t.Fatalf("days %v", days)
+	}
+	titles := days[0]["titles"].([]map[string]any)
+	if len(titles) != 1 || titles[0]["minutes"] != int64(13) || titles[0]["anonymous_minutes"] != int64(0) {
+		t.Fatalf("titles %v", titles)
+	}
+	who := titles[0]["players"].([]map[string]any)
+	if len(who) != 1 || who[0]["id"] != "10000000_00b20002_00000000_00000001" || who[0]["minutes"] != int64(13) {
+		t.Fatalf("players %v", who)
+	}
+}

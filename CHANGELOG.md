@@ -14,6 +14,10 @@ of truth; this file is the readable summary.
   account were both "Console". `PUT /internal/pctl/devices/<moon_id>/name {"name"}` sets up to 32
   characters and an empty name clears it. Until it is named, a console goes by the last four
   characters of its serial number, which is printed on it.
+- **Play activity says who played.** A played title's event splits its time by the console's own
+  player ids, plus the part played with no user selected (hardware: Moving Out 2, 790 s, 769 of
+  them one player's). Each title in `…/activity` now carries `players: [{id, minutes}]` and
+  `anonymous_minutes`; the ids are the ones the device's `players` list names.
 - The list carries `named`, `serial_number` and `firmware`, kept from `activate`. A console paired
   before this release has neither until it pairs again.
 

@@ -1228,12 +1228,9 @@ func (s *Store) PctlEventList(moonHex string) []json.RawMessage {
 // down is a counter that restarted. Whether it also restarts at the console's
 // midnight has not been seen; the reading below holds either way.
 //
-// `applicationTimes` has been `{}` in every event seen, because nothing was
-// played. Its shape is the firmware's (pctl 22.5.0 serialiser, vaddr 0x13875c
-// and 0x139228): keys are title ids as `%016llX`, each value an object whose
-// `elapsedTime` is that title's seconds, capped at the event's own
-// `elapsedTime` -- read as the same kind of running total, which is unproven
-// until a console uploads one.
+// `applicationTimes` is keyed by title id as `%016llX`; each value holds that
+// title's `elapsedTime` in seconds, the same kind of running total (hardware:
+// 790 s after thirteen minutes of one title), and who played it.
 //
 // So a day's time is the sum of the increases between consecutive events, the
 // whole value after a restart, each bounded by the wall-clock gap since the
@@ -1246,6 +1243,10 @@ func pctlActivity(events []json.RawMessage, days int, now time.Time) []map[strin
 	type counters struct {
 		at, offset, elapsed int64
 		titles              map[string]int64
+		// players is who played each title, keyed title + "/" + player id; an
+		// empty player id is the title's `anonymousPlayTime`, played with no
+		// user selected.
+		players map[string]int64
 	}
 	var evs []counters
 	for _, raw := range events {
@@ -1258,20 +1259,38 @@ func pctlActivity(events []json.RawMessage, days int, now time.Time) []map[strin
 		if json.Unmarshal(raw, &e) != nil || e.EventTimestamp == nil || e.ElapsedTime == nil || *e.ElapsedTime < 0 {
 			continue
 		}
-		c := counters{at: int64(*e.EventTimestamp), offset: int64(e.Offset), elapsed: int64(*e.ElapsedTime), titles: map[string]int64{}}
+		c := counters{at: int64(*e.EventTimestamp), offset: int64(e.Offset), elapsed: int64(*e.ElapsedTime),
+			titles: map[string]int64{}, players: map[string]int64{}}
 		for id, v := range e.ApplicationTimes {
+			// Seen on hardware (2026-09-27, DID_APP_PLAY): the title's seconds,
+			// the part played with no user, and the rest split by the console's
+			// own player ids -- the ids its `players` uploads carry.
 			var app struct {
-				ElapsedTime float64 `json:"elapsedTime"`
+				ElapsedTime       float64 `json:"elapsedTime"`
+				AnonymousPlayTime float64 `json:"anonymousPlayTime"`
+				DevicePlayers     map[string]struct {
+					ElapsedTime float64 `json:"elapsedTime"`
+				} `json:"devicePlayers"`
 			}
-			if len(id) == 16 && pctlHexID(id) && json.Unmarshal(v, &app) == nil && app.ElapsedTime > 0 {
-				c.titles[strings.ToLower(id)] = int64(app.ElapsedTime)
+			if len(id) != 16 || !pctlHexID(id) || json.Unmarshal(v, &app) != nil || app.ElapsedTime <= 0 {
+				continue
+			}
+			id = strings.ToLower(id)
+			c.titles[id] = int64(app.ElapsedTime)
+			if app.AnonymousPlayTime > 0 {
+				c.players[id+"/"] = int64(app.AnonymousPlayTime)
+			}
+			for player, p := range app.DevicePlayers {
+				if p.ElapsedTime > 0 && !strings.Contains(player, "/") {
+					c.players[id+"/"+player] = int64(p.ElapsedTime)
+				}
 			}
 		}
 		evs = append(evs, c)
 	}
 	slices.SortStableFunc(evs, func(a, b counters) int { return int(a.at - b.at) })
 
-	total, titles := map[string]int64{}, map[string]map[string]int64{}
+	total, titles, players := map[string]int64{}, map[string]map[string]int64{}, map[string]map[string]int64{}
 	for i, e := range evs {
 		local := time.Unix(e.at+e.offset, 0).UTC()
 		day := local.Format("2006-01-02")
@@ -1296,6 +1315,12 @@ func pctlActivity(events []json.RawMessage, days int, now time.Time) []map[strin
 			}
 			titles[day][id] += gain(secs, prev.titles[id])
 		}
+		for key, secs := range e.players {
+			if players[day] == nil {
+				players[day] = map[string]int64{}
+			}
+			players[day][key] += gain(secs, prev.players[key])
+		}
 	}
 
 	offset := int64(0)
@@ -1308,7 +1333,20 @@ func pctlActivity(events []json.RawMessage, days int, now time.Time) []map[strin
 		list := []map[string]any{}
 		for id, secs := range titles[day] {
 			if m := (secs + 30) / 60; m > 0 {
-				list = append(list, map[string]any{"title_id": id, "minutes": m})
+				who := []map[string]any{}
+				for key, secs := range players[day] {
+					if player, ok := strings.CutPrefix(key, id+"/"); ok && player != "" && (secs+30)/60 > 0 {
+						who = append(who, map[string]any{"id": player, "minutes": (secs + 30) / 60})
+					}
+				}
+				slices.SortFunc(who, func(a, b map[string]any) int {
+					if d := b["minutes"].(int64) - a["minutes"].(int64); d != 0 {
+						return int(d)
+					}
+					return strings.Compare(a["id"].(string), b["id"].(string))
+				})
+				list = append(list, map[string]any{"title_id": id, "minutes": m, "players": who,
+					"anonymous_minutes": (players[day][id+"/"] + 30) / 60})
 			}
 		}
 		slices.SortFunc(list, func(a, b map[string]any) int {
