@@ -9,6 +9,9 @@ import (
 	"crypto/rsa"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/jpeg"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -728,7 +731,7 @@ func TestTheOwnerCarriesAPictureLink(t *testing.T) {
 		if r.URL.Path != "/media/avatars/10c5a846-9005-474b-8e60-494fad24bdf8/console.jpg" {
 			t.Errorf("website asked for %s", r.URL.Path)
 		}
-		w.Write([]byte{0xFF, 0xD8, 0xFF, 0xD9})
+		jpeg.Encode(w, image.NewRGBA(image.Rect(0, 0, 256, 256)), nil)
 	}))
 	defer site.Close()
 	t.Setenv("WEBSITE_INTERNAL_URL", site.URL)
@@ -737,13 +740,15 @@ func TestTheOwnerCarriesAPictureLink(t *testing.T) {
 	d := s.store.PctlNewPairing("10c5a846-9005-474b-8e60-494fad24bdf8")
 	user := moonOwners(d, "api-lp1.pctl.srv.nintendo.net")[0].(map[string]any)["user"].(map[string]any)
 	link, _ := user["miiUri"].(map[string]any)["small"].(string)
-	if link != "https://api-lp1.pctl.srv.nintendo.net/moon/v1/mii/10c5a846-9005-474b-8e60-494fad24bdf8/console.jpg" || len(link) > 255 {
+	if link != "https://api-lp1.pctl.srv.nintendo.net/moon/v1/mii/10c5a846-9005-474b-8e60-494fad24bdf8/face.png" || len(link) > 255 {
 		t.Fatalf("link %q", link)
 	}
-	if w, _ := moonReq(t, s, "GET", strings.TrimPrefix(link, "https://api-lp1.pctl.srv.nintendo.net"), "", ""); w.Code != 200 || w.Header().Get("Content-Type") != "image/jpeg" {
+	if w, _ := moonReq(t, s, "GET", strings.TrimPrefix(link, "https://api-lp1.pctl.srv.nintendo.net"), "", ""); w.Code != 200 || w.Header().Get("Content-Type") != "image/png" {
 		t.Fatalf("picture status %d type %q", w.Code, w.Header().Get("Content-Type"))
+	} else if cfg, err := png.DecodeConfig(w.Body); err != nil || cfg.Width != 128 || cfg.Height != 128 {
+		t.Fatalf("picture is %dx%d, err %v -- want a 128px PNG", cfg.Width, cfg.Height, err)
 	}
-	if w, _ := moonReq(t, s, "GET", "/moon/v1/mii/..%2Fadmin/console.jpg", "", ""); w.Code != 404 {
+	if w, _ := moonReq(t, s, "GET", "/moon/v1/mii/..%2Fadmin/face.png", "", ""); w.Code != 404 {
 		t.Fatalf("a malformed account id answered %d", w.Code)
 	}
 }

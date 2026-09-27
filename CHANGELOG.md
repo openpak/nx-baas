@@ -3,6 +3,16 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.45.1 — 2026-09-27
+
+- **Confirmed on hardware: the console names the parent.** With v0.43.0 the pairing screen showed
+  the account's display name instead of "OpenPak".
+- **The parent's picture is a 128 px PNG, under a new name.** The console showed no picture for
+  the JPEG: it had fetched `console.jpg` once, filed it, and at the next pairing neither asked
+  again nor drew it. Nintendo's own are small PNGs, so the relay now re-encodes the website's
+  console JPEG and serves it as `face.png` — the console files a picture under the URL's last
+  segment, so the new name is what makes it fetch again. Unproven until a console draws it.
+
 ## v0.45.0 — 2026-09-27
 
 - **A parent can set the setting and the PIN**, for the hardware experiments first (the

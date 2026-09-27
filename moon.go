@@ -14,6 +14,7 @@ package main
 // that log.
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -21,6 +22,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/color"
+	"image/jpeg"
+	"image/png"
 	"log"
 	"maps"
 	"math/big"
@@ -530,7 +535,7 @@ func moonOwners(d *PctlDevice, host string) []any {
 		}
 		user := map[string]any{"nintendoAccountId": na, "nickname": name}
 		if host != "" && pctlAccountID(d.ManagedBy) {
-			user["miiUri"] = map[string]any{"small": "https://" + host + "/moon/v1/mii/" + d.ManagedBy + "/console.jpg"}
+			user["miiUri"] = map[string]any{"small": "https://" + host + "/moon/v1/mii/" + d.ManagedBy + "/face.png"}
 		}
 		out = append(out, map[string]any{"deviceId": d.Hex(), "user": user})
 	}
@@ -543,9 +548,11 @@ func pctlAccountID(s string) bool {
 	return s != "" && len(s) <= 36 && strings.Trim(s, "0123456789abcdef-") == ""
 }
 
-// moonMii is the parent's picture, relayed from the website's media store: the
-// same console JPEG a profile picture uses. The console keeps at most 64 KiB
-// (pctl .text 0x4d060), so anything larger is refused here rather than cut there.
+// moonMii is the parent's picture, relayed from the website's media store and
+// re-encoded: the website keeps a console JPEG, and the console showed nothing
+// for one (hardware, v0.43.0) -- Nintendo's own are small PNGs. The console
+// keeps at most 64 KiB (pctl .text 0x4d060) and files the picture under the
+// URL's last segment, so a new name is what makes it fetch again.
 func (s *server) moonMii(w http.ResponseWriter, path string) {
 	account, _, _ := strings.Cut(path, "/")
 	site := getenv("WEBSITE_INTERNAL_URL", "")
@@ -554,13 +561,46 @@ func (s *server) moonMii(w http.ResponseWriter, path string) {
 		return
 	}
 	img, err := fetchAvatar(site + "/media/avatars/" + account + "/console.jpg")
+	if err == nil {
+		img, err = pctlFacePNG(img)
+	}
 	if err != nil || len(img) > 64<<10 {
 		log.Printf("[moon] mii %s: %d bytes, err %v", account, len(img), err)
 		moonError(w, moonNotFound)
 		return
 	}
-	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Content-Length", strconv.Itoa(len(img)))
 	w.Write(img)
+}
+
+// pctlFacePNG turns a JPEG into a PNG of at most 128 pixels a side.
+// ponytail: box average by a whole factor, so a 256px avatar halves exactly and
+// an odd size lands a little under 128. x/image/draw if quality ever matters.
+func pctlFacePNG(jpg []byte) ([]byte, error) {
+	src, err := jpeg.Decode(bytes.NewReader(jpg))
+	if err != nil {
+		return nil, err
+	}
+	b := src.Bounds()
+	n := max(1, (max(b.Dx(), b.Dy())+127)/128)
+	dst := image.NewRGBA(image.Rect(0, 0, b.Dx()/n, b.Dy()/n))
+	for y := 0; y < dst.Rect.Dy(); y++ {
+		for x := 0; x < dst.Rect.Dx(); x++ {
+			var r, g, bl uint32
+			for dy := 0; dy < n; dy++ {
+				for dx := 0; dx < n; dx++ {
+					cr, cg, cb, _ := src.At(b.Min.X+x*n+dx, b.Min.Y+y*n+dy).RGBA()
+					r, g, bl = r+cr>>8, g+cg>>8, bl+cb>>8
+				}
+			}
+			k := uint32(n * n)
+			dst.SetRGBA(x, y, color.RGBA{uint8(r / k), uint8(g / k), uint8(bl / k), 255})
+		}
+	}
+	var out bytes.Buffer
+	err = png.Encode(&out, dst)
+	return out.Bytes(), err
 }
 
 // pctlHexID is what the console's id parser accepts (.text 0x50f00): one to
