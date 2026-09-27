@@ -368,8 +368,10 @@ func TestAConsolePairsAndSyncs(t *testing.T) {
 	// The names and the nesting are the moon document's, not the local
 	// savedata's: `safetyLevel` and the `is...Restricted` booleans belong to the
 	// other schema, and the console refused a document built from those.
-	if doc["functionalRestrictionLevel"] != "CUSTOM" {
-		t.Fatalf("default setting %v -- the level must be stated", doc)
+	// NONE: the restriction check permits everything while the state is empty,
+	// and a level meaning "custom rules" is what fills it (four hardware rounds).
+	if doc["functionalRestrictionLevel"] != "NONE" {
+		t.Fatalf("default level %v -- a record nobody has restricted must not read as restricted", doc["functionalRestrictionLevel"])
 	}
 	age, _ := doc["customSettings"].(map[string]any)["ageRestriction"].(map[string]any)
 	if age["ratingAge"] != float64(18) || age["restriction"] != "UNRESTRICTED" {

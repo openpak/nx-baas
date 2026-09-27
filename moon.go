@@ -504,13 +504,18 @@ func pctlUnlockCode() string {
 // pctl's own enums: a level is NONE/CUSTOM/CHILDREN/YOUNG_TEENS/OLDER_TEENS and a
 // restriction is UNRESTRICTED/RESTRICTED/UNDEFINED.
 //
-// CUSTOM rather than NONE on purpose: NONE may leave the age byte unfilled,
-// which is the very branch that refuses. CUSTOM with an explicit age of 18
-// states the permission instead of implying it.
+// NONE, not CUSTOM. CUSTOM was the guess for two builds, on the reasoning that
+// NONE might leave the allowed-age byte unfilled -- and it failed both times with
+// nothing else in play: no unlock code, a fully permissive customSettings, and
+// the console reporting parental controls as not set up. The check's first act is
+// to permit everything while the restriction state is empty, so a level that
+// means "restricted, custom rules" is what makes it non-empty and sends the
+// console into the comparison at all. customSettings stays permissive underneath
+// in case the level alone is not what it reads.
 func pctlDefaultSetting() map[string]any {
 	unrestricted := func() map[string]any { return map[string]any{"restriction": "UNRESTRICTED"} }
 	return map[string]any{
-		"functionalRestrictionLevel": "CUSTOM",
+		"functionalRestrictionLevel": "NONE",
 		"customSettings": map[string]any{
 			"ageRestriction": map[string]any{
 				"restriction":        "UNRESTRICTED",

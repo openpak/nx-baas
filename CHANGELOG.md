@@ -3,6 +3,15 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.40.0 — 2026-09-27
+
+- **The default level is `NONE`, not `CUSTOM`.** CUSTOM was the guess for two builds and failed both
+  times with nothing else in play: no unlock code in the response, a fully permissive
+  `customSettings`, and the console reporting parental controls as not set up. pctl's check permits
+  everything while the restriction state is empty, so a level meaning "restricted, with custom
+  rules" is what makes it non-empty and sends the console into the age comparison at all. The
+  permissive `customSettings` stays underneath in case the level is not the only thing read.
+
 ## v0.39.0 — 2026-09-27
 
 - **`unlockCode` is withheld until a console has claimed the record.** The restriction check returns
