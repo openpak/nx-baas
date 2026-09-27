@@ -3,6 +3,15 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.39.0 — 2026-09-27
+
+- **`unlockCode` is withheld until a console has claimed the record.** The restriction check returns
+  "permitted" unconditionally while pctl's eight-byte slot at `+0x799` is empty, and an eight-digit
+  code is exactly what fills it — so sending one during setup switches restrictions on before the
+  console has an allowance to judge against, which is 2142-0234. The console reports parental
+  controls as *not* set up, so nothing else can be filling that slot. The code stays on the record
+  and now travels only once `activated` is true, where it does its real job: lifting a restriction.
+
 ## v0.38.0 — 2026-09-27
 
 - **The setting document had the right names from the wrong schema.** `safetyLevel` and the

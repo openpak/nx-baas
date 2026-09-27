@@ -279,6 +279,7 @@ func moonItems(w http.ResponseWriter, items []any) {
 // firmware's (study §4); the id is spelled the way the console spells it in its
 // own paths, `%016llx`, which is the one shape we know it can render.
 func moonDeviceObj(d *PctlDevice) map[string]any {
+
 	obj := map[string]any{
 		// `id` is the field the console reads, and it reads it as a number.
 		// Three hardware attempts settled this: a hex string in `deviceId` was
@@ -297,13 +298,23 @@ func moonDeviceObj(d *PctlDevice) map[string]any {
 		"activated":              d.DauthID != "",
 		"pairingActive":          d.DauthID == "" && d.PairingCode != "",
 		"parentalControlSetting": pctlSettingOf(d),
-		"unlockCode":             d.UnlockCode,
-		"updatedAt":              d.UpdatedAt,
-		"etag":                   d.ETag,
-		"owners":                 moonOwners(d),
+		// No unlockCode here, deliberately. The restriction check returns
+		// "permitted" unconditionally while the eight-byte slot at +0x799 is
+		// empty, and an eight-digit code is exactly what fills it -- so sending
+		// one during setup is what switches restrictions on before the console
+		// has any allowance to judge against. The console says parental controls
+		// are *not* set up, so nothing else can be filling that slot. It stays on
+		// the record (the parent needs it once paired) and travels only after
+		// activation.
+		"updatedAt": d.UpdatedAt,
+		"etag":      d.ETag,
+		"owners":    moonOwners(d),
 	}
 	if d.ActivatedAt != 0 {
 		obj["synchronizedAt"] = d.ActivatedAt
+		// Once the console has claimed the record it is managed, and the unlock
+		// code is what lifts a restriction rather than what creates one.
+		obj["unlockCode"] = d.UnlockCode
 	}
 	if d.PairingCode != "" {
 		// The console found the record by this code; echoing the link back is
