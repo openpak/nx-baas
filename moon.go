@@ -251,13 +251,10 @@ func (s *server) moonSetting(w http.ResponseWriter, r *http.Request, d *PctlDevi
 		moonError(w, moonNotFound)
 		return
 	}
-	doc := d.Setting
-	if doc == nil {
-		// Nothing set by a parent: an empty document, which is what "no
-		// restrictions" is. Every field name the console reads is known (study
-		// §4), but naming one here would assert a restriction nobody asked for.
-		doc = map[string]any{}
-	}
+	// The same document the record embeds: an empty one refuses everything on
+	// the console rather than nothing (2142-0234), so "no restrictions" is
+	// stated in full.
+	doc := pctlSettingOf(d)
 	tag := d.ETag
 	if tag == "" {
 		tag = pctlETag(doc)
@@ -293,12 +290,19 @@ func moonDeviceObj(d *PctlDevice) map[string]any {
 		// which is a parse and not a network failure. Two changes at once, so
 		// the extra key is now removed on its own: pctl's reader looks strict,
 		// and a field it has no slot for is the likeliest thing it refused.
-		"deviceId":      d.MoonID,
-		"nickname":      d.Nickname,
-		"pairingActive": d.DauthID == "" && d.PairingCode != "",
-		"updatedAt":     d.UpdatedAt,
-		"etag":          d.ETag,
-		"owners":        moonOwners(d),
+		"deviceId": d.MoonID,
+		"nickname": d.Nickname,
+		// `activated` and `parentalControlSetting` sit beside each other in
+		// pctl's own field table, and the console reads the setting straight out
+		// of this object: it made no second call before refusing, so an absent
+		// setting is what it judged.
+		"activated":              d.DauthID != "",
+		"pairingActive":          d.DauthID == "" && d.PairingCode != "",
+		"parentalControlSetting": pctlSettingOf(d),
+		"unlockCode":             d.UnlockCode,
+		"updatedAt":              d.UpdatedAt,
+		"etag":                   d.ETag,
+		"owners":                 moonOwners(d),
 	}
 	if d.ActivatedAt != 0 {
 		obj["synchronizedAt"] = d.ActivatedAt
@@ -309,6 +313,16 @@ func moonDeviceObj(d *PctlDevice) map[string]any {
 		obj["links"] = map[string]any{"pairingCode": map[string]any{"code": d.PairingCode}}
 	}
 	return obj
+}
+
+// pctlSettingOf is the record's setting, or the stated permissive default when a
+// parent has set nothing. One place decides it, so the document the console
+// polls and the one embedded here can never disagree.
+func pctlSettingOf(d *PctlDevice) map[string]any {
+	if len(d.Setting) > 0 {
+		return d.Setting
+	}
+	return pctlDefaultSetting()
 }
 
 func moonOwners(d *PctlDevice) []any {
@@ -355,6 +369,11 @@ type PctlDevice struct {
 	ManagedBy string `json:"managedBy,omitempty"`
 	// Nickname is what the console calls itself, as it sent it.
 	Nickname string `json:"nickname,omitempty"`
+	// UnlockCode is the eight digits that lift a restriction on the console --
+	// pctl copies at most eight bytes into its PIN slot and validates the eighth
+	// as a digit, so eight digits it is. The parent side holds it, which is why a
+	// forgotten PIN is recoverable here rather than through Nintendo support.
+	UnlockCode string `json:"unlockCode,omitempty"`
 	// Events are the play-time uploads, held as received. Not interpreted: the
 	// parent side has nothing to show from them yet, and a console that cannot
 	// hand them over spools retries instead of moving on.
@@ -448,6 +467,38 @@ func pctlSearchMiss() {
 	pctlSearchMisses.n++
 }
 
+// pctlUnlockCode is the eight-digit code that lifts a restriction on the
+// console. Same generator shape as the pairing code and for the same reason: a
+// predictable one is somebody else's console unlocked.
+func pctlUnlockCode() string {
+	n, err := rand.Int(rand.Reader, big.NewInt(100000000))
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%08d", n)
+}
+
+// pctlDefaultSetting is what a record carries until a parent sets anything: a
+// stated "nothing is restricted", not an absent document.
+//
+// Absent was the first guess and it was wrong. pctl's check refuses with
+// 2142-0234 when the allowed age byte is unset, so silence reads as "block
+// everything" rather than "block nothing" (hardware, 2026-09-27). Every name and
+// every value below is out of pctl's own tables: safetyLevel takes NONE, CUSTOM,
+// CHILDREN, YOUNG_TEENS or OLDER_TEENS; ratingOrganization takes CERO ... GMEDIA
+// in that order; a restriction is UNRESTRICTED, RESTRICTED or UNDEFINED.
+func pctlDefaultSetting() map[string]any {
+	return map[string]any{
+		"safetyLevel":                            "NONE",
+		"ratingOrganization":                     "PEGI",
+		"ratingAge":                              18,
+		"isDefaultRatingOrganizationSet":         true,
+		"isSnsPostRestricted":                    false,
+		"isFreeCommunicationRestrictedByDefault": false,
+		"isStereoVisionRestricted":               false,
+	}
+}
+
 // pctlDevices is the map, created on first use so no migration is needed for a
 // store written before parental controls existed. Called with mu held.
 func (s *Store) pctlDevices() map[string]*PctlDevice {
@@ -478,6 +529,7 @@ func (s *Store) PctlNewPairing(managedBy string) *PctlDevice {
 		PairingExpires: now.Add(pctlPairingTTL).Unix(),
 		UpdatedAt:      now.Unix(),
 		ManagedBy:      managedBy,
+		UnlockCode:     pctlUnlockCode(),
 	}
 	s.pctlDevices()[d.Hex()] = d
 	s.save()

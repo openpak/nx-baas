@@ -359,8 +359,11 @@ func TestAConsolePairsAndSyncs(t *testing.T) {
 	if w.Code != 200 || etag == "" {
 		t.Fatalf("setting status %d etag %q", w.Code, etag)
 	}
-	if len(doc) != 0 {
-		t.Fatalf("doc %v -- nothing was set, so nothing may be asserted", doc)
+	// Nothing was set by a parent, so the document states "nothing restricted"
+	// in full. An empty one is what the console answered 2142-0234 to: its check
+	// refuses when the allowed age is unset (hardware, 2026-09-27).
+	if doc["safetyLevel"] != "NONE" || doc["ratingAge"] != float64(18) {
+		t.Fatalf("default setting %v -- silence reads as block-everything on the console", doc)
 	}
 
 	// 4. The same poll again, with the validator: no body, no restriction churn.
@@ -526,9 +529,14 @@ func TestTheDeviceObjectHasNoFieldPctlDoesNotName(t *testing.T) {
 	obj := moonDeviceObj(d)
 
 	// Every name here appears in pctl's rodata (the docs-repo study, §4).
+	// Every name here is one pctl's own field tables carry (the docs-repo study;
+	// the device table reads language, region, serialNumber, firmwareVersion,
+	// displayedVersion, internalVersion, activated, lastOnlineCheckedAt,
+	// parentalControlSetting, unlockCode).
 	known := map[string]bool{
 		"deviceId": true, "nickname": true, "pairingActive": true, "updatedAt": true,
 		"etag": true, "owners": true, "synchronizedAt": true, "links": true,
+		"activated": true, "unlockCode": true, "parentalControlSetting": true,
 	}
 	for k := range obj {
 		if !known[k] {
@@ -537,5 +545,31 @@ func TestTheDeviceObjectHasNoFieldPctlDoesNotName(t *testing.T) {
 	}
 	if _, ok := obj["deviceId"].(uint64); !ok {
 		t.Fatalf("deviceId is %T, must stay a number", obj["deviceId"])
+	}
+}
+
+// The console lifts a restriction with an eight-digit code: pctl copies at most
+// eight bytes into its PIN slot and validates the eighth as a digit.
+func TestUnlockCodesAreEightDigits(t *testing.T) {
+	st := pctlStore(t)
+	for i := 0; i < 50; i++ {
+		d := st.PctlNewPairing(fmt.Sprintf("acct-%d", i))
+		if len(d.UnlockCode) != 8 || strings.TrimFunc(d.UnlockCode, unicode.IsDigit) != "" {
+			t.Fatalf("unlock code %q is not eight digits", d.UnlockCode)
+		}
+	}
+}
+
+// The embedded setting and the polled document are the same thing: two answers
+// would mean the console applying one and the app editing the other.
+func TestTheEmbeddedSettingIsThePolledOne(t *testing.T) {
+	st := pctlStore(t)
+	d := st.PctlNewPairing("acct-parent")
+	st.PctlSetSetting(d.Hex(), map[string]any{"safetyLevel": "OLDER_TEENS", "ratingAge": 16})
+
+	obj := moonDeviceObj(st.PctlByMoonID(d.Hex()))
+	embedded, _ := obj["parentalControlSetting"].(map[string]any)
+	if embedded["safetyLevel"] != "OLDER_TEENS" || embedded["ratingAge"] != 16 {
+		t.Fatalf("embedded setting %v is not what the parent stored", embedded)
 	}
 }
