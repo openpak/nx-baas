@@ -21,8 +21,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"maps"
 	"math/big"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -44,18 +46,18 @@ const (
 	moonInternalError    = "500/internal_server_error"
 )
 
-// moonError writes a refusal. `type` is the identity above; `status`, `code` and
-// `detail` are the other three error keys in pctl's string table (997708 and
-// neighbours), so the envelope is those four and nothing guessed beyond them.
-// ponytail: four keys because four are evidenced. If hardware shows the client
-// reading a fifth, the log will name it.
+// moonError writes a refusal, in the five keys of the console's error parse
+// table (pctl 22.5.0, vaddr 0x13bb20): `type` is the identity above and the only
+// one it classifies by; `title`, `errorCode` and `detail` are strings, `status`
+// an integer.
 func moonError(w http.ResponseWriter, slug string) {
 	status, code, _ := strings.Cut(slug, "/")
 	writeJSON(w, statusOf(status), map[string]any{
-		"type":   moonErrorBase + slug,
-		"status": statusOf(status),
-		"code":   code,
-		"detail": code,
+		"type":      moonErrorBase + slug,
+		"title":     code,
+		"errorCode": code,
+		"status":    statusOf(status),
+		"detail":    code,
 	})
 }
 
@@ -182,6 +184,15 @@ func (s *server) moonDevice(w http.ResponseWriter, r *http.Request, body []byte,
 		return
 	}
 
+	// Between the search and `activate` the console asks whose record this is,
+	// so it can show the parent before anything is claimed (hardware, v0.41.0:
+	// a 403 here is 2142-2008). An unclaimed record answers any console holding
+	// a device token; the id is only known to one that typed the code.
+	if tail == "owners" && r.Method == http.MethodGet && d.DauthID == "" && device != "" {
+		moonItems(w, moonOwners(d))
+		return
+	}
+
 	// Everything else needs this console to be the one that claimed the record.
 	if device == "" || d.DauthID != device {
 		log.Printf("[moon] %s %s: bearer device %q is not %q", r.Method, r.URL.Path, device, d.DauthID)
@@ -264,7 +275,11 @@ func (s *server) moonSetting(w http.ResponseWriter, r *http.Request, d *PctlDevi
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
-	writeJSON(w, 200, doc)
+	// `etag` and `updatedAt` are in the document's parse table too; the body is
+	// a copy so the stored document and its hash stay as they were.
+	body := maps.Clone(doc)
+	body["etag"], body["updatedAt"] = tag, d.UpdatedAt
+	writeJSON(w, 200, body)
 }
 
 // moonItems is the `{items,count}` envelope pctl's strings carry (992493, 986719).
@@ -313,6 +328,12 @@ func moonDeviceObj(d *PctlDevice) map[string]any {
 	}
 	if d.ActivatedAt != 0 {
 		obj["synchronizedAt"] = d.ActivatedAt
+		// What the console reads from the activate answer, and all it reads
+		// (parse table vaddr 0x13c580): a string and an integer.
+		obj["synchronizedParentalControlSetting"] = map[string]any{
+			"synchronizedEtag": pctlETag(pctlSettingOf(d)),
+			"synchronizedAt":   d.ActivatedAt,
+		}
 		// Once the console has claimed the record it is managed, and the unlock
 		// code is what lifts a restriction rather than what creates one.
 		obj["unlockCode"] = d.UnlockCode
@@ -329,18 +350,137 @@ func moonDeviceObj(d *PctlDevice) map[string]any {
 // parent has set nothing. One place decides it, so the document the console
 // polls and the one embedded here can never disagree.
 func pctlSettingOf(d *PctlDevice) map[string]any {
-	if len(d.Setting) > 0 {
-		return d.Setting
+	// A stored document is whatever its writer sent -- the console's own PUT
+	// uses the serialiser's shape, not the parser's -- so only what the parse
+	// table would accept travels back.
+	if doc, _ := pctlConform(d.Setting, pctlSettingSchema).(map[string]any); doc["functionalRestrictionLevel"] != nil {
+		return doc
 	}
 	return pctlDefaultSetting()
 }
 
+// pctlSettingSchema is the console's parse table for the setting document
+// (vaddr 0x13c8c0; docs study section 5b). "s" string, "i" integer, "b" boolean,
+// a list is an enum, "*" is any hex-id or day-name key.
+var pctlSettingSchema = func() map[string]any {
+	restriction := []string{"UNRESTRICTED", "RESTRICTED", "UNDEFINED"}
+	clock := map[string]any{"hour": "i", "minute": "i"}
+	day := map[string]any{
+		"timeToPlayInOneDay": map[string]any{"enabled": "b", "limitTime": "i"},
+		"bedtime":            map[string]any{"enabled": "b", "endingTime": clock, "startingTime": clock},
+	}
+	return map[string]any{
+		"functionalRestrictionLevel": []string{"NONE", "CUSTOM", "CHILDREN", "YOUNG_TEENS", "OLDER_TEENS"},
+		"customSettings": map[string]any{
+			"ageRestriction": map[string]any{"restriction": restriction, "ratingAge": "i"},
+			"ugcRestriction": map[string]any{
+				"restriction":  restriction,
+				"applications": map[string]any{"*": map[string]any{"restriction": restriction}},
+			},
+			"snsPostRestriction": restriction,
+			"ratingOrganization": []string{"CERO", "GRAC_GCRB", "GSRMR", "ESRB", "CLASS_IND", "USK", "PEGI",
+				"PEGI_PORTUGAL", "PEGI_BBFC", "RUSSIAN", "ACB", "OFLC", "IARC_GENERIC", "GMEDIA"},
+			"vrRestriction": restriction,
+		},
+		"playTimerRegulations": map[string]any{
+			"timerMode":                   []string{"DAILY", "EACH_DAY_OF_THE_WEEK"},
+			"restrictionMode":             []string{"ALARM", "FORCED_TERMINATION"},
+			"dailyRegulations":            day,
+			"eachDayOfTheWeekRegulations": map[string]any{"*": day},
+			"bedtimeStartingTime":         clock,
+		},
+		"whitelistedApplications": map[string]any{"*": map[string]any{"safeLaunch": []string{"NONE", "ALLOW"}}},
+	}
+}()
+
+// pctlConform keeps the parts of v the schema names with the type it names, and
+// drops the rest: a wrong type on a known key is what ends the console's parse.
+// Returns nil when v itself does not fit.
+func pctlConform(v, schema any) any {
+	switch want := schema.(type) {
+	case string:
+		switch n := v.(type) {
+		case string:
+			if want == "s" {
+				return n
+			}
+		case bool:
+			if want == "b" {
+				return n
+			}
+		case int:
+			if want == "i" && n >= 0 && n < 256 {
+				return n
+			}
+		case float64: // what a document read back from the store holds
+			if want == "i" && n >= 0 && n < 256 && n == float64(int(n)) {
+				return int(n)
+			}
+		}
+	case []string:
+		if s, ok := v.(string); ok && slices.Contains(want, s) {
+			return s
+		}
+	case map[string]any:
+		m, ok := v.(map[string]any)
+		if !ok {
+			return nil
+		}
+		out := map[string]any{}
+		for k, sub := range m {
+			spec, named := want[k]
+			if !named {
+				spec = want["*"]
+			}
+			if spec == nil {
+				continue
+			}
+			if c := pctlConform(sub, spec); c != nil {
+				out[k] = c
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// The shape is the console's parse table for this list (vaddr 0x13d240):
+// `deviceId` and `user.nintendoAccountId` are strings of at most sixteen hex
+// digits, and anything else in either ends the parse as 2142-0234 -- so an owner
+// that is not hex is left out rather than sent.
+//
+// A record nobody has been linked to yet is owned by the account that minted
+// its code: that is who the console is about to be paired with.
+// ponytail: every owner is called "OpenPak" and has no miiUri. Pass the
+// account's display name through /internal/pctl/pairing when the console's
+// confirmation screen should name the parent.
 func moonOwners(d *PctlDevice) []any {
+	owners := d.Owners
+	if len(owners) == 0 && d.ManagedBy != "" {
+		sum := sha256.Sum256([]byte(d.ManagedBy))
+		owners = []string{hex.EncodeToString(sum[:8])}
+	}
 	out := []any{}
-	for _, na := range d.Owners {
-		out = append(out, map[string]any{"nintendoAccountId": na})
+	for _, na := range owners {
+		if !pctlHexID(na) {
+			continue
+		}
+		out = append(out, map[string]any{
+			"deviceId": d.Hex(),
+			"user":     map[string]any{"nintendoAccountId": na, "nickname": "OpenPak"},
+		})
 	}
 	return out
+}
+
+// pctlHexID is what the console's id parser accepts (.text 0x50f00): one to
+// sixteen hex digits.
+func pctlHexID(s string) bool {
+	if len(s) > 16 {
+		return false
+	}
+	_, err := strconv.ParseUint(s, 16, 64)
+	return err == nil
 }
 
 // jsonObj reads a request body as an object, or nil when it is not one. A body

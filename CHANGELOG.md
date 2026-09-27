@@ -3,6 +3,29 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.42.0 — 2026-09-27
+
+- **Confirmed on hardware: `id` as a hex string gets the console past the search.** With v0.41.0
+  the console parsed the answer and asked for `/devices/0000335384296553/owners` with the right
+  id. 2142-0234 on pairing is closed.
+- **The owners read answers before `activate`.** That request is the console asking whose record
+  it found, and it comes before anything is claimed; the claimed-console check refused it with
+  `403/forbidden`, which the console shows as 2142-2008. An unclaimed record now answers any
+  console holding a device token. A claimed one still answers only its own console.
+- **Owners take the shape the console parses** (table `0x13d240`): `{deviceId, user{
+  nintendoAccountId, nickname}}`, both ids as hex strings. A record nobody is linked to yet names
+  the account that minted its code, under an id derived from it and the nickname "OpenPak". An
+  owner id that is not hex is left out, since it would end the parse.
+- **A stored setting is served only in the parsed shape.** The console's own PUT uses its
+  serialiser's layout, and serving that back would put wrong types on keys the parser knows.
+  The document is filtered through the parse table's keys, types and enums; one with no
+  `functionalRestrictionLevel` left is served as the default.
+- **The polled setting carries `etag` and `updatedAt` in its body**, as the table names them.
+- **The activate answer carries `synchronizedParentalControlSetting{synchronizedEtag,
+  synchronizedAt}`**, which is all the console reads from it (table `0x13c580`).
+- **Refusals use the console's five error keys** (table `0x13bb20`): `type`, `title`,
+  `errorCode`, `status`, `detail`. `code` was never one of them.
+
 ## v0.41.0 — 2026-09-27
 
 - **2142-0234 is a JSON parse abort, and `id` is a hex string.** The result is not a restriction

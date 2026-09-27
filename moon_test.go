@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -386,13 +387,20 @@ func TestAConsolePairsAndSyncs(t *testing.T) {
 
 	// 5. A parent sets a limit: the ETag moves, so the console's next poll is a
 	// 200 with the new document.
-	s.store.PctlSetSetting(id, map[string]any{"ratingAge": 12})
+	s.store.PctlSetSetting(id, map[string]any{
+		"functionalRestrictionLevel": "CUSTOM",
+		"customSettings":             map[string]any{"ageRestriction": map[string]any{"restriction": "RESTRICTED", "ratingAge": 12}},
+	})
 	w, doc = moonReq(t, s, "GET", "/moon/v1/devices/"+id+"/parental_control_setting", tok, "")
 	if w.Header().Get("ETag") == etag {
 		t.Fatalf("ETag did not move after a parent changed the setting")
 	}
-	if doc["ratingAge"] != float64(12) {
+	if got := doc["customSettings"].(map[string]any)["ageRestriction"].(map[string]any)["ratingAge"]; got != float64(12) {
 		t.Fatalf("doc %v", doc)
+	}
+	// The body names its own validator and time, as the parse table expects.
+	if doc["etag"] != w.Header().Get("ETag") || doc["updatedAt"] == nil {
+		t.Fatalf("doc %v carries no etag/updatedAt", doc)
 	}
 
 	// 6. Owners and events, the two writes the console makes on its own.
@@ -402,6 +410,10 @@ func TestAConsolePairsAndSyncs(t *testing.T) {
 	_, owners := moonReq(t, s, "GET", "/moon/v1/devices/"+id+"/owners", tok, "")
 	if owners["count"] != float64(1) {
 		t.Fatalf("owners %v", owners)
+	}
+	owner := owners["items"].([]any)[0].(map[string]any)
+	if owner["deviceId"] != id || owner["user"].(map[string]any)["nintendoAccountId"] != "bbbbbbbbbbbb0001" {
+		t.Fatalf("owner %v is not {deviceId, user{nintendoAccountId}} in hex strings", owner)
 	}
 	if w, _ := moonReq(t, s, "POST", "/moon/v1/devices/"+id+"/events", tok, `{"items":[{"eventType":"AppEvent"}]}`); w.Code != 200 {
 		t.Fatalf("events status %d", w.Code)
@@ -575,12 +587,74 @@ func TestUnlockCodesAreEightDigits(t *testing.T) {
 func TestTheEmbeddedSettingIsThePolledOne(t *testing.T) {
 	st := pctlStore(t)
 	d := st.PctlNewPairing("acct-parent")
-	st.PctlSetSetting(d.Hex(), map[string]any{"safetyLevel": "OLDER_TEENS", "ratingAge": 16})
+	st.PctlSetSetting(d.Hex(), map[string]any{"functionalRestrictionLevel": "OLDER_TEENS"})
 
 	obj := moonDeviceObj(st.PctlByMoonID(d.Hex()))
 	embedded, _ := obj["parentalControlSetting"].(map[string]any)
-	if embedded["safetyLevel"] != "OLDER_TEENS" || embedded["ratingAge"] != 16 {
+	if embedded["functionalRestrictionLevel"] != "OLDER_TEENS" {
 		t.Fatalf("embedded setting %v is not what the parent stored", embedded)
+	}
+}
+
+// A stored document is served only in the shape the console parses: a wrong
+// type on a key it knows ends its parse as 2142-0234, so that part is dropped,
+// and a document with no level at all falls back to the default.
+func TestAStoredSettingIsServedInTheParsedShape(t *testing.T) {
+	got := pctlConform(map[string]any{
+		"functionalRestrictionLevel": "CUSTOM",
+		"safetyLevel":                "CHILDREN", // the serialiser's name
+		"customSettings": map[string]any{
+			"snsPostRestriction": map[string]any{"restriction": "RESTRICTED"}, // object where a string is parsed
+			"vrRestriction":      "SOMETIMES",                                 // not in the enum
+			"ratingOrganization": "USK",
+			"ageRestriction":     map[string]any{"ratingAge": float64(300)},
+			"ugcRestriction": map[string]any{"applications": map[string]any{
+				"0100abcd12340000": map[string]any{"restriction": "RESTRICTED"},
+			}},
+		},
+	}, pctlSettingSchema).(map[string]any)
+	want := map[string]any{
+		"functionalRestrictionLevel": "CUSTOM",
+		"customSettings": map[string]any{
+			"ratingOrganization": "USK",
+			"ageRestriction":     map[string]any{},
+			"ugcRestriction": map[string]any{"applications": map[string]any{
+				"0100abcd12340000": map[string]any{"restriction": "RESTRICTED"},
+			}},
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got  %v\nwant %v", got, want)
+	}
+
+	st := pctlStore(t)
+	d := st.PctlNewPairing("acct-parent")
+	st.PctlSetSetting(d.Hex(), map[string]any{"safetyLevel": "CHILDREN"})
+	if !reflect.DeepEqual(pctlSettingOf(st.PctlByMoonID(d.Hex())), pctlDefaultSetting()) {
+		t.Fatalf("a document with no level must be served as the default")
+	}
+}
+
+// Before activate the console asks whose record it found; refusing that is
+// 2142-2008 (hardware, v0.41.0). The answer names the account that minted the
+// code, and a claimed record still answers only its own console.
+func TestOwnersAnswerBeforeActivation(t *testing.T) {
+	s, token := moonServer(t)
+	d := s.store.PctlNewPairing("acct-parent")
+	w, owners := moonReq(t, s, "GET", "/moon/v1/devices/"+d.Hex()+"/owners", token("cert-aaaaaaaaaaaaaaaa"), "")
+	if w.Code != 200 || owners["count"] != float64(1) {
+		t.Fatalf("status %d, owners %v", w.Code, owners)
+	}
+	na, _ := owners["items"].([]any)[0].(map[string]any)["user"].(map[string]any)["nintendoAccountId"].(string)
+	if !pctlHexID(na) {
+		t.Fatalf("owner id %q is not hex", na)
+	}
+	if w, _ := moonReq(t, s, "GET", "/moon/v1/devices/"+d.Hex()+"/owners", "", ""); w.Code != 403 {
+		t.Fatalf("no token: status %d, want 403", w.Code)
+	}
+	s.store.PctlActivate(d.Hex(), "cert-aaaaaaaaaaaaaaaa")
+	if w, _ := moonReq(t, s, "GET", "/moon/v1/devices/"+d.Hex()+"/owners", token("cert-bbbbbbbbbbbbbbbb"), ""); w.Code != 403 {
+		t.Fatalf("another console: status %d, want 403", w.Code)
 	}
 }
 
