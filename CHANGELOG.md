@@ -3,6 +3,21 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.38.0 — 2026-09-27
+
+- **The setting document had the right names from the wrong schema.** `safetyLevel` and the
+  `is...Restricted` booleans come from pctl's *local savedata* table; the moon document's own table
+  nests differently, and the console refused the flat version with 2142-0234 again. It now sends
+  what that table spells: `parentalControlSetting` holds `functionalRestrictionLevel` and
+  `customSettings`; `customSettings` holds `ageRestriction{restriction, ratingAge,
+  ratingOrganization}`, `ugcRestriction{restriction}`, `snsPostRestriction{restriction}`,
+  `vrRestriction{restriction}` and `applications`.
+- The level is `CUSTOM` with an explicit age of 18, not `NONE`. `NONE` may leave the allowed-age
+  byte unfilled, and that is the exact branch that refuses — so the permission is stated rather
+  than implied.
+- Confirmed by the same attempt: `id` is read correctly now. The console made no zero-id request,
+  so it got past the device id and failed only on the setting.
+
 ## v0.37.0 — 2026-09-27
 
 - **`id` is the field the console reads the device id from**, and v0.36.0 removed it on a wrong

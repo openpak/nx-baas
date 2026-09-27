@@ -365,8 +365,15 @@ func TestAConsolePairsAndSyncs(t *testing.T) {
 	// Nothing was set by a parent, so the document states "nothing restricted"
 	// in full. An empty one is what the console answered 2142-0234 to: its check
 	// refuses when the allowed age is unset (hardware, 2026-09-27).
-	if doc["safetyLevel"] != "NONE" || doc["ratingAge"] != float64(18) {
-		t.Fatalf("default setting %v -- silence reads as block-everything on the console", doc)
+	// The names and the nesting are the moon document's, not the local
+	// savedata's: `safetyLevel` and the `is...Restricted` booleans belong to the
+	// other schema, and the console refused a document built from those.
+	if doc["functionalRestrictionLevel"] != "CUSTOM" {
+		t.Fatalf("default setting %v -- the level must be stated", doc)
+	}
+	age, _ := doc["customSettings"].(map[string]any)["ageRestriction"].(map[string]any)
+	if age["ratingAge"] != float64(18) || age["restriction"] != "UNRESTRICTED" {
+		t.Fatalf("ageRestriction %v -- an unset age is the branch that returns 2142-0234", age)
 	}
 
 	// 4. The same poll again, with the validator: no body, no restriction churn.

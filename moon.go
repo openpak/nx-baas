@@ -479,21 +479,38 @@ func pctlUnlockCode() string {
 // pctlDefaultSetting is what a record carries until a parent sets anything: a
 // stated "nothing is restricted", not an absent document.
 //
-// Absent was the first guess and it was wrong. pctl's check refuses with
+// Absent was the first guess and it was wrong -- pctl's check refuses with
 // 2142-0234 when the allowed age byte is unset, so silence reads as "block
-// everything" rather than "block nothing" (hardware, 2026-09-27). Every name and
-// every value below is out of pctl's own tables: safetyLevel takes NONE, CUSTOM,
-// CHILDREN, YOUNG_TEENS or OLDER_TEENS; ratingOrganization takes CERO ... GMEDIA
-// in that order; a restriction is UNRESTRICTED, RESTRICTED or UNDEFINED.
+// everything". The second guess was wrong differently: it used `safetyLevel` and
+// the `is...Restricted` booleans, which are names from pctl's *local savedata*
+// schema, not from the moon document. The console read that and still refused.
+//
+// This shape is the moon document's own field table, in its order
+// (`0x13b574`+): parentalControlSetting holds functionalRestrictionLevel and
+// customSettings; customSettings holds ageRestriction{restriction, ratingAge,
+// ratingOrganization}, ugcRestriction{restriction}, applications,
+// snsPostRestriction{restriction} and vrRestriction{restriction}. The values are
+// pctl's own enums: a level is NONE/CUSTOM/CHILDREN/YOUNG_TEENS/OLDER_TEENS and a
+// restriction is UNRESTRICTED/RESTRICTED/UNDEFINED.
+//
+// CUSTOM rather than NONE on purpose: NONE may leave the age byte unfilled,
+// which is the very branch that refuses. CUSTOM with an explicit age of 18
+// states the permission instead of implying it.
 func pctlDefaultSetting() map[string]any {
+	unrestricted := func() map[string]any { return map[string]any{"restriction": "UNRESTRICTED"} }
 	return map[string]any{
-		"safetyLevel":                            "NONE",
-		"ratingOrganization":                     "PEGI",
-		"ratingAge":                              18,
-		"isDefaultRatingOrganizationSet":         true,
-		"isSnsPostRestricted":                    false,
-		"isFreeCommunicationRestrictedByDefault": false,
-		"isStereoVisionRestricted":               false,
+		"functionalRestrictionLevel": "CUSTOM",
+		"customSettings": map[string]any{
+			"ageRestriction": map[string]any{
+				"restriction":        "UNRESTRICTED",
+				"ratingAge":          18,
+				"ratingOrganization": "PEGI",
+			},
+			"ugcRestriction":     unrestricted(),
+			"snsPostRestriction": unrestricted(),
+			"vrRestriction":      unrestricted(),
+			"applications":       []any{},
+		},
 	}
 }
 
