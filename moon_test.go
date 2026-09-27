@@ -985,3 +985,37 @@ func TestAParentRemovesAConsole(t *testing.T) {
 		t.Fatalf("own console: status %d, record still there: %v", code, s.store.PctlByMoonID(d.Hex()) != nil)
 	}
 }
+
+// Each number has the bound the console's own handler enforces, a parent's PIN
+// is exactly the four digits the console can be typed, and the PIN never
+// reaches the log.
+func TestBoundsPinLengthAndTheLoggedPin(t *testing.T) {
+	for spec, tc := range map[string]struct{ ok, bad any }{
+		"i360": {360, 361}, "i23": {23, 24}, "i59": {float64(59), 60}, "i255": {255, 256},
+	} {
+		if pctlConform(tc.ok, spec) == nil || pctlConform(tc.bad, spec) != nil || pctlConform(1.5, spec) != nil {
+			t.Fatalf("%s: accepts %v, refuses %v and 1.5", spec, tc.ok, tc.bad)
+		}
+	}
+	day := map[string]any{"dailyRegulations": map[string]any{"timeToPlayInOneDay": map[string]any{"enabled": true, "limitTime": 300}}}
+	got := pctlConform(map[string]any{"playTimerRegulations": day}, pctlSettingSchema)
+	if !reflect.DeepEqual(got, map[string]any{"playTimerRegulations": day}) {
+		t.Fatalf("a five-hour limit was thinned: %v", got)
+	}
+
+	s, _ := moonServer(t)
+	d := s.store.PctlNewPairing("acct-parent")
+	for code, want := range map[string]int{"4827": 200, "48270": 400, "482": 400} {
+		r := httptest.NewRequest("PUT", "/internal/pctl/devices/"+d.Hex()+"/setting?account_id=acct-parent", strings.NewReader(`{"unlock_code":"`+code+`"}`))
+		w := httptest.NewRecorder()
+		s.pctlDeviceRoute(w, r)
+		if w.Code != want {
+			t.Fatalf("unlock_code %q: status %d, want %d", code, w.Code, want)
+		}
+	}
+
+	masked := string(pctlPinInBody.ReplaceAll([]byte(`{"synchronizedUnlockCode":"4827","a":{"unlockCode": "6816","ratingAge":2}}`), []byte(`${1}****"`)))
+	if strings.Contains(masked, "4827") || strings.Contains(masked, "6816") || !json.Valid([]byte(masked)) || !strings.Contains(masked, `"ratingAge":2`) {
+		t.Fatalf("masked body %s", masked)
+	}
+}

@@ -3,6 +3,22 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.45.2 — 2026-09-27
+
+- **Confirmed on hardware: a PIN and a restriction set on the server both reach the console.**
+  A served `unlockCode` came back in the receipt as `synchronizedUnlockCode`, the console showed
+  "PIN changed", and the new PIN worked; serving `NONE` again let titles launch. The parent's
+  picture is drawn now that it is a PNG.
+- **A parent's PIN is exactly four digits.** The console's parser takes up to eight, but its entry
+  field has four places, so anything longer could never be typed. `PUT …/setting` refuses any
+  other length. A code the console reports is still taken as it comes.
+- **Each number has its own bound.** Every integer was capped at 255, which is the rating age's
+  limit and nobody else's: a play-time limit of five hours was refused. The bounds are the ones
+  the console's handlers enforce — `limitTime` 360 minutes, `hour` 23, `minute` 59, `ratingAge`
+  255 — since a value past one ends the console's parse.
+- **The PIN is masked in the request dump.** The console sends it in `activate` and in every
+  receipt; the log shows `****` in its place and everything else in full.
+
 ## v0.45.1 — 2026-09-27
 
 - **Confirmed on hardware: a restriction set on the server blocks games on the console.** Level

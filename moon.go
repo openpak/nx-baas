@@ -30,6 +30,7 @@ import (
 	"maps"
 	"math/big"
 	"net/http"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -52,6 +53,8 @@ const (
 	moonDevicesMaxed     = "400/devices_maxed"
 	moonInternalError    = "500/internal_server_error"
 )
+
+var pctlPinInBody = regexp.MustCompile(`("(?:synchronizedU|u)nlockCode"\s*:\s*")[^"]*"`)
 
 // moonError writes a refusal, in the five keys of the console's error parse
 // table (pctl 22.5.0, vaddr 0x13bb20): `type` is the identity above and the only
@@ -96,7 +99,9 @@ func (s *server) moon(w http.ResponseWriter, r *http.Request, body []byte) {
 		s.serviceStatus(w, r, body)
 		return
 	}
-	dump(r, body, "[moon] pctl")
+	// In full, except the PIN: the console sends it in `activate` and in every
+	// receipt, and a log is read by more people than a parent's PIN should be.
+	dump(r, pctlPinInBody.ReplaceAll(body, []byte(`${1}****"`)), "[moon] pctl")
 
 	// The bearer is a dauth device token, signed by this server, so its `sub`
 	// is the device id (dauth.go). A request without one can still search for a
@@ -421,19 +426,19 @@ func pctlSettingOf(d *PctlDevice) map[string]any {
 }
 
 // pctlSettingSchema is the console's parse table for the setting document
-// (vaddr 0x13c8c0; docs study section 5b). "s" string, "i" integer, "b" boolean,
+// (vaddr 0x13c8c0; docs study section 5b). "s" string, "i360" an integer from 0 to 360, "b" boolean,
 // a list is an enum, "*" is any hex-id or day-name key.
 var pctlSettingSchema = func() map[string]any {
 	restriction := []string{"UNRESTRICTED", "RESTRICTED", "UNDEFINED"}
-	clock := map[string]any{"hour": "i", "minute": "i"}
+	clock := map[string]any{"hour": "i23", "minute": "i59"}
 	day := map[string]any{
-		"timeToPlayInOneDay": map[string]any{"enabled": "b", "limitTime": "i"},
+		"timeToPlayInOneDay": map[string]any{"enabled": "b", "limitTime": "i360"},
 		"bedtime":            map[string]any{"enabled": "b", "endingTime": clock, "startingTime": clock},
 	}
 	return map[string]any{
 		"functionalRestrictionLevel": []string{"NONE", "CUSTOM", "CHILDREN", "YOUNG_TEENS", "OLDER_TEENS"},
 		"customSettings": map[string]any{
-			"ageRestriction": map[string]any{"restriction": restriction, "ratingAge": "i"},
+			"ageRestriction": map[string]any{"restriction": restriction, "ratingAge": "i255"},
 			"ugcRestriction": map[string]any{
 				"restriction":  restriction,
 				"applications": map[string]any{"*": map[string]any{"restriction": restriction}},
@@ -470,11 +475,14 @@ func pctlConform(v, schema any) any {
 				return n
 			}
 		case int:
-			if want == "i" && n >= 0 && n < 256 {
-				return n
-			}
+			return pctlConform(float64(n), schema)
 		case float64: // what a document read back from the store holds
-			if want == "i" && n >= 0 && n < 256 && n == float64(int(n)) {
+			// "i360" is an integer from 0 to 360: each bound is the one the
+			// console's own handler enforces (limitTime .text 0x60940, hour
+			// and minute 0x60a10, ratingAge 0x60520), and a value past it ends
+			// the console's parse.
+			if max, err := strconv.Atoi(strings.TrimPrefix(want, "i")); err == nil && want[0] == 'i' &&
+				n >= 0 && n <= float64(max) && n == float64(int(n)) {
 				return int(n)
 			}
 		}
@@ -1414,8 +1422,10 @@ func (s *server) pctlPutSetting(w http.ResponseWriter, r *http.Request, d *PctlD
 			return
 		}
 	}
-	if in.UnlockCode != nil && !pctlValidUnlockCode(*in.UnlockCode) {
-		apiErr(w, http.StatusBadRequest, "unlock_code must be 4 to 8 digits")
+	// Exactly four: the console's parser takes up to eight, but its entry field
+	// has four places, so a longer PIN could never be typed (hardware).
+	if in.UnlockCode != nil && (len(*in.UnlockCode) != 4 || !pctlValidUnlockCode(*in.UnlockCode)) {
+		apiErr(w, http.StatusBadRequest, "unlock_code must be 4 digits")
 		return
 	}
 	if doc != nil {
