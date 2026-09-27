@@ -281,14 +281,15 @@ func moonItems(w http.ResponseWriter, items []any) {
 func moonDeviceObj(d *PctlDevice) map[string]any {
 
 	obj := map[string]any{
-		// `id` is the field the console reads, and it reads it as a number.
-		// Three hardware attempts settled this: a hex string in `deviceId` was
-		// read as zero, a number in `deviceId` alone was still read as zero, and
-		// only the build that also carried `id` got past the id and on to judging
-		// the setting. `deviceId` is not in pctl's device field table at all,
-		// which fits -- it stays because pctl's strings carry the name and it
-		// costs nothing.
-		"id":       d.MoonID,
+		// `id` is the only field the search reads from an item, and its parse
+		// table (pctl 22.5.0, vaddr 0x13c6f0) types it as a STRING: at most
+		// sixteen hex digits through strtoull base 16 (.text 0x50f00). A number
+		// here makes the SAX handler refuse the token, RapidJSON reports
+		// kParseErrorTermination, and pctl maps that to 2142-0234 -- which is
+		// what every build carrying a numeric `id` got. Builds without `id`
+		// parsed cleanly and read zero. `deviceId` is not in that table and is
+		// skipped; it stays as it was so this build changes one thing.
+		"id":       d.Hex(),
 		"deviceId": d.MoonID,
 		"nickname": d.Nickname,
 		// `activated` and `parentalControlSetting` sit beside each other in
@@ -490,42 +491,42 @@ func pctlUnlockCode() string {
 // pctlDefaultSetting is what a record carries until a parent sets anything: a
 // stated "nothing is restricted", not an absent document.
 //
-// Absent was the first guess and it was wrong -- pctl's check refuses with
-// 2142-0234 when the allowed age byte is unset, so silence reads as "block
-// everything". The second guess was wrong differently: it used `safetyLevel` and
-// the `is...Restricted` booleans, which are names from pctl's *local savedata*
-// schema, not from the moon document. The console read that and still refused.
+// The shape is the console's own PARSE table for this document (pctl 22.5.0,
+// vaddr 0x13c8c0), which is typed -- a value of the wrong JSON type makes the
+// handler refuse the token and the whole parse ends as 2142-0234:
 //
-// This shape is the moon document's own field table, in its order
-// (`0x13b574`+): parentalControlSetting holds functionalRestrictionLevel and
-// customSettings; customSettings holds ageRestriction{restriction, ratingAge,
-// ratingOrganization}, ugcRestriction{restriction}, applications,
-// snsPostRestriction{restriction} and vrRestriction{restriction}. The values are
-// pctl's own enums: a level is NONE/CUSTOM/CHILDREN/YOUNG_TEENS/OLDER_TEENS and a
-// restriction is UNRESTRICTED/RESTRICTED/UNDEFINED.
+//	etag, unlockCode (4-8 digits), functionalRestrictionLevel   strings
+//	customSettings {
+//	  ageRestriction { restriction, ratingAge (int < 256) }
+//	  ugcRestriction { restriction, applications { <%016llx>: { restriction } } }
+//	  snsPostRestriction, ratingOrganization, vrRestriction      strings
+//	}
+//	playTimerRegulations {...}, whitelistedApplications {...}, updatedAt (int)
 //
-// NONE, not CUSTOM. CUSTOM was the guess for two builds, on the reasoning that
-// NONE might leave the allowed-age byte unfilled -- and it failed both times with
-// nothing else in play: no unlock code, a fully permissive customSettings, and
-// the console reporting parental controls as not set up. The check's first act is
-// to permit everything while the restriction state is empty, so a level that
-// means "restricted, custom rules" is what makes it non-empty and sends the
-// console into the comparison at all. customSettings stays permissive underneath
-// in case the level alone is not what it reads.
+// So snsPostRestriction and vrRestriction are bare strings, ratingOrganization
+// sits in customSettings rather than in ageRestriction, and applications is an
+// object keyed by title id inside ugcRestriction. The earlier shapes were read
+// off the *serialiser* tables, which nest differently. Enum values are pctl's:
+// a level is NONE/CUSTOM/CHILDREN/YOUNG_TEENS/OLDER_TEENS, a restriction is
+// UNRESTRICTED/RESTRICTED/UNDEFINED, and an unknown value refuses the parse.
+//
+// ponytail: no playTimerRegulations or whitelistedApplications -- unknown keys
+// are skipped and absent ones left alone; add them when the parent app edits them.
 func pctlDefaultSetting() map[string]any {
-	unrestricted := func() map[string]any { return map[string]any{"restriction": "UNRESTRICTED"} }
 	return map[string]any{
 		"functionalRestrictionLevel": "NONE",
 		"customSettings": map[string]any{
 			"ageRestriction": map[string]any{
-				"restriction":        "UNRESTRICTED",
-				"ratingAge":          18,
-				"ratingOrganization": "PEGI",
+				"restriction": "UNRESTRICTED",
+				"ratingAge":   18,
 			},
-			"ugcRestriction":     unrestricted(),
-			"snsPostRestriction": unrestricted(),
-			"vrRestriction":      unrestricted(),
-			"applications":       []any{},
+			"ugcRestriction": map[string]any{
+				"restriction":  "UNRESTRICTED",
+				"applications": map[string]any{},
+			},
+			"snsPostRestriction": "UNRESTRICTED",
+			"ratingOrganization": "PEGI",
+			"vrRestriction":      "UNRESTRICTED",
 		},
 	}
 }

@@ -328,22 +328,17 @@ func TestAConsolePairsAndSyncs(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("search found %v", found)
 	}
-	// A number, not a string: the console read a hex string as zero and asked
-	// for /devices/0000000000000000/owners (hardware, 2026-09-27).
-	num, ok := items[0].(map[string]any)["id"].(float64)
+	// A hex string of at most sixteen digits: pctl's search table types `id`
+	// as a string and parses it base 16. A number aborts the parse (2142-0234).
+	id, ok := items[0].(map[string]any)["id"].(string)
 	if !ok {
-		t.Fatalf("id %#v is not a JSON number -- it is the field the console reads the device id from", items[0].(map[string]any)["id"])
+		t.Fatalf("id %#v is not a JSON string -- pctl's parse table refuses anything else", items[0].(map[string]any)["id"])
 	}
-	if items[0].(map[string]any)["deviceId"] != num {
-		t.Fatalf("deviceId and id must carry the same value")
+	if parsed, err := strconv.ParseUint(id, 16, 64); err != nil || len(id) > 16 || parsed != minted.MoonID {
+		t.Fatalf("id %q does not parse base 16 to %d", id, minted.MoonID)
 	}
-	if uint64(num) != minted.MoonID {
-		t.Fatalf("deviceId %v, want %d", num, minted.MoonID)
-	}
-	// And the console asks with %016llx of that number, which must resolve.
-	id := fmt.Sprintf("%016x", uint64(num))
 	if id != minted.Hex() {
-		t.Fatalf("hex of the number is %q, want %q", id, minted.Hex())
+		t.Fatalf("id is %q, want %q -- the console asks with %%016llx of it", id, minted.Hex())
 	}
 
 	// 2. AuthorizePairing/activate: the console claims it, using the id our own
@@ -550,7 +545,7 @@ func TestTheDeviceObjectHasNoFieldPctlDoesNotName(t *testing.T) {
 		"etag": true, "owners": true, "synchronizedAt": true, "links": true,
 		"activated": true, "unlockCode": true, "parentalControlSetting": true,
 		// `id` is what the console actually reads the device id from: the build
-		// without it asked for /devices/0000000000000000/owners.
+		// without it asked for /devices/0000000000000000/owners. A hex string.
 		"id": true,
 	}
 	for k := range obj {
@@ -586,5 +581,24 @@ func TestTheEmbeddedSettingIsThePolledOne(t *testing.T) {
 	embedded, _ := obj["parentalControlSetting"].(map[string]any)
 	if embedded["safetyLevel"] != "OLDER_TEENS" || embedded["ratingAge"] != 16 {
 		t.Fatalf("embedded setting %v is not what the parent stored", embedded)
+	}
+}
+
+// The default setting matches the console's typed parse table (pctl 22.5.0,
+// vaddr 0x13c8c0): a wrong JSON type on a key it knows ends the parse as
+// 2142-0234.
+func TestTheDefaultSettingHasTheTypesPctlParses(t *testing.T) {
+	custom := pctlDefaultSetting()["customSettings"].(map[string]any)
+	for _, k := range []string{"snsPostRestriction", "ratingOrganization", "vrRestriction"} {
+		if _, ok := custom[k].(string); !ok {
+			t.Fatalf("customSettings.%s is %T, the console parses a string", k, custom[k])
+		}
+	}
+	ugc := custom["ugcRestriction"].(map[string]any)
+	if _, ok := ugc["applications"].(map[string]any); !ok {
+		t.Fatalf("ugcRestriction.applications is %T, the console parses an object keyed by title id", ugc["applications"])
+	}
+	if age := custom["ageRestriction"].(map[string]any)["ratingAge"]; age != 18 {
+		t.Fatalf("ratingAge %v", age)
 	}
 }

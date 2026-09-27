@@ -3,6 +3,25 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.41.0 — 2026-09-27
+
+- **2142-0234 is a JSON parse abort, and `id` is a hex string.** The result is not a restriction
+  verdict: pctl maps RapidJSON's parse error codes through an 18-slot table (`.text 0x47c30`), and
+  slot 16, `kParseErrorTermination`, is 2142-0234 — its handler refused a token in a body we
+  answered with 200. The search answer's parse table (`0x13c6f0`) reads exactly `count` (integer)
+  and `items[].id` (**string**), and the `id` handler takes at most sixteen hex digits through
+  `strtoull` base 16 (`0x50f00`). That fits every hardware round: builds carrying a numeric `id`
+  aborted with no request behind them, builds without `id` parsed cleanly and read zero. `id` is
+  now the `%016x` string; `deviceId` is untouched, since that table skips it.
+- **The setting document follows the console's parse table, not its serialiser tables.** The typed
+  table for this document (`0x13c8c0`) has `snsPostRestriction` and `vrRestriction` as bare
+  strings, `ratingOrganization` inside `customSettings`, and `applications` as an object keyed by
+  title id inside `ugcRestriction`. The v0.38.0 shape put objects where strings are parsed, which
+  would have been the next 2142-0234 once the search got through. This is a later stage than the
+  search — the search parser never reads the embedded setting — so the traffic log tells the two
+  apart: a failure with no request after the search is the first change, one after it is this.
+- Server error identities were never in play: they map to 2142-2001…2017 (`.text 0x5ab80`).
+
 ## v0.40.0 — 2026-09-27
 
 - **The default level is `NONE`, not `CUSTOM`.** CUSTOM was the guess for two builds and failed both
