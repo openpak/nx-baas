@@ -2435,11 +2435,12 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		body, _ = io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	}
 	if debug && !strings.HasPrefix(r.URL.Path, "/avatar/") {
-		dump(r, passwordRe.ReplaceAll(body, []byte("password=***")), "DBG >>>")
+		// No PIN either: parental controls carry one in both directions.
+		dump(r, pctlPinInBody.ReplaceAll(passwordRe.ReplaceAll(body, []byte("password=***")), []byte(`${1}****"`)), "DBG >>>")
 		rec := &recorder{ResponseWriter: w, status: 200}
 		w = rec
 		defer func() {
-			log.Printf("[nx-baas] DBG <<< %d %s %s%s body(%d)=%s", rec.status, r.Method, host, r.URL.Path, rec.buf.Len(), rec.buf.Bytes())
+			log.Printf("[nx-baas] DBG <<< %d %s %s%s body(%d)=%s", rec.status, r.Method, host, r.URL.Path, rec.buf.Len(), pctlPinInBody.ReplaceAll(rec.buf.Bytes(), []byte(`${1}****"`)))
 		}()
 	}
 	switch {

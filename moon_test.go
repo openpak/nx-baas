@@ -23,6 +23,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"nx-baas/internal/penne"
 )
 
 func moonCall(t *testing.T, method, path string) (*httptest.ResponseRecorder, map[string]any) {
@@ -1063,5 +1065,48 @@ func TestActivityIsTheGainBetweenEventsPerConsoleDay(t *testing.T) {
 		if w.Code != want || (want == 200 && w.Body.String() != "{\"days\":[]}\n") {
 			t.Fatalf("%s: status %d body %q", path, w.Code, w.Body.String())
 		}
+	}
+}
+
+// A parent's save pushes DID_CHANGE_PARENTAL_CONTROL_SETTING to the console's
+// own connection -- the one named by the token it sent at activate -- in the
+// shape pctl parses; with no connection the save still succeeds.
+func TestAParentSaveIsPushedToTheConsole(t *testing.T) {
+	s, token := moonServer(t)
+	tok := token("cert-aaaaaaaaaaaaaaaa")
+	d := s.store.PctlNewPairing("acct-parent")
+	moonReq(t, s, "POST", "/moon/v1/devices/"+d.Hex()+"/activate", tok,
+		`{"notificationToken":"pzxi59sl","parentalControlSetting":{"functionalRestrictionLevel":"NONE"}}`)
+	if got := s.store.PctlByMoonID(d.Hex()).NotificationToken; got != "pzxi59sl" {
+		t.Fatalf("token kept as %q", got)
+	}
+	put := func() int {
+		w := httptest.NewRecorder()
+		s.pctlDeviceRoute(w, httptest.NewRequest("PUT", "/internal/pctl/devices/"+d.Hex()+"/setting?account_id=acct-parent", strings.NewReader(`{"unlock_code":"4827"}`)))
+		return w.Code
+	}
+	if code := put(); code != 200 {
+		t.Fatalf("with no connection: status %d", code)
+	}
+
+	mine := &penneSession{user: "u1", penneID: "pzxi59sl", send: make(chan penneOutbound, 4)}
+	other := &penneSession{user: "u2", penneID: "another", send: make(chan penneOutbound, 4)}
+	s.notifHub().attach(mine)
+	s.notifHub().attach(other)
+	if code := put(); code != 200 || len(mine.send) != 1 || len(other.send) != 0 {
+		t.Fatalf("status %d, %d frame(s) on the console, %d on another", code, len(mine.send), len(other.send))
+	}
+	env, err := penne.DecodeEnvelope((<-mine.send).frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := env.Payload()
+	m, _ := penne.ParseMessage(payload)
+	if m.Receivers != "pctl" || m.AccountID != "" || m.Type != 1 ||
+		m.Body != `{"deviceId":"`+d.Hex()+`","eventId":"DID_CHANGE_PARENTAL_CONTROL_SETTING"}` {
+		t.Fatalf("pushed %+v", m)
+	}
+	if masked := pctlPinInBody.ReplaceAllString(`{"unlock_code":"4827"}`, `${1}****"`); masked != `{"unlock_code":"****"}` {
+		t.Fatalf("the parent's code is logged as %s", masked)
 	}
 }

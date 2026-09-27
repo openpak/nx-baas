@@ -3,6 +3,27 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.47.0 — 2026-09-27
+
+- **A parent's save tells the console to fetch at once.** Without a push the console fetches its
+  setting only when someone presses "update settings" or when its retrieve task runs, and that
+  task's default interval is 21600 s (`pctl!intermittent_task_interval_seconds`, six hours).
+  After every `PUT …/setting`, nx-baas now writes one npns message on the console's own Penne
+  frontline connection: receivers `pctl`, no account id, and the body
+  `{"deviceId":"<moon id>","eventId":"DID_CHANGE_PARENTAL_CONTROL_SETTING"}`. That is the shape
+  pctl 22.5.0 listens for and parses. It listens under the name `pctl`, drops a message naming
+  any other device, and on this event runs its retrieve-settings task at once. The push is best
+  effort: with no live connection the save still succeeds, and the log says so. It has not yet
+  been run on hardware.
+- **The console's `notificationToken` is kept.** It is the console's Penne registration id, so it
+  names the connection a push goes out on. It is read at `activate` and from any device update
+  that carries it. A console paired before this version is reached through the Penne
+  registration made under the same device certificate.
+- **No PIN in the debug log.** With `NX_DEBUG` set, the request and response dumps logged the
+  PIN in full: in `activate` and receipt bodies, and in the setting and activate answers. Both
+  directions now mask `unlockCode`, `synchronizedUnlockCode` and `unlock_code`, the same way the
+  `[moon]` dump does. Lines already in the journal are not changed.
+
 ## v0.46.0 — 2026-09-27
 
 - **Play time per day, for the parent.** `GET /internal/pctl/devices/<moon_id>/activity?account_id=…&days=1..30`

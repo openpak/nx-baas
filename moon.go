@@ -38,6 +38,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"nx-baas/internal/penne"
 )
 
 // The error identities pctl carries as literals (study §5). A refusal that does
@@ -54,7 +56,9 @@ const (
 	moonInternalError    = "500/internal_server_error"
 )
 
-var pctlPinInBody = regexp.MustCompile(`("(?:synchronizedU|u)nlockCode"\s*:\s*")[^"]*"`)
+// pctlPinInBody finds a PIN in a body about to be logged: the console's own
+// keys, and the parent side's `unlock_code`.
+var pctlPinInBody = regexp.MustCompile(`("(?:synchronizedUnlockCode|unlockCode|unlock_code)"\s*:\s*")[^"]*"`)
 
 // moonError writes a refusal, in the five keys of the console's error parse
 // table (pctl 22.5.0, vaddr 0x13bb20): `type` is the identity above and the only
@@ -199,6 +203,8 @@ func (s *server) moonDevice(w http.ResponseWriter, r *http.Request, body []byte,
 		if set, ok := jsonObj(body)["parentalControlSetting"].(map[string]any); ok {
 			bound = s.store.PctlSetSetting(bound.Hex(), set)
 		}
+		// And its notificationToken, which is where a push reaches it.
+		bound = s.store.PctlUpdateDevice(bound.Hex(), jsonObj(body))
 		writeJSON(w, 200, moonDeviceObj(bound))
 		return
 	}
@@ -663,6 +669,10 @@ type PctlDevice struct {
 	ParentName string `json:"parentName,omitempty"`
 	// Nickname is what the console calls itself, as it sent it.
 	Nickname string `json:"nickname,omitempty"`
+	// NotificationToken is what the console sends at `activate`: its Penne
+	// registration id (hardware: the `penne_id` its frontline connection was
+	// minted under), so it names the connection a push goes out on.
+	NotificationToken string `json:"notificationToken,omitempty"`
 	// UnlockCode is the console's PIN, four to eight digits. It is minted with
 	// the record and replaced by the console's own as soon as the console names
 	// it (activate, or a sync receipt). The parent side holds it, which is why a
@@ -995,6 +1005,9 @@ func (s *Store) PctlUpdateDevice(moonHex string, doc map[string]any) *PctlDevice
 	}
 	if v, ok := doc["nickname"].(string); ok && v != "" {
 		d.Nickname = v
+	}
+	if v, ok := doc["notificationToken"].(string); ok && v != "" {
+		d.NotificationToken = v
 	}
 	// The sync receipt names the console's PIN as it stands. No parent-set code
 	// exists yet, so the console's is authoritative, and it corrects a record
@@ -1568,8 +1581,58 @@ func (s *server) pctlPutSetting(w http.ResponseWriter, r *http.Request, d *PctlD
 	d = s.store.PctlByMoonID(d.Hex())
 	tag := pctlServedETag(d)
 	log.Printf("[moon] device %s: parent set setting=%t code=%t, served etag %s", d.Hex(), doc != nil, in.UnlockCode != nil, tag)
+	s.pctlPush(d)
 	writeJSON(w, 200, map[string]any{"etag": tag, "updated_at": d.UpdatedAt})
 }
+
+// pctlPush tells a console that its setting changed, so it fetches it now
+// rather than at its next scheduled retrieve (`pctl!intermittent_task_interval_seconds`,
+// 21600 s by default). Best effort: with no live connection, or a console
+// that ignores it, the save already stands and the console catches up on its
+// own schedule.
+//
+// The shape is pctl 22.5.0's (docs repo, parental-controls-firmware-2026-09-26.md
+// §5c): pctl listens on npns under the name `pctl` (npns cmd 8 with that
+// string, .text 0x7abb0), parses a message body with the table at vaddr
+// 0x13a9a0, drops it unless `deviceId` (a hex string) is its own paired id,
+// and for `eventId` DID_CHANGE_PARENTAL_CONTROL_SETTING asks for a retrieve
+// at once (.text 0x4fdec). No account id: pctl never reads it. The carrier
+// is the frontline connection whose Penne id the console gave as its
+// notificationToken, the way news.go reaches a console.
+func (s *server) pctlPush(d *PctlDevice) {
+	token := d.NotificationToken
+	if token == "" && d.DauthID != "" {
+		// Paired before v0.47.0, when the token was not kept: the Penne
+		// registration made under the same device certificate is the same
+		// console's.
+		token = s.notifStore().AssocIDForUser(d.DauthID)
+	}
+	if token == "" {
+		log.Printf("[moon] device %s: no notification token; the console fetches on its own schedule", d.Hex())
+		return
+	}
+	body, _ := json.Marshal(map[string]any{"deviceId": d.Hex(), "eventId": pctlSettingChanged})
+	now := uint64(time.Now().Unix())
+	frame := penne.BuildMessage(penne.Message{Name: pctlSettingChanged, Type: 1, Receivers: "pctl", Body: string(body)}, now, now+penneSyncTTL)
+	h := s.notifHub()
+	h.mu.Lock()
+	var live []*penneSession
+	for _, list := range h.sessions {
+		for _, sess := range list {
+			if sess.penneID == token {
+				live = append(live, sess)
+			}
+		}
+	}
+	h.mu.Unlock()
+	for _, sess := range live {
+		sess.offer("", frame)
+	}
+	log.Printf("[moon] device %s: pushed %s on %d connection(s) of registration %s", d.Hex(), pctlSettingChanged, len(live), token)
+}
+
+// pctlSettingChanged is the first value of pctl's eventId enum (vaddr 0x13ab20).
+const pctlSettingChanged = "DID_CHANGE_PARENTAL_CONTROL_SETTING"
 
 // pctlDropped names the first path (sorted, dotted) where the conformed
 // document differs from what was sent, or "" when nothing was dropped or
