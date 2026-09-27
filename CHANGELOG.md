@@ -3,6 +3,20 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.48.0 — 2026-09-27
+
+- **Confirmed on hardware: the push.** A parent's save was pushed, acknowledged, fetched and
+  receipted by the console inside a second, six times out of six, with nobody touching it. The
+  editor's play-timer document is accepted, and per-title play time arrives as the firmware's
+  serialiser said it would.
+- **A parent can name a console.** The console never names itself — its `activate` body carries a
+  serial number, region, language, time zone and firmware, and no name — so two consoles under one
+  account were both "Console". `PUT /internal/pctl/devices/<moon_id>/name {"name"}` sets up to 32
+  characters and an empty name clears it. Until it is named, a console goes by the last four
+  characters of its serial number, which is printed on it.
+- The list carries `named`, `serial_number` and `firmware`, kept from `activate`. A console paired
+  before this release has neither until it pairs again.
+
 ## v0.47.0 — 2026-09-27
 
 - **A parent's save tells the console to fetch at once.** Without a push the console fetches its

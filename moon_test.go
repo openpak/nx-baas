@@ -1110,3 +1110,33 @@ func TestAParentSaveIsPushedToTheConsole(t *testing.T) {
 		t.Fatalf("the parent's code is logged as %s", masked)
 	}
 }
+
+// The console never names itself, so the parent does, and until then it goes by
+// the end of the serial number printed on it.
+func TestAParentNamesAConsole(t *testing.T) {
+	s, token := moonServer(t)
+	d := s.store.PctlNewPairing("acct-parent")
+	moonReq(t, s, "POST", "/moon/v1/devices/"+d.Hex()+"/activate", token("cert-aaaaaaaaaaaaaaaa"),
+		`{"serialNumber":"XKJ70000000001","firmwareVersion":{"displayedVersion":"22.5.0"}}`)
+	if got := pctlConsoleName(s.store.PctlByMoonID(d.Hex())); got != "Switch ···0001" {
+		t.Fatalf("unnamed console is %q", got)
+	}
+	put := func(account, body string) int {
+		r := httptest.NewRequest("PUT", "/internal/pctl/devices/"+d.Hex()+"/name?account_id="+account, strings.NewReader(body))
+		w := httptest.NewRecorder()
+		s.pctlDeviceRoute(w, r)
+		return w.Code
+	}
+	if code := put("acct-other", `{"name":"Theirs"}`); code != 404 {
+		t.Fatalf("another account: status %d", code)
+	}
+	if code := put("acct-parent", `{"name":"`+strings.Repeat("é", 33)+`"}`); code != 400 {
+		t.Fatalf("33 characters: status %d", code)
+	}
+	if code := put("acct-parent", `{"name":" Living room "}`); code != 204 || pctlConsoleName(s.store.PctlByMoonID(d.Hex())) != "Living room" {
+		t.Fatalf("status %d, name %q", code, pctlConsoleName(s.store.PctlByMoonID(d.Hex())))
+	}
+	if code := put("acct-parent", `{"name":""}`); code != 204 || pctlConsoleName(s.store.PctlByMoonID(d.Hex())) != "Switch ···0001" {
+		t.Fatalf("clearing the name: status %d", code)
+	}
+}

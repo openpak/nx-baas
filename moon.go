@@ -37,6 +37,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"nx-baas/internal/penne"
@@ -667,8 +668,17 @@ type PctlDevice struct {
 	// had it when the code was minted. It is what the console shows as the
 	// parent; "OpenPak" stands in when there is none.
 	ParentName string `json:"parentName,omitempty"`
-	// Nickname is what the console calls itself, as it sent it.
+	// Nickname is what the console calls itself, as it sent it. No console has
+	// sent one: pctl's device document has no name in it (hardware, 22.5.0).
 	Nickname string `json:"nickname,omitempty"`
+	// Label is what the parent calls the console, which is how two consoles
+	// under one account are told apart.
+	Label string `json:"label,omitempty"`
+	// SerialNumber and Firmware are what the console says of itself at
+	// `activate`: the serial is printed on the console, so it identifies one
+	// the parent has not named yet.
+	SerialNumber string `json:"serialNumber,omitempty"`
+	Firmware     string `json:"firmware,omitempty"`
 	// NotificationToken is what the console sends at `activate`: its Penne
 	// registration id (hardware: the `penne_id` its frontline connection was
 	// minted under), so it names the connection a push goes out on.
@@ -1009,6 +1019,14 @@ func (s *Store) PctlUpdateDevice(moonHex string, doc map[string]any) *PctlDevice
 	if v, ok := doc["notificationToken"].(string); ok && v != "" {
 		d.NotificationToken = v
 	}
+	if v, ok := doc["serialNumber"].(string); ok && v != "" && len(v) <= 32 {
+		d.SerialNumber = v
+	}
+	if fw, ok := doc["firmwareVersion"].(map[string]any); ok {
+		if v, ok := fw["displayedVersion"].(string); ok && v != "" && len(v) <= 32 {
+			d.Firmware = v
+		}
+	}
 	// The sync receipt names the console's PIN as it stands. No parent-set code
 	// exists yet, so the console's is authoritative, and it corrects a record
 	// paired before activate was kept (docs repo, the parent-surface PRD).
@@ -1031,6 +1049,31 @@ func (s *Store) PctlUpdateDevice(moonHex string, doc map[string]any) *PctlDevice
 	d.UpdatedAt = time.Now().Unix()
 	s.save()
 	return d
+}
+
+// pctlConsoleName is what the parent's list calls a console: the name they gave
+// it, else the end of its serial number, else nothing and the surface says
+// "Console".
+func pctlConsoleName(d *PctlDevice) string {
+	switch {
+	case d.Label != "":
+		return d.Label
+	case d.Nickname != "":
+		return d.Nickname
+	case len(d.SerialNumber) >= 4:
+		return "Switch ···" + d.SerialNumber[len(d.SerialNumber)-4:]
+	}
+	return ""
+}
+
+// PctlSetLabel names a console for its parent; an empty name clears it.
+func (s *Store) PctlSetLabel(moonHex, label string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if d := s.pctlDevices()[moonHex]; d != nil {
+		d.Label = label
+		s.save()
+	}
 }
 
 // PctlUnlink is the console saying it is no longer managed. The record goes
@@ -1460,7 +1503,10 @@ func (s *server) pctlDeviceList(w http.ResponseWriter, r *http.Request) {
 			"updated_at":         d.UpdatedAt,
 			"owners":             d.Owners,
 			"has_setting":        len(d.Setting) > 0,
-			"nickname":           d.Nickname,
+			"nickname":           pctlConsoleName(d),
+			"named":              d.Label != "",
+			"serial_number":      d.SerialNumber,
+			"firmware":           d.Firmware,
 			"setting":            pctlSettingOf(d),
 			"players":            s.store.PctlPlayerList(d.Hex()),
 			"etag":               pctlServedETag(d),
@@ -1497,6 +1543,18 @@ func (s *server) pctlDeviceRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
+	case len(parts) == 2 && parts[1] == "name" && r.Method == http.MethodPut:
+		var in struct {
+			Name string `json:"name"`
+		}
+		json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in)
+		name := strings.TrimSpace(in.Name)
+		if utf8.RuneCountInString(name) > 32 || strings.ContainsFunc(name, unicode.IsControl) {
+			apiErr(w, http.StatusBadRequest, "name must be at most 32 characters")
+			return
+		}
+		s.store.PctlSetLabel(d.Hex(), name)
+		w.WriteHeader(http.StatusNoContent)
 	case len(parts) == 1 && r.Method == http.MethodDelete:
 		// The parent removing a console from their list. The console is not
 		// told: it stays linked on its own side and gets a 404 at its next
