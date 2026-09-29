@@ -312,7 +312,7 @@ func (s *server) switchEmulatorLinkToken(w http.ResponseWriter, r *http.Request)
 	// The same bookkeeping the authorize page does: link() resolves the token's sub through it.
 	s.store.RememberNA(id.NaID, pr.PID)
 	c := naCode{PID: pr.PID, Username: id.Nickname, ClientID: r.URL.Query().Get("client_id"), NaID: id.NaID}
-	writeJSON(w, http.StatusOK, map[string]any{"id_token": s.naIDToken(c, "")})
+	writeJSON(w, http.StatusOK, map[string]any{"id_token": s.naIDToken(c, "", "")})
 }
 
 // switchEmulatorFriend answers POST /internal/switch/emulator/friend

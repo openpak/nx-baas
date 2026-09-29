@@ -9,6 +9,8 @@ package main
 // content. Hardware gates stay pending until reproduced on the declared 22.5.0 setup.
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"net/http/httptest"
 	"os"
@@ -40,7 +42,7 @@ func shopServerFor(t *testing.T) *server {
 
 // naIDTokenFor mints the NA id token the storefront's identify() step would deliver.
 func naIDTokenFor(s *server) string {
-	return s.naIDToken(naCode{NaID: testNAID, ClientID: "test-client"}, "access")
+	return s.naIDToken(naCode{NaID: testNAID, ClientID: "test-client"}, "access", "")
 }
 
 func shopReq(s *server, method, path, token string, body string) *httptest.ResponseRecorder {
@@ -275,7 +277,7 @@ func TestAccountSwitchAndRedownload(t *testing.T) {
 	uB, _ := s.store.NewUser()
 	s.store.Update(uB, func(u *User) { u.PID = 9 })
 	s.store.RememberNA(naB, 9)
-	tokB := s.naIDToken(naCode{NaID: naB, ClientID: "test-client"}, "access")
+	tokB := s.naIDToken(naCode{NaID: naB, ClientID: "test-client"}, "access", "")
 
 	d := decodeBody(t, shopReq(s, "GET", "/ashigaru/api/v1/catalog/"+testTitleID, tokB, ""))
 	if d["ownership"] != "not_owned" {
@@ -351,5 +353,53 @@ func TestShopAvatarIsTheSignedInUsers(t *testing.T) {
 	rec := shopReq(s, "GET", "/ashigaru/api/v1/me/avatar", naIDTokenFor(s), "")
 	if rec.Code != 200 || rec.Header().Get("Content-Type") != "image/jpeg" || rec.Body.Len() == 0 {
 		t.Errorf("avatar = %d %s %d bytes", rec.Code, rec.Header().Get("Content-Type"), rec.Body.Len())
+	}
+}
+
+// A game asking nn::account for a Nintendo Account token gets the id_token validated, unlike
+// the console's own client which tolerates a loose one. Don't Starve Together died on exactly
+// that ("[NX] GetResultWithInteractionIfRequired failed. (41)" in its own log, 2124-0041 on
+// screen), so the three claims that validation turns on are asserted here.
+func TestNaIDTokenCarriesNonceAndCodeHash(t *testing.T) {
+	s := dauthServer(t)
+	c := naCode{NaID: testNAID, ClientID: "f4e5f2f3e022208b", Nonce: "abc123"}
+
+	claimsOf := func(tok string) map[string]any {
+		parts := strings.Split(tok, ".")
+		if len(parts) != 3 {
+			t.Fatalf("not a JWT: %q", tok)
+		}
+		raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+
+	// The hybrid flow: a code comes back beside the token, so the token must tie itself to it.
+	hybrid := claimsOf(s.naIDToken(c, "", "thecode"))
+	if hybrid["nonce"] != "abc123" {
+		t.Errorf("nonce = %v, want the one the client sent", hybrid["nonce"])
+	}
+	sum := sha256.Sum256([]byte("thecode"))
+	if hybrid["c_hash"] != b64url(sum[:16]) {
+		t.Errorf("c_hash = %v, want the left half of SHA-256 of the code", hybrid["c_hash"])
+	}
+	if _, ok := hybrid["at_hash"]; ok {
+		t.Error("at_hash present with no access token; it used to be the hash of the empty string")
+	}
+
+	// The token endpoint: an access token exists, no code is returned with it.
+	tokened := claimsOf(s.naIDToken(c, "theaccesstoken", ""))
+	asum := sha256.Sum256([]byte("theaccesstoken"))
+	if tokened["at_hash"] != b64url(asum[:16]) {
+		t.Errorf("at_hash = %v, want the left half of SHA-256 of the access token", tokened["at_hash"])
+	}
+	if _, ok := tokened["c_hash"]; ok {
+		t.Error("c_hash present with no code")
 	}
 }

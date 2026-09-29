@@ -152,6 +152,7 @@ type naCode struct {
 	Username string
 	ClientID string
 	NaID     string
+	Nonce    string
 }
 
 // ---------- errors / helpers ----------
@@ -403,12 +404,41 @@ func naLinks(id *Identity) map[string]any {
 	}
 }
 
-func (s *server) naIDToken(c naCode, accessToken string) string {
+// naIDToken mints the OpenID Connect id_token for a Nintendo Account client.
+//
+// The console's own client tolerates a loose token, but the path a *game* uses does not:
+// nn::account's GetResultWithInteractionIfRequired validates it, and Don't Starve Together
+// died on exactly that (its own log: "[NX] GetResultWithInteractionIfRequired failed. (41)"
+// -> "Unable to retrieve id token", which is the 2124-0041 on screen). Measured on hardware
+// 2026-09-29. Three things it wants, and which the loose token got wrong:
+//
+//   - nonce is echoed when the request carried one. A client that sent a nonce and gets a
+//     token without it must reject the token; that is the whole point of the nonce.
+//   - c_hash is present whenever an authorization code is being returned alongside the token
+//     (response_type "code id_token"). OIDC requires it for the hybrid flow -- it is what ties
+//     this token to that code.
+//   - at_hash is only present when an access token is actually being returned. It used to be
+//     stamped unconditionally, so a silent authorize carried the hash of the empty string
+//     (47DEQpj8HBSa-_TImW-5JA) and claimed an access token that did not exist.
+//
+// Both hashes are the left half of the SHA-256 of the value, per OIDC for an RS256 token.
+func (s *server) naIDToken(c naCode, accessToken, code string) string {
 	now := time.Now().Unix()
-	sum := sha256.Sum256([]byte(accessToken))
-	return signJWT(s.naHeader(), map[string]any{
-		"at_hash": b64url(sum[:16]), "aud": c.ClientID, "exp": now + 900, "iat": now, "iss": naIssuer, "jti": uuid4(), "sub": c.NaID,
-	}, s.key)
+	claims := map[string]any{
+		"aud": c.ClientID, "exp": now + 900, "iat": now, "iss": naIssuer, "jti": uuid4(), "sub": c.NaID,
+	}
+	if c.Nonce != "" {
+		claims["nonce"] = c.Nonce
+	}
+	if accessToken != "" {
+		sum := sha256.Sum256([]byte(accessToken))
+		claims["at_hash"] = b64url(sum[:16])
+	}
+	if code != "" {
+		sum := sha256.Sum256([]byte(code))
+		claims["c_hash"] = b64url(sum[:16])
+	}
+	return signJWT(s.naHeader(), claims, s.key)
 }
 
 // ---------- user objects ----------
@@ -1995,14 +2025,14 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			writeJSON(w, 401, map[string]any{"error": "login_required"})
 			return
 		}
-		c := naCode{PID: pid, Username: id.Nickname, ClientID: form.Get("client_id"), NaID: id.NaID}
+		c := naCode{PID: pid, Username: id.Nickname, ClientID: form.Get("client_id"), NaID: id.NaID, Nonce: form.Get("nonce")}
 		code := randHex(16)
 		s.mu.Lock()
 		s.codes[code] = c
 		s.mu.Unlock()
 		frag := url.Values{"state": {form.Get("state")}, "session_state": {randHex(11)}, "code": {code}}
 		if strings.Contains(form.Get("response_type"), "id_token") {
-			frag.Set("id_token", s.naIDToken(c, ""))
+			frag.Set("id_token", s.naIDToken(c, "", code))
 		}
 		dest := form.Get("redirect_uri") + "#" + frag.Encode()
 		// The whole fragment, not just the redirect_uri: the friends module's
@@ -2113,7 +2143,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		at := s.naAccessToken(c)
 		writeJSON(w, 200, map[string]any{
-			"access_token": at, "expires_in": 900, "id_token": s.naIDToken(c, at), "refresh_token": s.naRefreshToken(c),
+			"access_token": at, "expires_in": 900, "id_token": s.naIDToken(c, at, ""), "refresh_token": s.naRefreshToken(c),
 			"scope":         strings.Fields(strings.ReplaceAll(form.Get("scope"), "+", " ")),
 			"session_token": randHex(24), "token_type": "Bearer",
 		})
@@ -2212,7 +2242,11 @@ func (s *server) authorizeRedirect(q url.Values, code string) string {
 		s.mu.Lock()
 		c := s.codes[code]
 		s.mu.Unlock()
-		params.Set("id_token", s.naIDToken(c, ""))
+		idCode := ""
+		if strings.Contains(rt, "code") {
+			idCode = code
+		}
+		params.Set("id_token", s.naIDToken(c, "", idCode))
 		if strings.Contains(rt, "code") {
 			params.Set("code", code)
 		}
