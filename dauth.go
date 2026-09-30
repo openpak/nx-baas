@@ -122,7 +122,7 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 		writeJSON(w, 200, map[string]any{
 			"application_auth_token": s.applicationToken(appID, appVer),
 			"expires_in":             86400,
-			"settings":               []any{},
+			"settings":               aauthSettings(appID),
 			// Every account on this network has a membership; nothing here sells one.
 			"online_play_policy": "MEMBERSHIP_REQUIRED",
 			"policy_handler":     "SYSTEM",
@@ -246,4 +246,19 @@ func consoleSerial(deviceID string) string {
 	sum := sha256.Sum256([]byte("serial:" + deviceID))
 	n := binary.BigEndian.Uint64(sum[:8]) % 100000000000
 	return fmt.Sprintf("XKJ%011d", n)
+}
+
+// aauthSettings is where a title's Nintendo Account client comes from. The account module
+// reads exactly $.settings[0].nas:client_id (16 hex digits) and $.settings[0].nas:redirect_uri
+// (under 256 bytes) out of this response [firmware, account module 0x2402e0], and with no
+// client id it refuses the title's authorization request before any network request
+// (0x1fb270: client id 0 -> 2124-0041). Nintendo assigns these per title; here the title id
+// is the client id, so an id_token's aud names the title it was issued to.
+func aauthSettings(appID string) []any {
+	id := strings.ToLower(appID)
+	// System titles (0100000000000xxx/1xxx) have their client ids compiled in.
+	if len(id) != 16 || strings.HasPrefix(id, "01000000000") {
+		return []any{}
+	}
+	return []any{map[string]any{"nas:client_id": id, "nas:redirect_uri": "npf" + id + "://auth"}}
 }

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -210,5 +211,18 @@ func TestProfileImageUploadIsAccepted(t *testing.T) {
 	}
 	if got := s.store.User(u.ID); got == nil || got.Avatar != jpeg {
 		t.Error("the uploaded picture was not kept")
+	}
+}
+
+// A title with no nas:client_id in its aauth settings cannot ask for a Nintendo Account
+// authorization token at all: the console fails it with 2124-0041 without a request.
+func TestAauthNamesTheTitlesNintendoAccountClient(t *testing.T) {
+	got := aauthSettings("010090100E334000")
+	want := map[string]any{"nas:client_id": "010090100e334000", "nas:redirect_uri": "npf010090100e334000://auth"}
+	if len(got) != 1 || !reflect.DeepEqual(got[0], want) {
+		t.Fatalf("settings = %v, want [%v]", got, want)
+	}
+	if got := aauthSettings("010000000000003e"); len(got) != 0 {
+		t.Fatalf("system title got a client: %v", got)
 	}
 }
