@@ -4,7 +4,7 @@ Workstream: A of `../prds/native-switch-parallel-plan.md`; PRD:
 `../prds/native-switch-friends-presence-prd.md`. Date: 2026-09-11.
 
 - Repository: `nx-baas`, branch **`a-friends-presence`**.
-- Base commit: `e8b7afcd62f69ed0c9bb6f63901b4301dce28ef9` (clean at kickoff).
+- Base commit: `d1fb059930370f4d46a971adbab10907cd287994` (clean at kickoff).
 - Head: see `git log a-friends-presence ^main`.
 - Verification: `go vet ./...` clean; `go test -race ./...` passes (existing suite
   retained and extended; new suites listed in §2).
