@@ -789,11 +789,14 @@ function startDownload(t){
   syncRights(function(){
    handOff(t);
    app.innerHTML='<div class="detail">'+art(t)+'<div><h1>'+esc(t.name)+'</h1>'+
-    '<p class="msg">The download has started. Progress shows on the HOME Menu, and you can close the shop.</p>'+
+    '<p class="msg">The download has started. Returning to the HOME Menu…</p>'+
     '<button class="act" id="done">Close the shop</button> <button class="act plain" id="cancel">Cancel download</button></div></div>';
    $('done').addEventListener('click',closeShop);
    $('cancel').addEventListener('click',function(){api('/tasks/'+id+'/cancel',{method:'POST'}).then(function(){handOff(t);detail(t.title_id);});});
    $('done').focus();
+   // Like Nintendo's shop: leave on our own once the list is handed over, since NIM only
+   // fetches the download list when the shop ends. The buttons stay for a refused exit.
+   setTimeout(closeShop,1500);
   });
  });
 }
