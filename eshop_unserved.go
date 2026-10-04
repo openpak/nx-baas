@@ -227,13 +227,24 @@ func (s *server) nimUnserved(w http.ResponseWriter, r *http.Request, body []byte
 		log.Printf("[shop] nim %s %s -> no system update", r.Method, p)
 		writeJSON(w, 200, map[string]any{"system_update_metas": []any{}})
 		return true
-	// aqua asks the same question with a floor: "which system version must I have?"
-	// [nim: aqua.hac.%.d4c.nintendo.net/required_system_update_meta?device_id=]. The
-	// reply's fields are not recovered; 404 says there is no requirement on record,
-	// which is true, without inventing a version a console would try to reach.
+	// aqua: "which system version must I have before content delivery?"
+	// [nim: aqua.hac.%.d4c.nintendo.net/required_system_update_meta?device_id=,
+	// checker 0x218e40]. It is a gate, not a background check: NIM runs it first
+	// in the download-task-list task (0x218a10, before pushmo), the version-list
+	// task (tagaya) and the latest-version task (superfly), and any failure ends
+	// the task. Any non-2xx fails it (a 404 left the console fetching nothing), so
+	// does a body without both keys (0xa7889). NIM then looks the id up in the
+	// console's BuiltInSystem content meta database: it must exist, be a
+	// SystemUpdate meta, and its installed version must be >= the one sent, else
+	// 0x2bc89. The SystemUpdate title at version 0 is therefore the "no
+	// requirement, go ahead" answer on every console; we serve no system images,
+	// so we never name a real floor.
 	case strings.HasPrefix(p, "/required_system_update_meta"):
-		dump(r, body, "!! ESHOP aqua required system update (response shape unrecovered)")
-		writeJSON(w, 404, map[string]any{"status": 404, "title": "no required system update"})
+		log.Printf("[shop] nim aqua required system update device=%s -> none (0100000000000816 v0)", r.URL.Query().Get("device_id"))
+		writeJSON(w, 200, map[string]any{
+			"contents_delivery_required_title_id":      "0100000000000816",
+			"contents_delivery_required_title_version": 0,
+		})
 		return true
 
 	// Messages the shop would show the player [nim: /v1/direct-messages] and

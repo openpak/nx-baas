@@ -282,8 +282,12 @@ func TestNimMetadataHostsDoNotReachAtum(t *testing.T) {
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"system_update_metas":[]`) {
 		t.Errorf("sun = %d %s", rec.Code, rec.Body.String())
 	}
+	// aqua gates NIM's download-list, version-list and latest-version tasks: it must
+	// be a 200 carrying both keys, naming the SystemUpdate title at version 0.
 	rec = hostReq(s, "aqua.hac.lp1.d4c.nintendo.net", "GET", "/required_system_update_meta?device_id="+testDevice, "", "")
-	if rec.Code != 404 || !strings.Contains(rec.Body.String(), "no required system update") {
+	d := decodeBody(t, rec)
+	if rec.Code != 200 || d["contents_delivery_required_title_id"] != "0100000000000816" ||
+		d["contents_delivery_required_title_version"] != float64(0) {
 		t.Errorf("aqua = %d %s", rec.Code, rec.Body.String())
 	}
 	rec = hostReq(s, "atumn.hac.lp1.d4c.nintendo.net", "GET", "/whatever", "", "")
