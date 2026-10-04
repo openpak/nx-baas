@@ -210,8 +210,9 @@ end, the chain that works today:
 
 **Penne second.** The highest-value move — push connections survive core releases — and the
 most delicate: it has the long-lived connections, and the core feeds it from four places.
-Risks: notifications lost in the few seconds between the core restart and nx-penne's start
-(the outbox is persisted on both sides of the gap; only submissions during it are lost);
+Risks: the few seconds between the core restart and nx-penne's start (the core's queue
+retries each push for up to a minute, in order, so nothing it submits in that gap is lost;
+the outbox itself moves with `penne.json`);
 consoles holding tickets for the old process (they are imported with `penne.json`); the
 frontline router missing (consoles cannot connect; 421 in the core's log). Re-verify: a
 console's frontline connects and stays up across an nx-baas restart; a friend request, accept
@@ -325,6 +326,10 @@ state back over nx-baas's — `podman cp openpak-nx-penne:/app/data/penne.json
 original was; remove `NX_PENNE_URL` from the `.env`; `systemctl --user restart
 openpak-nx-baas`. Notifications submitted while nx-penne was down are lost; consoles
 reconnect to nx-baas.
+
+Day to day after the move: restarting nx-penne costs consoles their connection (they
+reconnect) and nothing else; the core holds its pushes for up to a minute meanwhile.
+Restarting nx-baas costs consoles nothing on Penne.
 
 **Later**: drop nx-baas's Penne files except what the core keeps (the vermillion gateway,
 `penne_link.go`), its Penne names from the fixed certificate, and the `/import` mount from

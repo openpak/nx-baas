@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -182,5 +183,40 @@ func TestPenneRoutesServedHereWhilePenneIsLocal(t *testing.T) {
 	}
 	if rec := identityDo(t, s, "POST", "/internal/penne/nope", `{}`); rec.Code != 404 {
 		t.Fatalf("unknown route = %d", rec.Code)
+	}
+}
+
+// A restart of nx-penne loses nothing the core queued: the worker retries, in order, until
+// it is back.
+func TestQueuedPushesSurviveAnNxPenneRestart(t *testing.T) {
+	t.Setenv("NX_INTERNAL_KEY", "test-internal-key")
+	var up atomic.Bool
+	got := make(chan string, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !up.Load() {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		got <- str(body, "device_id")
+		w.WriteHeader(204)
+	}))
+	defer srv.Close()
+	p := newPenneRemote(srv.URL)
+	s := &server{penneRemote: p}
+	s.penneBindConsole("first", "u")
+	s.penneBindConsole("second", "u")
+	time.Sleep(300 * time.Millisecond)
+	up.Store(true)
+	for _, want := range []string{"first", "second"} {
+		select {
+		case d := <-got:
+			if d != want {
+				t.Fatalf("delivered %q, want %q (order kept)", d, want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s never arrived after nx-penne came back", want)
+		}
 	}
 }

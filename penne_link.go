@@ -11,13 +11,14 @@ package main
 // Calls nobody waits on for an answer -- a console binding, a push channel, a token
 // binding, a notification from the core's event loop, a ban's close -- go through one
 // ordered worker, so a slow or restarting nx-penne never holds up a console's login or the
-// core's event poller. Calls whose answer matters (news and device pushes, which report how
+// core's event poller; the worker retries through an nx-penne restart. Calls whose answer matters (news and device pushes, which report how
 // many connections took them; the shop's registration lookup) are synchronous with a short
 // timeout.
 
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -66,12 +67,16 @@ func (p *penneRemote) call(method, path string, in, out any) error {
 	req.Header.Set("X-Internal-Key", getenv("NX_INTERNAL_KEY", getenv("OPENPAK_INTERNAL_KEY", "")))
 	resp, err := p.http.Do(req)
 	if err != nil {
-		return err
+		return retryable{err}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("%s %s: %d %s", method, path, resp.StatusCode, bytes.TrimSpace(msg))
+		err := fmt.Errorf("%s %s: %d %s", method, path, resp.StatusCode, bytes.TrimSpace(msg))
+		if resp.StatusCode >= 500 {
+			return retryable{err} // nx-penne restarting behind a proxy, or failing
+		}
+		return err
 	}
 	if out == nil {
 		return nil
@@ -89,10 +94,29 @@ func (p *penneRemote) later(what string, run func() error) {
 	}
 }
 
+// retryable marks a failure worth trying again: nx-penne unreachable or answering 5xx.
+type retryable struct{ error }
+
+// penneRetryFor is how long the worker keeps retrying one job while nx-penne is away. The
+// queue waits behind it, in order, so a restart of nx-penne (seconds) loses nothing; a
+// longer outage drops jobs one by one, each said so.
+var penneRetryFor = time.Minute
+
 func (p *penneRemote) work() {
 	for j := range p.queue {
-		if err := j.run(); err != nil {
-			log.Printf("[nx-baas] penne: %s to nx-penne failed: %v", j.what, err)
+		wait, deadline := 250*time.Millisecond, time.Now().Add(penneRetryFor)
+		for {
+			err := j.run()
+			if err == nil {
+				break
+			}
+			var again retryable
+			if !errors.As(err, &again) || time.Now().Add(wait).After(deadline) {
+				log.Printf("[nx-baas] penne: %s to nx-penne failed: %v", j.what, err)
+				break
+			}
+			time.Sleep(wait)
+			wait = min(2*wait, 5*time.Second)
 		}
 	}
 }

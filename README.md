@@ -18,6 +18,12 @@ Env: `NX_ADDR`, `NX_DATA`, `ACCOUNT_API`, `OPENPAK_SECRET`, `OPENPAK_ADMIN_KEY`,
 `BAAS_SIGNING_KEY`, `BAAS_KID`, `NX_CA_DIR` (optional `ca.pem`/`ca.key` to sign the server cert),
 `PCTL_MOVIE` (optional mp4 served as the Parental Controls explainer clip; 404 while unset).
 
+The eShop, Penne and parental controls are being split out into nx-shop, nx-penne and nx-pctl
+([`docs/service-split.md`](docs/service-split.md)). `NX_SHOP_URL`, `NX_PENNE_URL` and
+`NX_PCTL_URL` hand each family to its service; unset, this process serves it as before. The
+services ask this one about accounts on `/internal/identity` (game-API listener, strict
+`NX_INTERNAL_KEY`).
+
 ## OpenPak backend (`ACCOUNT_BACKEND=openpak`)
 
 Identity source is the OpenPak account core over internal gRPC instead of
