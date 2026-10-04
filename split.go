@@ -3,14 +3,15 @@ package main
 // Forwarding to the services split out of this one (docs/service-split.md).
 //
 // Each moved family has a base URL: NX_SHOP_URL for the eShop (nx-shop), NX_PENNE_URL for
-// Penne (nx-penne; the core's own calls into Penne are penne_link.go's). Unset, this
-// process serves the family itself exactly as before, which is the state production stays in
-// until the cut-over. Set, it stops touching that family's state and forwards whatever of the
-// family still reaches it: a console host Traefik does not route to the new service yet (or
-// any more, after a router is removed), a path-routed request on a host this process keeps,
-// and the family's internal admin routes the website calls here. So the cut-over is one
-// restart of this process with the URL set, and every later step -- the Traefik routers that
-// take this process out of the path -- can be added and removed without touching it.
+// Penne (nx-penne; the core's own calls into Penne are penne_link.go's), NX_PCTL_URL for
+// parental controls (nx-pctl). Unset, this process serves the family itself exactly as
+// before, which is the state production stays in until the cut-over. Set, it stops touching
+// that family's state and forwards whatever of the family still reaches it: a console host
+// Traefik does not route to the new service yet (or any more, after a router is removed), a
+// path-routed request on a host this process keeps, and the family's internal admin routes
+// the website calls here. So the cut-over is one restart of this process with the URL set,
+// and every later step -- the Traefik routers that take this process out of the path -- can
+// be added and removed without touching it.
 //
 // The forward is plain HTTP on the openpak network to the service's internal listener, with
 // the console's Host kept: TLS ended here, and the service answers the same routes there as on
@@ -18,6 +19,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"log"
 	"net/http"
@@ -25,6 +27,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 )
 
 // newForwarder is a streaming reverse proxy that keeps the request's Host.
@@ -58,6 +61,15 @@ func (s *server) forwardersFromEnv() {
 		s.penneRemote = newPenneRemote(u)
 		log.Printf("[nx-baas] Penne moved: registrations, tickets, /internal/penne and every push go to %s", u)
 	}
+	if u := os.Getenv("NX_PCTL_URL"); u != "" {
+		s.pctlFwd = newForwarder("nx-pctl", u)
+		log.Printf("[nx-baas] parental controls moved: forwarding the pctl hosts and /internal/pctl to %s", u)
+	}
+}
+
+// isPctlHost names the parental-controls hosts: moon's API host and the explainer movie's.
+func isPctlHost(host string) bool {
+	return strings.Contains(host, "pctl.srv.nintendo.net") || strings.HasPrefix(host, "parentalcontrols-movie-")
 }
 
 // isPenneHost names Penne's own hosts: god (registrations), val (login tickets) and the
@@ -99,6 +111,10 @@ func (s *server) forwardMoved(w http.ResponseWriter, r *http.Request) bool {
 		s.penneFwd.ServeHTTP(w, r)
 		return true
 	}
+	if s.pctlFwd != nil && isPctlHost(host) {
+		s.pctlFwd.ServeHTTP(w, r)
+		return true
+	}
 	return false
 }
 
@@ -108,4 +124,29 @@ func forwardRead(fwd *httputil.ReverseProxy, w http.ResponseWriter, r *http.Requ
 	r2.Body = io.NopCloser(bytes.NewReader(body))
 	r2.ContentLength = int64(len(body))
 	fwd.ServeHTTP(w, r2)
+}
+
+// importPctlRollback takes parental controls back from nx-pctl: when $NX_DATA holds a
+// pctl-rollback.json (nx-pctl's pctl.json, copied in for a rollback), its records replace the
+// ones baas.json kept from before the cut-over, and the file is renamed so a later restart
+// does not apply it again. Without the file this does nothing.
+func (s *Store) importPctlRollback(path string) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var in struct {
+		PctlDevices map[string]*PctlDevice `json:"pctlDevices"`
+	}
+	if err := json.Unmarshal(b, &in); err != nil {
+		log.Printf("[nx-baas] %s is not nx-pctl's state (%v); not applied", path, err)
+		return
+	}
+	s.mu.Lock()
+	s.PctlDevices = in.PctlDevices
+	s.save()
+	s.mu.Unlock()
+	done := path + ".applied-" + time.Now().UTC().Format("20060102T150405")
+	os.Rename(path, done)
+	log.Printf("[nx-baas] parental controls taken back from nx-pctl: %d record(s) from %s (now %s)", len(in.PctlDevices), path, done)
 }

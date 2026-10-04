@@ -329,3 +329,57 @@ reconnect to nx-baas.
 **Later**: drop nx-baas's Penne files except what the core keeps (the vermillion gateway,
 `penne_link.go`), its Penne names from the fixed certificate, and the `/import` mount from
 nx-penne's quadlet.
+
+## 7. Parental controls cut-over runbook
+
+The records live inside `baas.json` today, which only nx-baas writes, so the order is: nx-baas
+stops serving parental controls, then nx-pctl takes the records out of `baas.json` as they
+stand. A console polling its setting in the seconds between gets a 502 and polls again later.
+
+**Preconditions.** This branch released; `ghcr.io/openpak/nx-pctl` published. Penne moved
+first is not required: without `NX_PENNE_URL` nx-pctl pushes through nx-baas
+(`NX_CORE_URL`), which serves or forwards the penne API either way.
+
+1. **Install the quadlet, do not start it** (`nx-pctl/deploy/openpak-nx-pctl.container`): fill
+   in nx-baas's data directory (read-only at `/import`, read once), the keys directory, and
+   the `PCTL_MOVIE` mount if nx-baas has one. `systemctl --user daemon-reload`;
+   `podman pull ghcr.io/openpak/nx-pctl:latest`.
+2. **Switch nx-baas.** Add `NX_PCTL_URL=http://openpak-nx-pctl:20070` to the `.env`;
+   `systemctl --user restart openpak-nx-baas`. It forwards the pctl hosts and
+   `/internal/pctl` from now on and no longer changes the records in `baas.json`.
+3. **Start nx-pctl.** `systemctl --user start openpak-nx-pctl`; the journal must show
+   `imported <n> parental-controls record(s) from /import/baas.json`.
+4. **DNS sanity** for `openpak-nx-pctl` and, after its restart, `openpak-nx-baas`.
+5. **Smoke.** `curl -sk --resolve api-lp1.pctl.srv.nintendo.net:21443:127.0.0.1
+   'https://api-lp1.pctl.srv.nintendo.net:21443/moon/v1/devices?filter.links.pairingCode.code.$eq=000000'`
+   answers `{"items":[]}` from nx-pctl's journal; the website's parental-controls page lists
+   the paired consoles (forwarded through nx-baas).
+6. **Take nx-baas out of the path**: merge `nx-pctl/deploy/traefik-nx-pctl.yml`; point the
+   website's parental-controls base URL at `http://openpak-nx-pctl:20070` when convenient.
+7. **Hardware**: §4's moon list.
+
+**Rollback**: remove the `nx-pctl` router; `systemctl --user stop openpak-nx-pctl`; copy its
+records back for nx-baas to take: `podman cp openpak-nx-pctl:/app/data/pctl.json
+~/openpak/pctl-rollback.json`, then `podman unshare cp` it into nx-baas's data directory as
+`pctl-rollback.json` (`podman unshare chown 65532:65532`); remove `NX_PCTL_URL` from the `.env`;
+`systemctl --user restart openpak-nx-baas`. On start it replaces the records in `baas.json` with
+the file's and renames it `pctl-rollback.json.applied-<time>`, so the next restart does not
+apply it again.
+
+**Later**: drop `moon.go` and the `pctlDevices` key from nx-baas (a store written with the key
+still loads in an nx-baas that no longer has it), the pctl name from its fixed certificate,
+and the `/import` mount from nx-pctl's quadlet.
+
+## 8. nx-baas after all three
+
+| env | effect |
+|---|---|
+| `NX_SHOP_URL` | eShop hosts, `/v1/apps/` catalog paths, superfly `dv` and acds search on kept hosts, dragons. store rights routes, `/internal/store/*` → nx-shop; `shop/` not opened |
+| `NX_PENNE_URL` | god/val → nx-penne, fro- → 421, `/internal/penne/*` → nx-penne, every core push through `penne_link.go`; `penne.json` not opened, no sweeper |
+| `NX_PCTL_URL` | pctl and movie hosts, `/internal/pctl/*` → nx-pctl |
+| (always) | `/internal/identity/*` for the services; `pctl-rollback.json` taken on start if present |
+
+The services find nx-baas with `NX_CORE_URL=http://openpak-nx-baas:20070`; put
+`NX_SHOP_URL`, `NX_PENNE_URL`, `NX_PCTL_URL` in the shared `.env` so every process sees one
+topology (only nx-baas acts on the first and third; nx-shop and nx-pctl use the second to
+reach nx-penne directly).

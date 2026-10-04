@@ -141,6 +141,8 @@ type server struct {
 	// penne_link.go); nil serves Penne here.
 	penneFwd    *httputil.ReverseProxy
 	penneRemote *penneRemote
+	// pctlFwd forwards parental controls to nx-pctl once they have moved (split.go).
+	pctlFwd *httputil.ReverseProxy
 	// Penne record store: what this server has written to each account's
 	// records, and its digests (penne_records.go).
 	recordStore *penneRecordStore
@@ -2695,6 +2697,8 @@ func main() {
 		acct:    newBackend(),
 	}
 	s.forwardersFromEnv()
+	// A parental-controls rollback hands nx-pctl's records back (split.go).
+	s.store.importPctlRollback(getenv("NX_DATA", "/data") + "/pctl-rollback.json")
 	if s.shopFwd == nil {
 		s.shop = newShopState(getenv("NX_DATA", "/data") + "/shop")
 	} else {

@@ -441,9 +441,14 @@ func (s *server) gameAPI() http.Handler {
 	mux.HandleFunc("/api/invitations", s.invitations)
 	mux.HandleFunc("/internal/notifications/test", s.penneTestNotification)
 	mux.HandleFunc("/internal/news/push", s.newsPush)
-	mux.HandleFunc("/internal/pctl/pairing", s.pctlPairing)
-	mux.HandleFunc("/internal/pctl/devices", s.pctlDeviceList)
-	mux.HandleFunc("/internal/pctl/devices/", s.pctlDeviceRoute)
+	if s.pctlFwd != nil {
+		// The website's parent routes are nx-pctl's now; forwarded until it points there.
+		mux.Handle("/internal/pctl/", s.pctlFwd)
+	} else {
+		mux.HandleFunc("/internal/pctl/pairing", s.pctlPairing)
+		mux.HandleFunc("/internal/pctl/devices", s.pctlDeviceList)
+		mux.HandleFunc("/internal/pctl/devices/", s.pctlDeviceRoute)
+	}
 	if s.shopFwd != nil {
 		mux.Handle("/internal/store/", s.shopFwd)
 	} else {
