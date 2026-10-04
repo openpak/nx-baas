@@ -162,6 +162,10 @@ func (s *server) adminTitle(w http.ResponseWriter, r *http.Request, tid string, 
 		return s.adminDeleteTitle(w, tid)
 	case sub == "icon" && m == http.MethodPut:
 		return s.adminIcon(w, r, tid)
+	case strings.HasPrefix(sub, "screenshots/") && m == http.MethodPut:
+		return s.adminScreenshot(w, r, tid, strings.TrimPrefix(sub, "screenshots/"))
+	case sub == "screenshots" && m == http.MethodDelete:
+		return s.adminClearScreenshots(w, tid)
 	case sub == "versions" && m == http.MethodPost:
 		return s.adminUpload(w, r, tid)
 	case sub == "versions/update" && m == http.MethodDelete:
@@ -260,6 +264,7 @@ func adminTitleObj(t *ShopTitle, withContent bool) map[string]any {
 		"title_id": t.TitleID, "published": !t.Unpublished, "publisher": t.Publisher,
 		"category": t.Category, "localized": t.Localized, "default_lang": t.DefaultLang,
 		"languages": t.Languages, "compatibility": t.Compatibility, "screenshots": t.Screenshots,
+		"changelog":    t.Changelog,
 		"distribution": t.Distribution, "icon_path": t.IconPath, "size_bytes": t.SizeBytes,
 		"version": t.Version, "version_label": t.VersionLabel, "base_version": t.applicationVersion(),
 		"updated_at": t.UpdatedAt, "application": nil, "update": nil, "bundle": bundleObjs(t.Bundle),
@@ -321,6 +326,7 @@ type titleMeta struct {
 	Languages     *[]string            `json:"languages"`
 	Compatibility *[]string            `json:"compatibility"`
 	Screenshots   *[]string            `json:"screenshots"`
+	Changelog     *string              `json:"changelog"`
 	Distribution  *ShopDistribution    `json:"distribution"`
 	Bundle        *[]ShopBundleItem    `json:"bundle"`
 }
@@ -356,6 +362,9 @@ func (m *titleMeta) apply(t *ShopTitle) error {
 	}
 	if m.Screenshots != nil {
 		t.Screenshots = *m.Screenshots
+	}
+	if m.Changelog != nil {
+		t.Changelog = *m.Changelog
 	}
 	if m.Distribution != nil {
 		if strings.TrimSpace(m.Distribution.Permission) == "" || strings.TrimSpace(m.Distribution.Source) == "" {
@@ -485,6 +494,7 @@ func (s *server) adminDeleteTitle(w http.ResponseWriter, tid string) error {
 		if strings.HasPrefix(t.IconPath, "icons/") {
 			os.Remove(filepath.Join(s.shop.dir, t.IconPath))
 		}
+		removeHostedScreens(s.shop.dir, t.Screenshots)
 	}
 	log.Printf("[store-admin] deleted title %s", tid)
 	w.WriteHeader(http.StatusNoContent)
@@ -521,6 +531,76 @@ func (s *server) adminIcon(w http.ResponseWriter, r *http.Request, tid string) e
 	}
 	writeJSON(w, 200, adminTitleObj(t, true))
 	return nil
+}
+
+// maxScreenshots bounds a title's hosted screenshots (slots 0..maxScreenshots-1).
+const maxScreenshots = 8
+
+// adminScreenshot stores one screenshot (JPEG or PNG, at most 2 MiB) in slot <i> and lists
+// it in the title's screenshots; the shop serves it at /ashigaru/screen/<tid>/<i>.
+func (s *server) adminScreenshot(w http.ResponseWriter, r *http.Request, tid, slot string) error {
+	i, err := strconv.Atoi(slot)
+	if err != nil || i < 0 || i >= maxScreenshots {
+		return adminErr(400, "invalid_field", "screenshot slot must be 0..%d", maxScreenshots-1)
+	}
+	b, err := io.ReadAll(io.LimitReader(r.Body, 2<<20+1))
+	if err != nil {
+		return adminErr(400, "invalid_field", "reading screenshot: %v", err)
+	}
+	if len(b) > 2<<20 {
+		return adminErr(413, "too_large", "screenshots are at most 2 MiB")
+	}
+	ext := map[string]string{"image/jpeg": ".jpg", "image/png": ".png"}[http.DetectContentType(b)]
+	if ext == "" {
+		return adminErr(400, "invalid_field", "screenshot must be a JPEG or PNG image")
+	}
+	if s.shop.adminGet(tid) == nil {
+		return adminErr(404, "not_found", "no title %s", tid)
+	}
+	rel := fmt.Sprintf("screens/%s-%d%s", tid, i, ext)
+	if s.shop.dir != "" {
+		if err := os.MkdirAll(filepath.Join(s.shop.dir, "screens"), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(s.shop.dir, rel), b, 0o644); err != nil {
+			return err
+		}
+	}
+	t, err := s.shop.mutateTitle(tid, func(t *ShopTitle) error {
+		for len(t.Screenshots) <= i {
+			t.Screenshots = append(t.Screenshots, "")
+		}
+		if old := t.Screenshots[i]; old != rel && strings.HasPrefix(old, "screens/") && s.shop.dir != "" {
+			os.Remove(filepath.Join(s.shop.dir, old))
+		}
+		t.Screenshots[i] = rel
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	writeJSON(w, 200, adminTitleObj(t, true))
+	return nil
+}
+
+// adminClearScreenshots drops every screenshot of a title and the files we host for them.
+func (s *server) adminClearScreenshots(w http.ResponseWriter, tid string) error {
+	var old []string
+	t, err := s.shop.mutateTitle(tid, func(t *ShopTitle) error { old, t.Screenshots = t.Screenshots, nil; return nil })
+	if err != nil {
+		return err
+	}
+	removeHostedScreens(s.shop.dir, old)
+	writeJSON(w, 200, adminTitleObj(t, true))
+	return nil
+}
+
+func removeHostedScreens(dir string, shots []string) {
+	for _, p := range shots {
+		if dir != "" && strings.HasPrefix(p, "screens/") {
+			os.Remove(filepath.Join(dir, p))
+		}
+	}
 }
 
 func (s *server) adminPublish(w http.ResponseWriter, tid string, publish bool) error {

@@ -32,6 +32,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -66,6 +67,8 @@ func (s *server) shopHandler(w http.ResponseWriter, r *http.Request, body []byte
 		s.shopAPI(w, r, body)
 	case strings.HasPrefix(p, "/ashigaru/icon/"):
 		s.shopIcon(w, r)
+	case strings.HasPrefix(p, "/ashigaru/screen/"):
+		s.shopScreen(w, r)
 	default:
 		// The applet asks for favicons and (on the real store) many more paths.
 		// Record rather than 404 silently: SHP-01 wants the actual request sequence.
@@ -186,8 +189,8 @@ func (s *server) shopAPI(w http.ResponseWriter, r *http.Request, body []byte) {
 			"publisher": t.Publisher, "category": t.Category, "size_bytes": t.SizeBytes,
 			"version": t.Version, "version_label": t.VersionLabel,
 			"compatibility": t.Compatibility, "languages": t.Languages,
-			"icon": "/ashigaru/icon/" + t.TitleID, "screenshots": t.Screenshots,
-			"distribution": t.Distribution, "updated_at": t.UpdatedAt,
+			"icon": "/ashigaru/icon/" + t.TitleID, "screenshots": screenURLs(t),
+			"distribution": t.Distribution, "updated_at": t.UpdatedAt, "changelog": t.Changelog,
 		}
 		if account != "" {
 			ownership := "not_owned"
@@ -322,6 +325,45 @@ func (s *server) shopAcquire(w http.ResponseWriter, r *http.Request, tid string)
 		"title_id": e.TitleID, "elicense_id": e.ELicenseID, "rights_id": e.RightsID,
 		"version": e.Version, "status": e.Status, "already_owned": !created,
 	})
+}
+
+// screenURLs lists a title's screenshots as the page loads them: hosted files by slot under
+// /ashigaru/screen/, anything else (an operator's URL) as given.
+func screenURLs(t *ShopTitle) []string {
+	out := []string{}
+	for i, p := range t.Screenshots {
+		switch {
+		case p == "":
+		case strings.HasPrefix(p, "screens/"):
+			out = append(out, fmt.Sprintf("/ashigaru/screen/%s/%d", t.TitleID, i))
+		default:
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// shopScreen serves a listed title's hosted screenshot: /ashigaru/screen/<tid>/<slot>.
+func (s *server) shopScreen(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/ashigaru/screen/"), "/")
+	if len(parts) != 2 || !validTitleID(parts[0]) {
+		http.NotFound(w, r)
+		return
+	}
+	i, err := strconv.Atoi(parts[1])
+	t := s.shop.listed(parts[0])
+	if err != nil || t == nil || i < 0 || i >= len(t.Screenshots) || !strings.HasPrefix(t.Screenshots[i], "screens/") {
+		http.NotFound(w, r)
+		return
+	}
+	b, err := os.ReadFile(s.shop.dir + "/" + t.Screenshots[i])
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", http.DetectContentType(b))
+	w.Header().Set("Cache-Control", "max-age=86400")
+	w.Write(b)
 }
 
 // shopIcon serves a title's icon from the operator's shop directory.
@@ -554,9 +596,14 @@ var shopCategories = []struct{ key, label, icon string }{
 func categoryNav() string {
 	var b strings.Builder
 	for _, c := range shopCategories {
-		b.WriteString(`<button class="nav" data-view="cat:` + c.key + `"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">` + c.icon + `</svg></span>` + c.label + `</button>`)
+		b.WriteString(navButton("cat:"+c.key, c.label, c.icon))
 	}
 	return b.String()
+}
+
+// navButton is one sidebar entry with its inline SVG icon.
+func navButton(view, label, icon string) string {
+	return `<button class="nav" data-view="` + view + `"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">` + icon + `</svg></span>` + label + `</button>`
 }
 
 func storePage() string {
@@ -564,9 +611,9 @@ func storePage() string {
 		`<meta name="viewport" content="width=1280,initial-scale=1,maximum-scale=1,user-scalable=no"><title>OpenPak Shop</title>` +
 		`<style>` + storeCSS + `</style></head><body>` +
 		`<nav id="side"><div class="logo"><img src="` + logoDataURI + `" alt="">OpenPak Shop</div>` +
-		`<button class="nav" data-view="highlights"><span class="ic">☆</span>Highlights</button>` +
-		`<button class="nav" data-view="search"><span class="ic">⌕</span>Search</button>` +
-		`<button class="nav" data-view="owned"><span class="ic">♡</span>Your Titles</button>` +
+		navButton("highlights", "Highlights", `<path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/>`) +
+		navButton("search", "Search", `<circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/>`) +
+		navButton("owned", "Your Titles", `<path d="M12 20s-7.5-4.6-7.5-10A4.5 4.5 0 0 1 12 7.4 4.5 4.5 0 0 1 19.5 10c0 5.4-7.5 10-7.5 10z"/>`) +
 		`<div class="gap"></div>` +
 		categoryNav() +
 		`<div class="gap"></div>` +
@@ -628,7 +675,15 @@ background:var(--accent-weak);border:1px solid var(--accent-line);color:var(--ac
 .detail .art img{width:26vh;height:26vh;margin:7vh auto}
 .detail h1{margin:0 0 .6vh}
 .pub{color:var(--muted);margin:0 0 2vh}
-.desc{margin:0 0 2.4vh;font-size:2.6vh;color:var(--ink-2)}
+.desc{margin:0 0 2.4vh;font-size:2.6vh;color:var(--ink-2);white-space:pre-line}
+h2{font-size:3.2vh;font-weight:700;margin:4vh 0 1.4vh}
+.notes{background:var(--raised);border:1px solid var(--line);border-radius:14px;padding:2vh 1.6vw;font-size:2.4vh}
+.shots{display:flex;gap:1.2vw;overflow-x:auto;margin-top:3vh;padding-bottom:1vh}
+.shots img{height:32vh;border-radius:12px;border:1px solid var(--line);box-shadow:var(--shadow-sm);flex:none}
+.src{overflow-wrap:anywhere}
+.sortbar{display:flex;gap:.8vw;margin:-1vh 0 2.4vh}
+.sort{font:inherit;font-size:2.3vh;padding:.9vh 1.3vw;border-radius:999px;border:1px solid var(--line-2);background:var(--raised);color:var(--ink-2)}
+.sort.on{background:var(--accent-weak);border-color:var(--accent-line);color:var(--ink);font-weight:600}
 .kv{display:grid;grid-template-columns:auto 1fr;gap:.6vh 1.6vw;font-size:2.4vh;margin-bottom:3vh}
 .kv b{color:var(--muted);font-weight:500}
 .act{display:inline-flex;align-items:center;justify-content:center;min-height:7vh;padding:0 2.4vw;border-radius:999px;font-weight:600;font-size:2.8vh;
@@ -639,7 +694,7 @@ box-shadow:0 1px 0 rgb(255 255 255/.2) inset,0 6px 16px -6px rgb(79 70 229/.6)}
 .empty{color:var(--muted);font-size:2.8vh;padding:4vh 0}
 .search{width:100%;font:inherit;font-size:3vh;min-height:7vh;padding:0 1.6vw;border:1px solid var(--line-2);border-radius:12px;margin-bottom:2.6vh;
 background:var(--raised);color:var(--ink)}
-.nav:focus,.card:focus,.act:focus,.search:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 .6vh var(--accent-weak),0 0 0 .9vh var(--accent-line)}
+.nav:focus,.card:focus,.act:focus,.search:focus,.sort:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 .6vh var(--accent-weak),0 0 0 .9vh var(--accent-line)}
 .card:focus{transform:translateY(-2px)}
 `
 
@@ -721,12 +776,23 @@ function wire(){
  var b=app.querySelectorAll('.card');
  for(var j=0;j<b.length;j++){b[j].addEventListener('click',function(){detail(this.getAttribute('data-tid'));});}
 }
-function grid(ts,title,empty){
- app.innerHTML=(title?'<h1>'+title+'</h1>':'')+(ts.length?'<div class="grid">'+ts.map(card).join('')+'</div>':'<p class="empty">'+empty+'</p>');
+// The sort bar: a grid's order until another view starts (each view passes its default).
+var sortBy=null;
+var sorts={name:['Name',function(a,b){return (a.name||'').localeCompare(b.name||'');}],
+ updated:['Recently updated',function(a,b){return (b.updated_at||0)-(a.updated_at||0);}],
+ size:['Largest',function(a,b){return (b.size_bytes||0)-(a.size_bytes||0);}]};
+function grid(ts,title,empty,def){
+ var by=sortBy||def||'name'; ts=ts.slice().sort(sorts[by][1]);
+ var bar=ts.length>1?'<div class="sortbar">'+Object.keys(sorts).map(function(k){
+  return '<button class="sort'+(k===by?' on':'')+'" data-sort="'+k+'">'+sorts[k][0]+'</button>';}).join('')+'</div>':'';
+ app.innerHTML=(title?'<h1>'+title+'</h1>':'')+bar+(ts.length?'<div class="grid">'+ts.map(card).join('')+'</div>':'<p class="empty">'+empty+'</p>');
+ var b=app.querySelectorAll('.sort');
+ for(var i=0;i<b.length;i++){b[i].addEventListener('click',function(){sortBy=this.getAttribute('data-sort');var k=sortBy;view();var f=app.querySelector('.sort[data-sort="'+k+'"]');if(f){f.focus();}});}
  wire();
 }
 function section(v,focusFirst){
- view=function(){section(v,false);}; back=null; select(v); hide();
+ if(!view||view.v!==v){sortBy=null;}
+ view=function(){section(v,false);}; view.v=v; back=null; select(v); hide();
  if(v==='nso'){return info('Nintendo Switch Online','Memberships are not sold on OpenPak: online play and every other Nintendo Switch Online feature are already included with your OpenPak account.');}
  if(v==='redeem'){return info('Redeem Code','Codes are not needed on OpenPak: every title in this shop is free to get.');}
  if(v==='search'){return search();}
@@ -734,7 +800,7 @@ function section(v,focusFirst){
   ts=ts.slice();
   if(v==='owned'){
    if(!token){return info('Your Titles','Sign-in has not reached the shop yet, so it cannot tell which titles are yours.');}
-   return grid(ts.filter(function(t){return t.ownership==='owned';}),'Your Titles','You have no titles from this shop yet.');
+   return grid(ts.filter(function(t){return t.ownership==='owned';}),'Your Titles','You have no titles from this shop yet.','name');
   }
   if(v.indexOf('cat:')===0){
    // The sidebar's categories (shopCategories); a category none of them names is Misc.
@@ -742,8 +808,8 @@ function section(v,focusFirst){
    if(c==='all'){return grid(ts,'All Apps','The shop is empty for now.');}
    return grid(ts.filter(function(t){return c==='misc'?(!named[t.category]||t.category==='misc'):t.category===c;}),named[c],'No titles in this category yet.');
   }
-  if(v==='recent'||v==='updates'){ts.sort(function(a,b){return (b.updated_at||0)-(a.updated_at||0);});
-   return grid(ts,v==='recent'?'Recent Releases':'Recently Updated','Nothing here yet.');}
+  if(v==='recent'||v==='updates'){
+   return grid(ts,v==='recent'?'Recent Releases':'Recently Updated','Nothing here yet.','updated');}
   grid(ts,'','The shop is empty for now.');
   if(focusFirst){var c=app.querySelector('.card');if(c){c.focus();}}
  }).catch(function(e){show('The shop could not be reached ('+e.message+').');app.innerHTML='';});
@@ -772,12 +838,19 @@ function detail(tid){
   else if(own==='revoked'){act='<p class="msg">This title is no longer licensed on this account.</p>';}
   else if(!bridge.present){act='<p class="msg">Getting titles needs the console. This page is open in a plain browser.</p>';}
   else{act='<button class="act" id="acq">Free Download</button>';}
+  var dist=t.distribution||{}, cats={game:'Games',emulator:'Emulators',tool:'Tools',advanced:'Advanced',theme:'Themes'};
+  var shots=(t.screenshots||[]).map(function(u){return '<img src="'+esc(u)+'" alt="">';}).join('');
   app.innerHTML='<div class="detail">'+art(t)+'<div><h1>'+esc(t.name)+'</h1><p class="pub">'+esc(t.publisher||'')+'</p>'+
-   (t.description?'<p class="desc">'+esc(t.description)+'</p>':'')+
-   '<div class="kv"><b>Size</b><span>'+human(t.size_bytes||0)+'</span>'+
+   '<div class="kv"><b>Category</b><span>'+esc(cats[t.category]||'Misc')+'</span>'+
    '<b>Version</b><span>'+esc(t.version_label||t.version)+'</span>'+
+   '<b>Size</b><span>'+human(t.size_bytes||0)+'</span>'+
+   (t.updated_at?'<b>Updated</b><span>'+esc(new Date(t.updated_at*1000).toLocaleDateString())+'</span>':'')+
    '<b>Play modes</b><span>'+esc((t.compatibility||[]).join(', ')||'—')+'</span>'+
-   '<b>Languages</b><span>'+esc((t.languages||[]).join(', ')||'—')+'</span></div>'+act+'</div></div>';
+   (dist.permission?'<b>License</b><span>'+esc(dist.permission)+'</span>':'')+
+   (dist.source?'<b>Source</b><span class="src">'+esc(dist.source)+'</span>':'')+'</div>'+act+'</div></div>'+
+   (shots?'<div class="shots">'+shots+'</div>':'')+
+   (t.description?'<h2>About</h2><p class="desc">'+esc(t.description)+'</p>':'')+
+   (t.changelog?'<h2>What\'s new</h2><p class="desc notes">'+esc(t.changelog)+'</p>':'');
   var a=$('acq')||$('dl');
   if($('acq')){$('acq').addEventListener('click',function(){acquire(t);});}
   if($('dl')){$('dl').addEventListener('click',function(){startDownload(t);});}

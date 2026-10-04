@@ -32,8 +32,9 @@ import (
 type ShopTitle struct {
 	TitleID       string   `json:"title_id"` // 16 hex digits, the packager's choice; must be stable
 	Publisher     string   `json:"publisher"`
-	IconPath      string   `json:"icon_path,omitempty"` // served as-is under /ashigaru/assets/
-	Screenshots   []string `json:"screenshots,omitempty"`
+	IconPath      string   `json:"icon_path,omitempty"`   // served as-is under /ashigaru/assets/
+	Screenshots   []string `json:"screenshots,omitempty"` // "screens/…" files we host, or URLs
+	Changelog     string   `json:"changelog,omitempty"`   // what changed in the served version
 	Category      string   `json:"category,omitempty"`
 	SizeBytes     int64    `json:"size_bytes"`
 	Version       uint32   `json:"version"` // the title's own version number, e.g. 65536 == 1.0.0
