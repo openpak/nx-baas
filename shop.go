@@ -537,6 +537,28 @@ func mustJSON(v any) string {
 // storePage is the storefront's own shell, laid out like the console eShop: a sidebar with
 // the brand block and sections, a two-column card grid, and a footer with the button hints.
 // OpenPak's purple and blue replace Nintendo's red. Sized for the 1280x720 applet.
+// shopCategories are the sidebar's catalog views, in order: the view key (a title's
+// category, or "all"), the label, and a 24×24 stroke icon drawn in the text colour (inline
+// SVG, so the console's fonts need no symbol glyphs). A category the named ones do not
+// cover shows under Misc.
+var shopCategories = []struct{ key, label, icon string }{
+	{"all", "All Apps", `<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>`},
+	{"game", "Games", `<rect x="2" y="7" width="20" height="11" rx="5"/><path d="M7 10.5v4M5 12.5h4"/><circle cx="16" cy="11.5" r="1"/><circle cx="18.5" cy="14" r="1"/>`},
+	{"emulator", "Emulators", `<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/><path d="M8 10h3M9.5 8.5v3"/><circle cx="15.5" cy="10" r="1"/>`},
+	{"tool", "Tools", `<path d="M14.7 6.3a4 4 0 0 0-5.4 5.2L3.5 17.3a1.8 1.8 0 0 0 2.5 2.5l5.8-5.8a4 4 0 0 0 5.2-5.4l-2.6 2.6-2.3-.5-.5-2.3z"/>`},
+	{"advanced", "Advanced", `<circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/>`},
+	{"theme", "Themes", `<path d="M12 3a9 9 0 1 0 0 18c1.2 0 1.8-.9 1.8-1.8 0-1.3-1-1.6-1-2.7 0-1 .8-1.6 1.8-1.6H17a4 4 0 0 0 4-4C21 6.5 17 3 12 3z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="15" cy="7.5" r="1"/>`},
+	{"misc", "Misc", `<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>`},
+}
+
+func categoryNav() string {
+	var b strings.Builder
+	for _, c := range shopCategories {
+		b.WriteString(`<button class="nav" data-view="cat:` + c.key + `"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">` + c.icon + `</svg></span>` + c.label + `</button>`)
+	}
+	return b.String()
+}
+
 func storePage() string {
 	return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">` +
 		`<meta name="viewport" content="width=1280,initial-scale=1,maximum-scale=1,user-scalable=no"><title>OpenPak Shop</title>` +
@@ -546,10 +568,7 @@ func storePage() string {
 		`<button class="nav" data-view="search"><span class="ic">⌕</span>Search</button>` +
 		`<button class="nav" data-view="owned"><span class="ic">♡</span>Your Titles</button>` +
 		`<div class="gap"></div>` +
-		`<button class="nav sub" data-view="cat:game">Games</button>` +
-		`<button class="nav sub" data-view="cat:emulator">Emulators</button>` +
-		`<button class="nav sub" data-view="cat:tool">Tools</button>` +
-		`<button class="nav sub" data-view="cat:other">Other</button>` +
+		categoryNav() +
 		`<div class="gap"></div>` +
 		`<button class="nav sub" data-view="recent">Recent Releases</button>` +
 		`<button class="nav sub" data-view="updates">Recently Updated</button>` +
@@ -579,7 +598,8 @@ button{font:inherit;color:inherit;cursor:pointer}
 .nav{display:flex;align-items:center;gap:1vw;width:100%;margin:.4vh 0;padding:1.3vh 1.3vw;background:none;
 border:1px solid transparent;border-radius:999px;text-align:left;font-weight:600;font-size:3vh;color:var(--ink-2)}
 .nav.sub{font-size:2.6vh;padding:1vh 1.3vw;font-weight:500}
-.nav .ic{width:2.2vw;text-align:center}
+.nav .ic{width:2.2vw;text-align:center;display:inline-flex;justify-content:center}
+.nav .ic svg{width:3.2vh;height:3.2vh}
 .nav.on{background:var(--raised);border-color:var(--line);box-shadow:var(--shadow-sm);color:var(--ink)}
 .gap{height:1.2vh;border-bottom:1px solid var(--line);margin:0 1vw 1.2vh}
 #main{position:fixed;left:26vw;right:0;top:0;bottom:0;overflow-y:auto;padding:0 3vw 4vh}
@@ -717,9 +737,10 @@ function section(v,focusFirst){
    return grid(ts.filter(function(t){return t.ownership==='owned';}),'Your Titles','You have no titles from this shop yet.');
   }
   if(v.indexOf('cat:')===0){
-   // The sidebar's categories; anything the three named ones do not cover is Other.
-   var c=v.slice(4), named={game:'Games',emulator:'Emulators',tool:'Tools'};
-   return grid(ts.filter(function(t){return c==='other'?!named[t.category]:t.category===c;}),named[c]||'Other','No titles in this category yet.');
+   // The sidebar's categories (shopCategories); a category none of them names is Misc.
+   var c=v.slice(4), named={game:'Games',emulator:'Emulators',tool:'Tools',advanced:'Advanced',theme:'Themes',misc:'Misc'};
+   if(c==='all'){return grid(ts,'All Apps','The shop is empty for now.');}
+   return grid(ts.filter(function(t){return c==='misc'?(!named[t.category]||t.category==='misc'):t.category===c;}),named[c],'No titles in this category yet.');
   }
   if(v==='recent'||v==='updates'){ts.sort(function(a,b){return (b.updated_at||0)-(a.updated_at||0);});
    return grid(ts,v==='recent'?'Recent Releases':'Recently Updated','Nothing here yet.');}
