@@ -546,6 +546,11 @@ func storePage() string {
 		`<button class="nav" data-view="search"><span class="ic">⌕</span>Search</button>` +
 		`<button class="nav" data-view="owned"><span class="ic">♡</span>Your Titles</button>` +
 		`<div class="gap"></div>` +
+		`<button class="nav sub" data-view="cat:game">Games</button>` +
+		`<button class="nav sub" data-view="cat:emulator">Emulators</button>` +
+		`<button class="nav sub" data-view="cat:tool">Tools</button>` +
+		`<button class="nav sub" data-view="cat:other">Other</button>` +
+		`<div class="gap"></div>` +
 		`<button class="nav sub" data-view="recent">Recent Releases</button>` +
 		`<button class="nav sub" data-view="updates">Recently Updated</button>` +
 		`</nav><section id="main"><div class="top"><span class="note">All titles are free</span>` +
@@ -710,6 +715,11 @@ function section(v,focusFirst){
   if(v==='owned'){
    if(!token){return info('Your Titles','Sign-in has not reached the shop yet, so it cannot tell which titles are yours.');}
    return grid(ts.filter(function(t){return t.ownership==='owned';}),'Your Titles','You have no titles from this shop yet.');
+  }
+  if(v.indexOf('cat:')===0){
+   // The sidebar's categories; anything the three named ones do not cover is Other.
+   var c=v.slice(4), named={game:'Games',emulator:'Emulators',tool:'Tools'};
+   return grid(ts.filter(function(t){return c==='other'?!named[t.category]:t.category===c;}),named[c]||'Other','No titles in this category yet.');
   }
   if(v==='recent'||v==='updates'){ts.sort(function(a,b){return (b.updated_at||0)-(a.updated_at||0);});
    return grid(ts,v==='recent'?'Recent Releases':'Recently Updated','Nothing here yet.');}
