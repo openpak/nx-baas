@@ -444,7 +444,19 @@ func (s *server) gameAPI() http.Handler {
 	mux.HandleFunc("/internal/pctl/pairing", s.pctlPairing)
 	mux.HandleFunc("/internal/pctl/devices", s.pctlDeviceList)
 	mux.HandleFunc("/internal/pctl/devices/", s.pctlDeviceRoute)
-	mux.HandleFunc("/internal/store/", s.storeAdmin)
+	if s.shopFwd != nil {
+		mux.Handle("/internal/store/", s.shopFwd)
+	} else {
+		mux.HandleFunc("/internal/store/", s.storeAdmin)
+	}
+	// What the split-out services ask the core (internal_identity.go) and the push state
+	// they read while Penne is still served here (internal_penne.go).
+	mux.HandleFunc("/internal/identity/users/", s.identityUsers)
+	mux.HandleFunc("/internal/identity/na/", s.identityNA)
+	mux.HandleFunc("/internal/identity/accounts/", s.identityAccounts)
+	mux.HandleFunc("/internal/identity/presence", s.identityPresence)
+	mux.HandleFunc("/internal/identity/presence/renew", s.identityPresence)
+	mux.HandleFunc("/internal/penne/registrations/", s.penneRegistrations)
 	if base := os.Getenv("ACCOUNT_API"); base != "" {
 		if u, err := url.Parse(strings.TrimRight(base, "/")); err == nil {
 			proxy := httputil.NewSingleHostReverseProxy(u)

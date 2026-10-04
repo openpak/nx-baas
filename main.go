@@ -135,6 +135,8 @@ type server struct {
 	// shopUI holds the storefront's in-memory diagnostics ring.
 	shop   *shopState
 	shopUI *shopUI
+	// shopFwd forwards the eShop to nx-shop once it has moved (split.go); nil serves it here.
+	shopFwd *httputil.ReverseProxy
 	// Penne record store: what this server has written to each account's
 	// records, and its digests (penne_records.go).
 	recordStore *penneRecordStore
@@ -2431,6 +2433,11 @@ var minimal = os.Getenv("NX_MINIMAL") != "" // bisecting 2124-0292: only the NA 
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	host := hostOf(r)
 	log.Printf("[nx-baas] %s %s%s ua=%q", r.Method, host, r.URL.RequestURI(), r.UserAgent())
+	// A family that moved to its own service is forwarded before anything here reads the
+	// body (split.go); with no forward URL configured this is a no-op.
+	if s.forwardMoved(w, r) {
+		return
+	}
 	// The friends module fetches its app catalog and art from a configured
 	// host, so this matches on the path before host routing claims it
 	// (eshop_unserved.go). It declines anything that is not /v1/apps/<id>/.
@@ -2682,7 +2689,13 @@ func main() {
 		guesses: newGuesses(),
 		phones:  newPhoneStore(),
 		acct:    newBackend(),
-		shop:    newShopState(getenv("NX_DATA", "/data") + "/shop"),
+	}
+	s.forwardersFromEnv()
+	if s.shopFwd == nil {
+		s.shop = newShopState(getenv("NX_DATA", "/data") + "/shop")
+	} else {
+		// The shop's files belong to nx-shop now; this process must not read or write them.
+		s.shop = newShopState("")
 	}
 	s.acbaaPath = getenv("NX_DATA", "/data") + "/acbaa.json"
 	s.acbaaLoad()

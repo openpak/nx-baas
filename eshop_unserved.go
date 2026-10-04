@@ -263,6 +263,10 @@ func (s *server) nimUnserved(w http.ResponseWriter, r *http.Request, body []byte
 	// superfly [nim: /v1/a/%016llx/dv, built at 0x1ecbe0; the reply is read by
 	// the SAX handler at 0x3280e0]. Answered from the catalog (eshop_nim.go).
 	case strings.HasPrefix(p, "/v1/a/") && strings.HasSuffix(p, "/dv"):
+		if s.shopFwd != nil {
+			forwardRead(s.shopFwd, w, r, body) // the catalog lives in nx-shop (split.go)
+			return true
+		}
 		s.versionLookup(w, r, body)
 		return true
 
@@ -271,6 +275,9 @@ func (s *server) nimUnserved(w http.ResponseWriter, r *http.Request, body []byte
 	// what this store has, and this store knows. The entry shape mirrors the
 	// applet's own listing (shop.go) — the ACD document's native field names
 	// are not recovered, so what is served is our catalog's own vocabulary.
+	case strings.HasPrefix(p, "/v1/acds/search") && s.shopFwd != nil:
+		forwardRead(s.shopFwd, w, r, body)
+		return true
 	case strings.HasPrefix(p, "/v1/acds/search"):
 		q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
 		items := []any{}
@@ -309,6 +316,10 @@ func (s *server) friendsAppCatalog(w http.ResponseWriter, r *http.Request) bool 
 	appID, file, ok := strings.Cut(rest, "/")
 	if !ok || appID == "" {
 		return false
+	}
+	if s.shopFwd != nil && (file == "catalog.json" || strings.HasSuffix(file, ".jpg") || strings.HasSuffix(file, ".png")) {
+		s.shopFwd.ServeHTTP(w, r) // the catalog lives in nx-shop (split.go)
+		return true
 	}
 	// The friends module asks by 128-bit application id; our catalog is keyed
 	// by the 64-bit title id, which is its upper half.
