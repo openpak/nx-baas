@@ -161,7 +161,7 @@ func (s *server) shopAPI(w http.ResponseWriter, r *http.Request, body []byte) {
 				"title_id": t.TitleID, "name": tx.Name, "publisher": t.Publisher,
 				"category": t.Category, "size_bytes": t.SizeBytes, "version": t.Version,
 				"version_label": t.VersionLabel, "updated_at": t.UpdatedAt,
-				"icon": "/ashigaru/icon/" + t.TitleID,
+				"icon": iconURL(t),
 			}
 			if account != "" {
 				if e := owned[t.TitleID]; e != nil {
@@ -189,7 +189,7 @@ func (s *server) shopAPI(w http.ResponseWriter, r *http.Request, body []byte) {
 			"publisher": t.Publisher, "category": t.Category, "size_bytes": t.SizeBytes,
 			"version": t.Version, "version_label": t.VersionLabel,
 			"compatibility": t.Compatibility, "languages": t.Languages,
-			"icon": "/ashigaru/icon/" + t.TitleID, "screenshots": screenURLs(t),
+			"icon": iconURL(t), "screenshots": screenURLs(t),
 			"distribution": t.Distribution, "updated_at": t.UpdatedAt, "changelog": t.Changelog,
 		}
 		if account != "" {
@@ -366,6 +366,12 @@ func (s *server) shopScreen(w http.ResponseWriter, r *http.Request) {
 	w.Write(b)
 }
 
+// iconURL carries the title's update time so a new icon is a new URL, and the icon itself can
+// be cached for a week (a 450-title grid fetched every icon on every visit before).
+func iconURL(t *ShopTitle) string {
+	return fmt.Sprintf("/ashigaru/icon/%s?v=%d", t.TitleID, t.UpdatedAt)
+}
+
 // shopIcon serves a title's icon from the operator's shop directory.
 func (s *server) shopIcon(w http.ResponseWriter, r *http.Request) {
 	tid := strings.TrimPrefix(r.URL.Path, "/ashigaru/icon/")
@@ -387,6 +393,7 @@ func (s *server) shopIcon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", http.DetectContentType(b))
+	w.Header().Set("Cache-Control", "public, max-age=604800")
 	w.Write(b)
 }
 
@@ -495,7 +502,11 @@ function nxToken(v){
 }
 function brief(v){try{return String(JSON.stringify(v)).slice(0,400);}catch(e){return String(v).slice(0,400);}}
 function report(o){try{fetch('/ashigaru/api/v1/diag',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)});}catch(e){}}
-function closeShop(){report({event:'close'});location.href='eshop://success';}
+// Leave the way Nintendo's shop does: the applet's own endApplet, which ends it at once; the
+// eshop:// scheme (a navigation the applet then acts on) only when the bridge lacks it.
+function closeShop(){report({event:'close'});
+ if(nxCall('endApplet',[],null)){setTimeout(function(){location.href='eshop://success';},300);return;}
+ location.href='eshop://success';}
 (function(){var c=document.getElementById('close');if(c){c.addEventListener('click',closeShop);}})();
 `
 
@@ -766,15 +777,33 @@ function select(v){
  var b=document.querySelectorAll('.nav');
  for(var i=0;i<b.length;i++){b[i].className=b[i].className.replace(/ on/g,'')+(b[i].getAttribute('data-view')===v?' on':'');}
 }
-function art(t){return '<div class="art"><div class="blur" style="background-image:url('+esc(t.icon)+')"></div><img src="'+esc(t.icon)+'" alt=""></div>';}
+// The blurred backdrop is the costliest thing this browser draws; only the detail page has it.
+function art(t,blur){return '<div class="art">'+(blur?'<div class="blur" style="background-image:url('+esc(t.icon)+')"></div>':'')+'<img src="'+esc(t.icon)+'" alt="" loading="lazy" decoding="async"></div>';}
 function card(t){
  var badge=t.ownership==='owned'?'<span class="badge own">OWNED</span>':(isNew(t)?'<span class="badge">NEW</span>':'');
  return '<button class="card" data-tid="'+esc(t.title_id)+'"><div class="strip">'+esc(t.category||'Homebrew')+'</div>'+
   art(t)+'<div class="cap"><span class="n">'+esc(t.name)+'</span>'+badge+'</div></button>';
 }
-function wire(){
- var b=app.querySelectorAll('.card');
- for(var j=0;j<b.length;j++){b[j].addEventListener('click',function(){detail(this.getAttribute('data-tid'));});}
+function wire(root){
+ var b=(root||app).querySelectorAll('.card:not([data-w])');
+ for(var j=0;j<b.length;j++){b[j].setAttribute('data-w','1');b[j].addEventListener('click',function(){detail(this.getAttribute('data-tid'));});}
+}
+// Grids render a page of cards and add the next as focus or scrolling nears the end: a few
+// hundred cards and their images at once made every view slow on the console.
+var PAGE=24;
+function pager(el,ts){
+ var shown=0;
+ function more(){
+  if(shown>=ts.length){return;}
+  var d=document.createElement('div');d.innerHTML=ts.slice(shown,shown+PAGE).map(card).join('');
+  while(d.firstChild){el.appendChild(d.firstChild);}
+  shown=Math.min(ts.length,shown+PAGE); wire(el);
+ }
+ more();
+ el.addEventListener('focus',function(e){var c=el.children;if(c.length-Array.prototype.indexOf.call(c,e.target)<=6){more();}},true);
+ var main=document.getElementById('main');
+ function near(){if(el.isConnected&&main.scrollTop+main.clientHeight>main.scrollHeight-main.clientHeight){more();}}
+ main.addEventListener('scroll',near);
 }
 // The sort bar: a grid's order until another view starts (each view passes its default).
 var sortBy=null;
@@ -785,10 +814,10 @@ function grid(ts,title,empty,def){
  var by=sortBy||def||'name'; ts=ts.slice().sort(sorts[by][1]);
  var bar=ts.length>1?'<div class="sortbar">'+Object.keys(sorts).map(function(k){
   return '<button class="sort'+(k===by?' on':'')+'" data-sort="'+k+'">'+sorts[k][0]+'</button>';}).join('')+'</div>':'';
- app.innerHTML=(title?'<h1>'+title+'</h1>':'')+bar+(ts.length?'<div class="grid">'+ts.map(card).join('')+'</div>':'<p class="empty">'+empty+'</p>');
+ app.innerHTML=(title?'<h1>'+title+'</h1>':'')+bar+(ts.length?'<div class="grid"></div>':'<p class="empty">'+empty+'</p>');
+ if(ts.length){pager(app.querySelector('.grid'),ts);}
  var b=app.querySelectorAll('.sort');
  for(var i=0;i<b.length;i++){b[i].addEventListener('click',function(){sortBy=this.getAttribute('data-sort');var k=sortBy;view();var f=app.querySelector('.sort[data-sort="'+k+'"]');if(f){f.focus();}});}
- wire();
 }
 function section(v,focusFirst){
  if(!view||view.v!==v){sortBy=null;}
@@ -810,7 +839,8 @@ function section(v,focusFirst){
   }
   if(v==='recent'||v==='updates'){
    return grid(ts,v==='recent'?'Recent Releases':'Recently Updated','Nothing here yet.','updated');}
-  grid(ts,'','The shop is empty for now.');
+  ts.sort(sorts.updated[1]);
+  grid(ts.slice(0,PAGE),'New and updated','The shop is empty for now.','updated');
   if(focusFirst){var c=app.querySelector('.card');if(c){c.focus();}}
  }).catch(function(e){show('The shop could not be reached ('+e.message+').');app.innerHTML='';});
 }
@@ -819,9 +849,13 @@ function search(){
  var q=$('q');
  function run(){load().then(function(ts){var s=q.value.trim().toLowerCase();
   var hit=s?ts.filter(function(t){return (t.name+' '+(t.publisher||'')).toLowerCase().indexOf(s)>=0;}):[];
-  $('res').innerHTML=s?(hit.length?'<div class="grid">'+hit.map(card).join('')+'</div>':'<p class="empty">No titles match “'+esc(q.value)+'”.</p>'):'';
-  wire();});}
- q.addEventListener('input',run);q.addEventListener('change',run);q.focus();
+  $('res').innerHTML=s?(hit.length?'<div class="grid"></div>':'<p class="empty">No titles match “'+esc(q.value)+'”.</p>'):'';
+  if(hit.length){pager($('res').querySelector('.grid'),hit);}});}
+ q.addEventListener('input',run);q.addEventListener('change',run);
+ // The console opens its keyboard when the player focuses the box, not when a script does, so
+ // the box is not focused for them; A on it re-focuses inside the key press, which does.
+ function kb(){q.blur();setTimeout(function(){q.focus();q.click();},0);}
+ q.addEventListener('keydown',function(e){if(e.key==='Enter'||e.keyCode===13){e.preventDefault();kb();}});
 }
 function info(h,body){
  app.innerHTML='<h1>'+esc(h)+'</h1><p class="msg">'+esc(body)+'</p>';
@@ -840,7 +874,7 @@ function detail(tid){
   else{act='<button class="act" id="acq">Free Download</button>';}
   var dist=t.distribution||{}, cats={game:'Games',emulator:'Emulators',tool:'Tools',advanced:'Advanced',theme:'Themes'};
   var shots=(t.screenshots||[]).map(function(u){return '<img src="'+esc(u)+'" alt="">';}).join('');
-  app.innerHTML='<div class="detail">'+art(t)+'<div><h1>'+esc(t.name)+'</h1><p class="pub">'+esc(t.publisher||'')+'</p>'+
+  app.innerHTML='<div class="detail">'+art(t,true)+'<div><h1>'+esc(t.name)+'</h1><p class="pub">'+esc(t.publisher||'')+'</p>'+
    '<div class="kv"><b>Category</b><span>'+esc(cats[t.category]||'Misc')+'</span>'+
    '<b>Version</b><span>'+esc(t.version_label||t.version)+'</span>'+
    '<b>Size</b><span>'+human(t.size_bytes||0)+'</span>'+
@@ -892,7 +926,7 @@ function startDownload(t){
   var id=r.body.id;
   syncRights(function(){
    handOff(t);
-   app.innerHTML='<div class="detail">'+art(t)+'<div><h1>'+esc(t.name)+'</h1>'+
+   app.innerHTML='<div class="detail">'+art(t,true)+'<div><h1>'+esc(t.name)+'</h1>'+
     '<p class="msg">The download has started. Returning to the HOME Menu…</p>'+
     '<button class="act" id="done">Close the shop</button> <button class="act plain" id="cancel">Cancel download</button></div></div>';
    $('done').addEventListener('click',closeShop);
