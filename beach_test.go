@@ -194,3 +194,23 @@ func TestEticketsPublishIsRecordedNotFaked(t *testing.T) {
 		t.Errorf("etickets/publish = %d, want 501", rec.Code)
 	}
 }
+
+// On hardware the console has no beach link; NIM proves the account with the na_id_tokens
+// it forwards in the body (22.5.0: {"title_ids":[…],"na_id_tokens":[…]}).
+func TestEdgeTokenTitlesFollowForwardedNAIDTokens(t *testing.T) {
+	s := shopServerFor(t)
+	tok := naIDTokenFor(s)
+	shopReq(s, "POST", "/ashigaru/api/v1/catalog/"+testTitleID+"/acquire", tok, "")
+	body := `{"title_ids":["` + testTitleID + `"],"na_id_tokens":["` + tok + `"]}`
+	for _, p := range []string{"/v2/edge_token/issuable_titles", "/v2/edge_token/issue"} {
+		rec := dragonsReq(s, "dragonst.hac.lp1.dragons.nintendo.net", "POST", p, body)
+		if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"title_ids":["`+testTitleID+`"]`) {
+			t.Errorf("%s = %d %s", p, rec.Code, rec.Body.String())
+		}
+	}
+	rec := dragonsReq(s, "dragonst.hac.lp1.dragons.nintendo.net", "POST", "/v2/edge_token/issuable_titles",
+		`{"title_ids":["`+testTitleID+`"],"na_id_tokens":["not-a-token"]}`)
+	if strings.Contains(rec.Body.String(), testTitleID) {
+		t.Errorf("unverified token granted %s", rec.Body.String())
+	}
+}

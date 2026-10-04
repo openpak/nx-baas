@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 )
@@ -425,41 +426,22 @@ func (s *server) dragons(w http.ResponseWriter, r *http.Request, body []byte) {
 	// Any of the three rights hosts: NIM names the issuer by configuration, and a token
 	// request that reached dragons. or tigers. used to fall to the 404 below.
 	case p == "/edge_token/issue" && r.Method == "POST":
-		var in struct {
-			TitleIDs []string `json:"title_ids"`
-		}
+		var in dragonsEdgeTokenRequest
 		json.Unmarshal(body, &in)
 		if device == "" {
 			dragonsError(w, 401, "unauthorized", "device authorization required", "")
 			return
 		}
-		// Only titles this console's linked accounts own may be tokenized (authorized
-		// content delivery, SHP-04). An unlinked device gets nothing.
-		allowed := []string{}
-		for _, tid := range in.TitleIDs {
-			tid = strings.ToLower(tid)
-			if !validTitleID(tid) {
-				continue
-			}
-			// An update rides its application's entitlement.
-			if s.shop.deviceOwnsTitle(device, s.shop.applicationFor(tid)) {
-				allowed = append(allowed, tid)
-			}
-		}
+		// Only titles this console's linked accounts, or the accounts its na_id_tokens
+		// prove, own may be tokenized (authorized content delivery, SHP-04).
+		allowed := s.edgeTokenTitles(device, in)
 		writeJSON(w, 200, map[string]any{
 			"expires_in": 21600, "dragons_edge_token": s.dragonsEdgeToken(device, allowed), "title_ids": allowed,
 		})
 	case p == "/edge_token/issuable_titles" && r.Method == "POST":
-		var in struct {
-			ApplicationIDs []string `json:"application_ids"`
-		}
+		var in dragonsEdgeTokenRequest
 		json.Unmarshal(body, &in)
-		allowed := []string{}
-		for _, tid := range in.ApplicationIDs {
-			if validTitleID(tid) && s.shop.deviceOwnsTitle(device, s.shop.applicationFor(tid)) {
-				allowed = append(allowed, tid)
-			}
-		}
+		allowed := s.edgeTokenTitles(device, in)
 		// Response shape hypothesis: the wiki documents the request only.
 		writeJSON(w, 200, map[string]any{"title_ids": allowed})
 
@@ -586,6 +568,18 @@ func (s *shopState) deviceOwnsTitle(deviceID, titleID string) bool {
 	return false
 }
 
+// accountOwnsTitle reports an active entitlement of the account to the title.
+func (s *shopState) accountOwnsTitle(accountID, titleID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, e := range s.Entitlements {
+		if e.AccountID == accountID && e.TitleID == titleID && e.Status == "active" {
+			return true
+		}
+	}
+	return false
+}
+
 // accountsForDevice lists the accounts linked to a device.
 func (s *shopState) accountsForDevice(deviceID string) []string {
 	s.mu.Lock()
@@ -621,6 +615,65 @@ func (s *server) rightsAccounts(r *http.Request) []string {
 		}
 	}
 	return accounts
+}
+
+// dragonsEdgeTokenRequest is NIM's body for dragonst edge_token/issue and issuable_titles
+// (hardware 22.5.0: {"title_ids":[…],"na_id_tokens":[…]}; application_ids is the older
+// reading, kept).
+type dragonsEdgeTokenRequest struct {
+	TitleIDs       []string `json:"title_ids"`
+	ApplicationIDs []string `json:"application_ids"`
+	NAIDTokens     []string `json:"na_id_tokens"`
+}
+
+// edgeTokenTitles lists the requested titles the device's linked accounts or the accounts
+// its na_id_tokens prove own. An update rides its application's entitlement.
+func (s *server) edgeTokenTitles(device string, in dragonsEdgeTokenRequest) []string {
+	accounts := s.idTokenAccounts(in.NAIDTokens)
+	allowed := []string{}
+	for _, tid := range append(in.TitleIDs, in.ApplicationIDs...) {
+		tid = strings.ToLower(tid)
+		if !validTitleID(tid) || slices.Contains(allowed, tid) {
+			continue
+		}
+		app := s.shop.applicationFor(tid)
+		owned := device != "" && s.shop.deviceOwnsTitle(device, app)
+		for _, a := range accounts {
+			owned = owned || s.shop.accountOwnsTitle(a, app)
+		}
+		if owned {
+			allowed = append(allowed, tid)
+		}
+	}
+	return allowed
+}
+
+// idTokenAccounts maps the id tokens NIM forwards to the Nintendo Accounts they prove:
+// our NA id tokens name the account in sub; our BAAS id tokens name the BAAS user, whose
+// account it is. A token that does not verify against our key proves nothing.
+func (s *server) idTokenAccounts(tokens []string) []string {
+	var out []string
+	for _, t := range tokens {
+		c, err := parseJWT(t, &s.key.PublicKey)
+		if err != nil {
+			continue
+		}
+		account := ""
+		switch str(c, "iss") {
+		case naIssuer:
+			account = str(c, "sub")
+		case baasIssuer:
+			if s.store != nil {
+				if u := s.store.User(str(c, "sub")); u != nil {
+					account = u.NaID
+				}
+			}
+		}
+		if account != "" && !slices.Contains(out, account) {
+			out = append(out, account)
+		}
+	}
+	return out
 }
 
 // titleIDForRights inverts rightsIDFor; anything that does not parse is not a rights id.
