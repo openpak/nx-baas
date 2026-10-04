@@ -26,9 +26,9 @@ package main
 //     out to be the superfly dv handler above. The best remaining candidate is ns's download
 //     task list parser (ns 0x22a090, 0x22a674): $.tasks[].{id (a 36-character UUID),
 //     owner_application, na_id, config, titles[].{id, version, type}}, type being
-//     Application, Patch, AddOnContent, Delta or DataPatch. /d/ answers in that shape from
-//     the open download tasks; /p/ is served empty. UNCONFIRMED: every pushmo request is
-//     logged in full so the first console settles it.
+//     Application, Patch, AddOnContent, Delta or DataPatch. Both answer in that shape from
+//     the open download tasks: /d/<device> through device links, /p/<penne id> through the
+//     penne registration's accounts. Hardware (22.5.0) asks /p/. Every request is logged.
 //   - veer /v5/policy.json?context=: $.ttl and $.weights[].{vendor, weight} (NIM
 //     0x2277e0, 0x228230). Verified. vendor is the atum subdomain NIM then uses.
 
@@ -38,6 +38,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -151,9 +152,11 @@ func (s *server) pushmo(w http.ResponseWriter, r *http.Request, body []byte) {
 		return
 	}
 	s.shop.reloadCatalog()
-	tasks := []map[string]any{}
+	var tasks []map[string]any
 	if kind == "d" {
 		tasks = s.pushmoTasks(s.pushmoAccounts(id, r))
+	} else {
+		tasks = s.pushmoTasks(s.penneShopAccounts(id))
 	}
 	log.Printf("[shop] pushmo %s/%s -> %d task(s)", kind, id, len(tasks))
 	writeETagged(w, r, []byte(mustJSON(map[string]any{"tasks": tasks})))
@@ -174,6 +177,25 @@ func (s *server) pushmoAccounts(id string, r *http.Request) []string {
 	}
 	s.shop.mu.Unlock()
 	return s.shop.accountsForDevice(s.deviceIdentity(r))
+}
+
+// penneShopAccounts resolves /pushmo/p/<id>: the id is the console's penne registration
+// (hardware 2026-10-04: NIM's download-list task asked for /p/<the id beach and dragons
+// were handed in penne_id/register>, never /d/). The registration's BAAS users map to
+// the Nintendo Accounts the store keys tasks by.
+func (s *server) penneShopAccounts(penneID string) []string {
+	ps := s.notifStore()
+	a := ps.AssocIfLive(penneID)
+	if a == nil {
+		return nil
+	}
+	var out []string
+	for _, uid := range append([]string{a.UserID}, ps.UsersOn(penneID)...) {
+		if u := s.store.User(uid); u != nil && u.NaID != "" && !slices.Contains(out, u.NaID) {
+			out = append(out, u.NaID)
+		}
+	}
+	return out
 }
 
 // pushmoTasks renders the open download tasks of the accounts in the download-task-list

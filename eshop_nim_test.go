@@ -239,7 +239,25 @@ func TestPushmoListsOpenTasksWithETags(t *testing.T) {
 		t.Errorf("If-None-Match = %d, want 304", w.Code)
 	}
 	if rec := hostReq(s, host, "GET", "/pushmo/p/"+testDevice+".json", "", ""); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"tasks":[]`) {
-		t.Errorf("pushmo p = %d %s", rec.Code, rec.Body.String())
+		t.Errorf("pushmo p (unknown id) = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// NIM asks /pushmo/p/<penne id>: the registration's BAAS user leads to the Nintendo
+// Account the tasks belong to.
+func TestPushmoPListsTheTasksOfThePenneRegistrationsAccount(t *testing.T) {
+	s := shopServerFor(t)
+	tok := naIDTokenFor(s)
+	shopReq(s, "POST", "/ashigaru/api/v1/catalog/"+testTitleID+"/acquire", tok, "")
+	if rec := shopReq(s, "POST", "/ashigaru/api/v1/tasks", tok, `{"title_id":"`+testTitleID+`"}`); rec.Code != 200 {
+		t.Fatalf("task = %d: %s", rec.Code, rec.Body.String())
+	}
+	u := s.store.UserByPID(7)
+	s.store.Update(u, func(u *User) { u.NaID = testNAID })
+	penneID, _ := s.notifStore().Register("", u.ID, "", time.Now())
+	rec := hostReq(s, "pushmo.hac.lp1.eshop.nintendo.net", "GET", "/pushmo/p/"+penneID+".json", "", "")
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"owner_application":"`+testTitleID+`"`) {
+		t.Fatalf("pushmo p = %d %s", rec.Code, rec.Body.String())
 	}
 }
 
