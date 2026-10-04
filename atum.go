@@ -16,7 +16,9 @@ package main
 //     content delivery). 403 otherwise, in the documented error family.
 //   - It supports resumable download with HTTP Range on every content route (SHP-04).
 //
-// Route table (wiki):  /c1/a/d/<tid>[/<ver>]      control NCA (icon and name)
+// Route table (wiki):  /c1/a/d/<tid>[/<ver>]      control NCA (icon and name); NIM needs
+//                                                 x-nintendo-{title-version,content-id,
+//                                                 content-hash} with it (atumNamedHeaders)
 //                      /c1/t/a/<tid>/<ver>        NCA containing CNMT
 //                      /c1/<tid>/c/a/<cid>        NCA containing CNMT, by content id
 //                      /c1/<tid>/c/c/<cid>        NCA containing game content
@@ -118,9 +120,20 @@ func (s *server) atum(w http.ResponseWriter, r *http.Request, body []byte) {
 			atumErr(w, r, 404, "no such content", namedFile)
 			return
 		}
+		// NIM reads the content's identity from response headers, not the body
+		// (see atumNamedHeaders); without them it discards the bytes.
+		if err := s.atumNamedHeaders(w, titleID, namedFile, path, c); err != nil {
+			atumErr(w, r, 500, "cannot hash content", err.Error())
+			return
+		}
 	} else {
 		var err error
 		path, c, err = s.shop.contentFile(titleID, contentID)
+		if err != nil {
+			// A hand-placed control/CNMT file (control_path/cnmt_path) has no catalog
+			// row; its id is the one atumNamedHeaders derived and sent on /a/d or /t/a.
+			path, c, err = s.shop.namedFileByID(titleID, contentID)
+		}
 		if err != nil {
 			atumErr(w, r, 404, "no such content", contentID)
 			return
@@ -147,6 +160,89 @@ func (s *server) atumHashes(w http.ResponseWriter, titleID, contentID string, c 
 		"content_size": c.Size, "partitioning_size": c.Size,
 		"partitioned_content_hashes": []string{c.SHA256},
 	})
+}
+
+// atumNamedHeaders sets the headers NIM takes the content's identity from on the
+// control (/a/d/<tid>[/<ver>]) and CNMT (/t/a/<tid>/<ver>) routes [firmware 22.5.0, nim]:
+//
+//   - nn.nim.ApplicationControlTask (run 0x2178e0, header callback 0x217e80, body sink
+//     0x218150) needs x-nintendo-title-version (decimal) and x-nintendo-content-id
+//     (32 hex) before it writes the first byte, else 0xa3e89 (2137-1311);
+//     x-nintendo-content-hash (64 hex), else 0xa4289 (2137-1313); a Content-Length,
+//     else 0xa3c89 (2137-1310). The id names the ncm placeholder the body is written
+//     into; the hash must be the SHA-256 of the whole body, else 0x6489 (2137-0050).
+//     The version is handed back to ns with the placeholder path.
+//   - nn.nim.NetworkInstallTask's CNMT step (0x2164c0, header callback 0x216dc0) reads
+//     only x-nintendo-content-id and the Content-Length (else 0x7f889), then fetches
+//     /c/a/<that id>.
+//
+// The hash is computed over the bytes served, never trusted from the catalog: a stale
+// pin would fail the console's check. A content id the catalog lacks (hand-placed file)
+// is derived the NCA way, the first half of its SHA-256.
+func (s *server) atumNamedHeaders(w http.ResponseWriter, titleID, which, path string, c ShopContent) error {
+	sum, err := contentSHA256(path, c)
+	if err != nil {
+		return err
+	}
+	cid := strings.ToLower(c.ContentID)
+	if len(cid) != 32 {
+		cid = sum[:32]
+	}
+	w.Header().Set("X-Nintendo-Content-Id", cid)
+	w.Header().Set("X-Nintendo-Content-Hash", sum)
+	if which == "control" {
+		w.Header().Set("X-Nintendo-Title-Version", strconv.FormatUint(uint64(s.shop.servedVersion(titleID)), 10))
+	}
+	return nil
+}
+
+// servedVersion is the version of the content meta whose files titleFile serves for an
+// id: the patch's version for a patch id, the application's own for an application id.
+func (s *shopState) servedVersion(titleID string) uint32 {
+	t, isPatch := s.meta(titleID)
+	if t == nil {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if isPatch {
+		return t.Patch.Version
+	}
+	return t.applicationVersion()
+}
+
+// namedFileByID resolves a content id that only exists as the derived id of a title's
+// hand-placed control or CNMT file.
+func (s *shopState) namedFileByID(titleID, contentID string) (string, ShopContent, error) {
+	for _, which := range []string{"cnmt", "control"} {
+		p, c := s.titleFile(titleID, which)
+		if p == "" || c.ContentID != "" {
+			continue
+		}
+		if sum, err := contentSHA256(p, c); err == nil && sum[:32] == strings.ToLower(contentID) {
+			return p, c, nil
+		}
+	}
+	return "", ShopContent{}, fmt.Errorf("content %s not in catalog", contentID)
+}
+
+// contentSHA256 hashes a content's bytes: [Offset, Offset+Size) of its file, or the whole
+// file for a hand-placed one.
+func contentSHA256(path string, c ShopContent) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	var src io.Reader = f
+	if c.Size > 0 {
+		src = io.NewSectionReader(f, c.Offset, c.Size)
+	}
+	h := sha256.New()
+	if _, err := io.Copy(h, src); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // titleFile resolves the control/CNMT named file for a title: the hand-placed file the

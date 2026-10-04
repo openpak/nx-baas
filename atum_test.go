@@ -206,3 +206,30 @@ func sha256Hex(b []byte) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
+
+// NIM's ApplicationControlTask takes the control content's identity from headers and
+// rejects the body without them (2137-1311 on hardware); the CNMT step reads the content id
+// and fetches /c/a/<that id>, which must then resolve even for a hand-placed file.
+func TestAtumNamedRoutesCarryNimContentHeaders(t *testing.T) {
+	s, content := contentServerFor(t)
+	mine := s.dragonsEdgeToken(testDevice, []string{testTitleID})
+	host := "atum.hac.lp1.d4c.nintendo.net"
+	sum := sha256Hex(content)
+
+	rec := atumReq(s, "GET", host, "/c2/a/d/"+testTitleID, "Bearer "+mine)
+	h := rec.Header()
+	if rec.Code != 200 || h.Get("X-Nintendo-Content-Hash") != sum || h.Get("X-Nintendo-Content-Id") != sum[:32] ||
+		h.Get("X-Nintendo-Title-Version") == "" || h.Get("Content-Length") != fmt.Sprint(len(content)) {
+		t.Fatalf("control = %d, headers %v", rec.Code, h)
+	}
+
+	rec = atumReq(s, "HEAD", host, "/c2/t/a/"+testTitleID+"/65536", "Bearer "+mine)
+	cid := rec.Header().Get("X-Nintendo-Content-Id")
+	if rec.Code != 200 || len(cid) != 32 {
+		t.Fatalf("cnmt = %d, content id %q", rec.Code, cid)
+	}
+	rec = atumReq(s, "GET", host, "/c2/"+testTitleID+"/c/a/"+cid, "Bearer "+mine)
+	if rec.Code != 200 || rec.Body.Len() != len(content) {
+		t.Errorf("cnmt by id = %d (%d bytes)", rec.Code, rec.Body.Len())
+	}
+}
