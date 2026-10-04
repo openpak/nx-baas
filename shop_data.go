@@ -30,11 +30,16 @@ import (
 // is language-neutral. Distribution records the permission under which OpenPak may serve
 // this title at all (SHP-02): a catalog entry without it must not be listed.
 type ShopTitle struct {
-	TitleID       string   `json:"title_id"` // 16 hex digits, the packager's choice; must be stable
-	Publisher     string   `json:"publisher"`
-	IconPath      string   `json:"icon_path,omitempty"`   // served as-is under /ashigaru/assets/
-	Screenshots   []string `json:"screenshots,omitempty"` // "screens/…" files we host, or URLs
-	Changelog     string   `json:"changelog,omitempty"`   // what changed in the served version
+	TitleID     string   `json:"title_id"` // 16 hex digits, the packager's choice; must be stable
+	Publisher   string   `json:"publisher"`
+	IconPath    string   `json:"icon_path,omitempty"`   // served as-is under /ashigaru/assets/
+	Screenshots []string `json:"screenshots,omitempty"` // "screens/…" files we host, or URLs
+	Changelog   string   `json:"changelog,omitempty"`   // what changed in the served version
+	// The software's own dates (unix seconds), as its publisher states them: first release and
+	// last change. They drive the shop's NEW / UPDATED badges and its "recently updated" order;
+	// UpdatedAt is only when this catalog entry last changed.
+	ReleasedAt    int64    `json:"released_at,omitempty"`
+	RevisedAt     int64    `json:"revised_at,omitempty"`
 	Category      string   `json:"category,omitempty"`
 	SizeBytes     int64    `json:"size_bytes"`
 	Version       uint32   `json:"version"` // the title's own version number, e.g. 65536 == 1.0.0

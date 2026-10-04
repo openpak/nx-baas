@@ -264,7 +264,7 @@ func adminTitleObj(t *ShopTitle, withContent bool) map[string]any {
 		"title_id": t.TitleID, "published": !t.Unpublished, "publisher": t.Publisher,
 		"category": t.Category, "localized": t.Localized, "default_lang": t.DefaultLang,
 		"languages": t.Languages, "compatibility": t.Compatibility, "screenshots": t.Screenshots,
-		"changelog":    t.Changelog,
+		"changelog": t.Changelog, "released_at": t.ReleasedAt, "revised_at": t.RevisedAt,
 		"distribution": t.Distribution, "icon_path": t.IconPath, "size_bytes": t.SizeBytes,
 		"version": t.Version, "version_label": t.VersionLabel, "base_version": t.applicationVersion(),
 		"updated_at": t.UpdatedAt, "application": nil, "update": nil, "bundle": bundleObjs(t.Bundle),
@@ -327,6 +327,8 @@ type titleMeta struct {
 	Compatibility *[]string            `json:"compatibility"`
 	Screenshots   *[]string            `json:"screenshots"`
 	Changelog     *string              `json:"changelog"`
+	ReleasedAt    *int64               `json:"released_at"`
+	RevisedAt     *int64               `json:"revised_at"`
 	Distribution  *ShopDistribution    `json:"distribution"`
 	Bundle        *[]ShopBundleItem    `json:"bundle"`
 }
@@ -365,6 +367,12 @@ func (m *titleMeta) apply(t *ShopTitle) error {
 	}
 	if m.Changelog != nil {
 		t.Changelog = *m.Changelog
+	}
+	if m.ReleasedAt != nil {
+		t.ReleasedAt = *m.ReleasedAt
+	}
+	if m.RevisedAt != nil {
+		t.RevisedAt = *m.RevisedAt
 	}
 	if m.Distribution != nil {
 		if strings.TrimSpace(m.Distribution.Permission) == "" || strings.TrimSpace(m.Distribution.Source) == "" {

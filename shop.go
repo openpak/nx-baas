@@ -161,6 +161,7 @@ func (s *server) shopAPI(w http.ResponseWriter, r *http.Request, body []byte) {
 				"title_id": t.TitleID, "name": tx.Name, "publisher": t.Publisher,
 				"category": t.Category, "size_bytes": t.SizeBytes, "version": t.Version,
 				"version_label": t.VersionLabel, "updated_at": t.UpdatedAt,
+				"released_at": t.ReleasedAt, "revised_at": t.RevisedAt,
 				"icon": iconURL(t),
 			}
 			if account != "" {
@@ -191,6 +192,7 @@ func (s *server) shopAPI(w http.ResponseWriter, r *http.Request, body []byte) {
 			"compatibility": t.Compatibility, "languages": t.Languages,
 			"icon": iconURL(t), "screenshots": screenURLs(t),
 			"distribution": t.Distribution, "updated_at": t.UpdatedAt, "changelog": t.Changelog,
+			"released_at": t.ReleasedAt, "revised_at": t.RevisedAt,
 		}
 		if account != "" {
 			ownership := "not_owned"
@@ -681,6 +683,7 @@ background:radial-gradient(circle at 30% 30%,#818cf8,transparent 55%),radial-gra
 background:var(--accent-weak);border:1px solid var(--accent-line);color:var(--accent)}
 .badge::before{content:"";width:.9vh;height:.9vh;border-radius:50%;background:currentColor}
 .badge.own{background:var(--ok-weak);border-color:var(--ok-line);color:var(--ok)}
+.badge.upd{background:var(--paper-2);border-color:var(--line-2);color:var(--ink-2)}
 .detail{display:grid;grid-template-columns:40vh 1fr;gap:2.6vw;background:var(--raised);border:1px solid var(--line);border-radius:20px;padding:3vh 2vw;box-shadow:var(--shadow-sm)}
 .detail .art{height:40vh;border-radius:16px}
 .detail .art img{width:26vh;height:26vh;margin:7vh auto}
@@ -766,7 +769,12 @@ function avatar(){
 }
 function human(n){if(n>1073741824)return (n/1073741824).toFixed(2)+' GB';if(n>1048576)return (n/1048576).toFixed(1)+' MB';if(n>1024)return (n/1024).toFixed(0)+' KB';return n+' B';}
 var DAY=86400;
-function isNew(t){return t.updated_at&&(Date.now()/1000-t.updated_at)<30*DAY;}
+// Badges follow the software's own dates (released_at / revised_at), not when the catalog
+// entry was uploaded; an entry without them falls back to the catalog time.
+function within(s){return s&&(Date.now()/1000-s)<30*DAY;}
+function changed(t){return t.revised_at||t.updated_at||0;}
+function isNew(t){return within(t.released_at||t.updated_at);}
+function isUpdated(t){return !isNew(t)&&within(t.revised_at);}
 function load(){
  if(catalog){return Promise.resolve(catalog);}
  return api('/catalog?lang='+encodeURIComponent(lang)).then(function(r){
@@ -780,7 +788,7 @@ function select(v){
 // The blurred backdrop is the costliest thing this browser draws; only the detail page has it.
 function art(t,blur){return '<div class="art">'+(blur?'<div class="blur" style="background-image:url('+esc(t.icon)+')"></div>':'')+'<img src="'+esc(t.icon)+'" alt="" loading="lazy" decoding="async"></div>';}
 function card(t){
- var badge=t.ownership==='owned'?'<span class="badge own">OWNED</span>':(isNew(t)?'<span class="badge">NEW</span>':'');
+ var badge=t.ownership==='owned'?'<span class="badge own">OWNED</span>':isNew(t)?'<span class="badge">NEW</span>':isUpdated(t)?'<span class="badge upd">UPDATED</span>':'';
  return '<button class="card" data-tid="'+esc(t.title_id)+'"><div class="strip">'+esc(t.category||'Homebrew')+'</div>'+
   art(t)+'<div class="cap"><span class="n">'+esc(t.name)+'</span>'+badge+'</div></button>';
 }
@@ -808,7 +816,7 @@ function pager(el,ts){
 // The sort bar: a grid's order until another view starts (each view passes its default).
 var sortBy=null;
 var sorts={name:['Name',function(a,b){return (a.name||'').localeCompare(b.name||'');}],
- updated:['Recently updated',function(a,b){return (b.updated_at||0)-(a.updated_at||0);}],
+ updated:['Recently updated',function(a,b){return changed(b)-changed(a);}],
  size:['Largest',function(a,b){return (b.size_bytes||0)-(a.size_bytes||0);}]};
 function grid(ts,title,empty,def){
  var by=sortBy||def||'name'; ts=ts.slice().sort(sorts[by][1]);
@@ -878,7 +886,8 @@ function detail(tid){
    '<div class="kv"><b>Category</b><span>'+esc(cats[t.category]||'Misc')+'</span>'+
    '<b>Version</b><span>'+esc(t.version_label||t.version)+'</span>'+
    '<b>Size</b><span>'+human(t.size_bytes||0)+'</span>'+
-   (t.updated_at?'<b>Updated</b><span>'+esc(new Date(t.updated_at*1000).toLocaleDateString())+'</span>':'')+
+   (t.released_at?'<b>Released</b><span>'+esc(new Date(t.released_at*1000).toLocaleDateString())+'</span>':'')+
+   (changed(t)?'<b>Updated</b><span>'+esc(new Date(changed(t)*1000).toLocaleDateString())+'</span>':'')+
    '<b>Play modes</b><span>'+esc((t.compatibility||[]).join(', ')||'—')+'</span>'+
    (dist.permission?'<b>License</b><span>'+esc(dist.permission)+'</span>':'')+
    (dist.source?'<b>Source</b><span class="src">'+esc(dist.source)+'</span>':'')+'</div>'+act+'</div></div>'+
