@@ -137,6 +137,10 @@ type server struct {
 	shopUI *shopUI
 	// shopFwd forwards the eShop to nx-shop once it has moved (split.go); nil serves it here.
 	shopFwd *httputil.ReverseProxy
+	// penneFwd and penneRemote reach nx-penne once Penne has moved (split.go,
+	// penne_link.go); nil serves Penne here.
+	penneFwd    *httputil.ReverseProxy
+	penneRemote *penneRemote
 	// Penne record store: what this server has written to each account's
 	// records, and its digests (penne_records.go).
 	recordStore *penneRecordStore
@@ -363,7 +367,7 @@ func (s *server) bindNotificationChannel(deviceAuthenticationToken, baasUserID s
 		return
 	}
 	if dt, err := parseJWT(deviceAuthenticationToken, &s.key.PublicKey); err == nil {
-		s.notifStore().BindConsole(str(dt, "sub"), baasUserID)
+		s.penneBindConsole(str(dt, "sub"), baasUserID)
 	}
 }
 
@@ -992,7 +996,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		// Penne sees only the console's device token, whose subject is the
 		// certificate; this is where both halves are in hand, so the account
 		// behind the console is recorded for the notification channel.
-		s.notifStore().BindConsole(di, u.ID)
+		s.penneBindConsole(di, u.ID)
 		s.expireDeviceEverywhere(form.Get("id"), u.ID)
 		// A console re-logs in every hour while it plays; the login knows no
 		// title, so it must not overwrite the one the device already published
@@ -1400,7 +1404,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		now := time.Now().Unix()
 		// B workstream (NTF-01): keep the association this echo used to drop.
-		s.notifStore().RecordPushChannel(userID, devID, str(in, "service"), str(in, "deviceToken"), time.Unix(now, 0))
+		s.penneRecordPushChannel(userID, devID, str(in, "service"), str(in, "deviceToken"))
 		writeJSON(w, 200, map[string]any{
 			"createdAt": now, "deviceAccountId": devID, "deviceAttributes": map[string]any{}, "deviceToken": str(in, "deviceToken"),
 			"service": str(in, "service"), "updatedAt": now, "userAttributes": map[string]any{}, "userId": userID,
@@ -2706,15 +2710,20 @@ func main() {
 		go s.reconcilePresenceLoop()
 	}
 	// B workstream: the penne state file lives beside the BAAS store; the
-	// sweeper drives delivery retries, expiry and retention (NTF-05).
-	s.penneState = newPenneStore(getenv("NX_DATA", "/data") + "/penne.json")
+	// sweeper drives delivery retries, expiry and retention (NTF-05). Once Penne
+	// has moved (NX_PENNE_URL, split.go) the file is nx-penne's and is not opened.
+	if s.penneRemote == nil {
+		s.penneState = newPenneStore(getenv("NX_DATA", "/data") + "/penne.json")
+	}
 	s.penneHub = newPenneHub()
 	s.registerDefaultPennePolicies()
 	// Integration wiring: C's committed-invitation seam delivers through B
 	// (notify_wiring.go). Registered here so the REST surface keeps working
 	// unchanged when the notification side is absent.
 	s.wireInvitationNotifications()
-	go s.penneSweep()
+	if s.penneRemote == nil {
+		go s.penneSweep()
+	}
 	// Console error reports: kept raw, forwarded to the website, retried (errorreport.go).
 	go s.errorReports().run()
 	if u := os.Getenv("SAVES_URL"); u != "" {

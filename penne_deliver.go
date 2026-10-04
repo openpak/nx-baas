@@ -145,6 +145,13 @@ func (h *penneHub) allowed(d PenneDelivery, now time.Time) bool {
 // is the contract: Accepted means "persisted or already known"; the caller
 // never has to retry a submission that returned Accepted.
 func (s *server) SubmitNotification(d PenneDelivery) PenneSubmission {
+	return s.submitNotification(d, false)
+}
+
+// submitNotification is SubmitNotification; wait matters only once Penne has moved
+// (penne_link.go): the core checks the event and its recipient here either way, and then
+// hands it to nx-penne, waiting for the outcome only when the caller reads it.
+func (s *server) submitNotification(d PenneDelivery, wait bool) PenneSubmission {
 	now := time.Now()
 	if !eventKinds[d.Kind] {
 		return PenneSubmission{Outcome: penneRejectUser} // not a native event; refuse loudly via outcome
@@ -154,6 +161,11 @@ func (s *server) SubmitNotification(d PenneDelivery) PenneSubmission {
 	}
 	if d.ID == "" {
 		d.ID = "ev" + randHex(8)
+	}
+	if s.penneRemote != nil {
+		res := s.penneSubmitRemote(d, wait)
+		log.Printf("[nx-baas] notify: %s for %s -> %s (id=%s)", d.Kind, d.UserID, res.Outcome, d.ID)
+		return res
 	}
 	res := s.notifStore().Submit(d, now)
 	// Say it out loud. "Was this event ever queued?" was unanswerable from the

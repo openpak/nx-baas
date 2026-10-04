@@ -38,8 +38,6 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	"nx-baas/internal/penne"
 )
 
 // newsForwarder carries the console's News fetches to the news service.
@@ -202,31 +200,8 @@ func (s *server) newsPush(w http.ResponseWriter, r *http.Request) {
 
 // deliverToTopic writes one message to every live connection of every account that
 // subscribed the topic on that connection's device. It returns how many subscriptions
-// matched and how many connections the message was queued on.
+// matched and how many connections the message was queued on. The delivery itself is
+// penne_link.go's: here, or in nx-penne once Penne has moved.
 func (s *server) deliverToTopic(topic, name, body string) (subscribers, delivered int) {
-	subs := s.notifStore().TopicSubscribers(topic)
-	subscribers = len(subs)
-	if subscribers == 0 {
-		return 0, 0
-	}
-	now := uint64(time.Now().Unix())
-	frame := penne.BuildMessage(penne.Message{Name: name, Type: 1, Receivers: newsReceiverToken, Body: body}, now, now+penneSyncTTL)
-	h := s.notifHub()
-	h.mu.Lock()
-	var targets []*penneSession
-	for _, list := range h.sessions {
-		for _, sess := range list {
-			for _, sub := range subs {
-				if (sub.DeviceID != "" && sub.DeviceID == sess.device) || (sub.DeviceID == "" && sub.UserID == sess.user) {
-					targets = append(targets, sess)
-					break
-				}
-			}
-		}
-	}
-	h.mu.Unlock()
-	for _, sess := range targets {
-		sess.offer("", frame)
-	}
-	return subscribers, len(targets)
+	return s.penneTopicMessage(topic, name, newsReceiverToken, body)
 }

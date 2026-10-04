@@ -416,9 +416,9 @@ func (s *server) penneTestNotification(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, http.StatusBadRequest, "user_id and kind required")
 		return
 	}
-	res := s.SubmitNotification(PenneDelivery{
+	res := s.submitNotification(PenneDelivery{
 		ID: in.ID, UserID: in.UserID, Kind: in.Kind, Payload: in.Payload,
-	})
+	}, true)
 	log.Printf("[nx-baas] penne: test notification user=%s kind=%s -> %s", in.UserID, in.Kind, res.Outcome)
 	writeJSON(w, 200, map[string]any{"accepted": res.Accepted, "duplicate": res.Duplicate, "outcome": string(res.Outcome), "id": res.ID})
 }
@@ -456,7 +456,13 @@ func (s *server) gameAPI() http.Handler {
 	mux.HandleFunc("/internal/identity/accounts/", s.identityAccounts)
 	mux.HandleFunc("/internal/identity/presence", s.identityPresence)
 	mux.HandleFunc("/internal/identity/presence/renew", s.identityPresence)
-	mux.HandleFunc("/internal/penne/registrations/", s.penneRegistrations)
+	if s.penneFwd != nil {
+		// Penne's API is nx-penne's now; a caller still pointed here is forwarded.
+		mux.Handle("/internal/penne/", s.penneFwd)
+	} else {
+		mux.HandleFunc("/internal/penne/registrations/", s.penneRegistrations)
+		mux.HandleFunc("/internal/penne/", s.penneInternal)
+	}
 	if base := os.Getenv("ACCOUNT_API"); base != "" {
 		if u, err := url.Parse(strings.TrimRight(base, "/")); err == nil {
 			proxy := httputil.NewSingleHostReverseProxy(u)

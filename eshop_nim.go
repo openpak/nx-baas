@@ -184,13 +184,12 @@ func (s *server) pushmoAccounts(id string, r *http.Request) []string {
 // were handed in penne_id/register>, never /d/). The registration's BAAS users map to
 // the Nintendo Accounts the store keys tasks by.
 func (s *server) penneShopAccounts(penneID string) []string {
-	ps := s.notifStore()
-	a := ps.AssocIfLive(penneID)
-	if a == nil {
+	live, user, users := s.penneRegistration(penneID)
+	if !live {
 		return nil
 	}
 	var out []string
-	for _, uid := range append([]string{a.UserID}, ps.UsersOn(penneID)...) {
+	for _, uid := range append([]string{user}, users...) {
 		if u := s.store.User(uid); u != nil && u.NaID != "" && !slices.Contains(out, u.NaID) {
 			out = append(out, u.NaID)
 		}

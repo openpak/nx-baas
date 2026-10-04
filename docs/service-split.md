@@ -279,3 +279,53 @@ was changed.
 store_admin.go, atum.go, beach.go, eshop_*.go except the parts the core keeps) and its shop
 names from the fixed certificate. Until then, shop fixes land in nx-shop; nx-shop's README
 says how to port one that landed in nx-baas first.
+
+## 6. Penne cut-over runbook
+
+Penne is the one move with a short outage on purpose: `penne.json` is a single file with one
+writer, so nx-baas stops writing it before nx-penne starts from it. Consoles lose their
+frontline for the seconds in between, exactly as they do on every nx-baas restart today —
+and that is the last time a core release costs them their connection.
+
+**Preconditions.** The shop cut-over done (not required, but one move at a time). This
+branch released. `ghcr.io/openpak/nx-penne` published. Know the host path of nx-baas's data
+directory (`/app/data` in the container; `penne.json` is in it).
+
+1. **Install the quadlet, do not start it.** Copy `nx-penne/deploy/openpak-nx-penne.container`
+   to `~/.config/containers/systemd/`, fill in nx-baas's data directory (mounted read-only at
+   `/import`, read once) and the keys directory. `systemctl --user daemon-reload`;
+   `podman pull ghcr.io/openpak/nx-penne:latest`.
+2. **Route the frontline first.** Merge `nx-penne/deploy/traefik-nx-penne.yml` into
+   `dynamic.yml` (backup outside the aardvark directory). From here consoles' Penne
+   connections fail until step 4 — seconds.
+3. **Switch nx-baas.** Add `NX_PENNE_URL=http://openpak-nx-penne:20070` to
+   `~/openpak/deploy/.env`; `systemctl --user restart openpak-nx-baas`. It no longer opens
+   `penne.json` and sends every push to nx-penne (queued, so its logins never wait on it).
+4. **Start nx-penne.** `systemctl --user start openpak-nx-penne`. The journal must show
+   `imported /import/penne.json (… bytes) as /app/data/penne.json`.
+5. **DNS sanity** for `openpak-nx-penne` (from Traefik and from nx-baas) and again for
+   `openpak-nx-baas` after its restart.
+6. **Smoke.** `curl -sk --resolve val.hac.lp1.penne.srv.nintendo.net:21443:127.0.0.1 -X POST
+   https://val.hac.lp1.penne.srv.nintendo.net:21443/v1/frontlines` answers with
+   `frontline_fqdn` from nx-penne's journal. A console reconnects within its retry interval:
+   `penne frontline: open user=…` in nx-penne's journal. `curl -s -H "X-Internal-Key: $KEY"
+   -X POST -d '{"user_id":"<a console user>","kind":"friend_deleted","id":"probe-1"}'
+   http://openpak-nx-baas:20070/internal/notifications/test` (from a container on the
+   network) reports `persisted` from nx-penne.
+7. **Point nx-shop straight at nx-penne** (optional: nx-baas forwards `/internal/penne/*`):
+   `NX_PENNE_URL` in the `.env` already does it; `systemctl --user restart openpak-nx-shop`.
+8. **Hardware**: §4's Penne list, and the one that motivated the move — restart nx-baas
+   (`systemctl --user restart openpak-nx-baas`) and watch the console's connection in
+   nx-penne's journal stay open.
+
+**Rollback**: remove the `nx-penne` router; `systemctl --user stop openpak-nx-penne`; copy its
+state back over nx-baas's — `podman cp openpak-nx-penne:/app/data/penne.json
+~/openpak/penne-rollback.json` (works on a stopped container), then `podman unshare cp` it over
+`penne.json` in nx-baas's data directory and `podman unshare chown 65532:65532` it, as the
+original was; remove `NX_PENNE_URL` from the `.env`; `systemctl --user restart
+openpak-nx-baas`. Notifications submitted while nx-penne was down are lost; consoles
+reconnect to nx-baas.
+
+**Later**: drop nx-baas's Penne files except what the core keeps (the vermillion gateway,
+`penne_link.go`), its Penne names from the fixed certificate, and the `/import` mount from
+nx-penne's quadlet.

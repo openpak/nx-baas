@@ -225,12 +225,10 @@ func (s *server) closeAccountSessions(b *openpakBackend, accountID string) {
 	b.proj.mu.Lock()
 	pr := b.proj.ByAccount[accountID]
 	b.proj.mu.Unlock()
-	if pr == nil || s.penneHub == nil {
+	if pr == nil {
 		return
 	}
-	if n := s.penneHub.closeUser(pr.BaasUserID); n > 0 {
-		log.Printf("[bans] closed %d notification connection(s) of %s", n, accountID)
-	}
+	s.penneCloseUser(pr.BaasUserID)
 }
 
 // closeUser cancels a BAAS user's live frontline sessions and reports how many.

@@ -39,8 +39,6 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
-
-	"nx-baas/internal/penne"
 )
 
 // The error identities pctl carries as literals (study §5). A refusal that does
@@ -1696,35 +1694,20 @@ func (s *server) pctlPutSetting(w http.ResponseWriter, r *http.Request, d *PctlD
 // is the frontline connection whose Penne id the console gave as its
 // notificationToken, the way news.go reaches a console.
 func (s *server) pctlPush(d *PctlDevice) {
-	token := d.NotificationToken
-	if token == "" && d.DauthID != "" {
-		// Paired before v0.47.0, when the token was not kept: the Penne
-		// registration made under the same device certificate is the same
-		// console's.
-		token = s.notifStore().AssocIDForUser(d.DauthID)
-	}
-	if token == "" {
+	// The token is the console's Penne id. Paired before v0.47.0, when the token was not
+	// kept, the Penne registration made under the same device certificate is the same
+	// console's: penneDeviceMessage looks that up from DauthID.
+	if d.NotificationToken == "" && d.DauthID == "" {
 		log.Printf("[moon] device %s: no notification token; the console fetches on its own schedule", d.Hex())
 		return
 	}
 	body, _ := json.Marshal(map[string]any{"deviceId": d.Hex(), "eventId": pctlSettingChanged})
-	now := uint64(time.Now().Unix())
-	frame := penne.BuildMessage(penne.Message{Name: pctlSettingChanged, Type: 1, Receivers: "pctl", Body: string(body)}, now, now+penneSyncTTL)
-	h := s.notifHub()
-	h.mu.Lock()
-	var live []*penneSession
-	for _, list := range h.sessions {
-		for _, sess := range list {
-			if sess.penneID == token {
-				live = append(live, sess)
-			}
-		}
+	token, n := s.penneDeviceMessage(d.NotificationToken, d.DauthID, pctlSettingChanged, "pctl", string(body))
+	if token == "" {
+		log.Printf("[moon] device %s: no notification token; the console fetches on its own schedule", d.Hex())
+		return
 	}
-	h.mu.Unlock()
-	for _, sess := range live {
-		sess.offer("", frame)
-	}
-	log.Printf("[moon] device %s: pushed %s on %d connection(s) of registration %s", d.Hex(), pctlSettingChanged, len(live), token)
+	log.Printf("[moon] device %s: pushed %s on %d connection(s) of registration %s", d.Hex(), pctlSettingChanged, n, token)
 }
 
 // pctlSettingChanged is the first value of pctl's eventId enum (vaddr 0x13ab20).

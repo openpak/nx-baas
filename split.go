@@ -2,7 +2,8 @@ package main
 
 // Forwarding to the services split out of this one (docs/service-split.md).
 //
-// Each moved family has a base URL: NX_SHOP_URL for the eShop (nx-shop). Unset, this
+// Each moved family has a base URL: NX_SHOP_URL for the eShop (nx-shop), NX_PENNE_URL for
+// Penne (nx-penne; the core's own calls into Penne are penne_link.go's). Unset, this
 // process serves the family itself exactly as before, which is the state production stays in
 // until the cut-over. Set, it stops touching that family's state and forwards whatever of the
 // family still reaches it: a console host Traefik does not route to the new service yet (or
@@ -52,6 +53,18 @@ func (s *server) forwardersFromEnv() {
 		s.shopFwd = newForwarder("nx-shop", u)
 		log.Printf("[nx-baas] eShop moved: forwarding its hosts and /internal/store to %s", u)
 	}
+	if u := os.Getenv("NX_PENNE_URL"); u != "" {
+		s.penneFwd = newForwarder("nx-penne", u)
+		s.penneRemote = newPenneRemote(u)
+		log.Printf("[nx-baas] Penne moved: registrations, tickets, /internal/penne and every push go to %s", u)
+	}
+}
+
+// isPenneHost names Penne's own hosts: god (registrations), val (login tickets) and the
+// fro- frontlines. The vermillion gateway is not among them: it is the online-licence gate
+// and a title's bootstrap, stateless, and stays here (penne.go keeps answering it).
+func isPenneHost(host string) bool {
+	return strings.Contains(host, "penne.")
 }
 
 // isShopHost names the hostnames the eShop owns outright. dragons.* is not among them: it
@@ -72,6 +85,18 @@ func (s *server) forwardMoved(w http.ResponseWriter, r *http.Request) bool {
 	host := hostOf(r)
 	if s.shopFwd != nil && (isShopHost(host) || strings.HasPrefix(host, "dragons.") && shopRightsRoute(r.URL.Path)) {
 		s.shopFwd.ServeHTTP(w, r)
+		return true
+	}
+	if s.penneFwd != nil && isPenneHost(host) {
+		if isPenneFrontline(host) {
+			// A full-duplex stream this process cannot proxy (penne_conn.go: net/http
+			// drains the request body on the first flush). Traefik must send the
+			// frontline straight to nx-penne; reaching here means its router is missing.
+			log.Printf("[nx-baas] !! MISROUTED Penne frontline %s: route it to nx-penne in Traefik", host)
+			writeJSON(w, http.StatusMisdirectedRequest, map[string]any{"status": 421, "title": "misdirected request"})
+			return true
+		}
+		s.penneFwd.ServeHTTP(w, r)
 		return true
 	}
 	return false

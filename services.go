@@ -128,10 +128,7 @@ func (s *server) bindTokenProfile(r *http.Request, tok string) {
 	if s.store.User(uid) == nil {
 		return
 	}
-	store := s.notifStore()
-	if acct := store.TokenAccount(tok); acct != "" && store.BindAccount(acct, uid) {
-		log.Printf("[nx-baas] penne: console account %s is %s (olsc token upload)", acct, uid)
-	}
+	s.penneBindToken(tok, uid)
 }
 
 func (s *server) savesProxy(w http.ResponseWriter, r *http.Request) {
