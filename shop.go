@@ -898,9 +898,10 @@ function startDownload(t){
    $('done').addEventListener('click',closeShop);
    $('cancel').addEventListener('click',function(){api('/tasks/'+id+'/cancel',{method:'POST'}).then(function(){handOff(t);detail(t.title_id);});});
    $('done').focus();
-   // Like Nintendo's shop: leave on our own once the list is handed over, since NIM only
-   // fetches the download list when the shop ends. The buttons stay for a refused exit.
-   setTimeout(closeShop,1500);
+   // Like Nintendo's shop: leave at once when the list is handed over (the bridge call only
+   // sets a flag, and NIM fetches the download list when the shop ends). The buttons stay
+   // for a refused exit.
+   closeShop();
   });
  });
 }
