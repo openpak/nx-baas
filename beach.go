@@ -362,9 +362,8 @@ func (s *server) dragonsEdgeToken(deviceID string, titleIDs []string) string {
 // verifyDragonsEdgeToken checks a c2 request's X-Nintendo-DenebEdgeToken: our signature,
 // unexpired, and (when the caller knows the title) bound to that title.
 func (s *server) verifyDragonsEdgeToken(header, titleID string) (deviceID string, ok bool) {
-	if !strings.HasPrefix(header, "Bearer ") {
-		return "", false
-	}
+	// NIM sends the token bare in X-Nintendo-DenebEdgeToken (hardware 22.5.0); a
+	// "Bearer " prefix is accepted too.
 	c, err := parseJWT(strings.TrimPrefix(header, "Bearer "), &s.key.PublicKey)
 	if err != nil {
 		return "", false
@@ -375,7 +374,8 @@ func (s *server) verifyDragonsEdgeToken(header, titleID string) (deviceID string
 	device := str(c, "sub")
 	if titleID != "" {
 		found := false
-		for _, t := range c["title_ids"].([]any) {
+		ids, _ := c["title_ids"].([]any)
+		for _, t := range ids {
 			if fmt.Sprintf("%v", t) == titleID {
 				found = true
 				break

@@ -233,3 +233,13 @@ func TestAtumNamedRoutesCarryNimContentHeaders(t *testing.T) {
 		t.Errorf("cnmt by id = %d (%d bytes)", rec.Code, rec.Body.Len())
 	}
 }
+
+// NIM presents the dragons edge token bare, without "Bearer " (hardware 22.5.0: 2134-7403
+// on the program content while the prefix was required).
+func TestAtumC2AcceptsABareEdgeToken(t *testing.T) {
+	s, _ := contentServerFor(t)
+	mine := s.dragonsEdgeToken(testDevice, []string{testTitleID})
+	if rec := atumReq(s, "GET", "atum.hac.lp1.d4c.nintendo.net", "/c2/a/d/"+testTitleID, mine); rec.Code != 200 {
+		t.Fatalf("bare token = %d %s", rec.Code, rec.Body.String())
+	}
+}
