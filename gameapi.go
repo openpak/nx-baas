@@ -466,6 +466,7 @@ func (s *server) gameAPI() http.Handler {
 		mux.Handle("/internal/penne/", s.penneFwd)
 	} else {
 		mux.HandleFunc("/internal/penne/registrations/", s.penneRegistrations)
+		mux.HandleFunc("/internal/penne/console-registrations/", s.penneConsoleRegistrations)
 		mux.HandleFunc("/internal/penne/", s.penneInternal)
 	}
 	if base := os.Getenv("ACCOUNT_API"); base != "" {

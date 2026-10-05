@@ -37,6 +37,30 @@ func (s *server) penneRegistrations(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, out)
 }
 
+// penneConsoleRegistrations serves GET /internal/penne/console-registrations/{device certificate}: the registration of
+// that console, in the registrations shape. nx-shop's licence checks (dragons rights) carry
+// only the certificate, and every profile signed in on the console is on its registration.
+func (s *server) penneConsoleRegistrations(w http.ResponseWriter, r *http.Request) {
+	if !identityAuth(w, r) {
+		return
+	}
+	cert := strings.TrimPrefix(r.URL.Path, "/internal/penne/console-registrations/")
+	if cert == "" || strings.Contains(cert, "/") || r.Method != http.MethodGet {
+		apiErr(w, http.StatusNotFound, "no such route")
+		return
+	}
+	ps := s.notifStore()
+	id := ps.ConsoleAssoc(cert)
+	out := map[string]any{"penne_id": id, "live": false, "user_id": "", "users": []string{}}
+	if a := ps.AssocIfLive(id); id != "" && a != nil {
+		out["live"], out["user_id"] = true, a.UserID
+		if users := ps.UsersOn(id); users != nil {
+			out["users"] = users
+		}
+	}
+	writeJSON(w, 200, out)
+}
+
 // penneInternal serves the rest of /internal/penne while Penne is served here: the calls
 // the core makes into Penne (penne_link.go), as other services make them. nx-penne answers
 // the same routes the same way.
