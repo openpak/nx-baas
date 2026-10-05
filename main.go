@@ -2596,6 +2596,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// this it fell into the catch-all 404 and ACNH errored (2219-xxxx)
 		// before ever reaching NEX.
 		s.acbaa(w, r, body)
+	case strings.Contains(host, ".tabiji.srv.nintendo.net"):
+		// Firmware 23's play-history upload (tabiji.go).
+		s.tabiji(w, r, body)
 	case strings.HasSuffix(host, ".dg.srv.nintendo.net"):
 		// prepo's play reports (netdiag.go); eupld's error reports are routed above.
 		s.telemetry(w, r, body)
@@ -2766,6 +2769,8 @@ func main() {
 		"api.hac.lp1.ctest.srv.nintendo.net", "fw-api.lp1.nso.nintendo.net",
 		"receive-lp1.dg.srv.nintendo.net", "realtime-receive-lp1.dg.srv.nintendo.net",
 		"receive.hac.lp1.er.srv.nintendo.net",
+		// Firmware 23's play-history upload (tabiji.go), authenticated with the NSA id token.
+		"api.hac.lp1.tabiji.srv.nintendo.net",
 		// Friend suggestions (FRS). The friends module authenticates this name
 		// strictly, exactly like the dauth names above: on 2026-09-26 05:08 the
 		// on-demand cert happened to be accepted and the GET landed, and at
