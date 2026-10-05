@@ -5,6 +5,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -218,5 +219,69 @@ func TestQueuedPushesSurviveAnNxPenneRestart(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatalf("%s never arrived after nx-penne came back", want)
 		}
+	}
+}
+
+// A dead nx-penne costs the queue one shared outage, not a minute per job, and a
+// deployment fault (501, or nx-penne without an internal key) is never retried.
+func TestQueueSharesOneOutageAndGivesUpOnDeploymentFaults(t *testing.T) {
+	oldFor, oldProbe := penneRetryFor, pennePauseProbe
+	penneRetryFor, pennePauseProbe = 300*time.Millisecond, time.Hour
+	t.Cleanup(func() { penneRetryFor, pennePauseProbe = oldFor, oldProbe })
+
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer srv.Close()
+	p := newPenneRemote(srv.URL)
+	var ran atomic.Int32
+	for i := 0; i < 20; i++ {
+		p.later("job", func() error {
+			ran.Add(1)
+			return p.call("POST", "/internal/penne/consoles", map[string]any{}, nil)
+		})
+	}
+	// Past the budget the rest are dropped without running, so the queue drains at once.
+	for deadline := time.Now().Add(3 * time.Second); len(p.queue) > 0; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("twenty jobs against a dead nx-penne held the queue past one outage budget")
+		}
+	}
+	time.Sleep(50 * time.Millisecond)
+	if n := ran.Load(); n > 2 {
+		t.Fatalf("%d jobs ran against a dead nx-penne; after the first outage the rest are dropped", n)
+	}
+	if n := calls.Load(); n > 8 {
+		t.Fatalf("%d attempts: jobs after the budget were retried instead of dropped", n)
+	}
+
+	for _, c := range []struct {
+		status int
+		body   string
+	}{{http.StatusServiceUnavailable, `{"error":"internal_key_not_configured"}`}, {http.StatusNotImplemented, `{}`}} {
+		var n atomic.Int32
+		fault := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			n.Add(1)
+			w.WriteHeader(c.status)
+			w.Write([]byte(c.body))
+		}))
+		err := newPenneRemote(fault.URL).call("POST", "/internal/penne/consoles", map[string]any{}, nil)
+		fault.Close()
+		var again retryable
+		if err == nil || errors.As(err, &again) {
+			t.Fatalf("%d %s: err %v, want a final error", c.status, c.body, err)
+		}
+	}
+}
+
+// A push nx-penne did not take is reported as such, not as a console without a token.
+func TestFailedRemotePushIsNotAMissingToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(502) }))
+	defer srv.Close()
+	s := &server{penneRemote: newPenneRemote(srv.URL)}
+	if _, _, err := s.penneDeviceMessage("", "cert-1", "x", "pctl", "{}"); err == nil {
+		t.Fatal("an unreachable nx-penne was not an error")
 	}
 }

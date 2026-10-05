@@ -95,6 +95,13 @@ func isShopHost(host string) bool {
 // is read so uploads and downloads stream. False when this process still serves it.
 func (s *server) forwardMoved(w http.ResponseWriter, r *http.Request) bool {
 	host := hostOf(r)
+	if strings.HasPrefix(r.URL.Path, "/internal/") && s.movedFamily(host) {
+		// The services serve their admin routes on the same listener this forwards to;
+		// a console host must never reach them, whatever path it asks for.
+		log.Printf("[nx-baas] refused %s %s%s: /internal/ is not a console route", r.Method, host, r.URL.Path)
+		http.NotFound(w, r)
+		return true
+	}
 	if s.shopFwd != nil && (isShopHost(host) || strings.HasPrefix(host, "dragons.") && shopRightsRoute(r.URL.Path)) {
 		s.shopFwd.ServeHTTP(w, r)
 		return true
@@ -118,6 +125,12 @@ func (s *server) forwardMoved(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
+// movedFamily reports whether host belongs to a family this process forwards.
+func (s *server) movedFamily(host string) bool {
+	return s.shopFwd != nil && (isShopHost(host) || strings.HasPrefix(host, "dragons.")) ||
+		s.penneFwd != nil && isPenneHost(host) || s.pctlFwd != nil && isPctlHost(host)
+}
+
 // forwardRead forwards a request whose body this process already read.
 func forwardRead(fwd *httputil.ReverseProxy, w http.ResponseWriter, r *http.Request, body []byte) {
 	r2 := r.Clone(r.Context())
@@ -135,11 +148,24 @@ func (s *Store) importPctlRollback(path string) {
 	if err != nil {
 		return
 	}
+	// Only nx-pctl's own file is applied: a JSON object with a pctlDevices object in it.
+	// Anything else -- a truncated copy, baas.json by mistake, "{}" -- would otherwise
+	// decode to no records and wipe every pairing, so it is refused and left in place.
+	var top map[string]json.RawMessage
 	var in struct {
 		PctlDevices map[string]*PctlDevice `json:"pctlDevices"`
 	}
-	if err := json.Unmarshal(b, &in); err != nil {
+	if err := json.Unmarshal(b, &top); err != nil {
 		log.Printf("[nx-baas] %s is not nx-pctl's state (%v); not applied", path, err)
+		return
+	}
+	raw, ok := top["pctlDevices"]
+	if !ok || len(top) != 1 {
+		log.Printf("[nx-baas] %s is not nx-pctl's state (want exactly a pctlDevices object, got %d key(s)); not applied", path, len(top))
+		return
+	}
+	if err := json.Unmarshal(raw, &in.PctlDevices); err != nil || in.PctlDevices == nil {
+		log.Printf("[nx-baas] %s: pctlDevices is not an object of records (%v); not applied", path, err)
 		return
 	}
 	s.mu.Lock()

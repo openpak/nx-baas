@@ -73,8 +73,11 @@ func (p *penneRemote) call(method, path string, in, out any) error {
 	if resp.StatusCode/100 != 2 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		err := fmt.Errorf("%s %s: %d %s", method, path, resp.StatusCode, bytes.TrimSpace(msg))
-		if resp.StatusCode >= 500 {
-			return retryable{err} // nx-penne restarting behind a proxy, or failing
+		// nx-penne restarting behind a proxy, or failing, is worth waiting for. A 501 or
+		// nx-penne saying it has no internal key is a deployment fault no retry mends.
+		if resp.StatusCode >= 500 && resp.StatusCode != http.StatusNotImplemented &&
+			!bytes.Contains(msg, []byte("internal_key_not_configured")) {
+			return retryable{err}
 		}
 		return err
 	}
@@ -97,25 +100,47 @@ func (p *penneRemote) later(what string, run func() error) {
 // retryable marks a failure worth trying again: nx-penne unreachable or answering 5xx.
 type retryable struct{ error }
 
-// penneRetryFor is how long the worker keeps retrying one job while nx-penne is away. The
-// queue waits behind it, in order, so a restart of nx-penne (seconds) loses nothing; a
-// longer outage drops jobs one by one, each said so.
-var penneRetryFor = time.Minute
+// penneRetryFor is the outage the worker waits out, shared by every job: a restart of
+// nx-penne (seconds) loses nothing, the queue waiting behind the job being retried, in
+// order. Past it nx-penne is down, not restarting: from then on a job is tried only when a
+// probe is due (one every pennePauseProbe), and the rest are dropped at once, each said so,
+// so a dead nx-penne costs the queue milliseconds per job rather than a minute each.
+var (
+	penneRetryFor   = time.Minute
+	pennePauseProbe = 5 * time.Second
+)
 
 func (p *penneRemote) work() {
+	var downSince, lastTry time.Time
 	for j := range p.queue {
-		wait, deadline := 250*time.Millisecond, time.Now().Add(penneRetryFor)
+		wait := 250 * time.Millisecond
 		for {
-			err := j.run()
-			if err == nil {
+			if !downSince.IsZero() && time.Since(downSince) > penneRetryFor && time.Since(lastTry) < pennePauseProbe {
+				log.Printf("[nx-baas] penne: nx-penne down since %s; dropped %s", downSince.Format(time.TimeOnly), j.what)
 				break
 			}
+			lastTry = time.Now()
+			err := j.run()
 			var again retryable
-			if !errors.As(err, &again) || time.Now().Add(wait).After(deadline) {
+			if err == nil || !errors.As(err, &again) {
+				if !downSince.IsZero() {
+					log.Printf("[nx-baas] penne: nx-penne answering again (down since %s)", downSince.Format(time.TimeOnly))
+					downSince = time.Time{}
+				}
+				if err != nil {
+					log.Printf("[nx-baas] penne: %s to nx-penne failed: %v", j.what, err)
+				}
+				break
+			}
+			if downSince.IsZero() {
+				downSince = time.Now()
+			}
+			left := penneRetryFor - time.Since(downSince)
+			if left <= 0 {
 				log.Printf("[nx-baas] penne: %s to nx-penne failed: %v", j.what, err)
 				break
 			}
-			time.Sleep(wait)
+			time.Sleep(min(wait, left))
 			wait = min(2*wait, 5*time.Second)
 		}
 	}
@@ -213,20 +238,20 @@ func (s *server) penneCloseUser(userID string) {
 
 // penneDeviceMessage writes one message to the live connections of one registration: the
 // penne id when the caller has it, else the registration made under a device certificate.
-func (s *server) penneDeviceMessage(penneID, dauthUser, name, receivers, body string) (string, int) {
+// The error is nx-penne's being unreachable, not a missing registration (that is "", 0, nil).
+func (s *server) penneDeviceMessage(penneID, dauthUser, name, receivers, body string) (string, int, error) {
 	if p := s.penneRemote; p != nil {
 		var out struct {
 			PenneID     string `json:"penne_id"`
 			Connections int    `json:"connections"`
 		}
-		if err := p.call("POST", "/internal/penne/device-messages", map[string]any{
+		err := p.call("POST", "/internal/penne/device-messages", map[string]any{
 			"penne_id": penneID, "dauth_user": dauthUser, "name": name, "receivers": receivers, "body": body,
-		}, &out); err != nil {
-			log.Printf("[nx-baas] penne: device message %s to nx-penne failed: %v", name, err)
-		}
-		return out.PenneID, out.Connections
+		}, &out)
+		return out.PenneID, out.Connections, err
 	}
-	return s.localDeviceMessage(penneID, dauthUser, name, receivers, body)
+	id, n := s.localDeviceMessage(penneID, dauthUser, name, receivers, body)
+	return id, n, nil
 }
 
 // penneRegistration is a registration's liveness, its user and every user on its console.

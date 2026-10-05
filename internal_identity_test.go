@@ -156,6 +156,20 @@ func TestMovedShopIsForwarded(t *testing.T) {
 		}
 	}
 
+	// A console host never reaches the service's admin routes, whatever the path.
+	req0 := httptest.NewRequest("GET", "https://hac.lp1.savanna.srv.nintendo.net/internal/store/titles", nil)
+	req0.Host = "hac.lp1.savanna.srv.nintendo.net"
+	rec0 := httptest.NewRecorder()
+	s.ServeHTTP(rec0, req0)
+	if rec0.Code != 404 {
+		t.Fatalf("/internal/ on a console host = %d, want 404 here", rec0.Code)
+	}
+	select {
+	case g := <-got:
+		t.Fatalf("/internal/ on a console host reached nx-shop as %+v", g)
+	default:
+	}
+
 	// dragons. keeps its licence answers here; only the store rights routes moved.
 	req := httptest.NewRequest("POST", "https://dragons.hac.lp1.dragons.nintendo.net/v1/elicenses/exercise", nil)
 	req.Host = "dragons.hac.lp1.dragons.nintendo.net"

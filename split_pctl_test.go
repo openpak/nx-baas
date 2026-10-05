@@ -4,6 +4,7 @@ package main
 // website's /internal/pctl routes are forwarded, and a rollback file hands the records back.
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -57,10 +58,12 @@ func TestPctlRollbackHandsTheRecordsBack(t *testing.T) {
 	st := &Store{path: filepath.Join(dir, "baas.json"), Users: map[string]*User{}, Devices: map[string]*DeviceAccount{}, NaToPID: map[string]uint64{}}
 	stale := st.PctlNewPairing("acct-parent")
 
-	// nx-pctl's file: the same key, a record paired after the cut-over.
-	other := &Store{path: filepath.Join(dir, "pctl-rollback.json")}
+	// nx-pctl's file: the pctlDevices key alone, a record paired after the cut-over.
+	other := &Store{path: filepath.Join(dir, "scratch.json")}
 	d := other.PctlNewPairing("acct-parent")
 	other.PctlActivate(d.Hex(), "cert-aaaaaaaaaaaaaaaa")
+	b, _ := json.Marshal(map[string]any{"pctlDevices": other.PctlDevices})
+	os.WriteFile(filepath.Join(dir, "pctl-rollback.json"), b, 0o600)
 
 	st.importPctlRollback(filepath.Join(dir, "pctl-rollback.json"))
 	if got := st.PctlByMoonID(d.Hex()); got == nil || got.DauthID != "cert-aaaaaaaaaaaaaaaa" {
@@ -72,13 +75,30 @@ func TestPctlRollbackHandsTheRecordsBack(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "pctl-rollback.json")); !os.IsNotExist(err) {
 		t.Fatal("the rollback file was left to be applied again")
 	}
-	b, _ := os.ReadFile(filepath.Join(dir, "baas.json"))
+	b, _ = os.ReadFile(filepath.Join(dir, "baas.json"))
 	if !strings.Contains(string(b), d.Hex()) {
 		t.Fatal("the rollback was not saved to baas.json")
 	}
+	// A wrong file never wipes the records: refused, and left where it is.
+	for _, bad := range []string{`{}`, `{"pctlDevices":null}`, `{"pctlDevices":{},"users":{}}`, `[]`, `{"pctlDev`} {
+		os.WriteFile(filepath.Join(dir, "pctl-rollback.json"), []byte(bad), 0o600)
+		st.importPctlRollback(filepath.Join(dir, "pctl-rollback.json"))
+		if st.PctlByMoonID(d.Hex()) == nil {
+			t.Fatalf("rollback file %s wiped the records", bad)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "pctl-rollback.json")); err != nil {
+			t.Fatalf("refused rollback file %s was moved away", bad)
+		}
+	}
+	// nx-pctl's file for a household that unlinked everything is applied: no records.
+	os.WriteFile(filepath.Join(dir, "pctl-rollback.json"), []byte(`{"pctlDevices":{}}`), 0o600)
+	st.importPctlRollback(filepath.Join(dir, "pctl-rollback.json"))
+	if st.PctlByMoonID(d.Hex()) != nil {
+		t.Fatal("an empty pctlDevices object was not applied")
+	}
 	// No file: nothing happens.
 	st.importPctlRollback(filepath.Join(dir, "pctl-rollback.json"))
-	if st.PctlByMoonID(d.Hex()) == nil {
+	if len(st.PctlDevices) != 0 {
 		t.Fatal("a missing rollback file changed the records")
 	}
 }

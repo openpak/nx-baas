@@ -185,6 +185,13 @@ it once Penne has moved, so the Penne router must be in place at the cut-over.
 A service asked for a hostname it does not own answers **421** and logs `!! MISROUTED`, never
 another family's handler.
 
+Forwarded console traffic never reaches an admin route. nx-baas refuses any `/internal/` path
+on a moved family's hostname before forwarding, and each service's internal listener sends a
+request naming a Nintendo host straight to its console handler — never through the ServeMux
+holding `/internal/*` (nx-common `nxhttp.SplitListener`), which also spares forwarded paths
+the ServeMux's 301 path cleaning. Only a request naming the service itself
+(`openpak-nx-shop:20070` and the like) reaches `/internal/*`.
+
 ## 4. Order, risk, and what to re-verify on hardware
 
 **Shop first.** Lowest blast radius (a shop outage stops the store and nothing else), most
@@ -303,7 +310,12 @@ directory (`/app/data` in the container; `penne.json` is in it).
    `~/openpak/deploy/.env`; `systemctl --user restart openpak-nx-baas`. It no longer opens
    `penne.json` and sends every push to nx-penne (queued, so its logins never wait on it).
 4. **Start nx-penne.** `systemctl --user start openpak-nx-penne`. The journal must show
-   `imported /import/penne.json (… bytes) as /app/data/penne.json`.
+   `imported /import/penne.json (… bytes) as /app/data/penne.json`. nx-penne imports whenever
+   nx-baas's file is not the one it last imported (it keeps the fingerprint in
+   `penne.json.imported`), so a **second cut-over after a rollback** takes nx-baas's current
+   state by itself and sets its own stale copy aside as `penne.json.before-import-<time>`.
+   Belt and braces for that case: before step 4, `podman volume rm openpak-nx-penne-data`
+   (nothing in it is newer than what the rollback handed back).
 5. **DNS sanity** for `openpak-nx-penne` (from Traefik and from nx-baas) and again for
    `openpak-nx-baas` after its restart.
 6. **Smoke.** `curl -sk --resolve val.hac.lp1.penne.srv.nintendo.net:21443:127.0.0.1 -X POST
@@ -328,7 +340,11 @@ openpak-nx-baas`. Notifications submitted while nx-penne was down are lost; cons
 reconnect to nx-baas.
 
 Day to day after the move: restarting nx-penne costs consoles their connection (they
-reconnect) and nothing else; the core holds its pushes for up to a minute meanwhile.
+reconnect) and nothing else; the core holds its pushes for up to a minute meanwhile, in
+order. That minute is one budget shared by the whole queue: past it nx-penne counts as down,
+queued pushes are dropped at once (each logged) with one probe every five seconds, and the
+first push it takes again ends the outage. A 501, or nx-penne saying it has no internal key,
+is a deployment fault and never retried.
 Restarting nx-baas costs consoles nothing on Penne.
 
 **Later**: drop nx-baas's Penne files except what the core keeps (the vermillion gateway,
@@ -353,7 +369,12 @@ first is not required: without `NX_PENNE_URL` nx-pctl pushes through nx-baas
    `systemctl --user restart openpak-nx-baas`. It forwards the pctl hosts and
    `/internal/pctl` from now on and no longer changes the records in `baas.json`.
 3. **Start nx-pctl.** `systemctl --user start openpak-nx-pctl`; the journal must show
-   `imported <n> parental-controls record(s) from /import/baas.json`.
+   `imported <n> parental-controls record(s) from /import/baas.json`. As with Penne, nx-pctl
+   imports whenever the records in `baas.json` are not the ones it last imported (fingerprint
+   of the `pctlDevices` value in `pctl.json.imported`; the rest of `baas.json` changes on every
+   login and is ignored), so a **second cut-over after a rollback** takes nx-baas's records and
+   sets its stale copy aside as `pctl.json.before-import-<time>`. Belt and braces: before this
+   step on a second cut-over, `podman volume rm openpak-nx-pctl-data`.
 4. **DNS sanity** for `openpak-nx-pctl` and, after its restart, `openpak-nx-baas`.
 5. **Smoke.** `curl -sk --resolve api-lp1.pctl.srv.nintendo.net:21443:127.0.0.1
    'https://api-lp1.pctl.srv.nintendo.net:21443/moon/v1/devices?filter.links.pairingCode.code.$eq=000000'`
@@ -369,7 +390,9 @@ records back for nx-baas to take: `podman cp openpak-nx-pctl:/app/data/pctl.json
 `pctl-rollback.json` (`podman unshare chown 65532:65532`); remove `NX_PCTL_URL` from the `.env`;
 `systemctl --user restart openpak-nx-baas`. On start it replaces the records in `baas.json` with
 the file's and renames it `pctl-rollback.json.applied-<time>`, so the next restart does not
-apply it again.
+apply it again. It applies only a file holding exactly a `pctlDevices` object (nx-pctl writes
+`{}` there when it has no records); anything else is refused with a log line and left in
+place, and the records are untouched — check for `taken back from nx-pctl` in the journal.
 
 **Later**: drop `moon.go` and the `pctlDevices` key from nx-baas (a store written with the key
 still loads in an nx-baas that no longer has it), the pctl name from its fixed certificate,
