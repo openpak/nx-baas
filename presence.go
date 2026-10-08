@@ -96,8 +96,8 @@ func aggregatePresence(u *User, now int64, lease time.Duration) Presence {
 		}
 		if e.ExpiresAt != 0 && e.ExpiresAt <= now {
 			// The claim lapsed: they went away when it ran out, at the latest.
-			if e.ExpiresAt > out.LogoutAt {
-				out.LogoutAt = e.ExpiresAt
+			if left := departedAt(e, e.ExpiresAt); left > out.LogoutAt {
+				out.LogoutAt = left
 			}
 			return
 		}
@@ -107,6 +107,11 @@ func aggregatePresence(u *User, now int64, lease time.Duration) Presence {
 				out.LogoutAt = left
 			}
 			return
+		}
+		// A live INACTIVE claim carries the moment it went INACTIVE: friends
+		// read it as offline, and "last online" is that moment.
+		if e.LogoutAt > out.LogoutAt {
+			out.LogoutAt = e.LogoutAt
 		}
 		if best == nil || devicePresenceWins(e, best) {
 			best = e
@@ -125,6 +130,11 @@ func aggregatePresence(u *User, now int64, lease time.Duration) Presence {
 			AppField: u.Presence.AppField, PresenceGroupID: u.Presence.PresenceGroupID,
 			ACDIndex: u.Presence.ACDIndex, UpdatedAt: u.Presence.UpdatedAt, ExpiresAt: 0})
 	}
+	// The old field remembers departures nothing else does: an account whose
+	// device entries were all dropped (revoked, pre-lease stores).
+	if u.Presence.LogoutAt > out.LogoutAt {
+		out.LogoutAt = u.Presence.LogoutAt
+	}
 	if best == nil {
 		if out.UpdatedAt == 0 && u.CreatedAt > 0 {
 			out.UpdatedAt = u.CreatedAt // never seen: the account's own clock, not the render's
@@ -134,6 +144,17 @@ func aggregatePresence(u *User, now int64, lease time.Duration) Presence {
 	return Presence{State: best.State, AppID: best.AppID, AppField: best.AppField,
 		PresenceGroupID: best.PresenceGroupID, ACDIndex: best.ACDIndex,
 		UpdatedAt: best.UpdatedAt, LogoutAt: out.LogoutAt, Client: best.Client, OS: best.OS}
+}
+
+// departedAt answers when a device's claim, ending at `at`, stopped reading as
+// online to friends. INACTIVE already reads as offline, so a claim that went
+// INACTIVE keeps the moment it did: staying at HOME, or switching off from
+// there, does not move "last online" forward.
+func departedAt(e *DevicePresence, at int64) int64 {
+	if e != nil && strings.ToUpper(e.State) == "INACTIVE" && e.LogoutAt > 0 && e.LogoutAt <= at {
+		return e.LogoutAt
+	}
+	return at
 }
 
 // devicePresenceWins picks between two live claims: higher rank first, then
@@ -184,21 +205,33 @@ func (s *server) noteClientPresence(u *User, deviceID, client, clientOS, state, 
 		if u.DevicePresence == nil {
 			u.DevicePresence = map[string]*DevicePresence{}
 		}
+		prev := u.DevicePresence[deviceID]
+		left := departedAt(prev, now)
 		if stateRank(state) == 0 {
 			u.DevicePresence[deviceID] = &DevicePresence{DeviceID: deviceID, State: "OFFLINE",
-				UpdatedAt: now, LogoutAt: now}
+				UpdatedAt: now, LogoutAt: left}
 		} else {
-			u.DevicePresence[deviceID] = &DevicePresence{DeviceID: deviceID, State: strings.ToUpper(state),
+			e := &DevicePresence{DeviceID: deviceID, State: strings.ToUpper(state),
 				AppID: appID, AppField: appField, PresenceGroupID: groupID, ACDIndex: acdIndex,
 				UpdatedAt: now, ExpiresAt: now + lease, Client: client, OS: clientOS}
+			if e.State == "INACTIVE" {
+				// Back at HOME (the title closed, or the console just signed
+				// in): friends see this as offline from now, so "last online"
+				// is now, as Nintendo's server stamps it. Without it they read
+				// the previous departure -- "last online 14 h ago" seconds
+				// after the person put the game down (2026-10-08, Harbor).
+				e.LogoutAt = left
+			}
+			u.DevicePresence[deviceID] = e
 		}
 		// Shadow the old field for anything that still reads it (rollback
 		// builds, scripts). The aggregate never trusts it over device entries.
 		u.Presence.State = strings.ToUpper(state)
 		u.Presence.UpdatedAt = now
-		if stateRank(state) == 0 {
-			u.Presence.LogoutAt = now
-		} else {
+		if stateRank(state) == 0 || strings.ToUpper(state) == "INACTIVE" {
+			u.Presence.LogoutAt = left
+		}
+		if stateRank(state) > 0 {
 			u.Presence.AppID, u.Presence.AppField, u.Presence.PresenceGroupID = appID, appField, groupID
 			u.Presence.ACDIndex = acdIndex
 		}
@@ -242,9 +275,12 @@ func (s *server) expireDevicePresence(u *User, deviceID string) {
 		if e == nil || e.ExpiresAt <= now {
 			return // not live; nothing to end
 		}
-		delete(u.DevicePresence, deviceID)
+		// Kept as departure evidence, not deleted: a deleted entry took the
+		// "last online" moment with it.
+		left := departedAt(e, now)
+		u.DevicePresence[deviceID] = &DevicePresence{DeviceID: deviceID, State: "OFFLINE", UpdatedAt: now, LogoutAt: left}
 		if !hasLiveDeviceClaim(u, now, presenceLease()) {
-			u.Presence.State, u.Presence.LogoutAt, u.Presence.UpdatedAt = "OFFLINE", now, now
+			u.Presence.State, u.Presence.LogoutAt, u.Presence.UpdatedAt = "OFFLINE", left, now
 		}
 	})
 }
@@ -399,7 +435,11 @@ func (s *server) expireLocalPresence(u *User, now int64, lease time.Duration) {
 	s.store.Update(u, func(u *User) {
 		for id, e := range u.DevicePresence {
 			if e.ExpiresAt != 0 && e.ExpiresAt <= now {
-				delete(u.DevicePresence, id)
+				// Ended, not forgotten: the entry becomes the departure, so
+				// "last online" is when the lease ran out (or when it went
+				// INACTIVE), not whatever older departure is left.
+				u.DevicePresence[id] = &DevicePresence{DeviceID: id, State: "OFFLINE",
+					UpdatedAt: e.ExpiresAt, LogoutAt: departedAt(e, e.ExpiresAt)}
 			}
 		}
 		if stateRank(u.Presence.State) > 0 && now-u.Presence.UpdatedAt >= int64(lease.Seconds()) {

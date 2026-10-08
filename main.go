@@ -828,9 +828,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			if err != nil {
 				img = defaultAvatar
 			}
-			w.Header().Set("Content-Type", "image/jpeg")
-			w.Header().Set("Cache-Control", "public, max-age=3600")
-			w.Write(img)
+			writeAvatarJPEG(w, r, img, "public, max-age=3600")
 			return
 		}
 		if strings.HasPrefix(p, "/avatar/") {
@@ -858,9 +856,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			// Fetched here and nowhere else: a login must not wait on the
 			// website, but a console asking for a thumbnail can.
 			if img, ferr := fetchAvatar(id.AvatarURL); ferr == nil {
-				w.Header().Set("Content-Type", "image/jpeg")
-				w.Header().Set("Cache-Control", "public, max-age=300")
-				w.Write(img)
+				writeAvatarJPEG(w, r, img, "public, max-age=300")
 				return
 			} else {
 				log.Printf("[nx-baas] avatar fetch %s: %v", id.AvatarURL, ferr)
@@ -876,9 +872,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				if derr != nil {
 					img = defaultAvatar
 				}
-				w.Header().Set("Content-Type", "image/jpeg")
-				w.Header().Set("Cache-Control", "public, max-age=300")
-				w.Write(img)
+				writeAvatarJPEG(w, r, img, "public, max-age=300")
 				return
 			}
 			w.WriteHeader(404)
@@ -889,9 +883,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			w.WriteHeader(404)
 			return
 		}
-		w.Header().Set("Content-Type", "image/jpeg")
-		w.Header().Set("Cache-Control", "public, max-age=3600")
-		w.Write(img)
+		writeAvatarJPEG(w, r, img, "public, max-age=3600")
 		return
 
 	case p == "/1.0.0/certificates" || p == "/1.0.0/internal_certificates":

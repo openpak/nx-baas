@@ -610,3 +610,67 @@ func TestCorePresenceCacheIsPerAccount(t *testing.T) {
 		t.Fatal("a live friend read as offline because another was looked up first")
 	}
 }
+
+// "Last online" is the moment someone stopped reading as online: going back
+// to HOME (INACTIVE) or offline stamps logoutAt then, instead of leaving the
+// previous departure -- friends saw "last online 14 h ago" seconds after a
+// friend closed a game (2026-10-08, Harbor).
+func TestLogoutAtIsStampedWhenPresenceGoesInactiveOrOffline(t *testing.T) {
+	s, _, a, b := presenceFixture(t)
+	lease := presenceLease()
+	old := time.Now().Unix() - 14*3600
+	s.store.Update(s.store.User(b.ID), func(u *User) {
+		u.DevicePresence = map[string]*DevicePresence{
+			"dev-1": {DeviceID: "dev-1", State: "OFFLINE", UpdatedAt: old, LogoutAt: old},
+		}
+		u.Presence = Presence{State: "OFFLINE", UpdatedAt: old, LogoutAt: old}
+	})
+	logoutAt := func() int64 {
+		t.Helper()
+		p := friendPresenceOf(t, s, a, b)
+		n, _ := p["logoutAt"].(float64)
+		return int64(n)
+	}
+
+	s.noteDevicePresence(s.store.User(b.ID), "dev-1", "PLAYING", "0100a5a020d5e000", "{}", "0100a5a020d5e000", -1)
+	s.noteDevicePresence(s.store.User(b.ID), "dev-1", "INACTIVE", "", "", "", -1)
+	now := time.Now().Unix()
+	if got := logoutAt(); got < now-2 {
+		t.Fatalf("back at HOME: logoutAt %d, want about %d (not the old %d)", got, now, old)
+	}
+
+	// Staying at HOME, then switching off from there, keeps that moment: the
+	// friend never saw them online in between.
+	stamp := now - 600
+	s.store.Update(s.store.User(b.ID), func(u *User) { u.DevicePresence["dev-1"].LogoutAt = stamp })
+	s.noteDevicePresence(s.store.User(b.ID), "dev-1", "INACTIVE", "", "", "", -1)
+	if got := logoutAt(); got != stamp {
+		t.Errorf("a repeated INACTIVE moved logoutAt: %d, want %d", got, stamp)
+	}
+	s.noteDevicePresence(s.store.User(b.ID), "dev-1", "OFFLINE", "", "", "", -1)
+	if got := logoutAt(); got != stamp {
+		t.Errorf("OFFLINE from HOME moved logoutAt: %d, want %d", got, stamp)
+	}
+
+	// Straight from a game to offline stamps the moment of leaving.
+	s.noteDevicePresence(s.store.User(b.ID), "dev-1", "PLAYING", "0100a5a020d5e000", "{}", "0100a5a020d5e000", -1)
+	s.noteDevicePresence(s.store.User(b.ID), "dev-1", "OFFLINE", "", "", "", -1)
+	if got := logoutAt(); got < time.Now().Unix()-2 {
+		t.Errorf("game -> OFFLINE: logoutAt %d, want now", got)
+	}
+
+	// A lapsed lease is swept into departure evidence, not deleted: the
+	// lease deadline stays the answer after the reconciler has run.
+	deadline := time.Now().Unix() + 3600 // later than every stamp above
+	s.store.Update(s.store.User(b.ID), func(u *User) {
+		u.DevicePresence["dev-2"] = &DevicePresence{DeviceID: "dev-2", State: "PLAYING", AppID: "0100",
+			UpdatedAt: deadline - 60, ExpiresAt: deadline}
+	})
+	s.expireLocalPresence(s.store.User(b.ID), deadline+1, lease)
+	if e := s.store.User(b.ID).DevicePresence["dev-2"]; e == nil || e.State != "OFFLINE" || e.LogoutAt != deadline {
+		t.Fatalf("lapsed claim after the sweep: %+v", e)
+	}
+	if agg := aggregatePresence(s.store.User(b.ID), deadline+1, lease); agg.State != "OFFLINE" || agg.LogoutAt != deadline {
+		t.Errorf("after the sweep: %+v, want OFFLINE at %d", agg, deadline)
+	}
+}
