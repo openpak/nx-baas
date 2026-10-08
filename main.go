@@ -555,6 +555,14 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 	if id != nil {
 		etag = id.BsDid // VPS parity: user.etag == the token bs:did for a linked user
 		nickname = id.Nickname
+		if u.NxAccount != "" && u.Nickname != "" {
+			// Once the console has PATCHed its profile (/nickname and
+			// /extras/self/nxAccount always travel together) its nickname is
+			// the one served back: the PATCH reply must repeat what was sent
+			// or the sysmodule fails it with 2124-3121 (23.0.1 0xe8a5c), and
+			// every later sync compares this field with the local profile.
+			nickname = u.Nickname
+		}
 		links["nintendoAccount"] = map[string]any{"id": id.NaID, "createdAt": u.CreatedAt, "updatedAt": u.CreatedAt}
 		if !minimal {
 			regenAt, regen := codeRegen(u.CodeGeneratedAt, u.CreatedAt)
@@ -930,18 +938,20 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				s.shareAvatar(u.ID, img.RawContent)
 			}
 		}
-		// NOT an empty object. `{}` to a console request is the push_channels
-		// failure verbatim -- that one answered `{}` and the console said the
-		// account could not be linked, every time, until it was given the real
-		// object. This is the last thing we answer during "add account" before
-		// the console gives up with 2124-3121, and it was answering `{}`.
+		// The reply is an image, not a user. The account sysmodule reads
+		// exactly two things from it, $.content.url (under 256 bytes) and
+		// $.content.format, which must be "jpg"; without both it ends the
+		// profile sync with 2124-3121 before its PATCH (account 22.5.0
+		// .text 0xeac38, 23.0.1 0xed978). Both `{}` and the user object we
+		// used to answer carry neither, which is why every sync failed here.
 		//
-		// The user object is what every other mutation here returns, and it
-		// carries what the console needs after an upload: the new thumbnail
-		// URLs and the time they changed.
+		// The console keeps the url and later compares its last path segment
+		// with thumbnailUrl's, so it is the same address the user object
+		// serves from now on.
 		if uid := str(s.bearer(r), "sub"); uid != "" {
 			if u := s.store.User(uid); u != nil {
-				writeJSON(w, 200, s.userObj(u, s.identity(u), ""))
+				url := s.userObj(u, s.identity(u), "")["thumbnailUrl"]
+				writeJSON(w, 200, map[string]any{"content": map[string]any{"url": url, "format": "jpg"}})
 				return
 			}
 		}

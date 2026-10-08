@@ -150,45 +150,69 @@ func compareShape(want map[string]any, got map[string]any, path string) (missing
 	return missing, extra
 }
 
-// image_upload used to answer `{}`. So did push_channels once, and the console
-// said the account could not be linked every single time until it was given a
-// real object; `{}` to a console request is that failure verbatim. It is the
-// last thing we answer during "add account" before 2124-3121 appears.
-func TestImageUploadAnswersTheUserObjectNotAnEmptyOne(t *testing.T) {
+// The account sysmodule's profile upload, as 22.5.0 and 23.0.1 run it: POST
+// image_upload, keep $.content.url, PATCH /nickname and /extras/self/nxAccount,
+// then require the PATCH reply to repeat both. image_upload answered `{}` and
+// then the user object; the sysmodule reads only $.content.url and
+// $.content.format ("jpg") from it, so every sync ended there with 2124-3121
+// (account 23.0.1 .text 0xed978) and started over on the next cycle.
+func TestProfileUploadCompletesTheWayTheSysmoduleChecksIt(t *testing.T) {
 	s := dauthServer(t)
 	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
 	u, _ := s.store.NewUser()
 	s.store.Update(u, func(u *User) { u.PID = 1; u.Nickname = "tester" })
-	s.acct = fakeBackend{id: &Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
+	s.acct = fakeBackend{id: &Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "website name",
 		FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did"}}
+	bearer := "Bearer " + s.accessToken(u.ID, 2, "did", "device", "serial")
+	call := func(method, path, body string) map[string]any {
+		t.Helper()
+		r := httptest.NewRequest(method, "https://"+baasHost+path, nil)
+		r.Host = baasHost
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Authorization", bearer)
+		w := httptest.NewRecorder()
+		s.baas(w, r, []byte(body))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s %s = %d: %s", method, path, w.Code, w.Body.String())
+		}
+		var got map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatalf("%s %s: not JSON: %v", method, path, err)
+		}
+		return got
+	}
 
-	r := httptest.NewRequest("POST", "https://"+baasHost+"/1.0.0/image_upload", nil)
-	r.Host = baasHost
-	r.Header.Set("Content-Type", "application/json")
-	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
-	body := []byte(`{"rawContent":"/9j/4AAQSkZJRg=="}`)
-	w := httptest.NewRecorder()
-	s.baas(w, r, body)
+	got := call("POST", "/1.0.0/image_upload", `{"rawContent":"/9j/4AAQSkZJRg==","ownerId":"`+u.ID+`","allowTransform":false}`)
+	content, _ := got["content"].(map[string]any)
+	url, _ := content["url"].(string)
+	if url == "" || len(url) >= 0x100 {
+		t.Fatalf("$.content.url = %q: the sysmodule needs a url under 256 bytes or the sync fails with 2124-3121", url)
+	}
+	if content["format"] != "jpg" {
+		t.Fatalf(`$.content.format = %v, want "jpg": anything else is 2124-3121`, content["format"])
+	}
+	// The kept url is matched against later thumbnailUrls by its last path
+	// segment; a different one makes the console upload the picture again.
+	last := func(s string) string { return s[strings.LastIndex(s, "/")+1:] }
+	if user := call("GET", "/1.0.0/users/"+u.ID, ""); last(user["thumbnailUrl"].(string)) != last(url) {
+		t.Fatalf("thumbnailUrl %v does not end like the uploaded %s", user["thumbnailUrl"], url)
+	}
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("image_upload = %d: %s", w.Code, w.Body.String())
+	// The PATCH that follows the upload: its reply must carry back exactly the
+	// nickname and nxAccount it sent (23.0.1 0xe8a5c), even when the console's
+	// nickname is not the website's.
+	const blob = "01606150AAAA"
+	user := call("PATCH", "/1.0.0/users/"+u.ID, `[{"op":"replace","path":"/nickname","value":"Leia"},`+
+		`{"op":"replace","path":"/extras/self/nxAccount","value":"`+blob+`"}]`)
+	if user["nickname"] != "Leia" {
+		t.Errorf("PATCH reply nickname = %v, want the %q the console sent", user["nickname"], "Leia")
 	}
-	var got map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
-		t.Fatalf("not JSON: %v", err)
+	if nx := user["extras"].(map[string]any)["self"].(map[string]any)["nxAccount"]; nx != blob {
+		t.Errorf("PATCH reply nxAccount = %v, want the blob the console sent", nx)
 	}
-	if len(got) == 0 {
-		t.Fatal("image_upload answered `{}` — the push_channels failure, verbatim")
-	}
-	user, ok := got["user"].(map[string]any)
-	if !ok {
-		user = got
-	}
-	if user["thumbnailUrl"] == nil || user["id"] == nil {
-		t.Fatalf("the reply says nothing about where the picture went: %s", w.Body.String())
-	}
-	if !strings.Contains(user["thumbnailUrl"].(string), u.ID) {
-		t.Fatalf("thumbnail still points at the default after an upload: %v", user["thumbnailUrl"])
+	// And the next sync's GET agrees with the console, so it has nothing to do.
+	if again := call("GET", "/1.0.0/users/"+u.ID, ""); again["nickname"] != "Leia" {
+		t.Errorf("GET after the PATCH says nickname %v; the console would upload again", again["nickname"])
 	}
 }
 
