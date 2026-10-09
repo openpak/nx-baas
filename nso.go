@@ -195,53 +195,69 @@ var lhubPage = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">` +
 	`<script>` + shopBridgeJS + footerJS + lhubJS + `</script></body></html>`
 
 const lhubCSS = `
-/* The website's hero language (website/web/src/input.css, 2026-09 redesign) on an all-blue
-   page: indigo depth with a glow and a dot grid, the gradient word, eyebrow labels, glass
-   cards on a hairline border, pill buttons. Units are vh: the console leaves ~650 of 720. */
+/* The website's design tokens (website/web/src/input.css, 2026-10 "console HOME menu" redesign) on
+   the lhub page: cool grey shell, white tiles, slate ink, indigo for primary, a cyan selection
+   cursor on hover, focus and the selected page dot. Flat colours, no gradients or glow; light and
+   dark follow the reader's system setting. Units are vh: the console leaves ~650 of 720. */
+:root{color-scheme:light dark;--paper:#e9ecf0;--paper-2:#f2f4f7;--raised:#ffffff;--sunk:#dde1e7;--ink:#20262f;--ink-2:#48505c;--muted:#6b7380;--faint:#9aa1ab;
+--line:#d9dde3;--line-2:#c3c9d1;--cursor:#0094be;--cursor-2:#39c9ea;
+--accent:#4f46e5;--accent-2:#6366f1;--accent-weak:#eceeff;--accent-line:#c5cafb;--on-accent:#fff;
+--ok:#138a45;--ok-weak:#e3f5ea;--ok-line:#b2e0c3;--bad:#c42b2b;--bad-weak:#fde9e9;--bad-line:#f2bfbf;
+--warn:#a35f00;--warn-weak:#fdf2dc;--warn-line:#efd39c;
+--shadow-sm:0 1px 0 rgba(32,38,47,.06);--shadow:0 1px 0 rgba(32,38,47,.06),0 6px 16px -10px rgba(32,38,47,.25)}
+@media (prefers-color-scheme:dark){:root{--paper:#24272d;--paper-2:#2b2f36;--raised:#31353d;--sunk:#1d2025;--ink:#eef1f5;--ink-2:#c4c9d1;--muted:#949ba6;--faint:#6c737e;
+--line:#3b4048;--line-2:#4a505a;--cursor:#3ad7f2;--cursor-2:#a2efff;
+--accent:#9198ff;--accent-2:#a5abff;--accent-weak:#2e3156;--accent-line:#4a4f8c;--on-accent:#15172e;
+--ok:#4fd486;--ok-weak:#1f3a2b;--ok-line:#2f5c42;--bad:#ff7676;--bad-weak:#432528;--bad-line:#6e3439;
+--warn:#f6bd4f;--warn-weak:#3f3320;--warn-line:#6a5328;
+--shadow-sm:0 1px 0 rgba(0,0,0,.25);--shadow:0 1px 0 rgba(0,0,0,.25),0 8px 18px -10px rgba(0,0,0,.6)}}
 *{box-sizing:border-box}
-html,body{margin:0;height:100%;overflow:hidden;color:#eceef3;-webkit-font-smoothing:antialiased;
-background:radial-gradient(circle at 18% 22%,rgb(99 102 241/.55),transparent 45%),radial-gradient(circle at 85% 90%,rgb(236 72 153/.28),transparent 45%),
-radial-gradient(rgb(255 255 255/.07) 1px,transparent 1px) 0 0/2.6vh 2.6vh,linear-gradient(160deg,#1e1b6b 0%,#1a2a8f 50%,#101a5c 100%);
+html,body{margin:0;height:100%;overflow:hidden;background:var(--paper);color:var(--ink);-webkit-font-smoothing:antialiased;
 font:2.9vh/1.5 "Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 body{display:flex;flex-direction:column}
 button{font:inherit;color:inherit;cursor:pointer}
 .wrap{flex:1;min-height:0;display:flex;align-items:center;padding:0 9vw}
 .left{width:30vw;display:flex;flex-direction:column}
-.tag{margin:0 0 1vh;font-size:2vh;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#c7ccfb}
+.tag{margin:0 0 1vh;font-size:2.2vh;font-weight:700;color:var(--muted)}
 .mark{display:flex;align-items:center;gap:1.4vw}
-.mark img{width:8vh;height:8vh;padding:1vh;border-radius:12px;background:#fff;box-shadow:0 8px 24px -8px rgb(0 0 0/.5)}
-.mark span{font-size:9vh;font-weight:800;letter-spacing:-.035em;line-height:1;
-background:linear-gradient(100deg,#a5b4fc,#c084fc 55%,#f472b6);-webkit-background-clip:text;background-clip:text;color:transparent}
-.sub{margin:1vh 0 3vh;font-weight:650;font-size:2.6vh;color:#b4b8c3}
-.guide{align-self:flex-start;min-height:6.4vh;padding:0 2.4vw;border-radius:999px;font-weight:600;font-size:2.7vh;color:#fff;
-border:1px solid #4338ca;background:linear-gradient(180deg,#6366f1,#4338ca);box-shadow:0 1px 0 rgb(255 255 255/.2) inset,0 6px 16px -6px rgb(79 70 229/.8)}
+.mark img{width:8vh;height:8vh;padding:1vh;border-radius:12px;background:var(--raised);box-shadow:var(--shadow)}
+.mark span{font-size:9vh;font-weight:800;letter-spacing:-.035em;line-height:1;color:var(--accent)}
+.sub{margin:1vh 0 3vh;font-weight:650;font-size:2.6vh;color:var(--ink-2)}
+.guide{align-self:flex-start;min-height:6.4vh;padding:0 2.4vw;border-radius:999px;font-weight:600;font-size:2.7vh;color:var(--on-accent);
+border:1px solid var(--accent);background:var(--accent)}
 .who{display:inline-flex;align-self:flex-start;align-items:center;gap:.6vw;margin:2.4vh 0 0;padding:.4vh 1vw;border-radius:999px;font-size:2vh;font-weight:650;
-background:rgb(74 222 128/.12);border:1px solid rgb(74 222 128/.35);color:#86efac}
+background:var(--ok-weak);border:1px solid var(--ok-line);color:var(--ok)}
 .who::before{content:"";width:.9vh;height:.9vh;border-radius:50%;background:currentColor}
 .right{flex:1;display:flex;flex-direction:column;justify-content:center;padding-left:2vw}
 .right.full{padding:0 1vw}
-.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:2vh 1.2vw}
-.it{background:rgb(255 255 255/.06);border:1px solid rgb(255 255 255/.12);border-radius:20px;padding:2vh .6vw 1.8vh;text-align:center}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:2.4vh 1.6vw}
+.it{background:var(--raised);border:1px solid var(--line);border-radius:20px;padding:2vh .6vw 1.8vh;text-align:center;box-shadow:var(--shadow-sm)}
 .it .ico{display:block;width:11vh;height:11vh;margin:0 auto 1vh}
 .it .t{font-size:2.5vh;font-weight:650;letter-spacing:-.01em}
 h1{font-size:5vh;font-weight:750;letter-spacing:-.03em;line-height:1.1;margin:0 0 1.2vh;display:flex;align-items:center}
 h1 .ico{width:6.4vh;height:6.4vh;margin-right:1.2vw}
-.lead{margin:0 0 2.6vh;font-size:2.7vh;color:#b4b8c3}
-.rows{display:grid;grid-template-columns:1fr 1fr;gap:1.8vh 1.2vw}
+.lead{margin:0 0 2.6vh;font-size:2.7vh;color:var(--ink-2)}
+.rows{display:grid;grid-template-columns:1fr 1fr;gap:2.2vh 1.6vw}
 .rows.one{grid-template-columns:1fr}
-.row{background:rgb(255 255 255/.06);border:1px solid rgb(255 255 255/.12);border-radius:16px;padding:1.8vh 1.6vw;text-align:left}
+.row{background:var(--raised);border:1px solid var(--line);border-radius:16px;padding:1.8vh 1.6vw;text-align:left;box-shadow:var(--shadow-sm)}
 .row b{display:block;font-size:2.8vh;font-weight:650;letter-spacing:-.01em;margin-bottom:.3vh}
-.row span{font-size:2.3vh;color:#b4b8c3}
-.url{font-weight:650;color:#c7ccfb}
-.dots{flex:none;display:flex;justify-content:center;align-items:center;gap:1.6vw;font-size:2.2vh;color:#c7ccfb;margin:0 0 1.8vh}
-.dots b{display:inline-flex;align-items:center;justify-content:center;width:3.6vh;height:3vh;border:1px solid rgb(255 255 255/.5);border-radius:.8vh;font-size:1.7vh;color:#fff}
-#dots i{display:inline-block;width:1.1vh;height:1.1vh;margin:0 .6vw;border-radius:50%;background:rgb(255 255 255/.3)}
-#dots i.on{width:3vh;border-radius:999px;background:#fff}
+.row span{font-size:2.3vh;color:var(--ink-2)}
+.url{font-weight:650;color:var(--accent)}
+.dots{flex:none;display:flex;justify-content:center;align-items:center;gap:1.6vw;font-size:2.2vh;color:var(--muted);margin:0 0 1.8vh}
+.dots b{display:inline-flex;align-items:center;justify-content:center;width:3.6vh;height:3vh;border:1px solid var(--line-2);border-radius:.8vh;font-size:1.7vh;color:var(--ink);background:var(--raised)}
+#dots i{display:inline-block;width:1.1vh;height:1.1vh;margin:0 .6vw;border-radius:50%;background:var(--line-2)}
+#dots i.on{width:3vh;border-radius:999px;background:var(--cursor)}
 .cta{flex:none;align-self:center;width:62vw;min-height:7.6vh;margin:0 0 3vh;border-radius:999px;font-size:2.9vh;font-weight:600;
-background:#fff;color:#1e1b6b;border:1px solid rgb(255 255 255/.6);box-shadow:0 24px 48px -16px rgb(0 0 0/.5)}
-.side{position:absolute;top:42%;width:7vh;height:7vh;border-radius:50%;border:1px solid rgb(255 255 255/.15);background:rgb(255 255 255/.06);font-size:4vh;line-height:1}
+background:var(--accent);color:var(--on-accent);border:1px solid var(--accent)}
+.side{position:absolute;top:42%;width:7vh;height:7vh;border-radius:50%;border:1px solid var(--line-2);background:var(--raised);font-size:4vh;line-height:1}
 .side.l{left:2vw}.side.r{right:2vw}
-.it:focus,.row:focus,.guide:focus,.cta:focus{outline:none;border-color:#a5b4fc;box-shadow:0 0 0 .6vh rgb(129 140 248/.45)}
+/* The selection cursor: a gap in the page's own colour, then the cyan ring. The D-pad moves focus, so
+   :focus is what the player sees as the cursor; hover selects for a pointer. It breathes between two
+   cyans where motion is welcome, and is a static ring where the browser cannot say. */
+.it:hover,.it:focus,.row:hover,.row:focus,.guide:hover,.guide:focus,.cta:hover,.cta:focus{outline:none;box-shadow:0 0 0 3px var(--paper),0 0 0 7px var(--cursor)}
+@keyframes breathe{50%{box-shadow:0 0 0 3px var(--paper),0 0 0 7px var(--cursor-2)}}
+@media (prefers-reduced-motion:no-preference){.it:hover,.it:focus,.row:hover,.row:focus,.guide:hover,.guide:focus,.cta:hover,.cta:focus{animation:breathe 1.6s ease-in-out infinite}}
+@media (prefers-color-scheme:dark){.it,.row{border-color:transparent}}
 `
 
 const lhubJS = `

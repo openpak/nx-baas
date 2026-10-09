@@ -479,18 +479,24 @@ func (s *server) finishLink(p *pendingLink) string {
 const logoDataURI = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIiBmaWxsPSJub25lIj4gPGRlZnM+IDxsaW5lYXJHcmFkaWVudCBpZD0iYmciIHgxPSIwIiB5MT0iMCIgeDI9IjUxMiIgeTI9IjUxMiIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPiA8c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjNjM2NmYxIi8+IDxzdG9wIG9mZnNldD0iMTAwJSIgc3RvcC1jb2xvcj0iIzQzMzhjYSIvPiA8L2xpbmVhckdyYWRpZW50PiA8L2RlZnM+IDxjaXJjbGUgY3g9IjI1NiIgY3k9IjI1NiIgcj0iMjU2IiBmaWxsPSJ1cmwoI2JnKSIvPiA8Y2lyY2xlIGN4PSIyNTYiIGN5PSIyNTYiIHI9IjE4MCIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyMCIgZmlsbD0ibm9uZSIgb3BhY2l0eT0iMC45Ii8+IDxwYXRoIGQ9Ik0xNjAgMjU2YzAtNTMgNDMtOTYgOTYtOTZzOTYgNDMgOTYgOTYtNDMgOTYtOTYgOTYiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iMjAiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgZmlsbD0ibm9uZSIgb3BhY2l0eT0iMC45Ii8+IDxjaXJjbGUgY3g9IjI1NiIgY3k9IjI1NiIgcj0iMjgiIGZpbGw9IndoaXRlIiBvcGFjaXR5PSIwLjk1Ii8+IDwvc3ZnPg=="
 
 const pageCSS = `
-/* The site's tokens, so the page a console sends you to looks like the place
-   it sends you to. Light and dark follow the reader's system setting: this
-   opens on a phone in daylight as often as on a television at night.
-   Inline on purpose — a console browser may have no route to the website. */
-:root{color-scheme:light dark;
---paper:#ffffff;--paper-2:#f7f7f8;--raised:#ffffff;--ink:#16161a;--ink-2:#3d3f47;--muted:#6b6e79;
---line:#e4e4e8;--line-2:#c9cad1;--accent:#4f46e5;--accent-weak:#eef0ff;--accent-line:#c7ccfb;
---ok:#1a7f4b;--ok-weak:#e8f5ee;--ok-line:#bfe0cd;--bad:#b3261e;--bad-weak:#fbeceb;--bad-line:#eec4c1;--r:12px}
-@media (prefers-color-scheme:dark){:root{
---paper:#101114;--paper-2:#191a1f;--raised:#1c1e24;--ink:#e9eaee;--ink-2:#b7bac2;--muted:#8a8e99;
---line:#26282e;--line-2:#3b3e47;--accent:#818cf8;--accent-weak:#1c2040;--accent-line:#343a6b;
---ok:#4ec98a;--ok-weak:#12251b;--ok-line:#2c4d3a;--bad:#ff8079;--bad-weak:#2a1615;--bad-line:#57302c}}
+/* The site's tokens (website/web/src/input.css, 2026-10 "console HOME menu" redesign), so the
+   page a console sends you to looks like the place it sends you to: a cool grey shell, white
+   tiles, slate ink, indigo for links and primary actions, and a cyan selection cursor that
+   appears only on hover, focus and the selected thing. Flat colours, no gradients. Light and
+   dark follow the reader's system setting: this opens on a phone in daylight as often as on a
+   television at night. Inline on purpose — a console browser may have no route to the website. */
+:root{color-scheme:light dark;--paper:#e9ecf0;--paper-2:#f2f4f7;--raised:#ffffff;--sunk:#dde1e7;--ink:#20262f;--ink-2:#48505c;--muted:#6b7380;--faint:#9aa1ab;
+--line:#d9dde3;--line-2:#c3c9d1;--cursor:#0094be;--cursor-2:#39c9ea;
+--accent:#4f46e5;--accent-2:#6366f1;--accent-weak:#eceeff;--accent-line:#c5cafb;--on-accent:#fff;
+--ok:#138a45;--ok-weak:#e3f5ea;--ok-line:#b2e0c3;--bad:#c42b2b;--bad-weak:#fde9e9;--bad-line:#f2bfbf;
+--warn:#a35f00;--warn-weak:#fdf2dc;--warn-line:#efd39c;
+--shadow-sm:0 1px 0 rgba(32,38,47,.06);--shadow:0 1px 0 rgba(32,38,47,.06),0 6px 16px -10px rgba(32,38,47,.25);--r:14px}
+@media (prefers-color-scheme:dark){:root{--paper:#24272d;--paper-2:#2b2f36;--raised:#31353d;--sunk:#1d2025;--ink:#eef1f5;--ink-2:#c4c9d1;--muted:#949ba6;--faint:#6c737e;
+--line:#3b4048;--line-2:#4a505a;--cursor:#3ad7f2;--cursor-2:#a2efff;
+--accent:#9198ff;--accent-2:#a5abff;--accent-weak:#2e3156;--accent-line:#4a4f8c;--on-accent:#15172e;
+--ok:#4fd486;--ok-weak:#1f3a2b;--ok-line:#2f5c42;--bad:#ff7676;--bad-weak:#432528;--bad-line:#6e3439;
+--warn:#f6bd4f;--warn-weak:#3f3320;--warn-line:#6a5328;
+--shadow-sm:0 1px 0 rgba(0,0,0,.25);--shadow:0 1px 0 rgba(0,0,0,.25),0 8px 18px -10px rgba(0,0,0,.6)}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--paper);color:var(--ink);
 font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
@@ -501,7 +507,7 @@ p{color:var(--muted);margin:0 0 20px}
 strong{color:var(--ink)}
 .brand{display:flex;align-items:center;gap:10px;font-weight:700;margin-bottom:24px;color:var(--ink)}
 .brand img{width:28px;height:28px}
-.card{background:var(--raised);border:1px solid var(--line);border-radius:var(--r);padding:20px;margin-bottom:16px}
+.card{--ring-gap:var(--raised);background:var(--raised);border:1px solid var(--line);border-radius:var(--r);padding:20px;margin-bottom:16px;box-shadow:var(--shadow-sm)}
 /* The code is the whole point of the screen it appears on: as large as it can
    be without wrapping on a narrow phone. */
 .code{font:600 clamp(1.8rem,9vw,2.4rem)/1 ui-monospace,SFMono-Regular,Menlo,monospace;
@@ -514,15 +520,23 @@ label{display:block;font-size:0.92rem;color:var(--ink-2);margin:14px 0 6px}
 /* 44px tall and never under 16px: a smaller field makes iOS zoom on focus and
    leaves the page scrolled sideways. */
 input{width:100%;min-height:44px;padding:0.65rem 0.8rem;font:inherit;font-size:max(1rem,16px);
-color:var(--ink);background:var(--paper);border:1px solid var(--line-2);border-radius:8px}
-input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-weak)}
+color:var(--ink);background:var(--paper-2);border:1px solid var(--line-2);border-radius:12px}
 button{margin-top:18px;min-height:44px;padding:0.7rem 1.1rem;font:inherit;font-weight:600;
-color:#fff;background:var(--accent);border:1px solid var(--accent);border-radius:8px;
+color:var(--on-accent);background:var(--accent);border:1px solid var(--accent);border-radius:999px;
 cursor:pointer;width:100%}
 button.ghost{background:transparent;border-color:var(--line-2);color:var(--ink);margin-top:10px}
+/* The selection cursor: a gap in the page's own colour, then the cyan ring. A D-pad moves focus,
+   so :focus is what the player sees as the cursor; hover selects for a pointer. Inside a card the
+   gap is the card's colour (--ring-gap). It breathes between two cyans where motion is welcome. */
+a:focus,button:hover,button:focus,summary:focus,input:focus{outline:none;box-shadow:0 0 0 3px var(--ring-gap,var(--paper)),0 0 0 7px var(--cursor)}
+a:focus,summary:focus{border-radius:8px}
+input:focus{border-color:var(--cursor);background:var(--raised)}
+@keyframes breathe{50%{box-shadow:0 0 0 3px var(--ring-gap,var(--paper)),0 0 0 7px var(--cursor-2)}}
+@media (prefers-reduced-motion:no-preference){a:focus,button:hover,button:focus,summary:focus{animation:breathe 1.6s ease-in-out infinite}}
+@media (prefers-color-scheme:dark){.card{border-color:transparent}}
 /* One row, tinted by state, with a pill on the right — the same shape the
    status page uses, so the two read as one product. */
-.row{display:flex;align-items:center;gap:0.75rem;padding:0.9rem 1rem;border-radius:var(--r);
+.row{display:flex;align-items:center;gap:0.75rem;padding:0.9rem 1rem;border-radius:12px;
 border:1px solid var(--line);background:var(--raised);margin-bottom:0.6rem}
 .row .name{font-weight:600;overflow-wrap:anywhere}
 .row .pill{margin-left:auto;flex:none;white-space:nowrap;display:inline-flex;align-items:center;
@@ -563,8 +577,7 @@ body.console{font-size:20px;padding:40px 56px;align-items:flex-start}
 .console #confirm[hidden]{display:none}
 .console label{font-size:1rem}
 .console input{min-height:52px;font-size:1.05rem}
-/* No pointer, so the focused control has to announce itself. */
-.console :focus-visible{outline:3px solid var(--accent);outline-offset:4px;border-radius:10px}
+/* No pointer: the cursor ring above announces the focused control. */
 @media (max-width:900px){
   .console .split{flex-wrap:wrap;gap:24px}
   body.console{padding:24px 20px;font-size:18px}

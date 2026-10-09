@@ -456,10 +456,13 @@ func shopPage(title, js string) string {
 const shopCSS = `
 .brand .close{margin-left:auto;margin-top:0}
 .banner{background:var(--bad-weak);border:1px solid var(--bad-line);color:var(--bad);
-border-radius:var(--r);padding:14px 18px;margin:0 0 16px;display:none}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:18px}
-.tile{display:flex;gap:14px;align-items:center;text-align:left;background:var(--raised);
-border:1px solid var(--line);border-radius:var(--r);padding:16px;cursor:pointer;min-height:96px;width:100%}
+border-radius:12px;padding:14px 18px;margin:0 0 16px;display:none}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:22px}
+.tile{display:flex;gap:14px;align-items:center;text-align:left;color:var(--ink);background:var(--raised);
+border:1px solid var(--line);border-radius:var(--r);padding:16px;cursor:pointer;min-height:96px;width:100%;box-shadow:var(--shadow-sm)}
+.tile:hover,.tile:focus{outline:none;box-shadow:0 0 0 3px var(--paper),0 0 0 7px var(--cursor)}
+@media (prefers-reduced-motion:no-preference){.tile:hover,.tile:focus{animation:breathe 1.6s ease-in-out infinite}}
+@media (prefers-color-scheme:dark){.tile{border-color:transparent}}
 .tile img{width:72px;height:72px;border-radius:10px;background:var(--paper-2)}
 .tile .t-name{font-weight:650;font-size:1.05rem}
 .tile .t-sub{color:var(--muted);font-size:.9rem}
@@ -639,15 +642,22 @@ func storePage() string {
 }
 
 const storeCSS = `
-/* The website's design tokens (website/web/src/input.css, 2026-09 redesign), sized for the
+/* The website's design tokens (website/web/src/input.css, 2026-10 "console HOME menu" redesign):
+   cool grey shell, white tiles, slate ink, indigo for primary, and a cyan selection cursor that
+   marks hover, focus and the selected thing only. Flat colours, no gradients. Sized for the
    1280x~650 the console leaves the page: units are vh so the layout follows that height. */
-:root{color-scheme:light dark;--paper:#f6f6f8;--raised:#fff;--paper-2:#f1f1f4;--ink:#0e0f14;--ink-2:#41444f;--muted:#6e717d;
---line:#e5e5ea;--line-2:#d3d4db;--accent:#4f46e5;--accent-2:#6366f1;--accent-weak:#eef0ff;--accent-line:#c7ccfb;
---ok:#15803d;--ok-weak:#e7f6ec;--ok-line:#b9e3c6;--bad:#b91c1c;--bad-weak:#fdecec;--bad-line:#f3c2c2;
---shadow-sm:0 1px 2px rgb(15 16 20/.05);--shadow:0 1px 2px rgb(15 16 20/.04),0 8px 24px -8px rgb(15 16 20/.10)}
-@media (prefers-color-scheme:dark){:root{--paper:#0a0b0f;--raised:#121319;--paper-2:#181a21;--ink:#eceef3;--ink-2:#b4b8c3;--muted:#858a97;
---line:#22242d;--line-2:#2f323d;--accent:#818cf8;--accent-weak:#1a1d3a;--accent-line:#333a73;--ok:#4ade80;--ok-weak:#0f2418;--ok-line:#1f4a2f;
---bad:#f87171;--bad-weak:#2a1213;--bad-line:#572526;--shadow-sm:0 1px 2px rgb(0 0 0/.3);--shadow:0 1px 2px rgb(0 0 0/.3),0 8px 24px -8px rgb(0 0 0/.5)}}
+:root{color-scheme:light dark;--paper:#e9ecf0;--paper-2:#f2f4f7;--raised:#ffffff;--sunk:#dde1e7;--ink:#20262f;--ink-2:#48505c;--muted:#6b7380;--faint:#9aa1ab;
+--line:#d9dde3;--line-2:#c3c9d1;--cursor:#0094be;--cursor-2:#39c9ea;
+--accent:#4f46e5;--accent-2:#6366f1;--accent-weak:#eceeff;--accent-line:#c5cafb;--on-accent:#fff;
+--ok:#138a45;--ok-weak:#e3f5ea;--ok-line:#b2e0c3;--bad:#c42b2b;--bad-weak:#fde9e9;--bad-line:#f2bfbf;
+--warn:#a35f00;--warn-weak:#fdf2dc;--warn-line:#efd39c;
+--shadow-sm:0 1px 0 rgba(32,38,47,.06);--shadow:0 1px 0 rgba(32,38,47,.06),0 6px 16px -10px rgba(32,38,47,.25)}
+@media (prefers-color-scheme:dark){:root{--paper:#24272d;--paper-2:#2b2f36;--raised:#31353d;--sunk:#1d2025;--ink:#eef1f5;--ink-2:#c4c9d1;--muted:#949ba6;--faint:#6c737e;
+--line:#3b4048;--line-2:#4a505a;--cursor:#3ad7f2;--cursor-2:#a2efff;
+--accent:#9198ff;--accent-2:#a5abff;--accent-weak:#2e3156;--accent-line:#4a4f8c;--on-accent:#15172e;
+--ok:#4fd486;--ok-weak:#1f3a2b;--ok-line:#2f5c42;--bad:#ff7676;--bad-weak:#432528;--bad-line:#6e3439;
+--warn:#f6bd4f;--warn-weak:#3f3320;--warn-line:#6a5328;
+--shadow-sm:0 1px 0 rgba(0,0,0,.25);--shadow:0 1px 0 rgba(0,0,0,.25),0 8px 18px -10px rgba(0,0,0,.6)}}
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--paper);color:var(--ink);overflow:hidden;
 font:2.9vh/1.55 "Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
@@ -660,11 +670,11 @@ border:1px solid transparent;border-radius:999px;text-align:left;font-weight:600
 .nav.sub{font-size:2.6vh;padding:1vh 1.3vw;font-weight:500}
 .nav .ic{width:2.2vw;text-align:center;display:inline-flex;justify-content:center}
 .nav .ic svg{width:3.2vh;height:3.2vh}
-.nav.on{background:var(--raised);border-color:var(--line);box-shadow:var(--shadow-sm);color:var(--ink)}
+.nav.on{background:var(--raised);border-color:var(--line);box-shadow:inset 0 -.5vh 0 var(--cursor),var(--shadow-sm);color:var(--ink)}
 .gap{height:1.2vh;border-bottom:1px solid var(--line);margin:0 1vw 1.2vh}
 #main{position:fixed;left:26vw;right:0;top:0;bottom:0;overflow-y:auto;padding:0 3vw 4vh}
 .top{display:flex;align-items:center;justify-content:space-between;height:11vh}
-.note{color:var(--muted);font-size:2.2vh;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+.note{color:var(--muted);font-size:2.2vh;font-weight:700}
 .who{width:8vh;height:8vh;border-radius:50%;border:2px solid var(--raised);box-shadow:0 0 0 1px var(--line-2),var(--shadow);object-fit:cover;background:var(--raised)}
 .banner{display:none;background:var(--bad-weak);border:1px solid var(--bad-line);color:var(--bad);border-radius:16px;padding:1.6vh 1.6vw;margin-bottom:2vh;font-size:2.4vh}
 h1{font-size:5vh;font-weight:750;letter-spacing:-.03em;line-height:1.1;margin:0 0 2.4vh}
@@ -672,11 +682,11 @@ h1{font-size:5vh;font-weight:750;letter-spacing:-.03em;line-height:1.1;margin:0 
 .card{position:relative;display:block;width:100%;padding:0;background:var(--raised);border:1px solid var(--line);border-radius:20px;
 overflow:hidden;text-align:left;box-shadow:var(--shadow-sm)}
 .strip{position:absolute;z-index:1;top:1.6vh;left:1.2vw;display:inline-flex;align-items:center;gap:.5vw;padding:.3vh .9vw;border-radius:999px;
-font-size:1.9vh;font-weight:650;background:rgb(255 255 255/.85);color:var(--accent);border:1px solid var(--accent-line)}
+font-size:1.9vh;font-weight:650;background:var(--raised);color:var(--accent);border:1px solid var(--accent-line)}
 .art{position:relative;height:30vh;overflow:hidden;
-background:radial-gradient(circle at 30% 30%,#818cf8,transparent 55%),radial-gradient(circle at 80% 80%,#ec4899,transparent 50%),linear-gradient(135deg,#312e81,#4f46e5)}
+background:var(--paper-2)}
 .art .blur{position:absolute;inset:-4vh;background-size:cover;background-position:center;filter:blur(3vh) saturate(1.2);opacity:.35}
-.art img{position:relative;display:block;height:20vh;width:20vh;margin:5vh auto;border-radius:22%;box-shadow:0 24px 48px -16px rgb(15 16 20/.45)}
+.art img{position:relative;display:block;height:20vh;width:20vh;margin:5vh auto;border-radius:22%;box-shadow:var(--shadow)}
 .cap{display:flex;align-items:center;justify-content:space-between;gap:1vw;padding:1.8vh 1.4vw;font-size:2.9vh;font-weight:650;letter-spacing:-.01em}
 .cap .n{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .badge{flex:none;display:inline-flex;align-items:center;gap:.4vw;padding:.3vh .9vw;border-radius:999px;font-size:1.9vh;font-weight:650;
@@ -684,7 +694,7 @@ background:var(--accent-weak);border:1px solid var(--accent-line);color:var(--ac
 .badge::before{content:"";width:.9vh;height:.9vh;border-radius:50%;background:currentColor}
 .badge.own{background:var(--ok-weak);border-color:var(--ok-line);color:var(--ok)}
 .badge.upd{background:var(--paper-2);border-color:var(--line-2);color:var(--ink-2)}
-.detail{display:grid;grid-template-columns:40vh 1fr;gap:2.6vw;background:var(--raised);border:1px solid var(--line);border-radius:20px;padding:3vh 2vw;box-shadow:var(--shadow-sm)}
+.detail{--ring-gap:var(--raised);display:grid;grid-template-columns:40vh 1fr;gap:2.6vw;background:var(--raised);border:1px solid var(--line);border-radius:20px;padding:3vh 2vw;box-shadow:var(--shadow-sm)}
 .detail .art{height:40vh;border-radius:16px}
 .detail .art img{width:26vh;height:26vh;margin:7vh auto}
 .detail h1{margin:0 0 .6vh}
@@ -701,15 +711,24 @@ h2{font-size:3.2vh;font-weight:700;margin:4vh 0 1.4vh}
 .kv{display:grid;grid-template-columns:auto 1fr;gap:.6vh 1.6vw;font-size:2.4vh;margin-bottom:3vh}
 .kv b{color:var(--muted);font-weight:500}
 .act{display:inline-flex;align-items:center;justify-content:center;min-height:7vh;padding:0 2.4vw;border-radius:999px;font-weight:600;font-size:2.8vh;
-color:#fff;border:1px solid #4338ca;background:linear-gradient(180deg,#6366f1,#4338ca);
-box-shadow:0 1px 0 rgb(255 255 255/.2) inset,0 6px 16px -6px rgb(79 70 229/.6)}
+color:var(--on-accent);border:1px solid var(--accent);background:var(--accent)}
 .act.plain{background:var(--raised);color:var(--ink);border-color:var(--line-2);box-shadow:var(--shadow-sm)}
 .msg{color:var(--ink-2);font-size:2.6vh}
 .empty{color:var(--muted);font-size:2.8vh;padding:4vh 0}
 .search{width:100%;font:inherit;font-size:3vh;min-height:7vh;padding:0 1.6vw;border:1px solid var(--line-2);border-radius:12px;margin-bottom:2.6vh;
 background:var(--raised);color:var(--ink)}
-.nav:focus,.card:focus,.act:focus,.search:focus,.sort:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 .6vh var(--accent-weak),0 0 0 .9vh var(--accent-line)}
+/* The selection cursor: a gap in the page's own colour, then the cyan ring. A D-pad moves focus,
+   so :focus is what the player sees as the cursor; hover selects for a pointer. Inside the detail
+   tile the gap is the tile's colour (--ring-gap). It breathes between two cyans where motion is
+   welcome, and is a static ring where the browser cannot say. */
+.nav:hover,.nav:focus,.card:hover,.card:focus,.act:hover,.act:focus,.search:focus,.sort:hover,.sort:focus{outline:none;
+box-shadow:0 0 0 3px var(--ring-gap,var(--paper)),0 0 0 7px var(--cursor)}
+.nav:focus,.sort:focus,.act:focus{position:relative;z-index:1}
+.search:focus{border-color:var(--cursor)}
 .card:focus{transform:translateY(-2px)}
+@keyframes breathe{50%{box-shadow:0 0 0 3px var(--ring-gap,var(--paper)),0 0 0 7px var(--cursor-2)}}
+@media (prefers-reduced-motion:no-preference){.nav:hover,.nav:focus,.card:hover,.card:focus,.act:hover,.act:focus,.sort:hover,.sort:focus{animation:breathe 1.6s ease-in-out infinite}}
+@media (prefers-color-scheme:dark){.card,.detail,.notes{border-color:transparent}}
 `
 
 // shopAppJS is the storefront (SHP-02): sections, catalog cards, details, acquisition,
