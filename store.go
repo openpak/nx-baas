@@ -13,6 +13,9 @@ type DeviceAccount struct {
 	ID       string `json:"id"`
 	Password string `json:"password"`
 	UserID   string `json:"userId"`
+	// BoundDevice is the dauth id of the enrolled Harbor console that first signed in with this
+	// account (harbor_devices.go); only that console may use it after. Empty: not bound.
+	BoundDevice string `json:"boundDevice,omitempty"`
 }
 
 type Presence struct {
@@ -266,6 +269,25 @@ func (s *Store) Login(id, password string) *User {
 		return nil
 	}
 	return s.Users[d.UserID]
+}
+
+// BindDevice ties a device account to an enrolled console the first time one uses it, and
+// answers whether the device `di` may use it. Unknown accounts pass (the login refuses them).
+func (s *Store) BindDevice(accountID, di string, enrolled bool) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d := s.Devices[accountID]
+	if d == nil {
+		return true
+	}
+	if d.BoundDevice != "" {
+		return d.BoundDevice == di
+	}
+	if enrolled {
+		d.BoundDevice = di
+		s.save()
+	}
+	return true
 }
 
 func (s *Store) User(id string) *User {

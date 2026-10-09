@@ -91,6 +91,9 @@ type server struct {
 	// In-memory by design: a restart re-derives truth from the core (and local
 	// leases), never from this map.
 	liveSessions map[string]string
+	// harbor is the Harbor device enrolment (harbor_devices.go); nil while no device CA is
+	// configured, which leaves dauth and BaaS as they were.
+	harbor *harborDevices
 	// liveSessionTitle is the title each of those sessions was registered
 	// with, so a console changing game re-registers rather than leaving the
 	// core reporting the game it started on.
@@ -969,6 +972,12 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		di, sn := str(tok, "sub"), ""
 		if n, ok := tok["nintendo"].(map[string]any); ok {
 			sn = str(n, "sn")
+		}
+		if !s.bindDeviceAccount(form.Get("id"), di) {
+			// A device account another enrolled console signed in with first.
+			log.Printf("[nx-baas] %s refused: the device account belongs to another console", seg[1])
+			baasErr(w, r, 400, "invalid_device_account", "Invalid Device Account", "Device Account's id or password is invalid")
+			return
 		}
 		if p == "/1.0.0/federation" {
 			var err error
@@ -2705,6 +2714,7 @@ func main() {
 		acct:    newBackend(),
 	}
 	s.forwardersFromEnv()
+	s.initHarborDevices()
 	// A parental-controls rollback hands nx-pctl's records back (split.go).
 	s.store.importPctlRollback(getenv("NX_DATA", "/data") + "/pctl-rollback.json")
 	if s.shopFwd == nil {

@@ -64,6 +64,13 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 		return
 	}
 
+	// Harbor device enrolment (harbor_devices.go), on this host because it is where a console
+	// presents its TLS client certificate.
+	if strings.HasPrefix(host, "dauth") && strings.HasPrefix(p, "/harbor/v1/devices") {
+		s.harborDevicesHandler(w, r, body)
+		return
+	}
+
 	form, _ := url.ParseQuery(string(body))
 	switch {
 	case p == "/v8/challenge" && r.Method == "POST":
@@ -80,7 +87,12 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 			http.Error(w, `{"errors":[{"code":"1000","message":"malformed request"}]}`, http.StatusBadRequest)
 			return
 		}
-		device := deviceID(r, req)
+		device, serial, err := s.dauthIdentity(r, req)
+		if err != nil {
+			log.Printf("[dauth] refused: another console is live with this device id")
+			writeDeviceInUse(w)
+			return
+		}
 		out := make([]any, 0, len(req.TokenRequests))
 		for _, tr := range req.TokenRequests {
 			if tr.ClientID == "" {
@@ -88,11 +100,11 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 			}
 			out = append(out, map[string]any{
 				"client_id":         tr.ClientID,
-				"device_auth_token": s.deviceToken(device, tr.ClientID),
+				"device_auth_token": s.deviceTokenFor(device, serial, tr.ClientID),
 				"expires_in":        86400,
 			})
 		}
-		log.Printf("[dauth] device %s (fw %s) -> %d token(s)", device, req.SystemVersion, len(out))
+		log.Printf("[dauth] fw %s -> %d token(s)", req.SystemVersion, len(out))
 		// The console reads "results"; anything else and it fails the link with 2124-4798
 		// after retrying the whole chain.
 		writeJSON(w, 200, map[string]any{"results": out})
@@ -102,14 +114,18 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 		// signed string rather than a JWT, one per requested client/vendor pair.
 		var req edgeTokenRequest
 		_ = json.Unmarshal(body, &req)
-		device := deviceID(r, deviceTokenRequest{})
+		device, serial, err := s.dauthIdentity(r, deviceTokenRequest{})
+		if err != nil {
+			writeDeviceInUse(w)
+			return
+		}
 		exp := time.Now().Unix() + 86400
 		out := make([]any, 0, len(req.TokenRequests))
 		for _, tr := range req.TokenRequests {
 			out = append(out, map[string]any{
 				"client_id":  tr.ClientID,
 				"vendor_id":  tr.VendorID,
-				"dtoken":     edgeDToken(exp, device),
+				"dtoken":     edgeDTokenFor(exp, device, serial),
 				"expires_in": 86400,
 			})
 		}
@@ -176,8 +192,12 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 // edgeDToken builds the CDN's token format: fields joined by ~, with an HMAC the CDN would
 // check. Nothing of ours verifies it, so the digest is random rather than pretend-signed.
 func edgeDToken(exp int64, device string) string {
+	return edgeDTokenFor(exp, device, consoleSerial(device))
+}
+
+func edgeDTokenFor(exp int64, device, serial string) string {
 	return fmt.Sprintf("exp=%d~acl=%%2F%%2A~data=sub=%s.sn=%s.pc=HAC.id=%s~hmac=%s",
-		exp, device, consoleSerial(device), uuid4(), randHex(32))
+		exp, device, serial, uuid4(), randHex(32))
 }
 
 // applicationToken is what aauth hands back for a title. Its jku is acert, not dcert: the
@@ -223,6 +243,12 @@ func deviceID(r *http.Request, req deviceTokenRequest) string {
 // deviceToken is what /1.0.0/application/token consumes: it reads "sub" as the device id and
 // nintendo.sn as the serial, so those two fields are the contract between the services.
 func (s *server) deviceToken(deviceID, clientID string) string {
+	return s.deviceTokenFor(deviceID, consoleSerial(deviceID), clientID)
+}
+
+// deviceTokenFor is deviceToken with the serial given: an enrolled Harbor console's own, read
+// off its enrolment as the real service reads a console's off its certificate.
+func (s *server) deviceTokenFor(deviceID, serial, clientID string) string {
 	now := time.Now().Unix()
 	return signJWT(
 		map[string]any{"alg": "RS256", "jku": "https://dcert-lp1.ndas.srv.nintendo.net/keys", "kid": s.idKid, "typ": "JWT"},
@@ -234,7 +260,7 @@ func (s *server) deviceToken(deviceID, clientID string) string {
 			"sub": deviceID,
 			"aud": clientID,
 			"nintendo": map[string]any{
-				"sn": consoleSerial(deviceID), "did": deviceID, "pc": "HAC", "dt": "NX Prod 1",
+				"sn": serial, "did": deviceID, "pc": "HAC", "dt": "NX Prod 1",
 				"ist": false, "esv": randB64(33), "x5t#S256": deviceThumbprint,
 			},
 			"client_id": clientID,
