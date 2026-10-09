@@ -2200,6 +2200,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		// the account holds neither. Where the account has nothing, the sample's values remain —
 		// a Nintendo Account always carries both, so there is no "absent" to serve here.
 		country, birthday := naProfile(id)
+		email, screenName := naAddress(id.Email)
 		me := map[string]any{
 			"agreedTerms": map[string]any{
 				"EULA":          map[string]any{"agreedAt": int64(1524557701), "country": country, "version": 2},
@@ -2214,10 +2215,10 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			"birthday": birthday, "clientFriendsOptedIn": true, "clientFriendsOptedInUpdatedAt": int64(1524557701),
 			"country": country, "createdAt": int64(1524557701),
 			"eachEmailOptedIn": map[string]any{"deals": map[string]any{"optedIn": false, "updatedAt": int64(1524557701)}, "survey": map[string]any{"optedIn": false, "updatedAt": int64(1524557701)}},
-			"email":            "legacy@example.com", "emailOptedIn": false, "emailOptedInUpdatedAt": int64(1524557701), "emailVerified": true,
+			"email":            email, "emailOptedIn": false, "emailOptedInUpdatedAt": int64(1524557701), "emailVerified": true,
 			"gender": "unknown", "iconUri": avatarURL(id.PID, id.Avatar, id.ImageUpdatedAt), "id": strings.ToLower(id.NaID), "isChild": false, "language": "en-GB",
 			"links": naLinks(id), "loginId": nil, "nickname": nick, "phoneNumberEnabled": false, "region": nil,
-			"screenName": "ne•••@e••••", "termsAgreementRequired": false,
+			"screenName": screenName, "termsAgreementRequired": false,
 			"timezone":  map[string]any{"id": "Europe/London", "name": "Europe/London", "utcOffset": "+01:00", "utcOffsetSeconds": 3600},
 			"updatedAt": now,
 		}
@@ -2901,6 +2902,18 @@ func main() {
 // fallback is unavoidable — but it must not be a captured stranger's when the account has its
 // own. The two objects are read in the same link, and disagreeing about where someone lives is
 // not something to leave to a constant.
+// naAddress is users/me's email and screenName. A Nintendo Account's screenName is its address
+// masked: the first two characters of the name, the first of the domain ("ne•••@e••••" in the
+// captured sample). Without an address (the legacy backend has none) the sample's values remain.
+func naAddress(address string) (email, screenName string) {
+	name, domain, ok := strings.Cut(address, "@")
+	if !ok || name == "" || domain == "" {
+		return "legacy@example.com", "ne•••@e••••"
+	}
+	nameRunes, domainRunes := []rune(name), []rune(domain)
+	return address, string(nameRunes[:min(2, len(nameRunes))]) + "•••@" + string(domainRunes[:1]) + "••••"
+}
+
 func naProfile(id *Identity) (country, birthday string) {
 	country, birthday = id.Country, id.Birthday
 	if country == "" {

@@ -51,7 +51,10 @@ type Identity struct {
 	// The console's user object carries both and rejects it when either is malformed.
 	Country  string `json:"country"`
 	Birthday string `json:"birthday"`
-	Avatar   string `json:"avatar"`
+	// The sign-in address, for users/me only (the openpak backend's GetAccount). Never marshalled
+	// and never logged.
+	Email  string `json:"-"`
+	Avatar string `json:"avatar"`
 	// AvatarURL is where the account's own picture lives when the adapter does
 	// not hold the bytes: the website's media store. Fetched only when a
 	// console actually asks for the thumbnail, never on the login path.

@@ -95,6 +95,9 @@ message GetAccountResponse {
   string country = 5;
   string birthday = 6; // ISO 8601 date, e.g. "1990-01-01"
   bool two_factor_enabled = 7;
+  // The sign-in address, for an adapter whose console protocol carries it (a Nintendo Account's
+  // users/me has the address and a masked form of it). Never logged by an adapter.
+  string email = 8;
 }
 
 message SetAdapterCredentialRequest {

@@ -549,8 +549,11 @@ type GetAccountResponse struct {
 	Country          string                 `protobuf:"bytes,5,opt,name=country,proto3" json:"country,omitempty"`
 	Birthday         string                 `protobuf:"bytes,6,opt,name=birthday,proto3" json:"birthday,omitempty"` // ISO 8601 date, e.g. "1990-01-01"
 	TwoFactorEnabled bool                   `protobuf:"varint,7,opt,name=two_factor_enabled,json=twoFactorEnabled,proto3" json:"two_factor_enabled,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// The sign-in address, for an adapter whose console protocol carries it (a Nintendo Account's
+	// users/me has the address and a masked form of it). Never logged by an adapter.
+	Email         string `protobuf:"bytes,8,opt,name=email,proto3" json:"email,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *GetAccountResponse) Reset() {
@@ -630,6 +633,13 @@ func (x *GetAccountResponse) GetTwoFactorEnabled() bool {
 		return x.TwoFactorEnabled
 	}
 	return false
+}
+
+func (x *GetAccountResponse) GetEmail() string {
+	if x != nil {
+		return x.Email
+	}
+	return ""
 }
 
 type SetAdapterCredentialRequest struct {
@@ -1797,7 +1807,7 @@ const file_openpak_account_v1_account_proto_rawDesc = "" +
 	"\x13two_factor_required\x18\x06 \x01(\bR\x11twoFactorRequired\"2\n" +
 	"\x11GetAccountRequest\x12\x1d\n" +
 	"\n" +
-	"account_id\x18\x01 \x01(\tR\taccountId\"\x9c\x02\n" +
+	"account_id\x18\x01 \x01(\tR\taccountId\"\xb2\x02\n" +
 	"\x12GetAccountResponse\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x129\n" +
@@ -1806,7 +1816,8 @@ const file_openpak_account_v1_account_proto_rawDesc = "" +
 	"\fdisplay_name\x18\x04 \x01(\tR\vdisplayName\x12\x18\n" +
 	"\acountry\x18\x05 \x01(\tR\acountry\x12\x1a\n" +
 	"\bbirthday\x18\x06 \x01(\tR\bbirthday\x12,\n" +
-	"\x12two_factor_enabled\x18\a \x01(\bR\x10twoFactorEnabled\"\x99\x01\n" +
+	"\x12two_factor_enabled\x18\a \x01(\bR\x10twoFactorEnabled\x12\x14\n" +
+	"\x05email\x18\b \x01(\tR\x05email\"\x99\x01\n" +
 	"\x1bSetAdapterCredentialRequest\x12)\n" +
 	"\x10caller_namespace\x18\x01 \x01(\tR\x0fcallerNamespace\x12\x18\n" +
 	"\apurpose\x18\x02 \x01(\tR\apurpose\x12\x1d\n" +
