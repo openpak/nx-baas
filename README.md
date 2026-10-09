@@ -176,6 +176,12 @@ a failed fetch keeps the last good table. Unknown titles and versions that are n
 digits are allowed. `NX_VERSION_GATE=0` turns it off; `NX_VERSION_GATE_OVERRIDES` takes
 `<title id>=<%08x minimum>` or `<title id>=all`, comma-separated. `versiongate.go`.
 
+Game servers ask the same table on the internal API, so their own refusals (NEX
+ApplicationVersionIsOld, NPLN FAILED_PRECONDITION, ...) match aauth's:
+`GET /internal/title-version?title=<16 hex>&version=<id_token nintendo.av>` answers
+`{"title","version","latest","update_required"}`; `latest` is empty when no minimum applies.
+Callers treat any failure as allowed.
+
 ## Known scaling ceilings (recorded, fine for one console)
 
 - `ensure` holds the global projection mutex across up to three core RPCs,

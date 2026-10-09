@@ -129,3 +129,46 @@ func TestVersionGateKeepsLastGoodTable(t *testing.T) {
 		t.Fatalf("cache load: %08x %v", need, ok)
 	}
 }
+
+// The game servers' question gets the same answer aauth gives the console.
+func TestTitleVersionAPI(t *testing.T) {
+	t.Setenv("NX_INTERNAL_KEY", "k")
+	s := dauthServer(t)
+	s.versions = gateFromFixture(t, "010090100E334000=all")
+
+	ask := func(key, query string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodGet, "/internal/title-version?"+query, nil)
+		r.Header.Set("X-Internal-Key", key)
+		w := httptest.NewRecorder()
+		s.gameAPI().ServeHTTP(w, r)
+		return w
+	}
+	cases := []struct{ query, want string }{
+		{"title=0100152000022000&version=00150000", `"latest":"00160000","title":"0100152000022000","update_required":true,"version":"00150000"`},
+		{"title=0100152000022000&version=00160000", `"latest":"00160000","title":"0100152000022000","update_required":false`},
+		{"title=0100152000022000&version=3.0.5", `"latest":"00160000","title":"0100152000022000","update_required":false`},
+		{"title=0100152000022000&version=", `"update_required":false`},
+		{"title=0100000000ABC000&version=00000000", `"latest":"","title":"0100000000abc000","update_required":false`},
+		{"title=010090100E334000&version=00000000", `"latest":"","title":"010090100e334000","update_required":false`},
+	}
+	for _, c := range cases {
+		w := ask("k", c.query)
+		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), c.want) {
+			t.Errorf("%s: got %d %s, want %s", c.query, w.Code, w.Body.String(), c.want)
+		}
+	}
+	if w := ask("k", "title=nope&version=00000000"); w.Code != http.StatusBadRequest {
+		t.Errorf("bad title: got %d", w.Code)
+	}
+	if w := ask("wrong", "title=0100152000022000&version=00150000"); w.Code != http.StatusUnauthorized {
+		t.Errorf("wrong key: got %d", w.Code)
+	}
+	s.versions.on = false
+	if w := ask("k", "title=0100152000022000&version=00000000"); !strings.Contains(w.Body.String(), `"latest":"","title":"0100152000022000","update_required":false`) {
+		t.Errorf("gate off: %s", w.Body.String())
+	}
+	s.versions = nil
+	if w := ask("k", "title=0100152000022000&version=00000000"); !strings.Contains(w.Body.String(), `"update_required":false`) {
+		t.Errorf("no gate: %s", w.Body.String())
+	}
+}

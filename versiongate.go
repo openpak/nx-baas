@@ -254,28 +254,83 @@ func (g *versionGate) required(title uint64) (uint32, bool) {
 	return v, ok
 }
 
+// versionVerdict is one title version measured against the table.
+type versionVerdict struct {
+	title    uint64
+	latest   uint32 // the minimum that applies; meaningful only when applies
+	applies  bool   // the gate is on and the table (or an override) names a minimum
+	have     uint32
+	readable bool // the version is the console's 8 hex digits
+	outdated bool
+}
+
+// verdict measures a title version. Anything unreadable, unknown or ungated is not outdated.
+func (g *versionGate) verdict(appID, appVer string) versionVerdict {
+	var v versionVerdict
+	tid, err := parseTitleID(appID)
+	if err != nil {
+		return v
+	}
+	v.title = tid
+	v.have, v.readable = parseAppVersion(appVer)
+	if g == nil || !g.on {
+		return v
+	}
+	v.latest, v.applies = g.required(tid)
+	v.outdated = v.applies && v.readable && v.have < v.latest
+	return v
+}
+
 // refuse decides an aauth request. It logs one line per refusal and per unreadable version,
 // with the title and versions only.
 func (g *versionGate) refuse(appID, appVer string) bool {
-	if g == nil || !g.on {
+	v := g.verdict(appID, appVer)
+	if !v.applies {
 		return false
 	}
-	tid, err := parseTitleID(appID)
-	if err != nil {
+	if !v.readable {
+		log.Printf("[version-gate] title %016x sent unparsed version %q: allowed", v.title, appVer)
 		return false
 	}
-	need, ok := g.required(tid)
-	if !ok {
+	if !v.outdated {
 		return false
 	}
-	have, ok := parseAppVersion(appVer)
-	if !ok {
-		log.Printf("[version-gate] title %016x sent unparsed version %q: allowed", tid, appVer)
-		return false
-	}
-	if have >= need {
-		return false
-	}
-	log.Printf("[version-gate] title %016x version %08x below required %08x: 0111 update required", tid, have, need)
+	log.Printf("[version-gate] title %016x version %08x below required %08x: 0111 update required", v.title, v.have, v.latest)
 	return true
+}
+
+// titleVersion answers the game servers (internal API): is this title version outdated, and what
+// is the latest? It is the same table and the same rule aauth applies, so a game server that
+// refuses an old version in its own protocol (NEX ApplicationVersionIsOld, NPLN
+// FAILED_PRECONDITION, ...) never disagrees with the console's 2124-3001. The version is the
+// id_token's nintendo.av, as aauth received it.
+//
+//	GET /internal/title-version?title=<16 hex>&version=<av>
+//	-> {"title":"0100152000022000","version":"00140000","latest":"00150000","update_required":true}
+//
+// latest is "" when no minimum applies (unknown title, an "all" override, the gate off), and
+// update_required is false then and for any version that is not 8 hex digits.
+func (s *server) titleVersion(w http.ResponseWriter, r *http.Request) {
+	if !s.internalOK(r) {
+		apiErr(w, http.StatusUnauthorized, "internal")
+		return
+	}
+	q := r.URL.Query()
+	title, version := q.Get("title"), q.Get("version")
+	if _, err := parseTitleID(title); err != nil {
+		apiErr(w, http.StatusBadRequest, "title must be 16 hex digits")
+		return
+	}
+	v := s.versions.verdict(title, version)
+	latest := ""
+	if v.applies {
+		latest = fmt.Sprintf("%08x", v.latest)
+	}
+	if v.outdated {
+		log.Printf("[version-gate] game server asked: title %016x version %08x below %s: update required", v.title, v.have, latest)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"title": fmt.Sprintf("%016x", v.title), "version": version,
+		"latest": latest, "update_required": v.outdated,
+	})
 }
