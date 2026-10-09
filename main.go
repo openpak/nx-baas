@@ -84,6 +84,8 @@ type server struct {
 	// news forwards the News list and topic routes to the news service
 	// (NEWS_INTERNAL_URL, news.go). nil keeps bcat.go's own answers.
 	news *newsForwarder
+	// versions refuses an outdated title at aauth (versiongate.go); nil lets every version in.
+	versions *versionGate
 	// liveSessions maps BAAS user id -> the core session the adapter registered
 	// for it, so the presence reconciler can renew and expire what it created.
 	// In-memory by design: a restart re-derives truth from the core (and local
@@ -2736,6 +2738,14 @@ func main() {
 	}
 	// Console error reports: kept raw, forwarded to the website, retried (errorreport.go).
 	go s.errorReports().run()
+	// Latest version only: outdated titles get 2124-3001 at aauth (versiongate.go).
+	s.versions = newVersionGateFromEnv()
+	if s.versions.on {
+		log.Printf("[version-gate] on (%d override(s))", len(s.versions.overrides))
+		go s.versions.run()
+	} else {
+		log.Printf("[version-gate] off (NX_VERSION_GATE)")
+	}
 	if u := os.Getenv("SAVES_URL"); u != "" {
 		s.saves, s.savesKey = newSavesProxy(u), os.Getenv("SAVES_INTERNAL_KEY")
 		log.Printf("[nx-baas] save-data cloud: forwarding scsi hosts to %s", u)

@@ -119,6 +119,13 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 		// aauth: the console asks for a per-title token once dauth has vouched for the device.
 		appID, appVer := form.Get("application_id"), form.Get("application_version")
 		log.Printf("[aauth] application %s version %s", appID, appVer)
+		if s.versions.refuse(appID, appVer) {
+			// 0111 -> 2124-3001 "A software update is required" (Restart / Later).
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"errors": []any{map[string]any{"code": "0111", "message": "Application update is required."}},
+			})
+			return
+		}
 		writeJSON(w, 200, map[string]any{
 			"application_auth_token": s.applicationToken(appID, appVer),
 			"expires_in":             86400,

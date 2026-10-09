@@ -166,6 +166,16 @@ NA `invalid_grant`/`user_banned`, game API `403 {"error":"account_banned"}` (nev
 The core's `GetAccount` status is cached `NX_BAN_CACHE_SECONDS` (default 30, max 60) and
 dropped on the core's ban/unban events. `bans.go` lists every surface.
 
+## Latest version only
+
+aauth refuses a title older than its latest update with HTTP 400 code `0111`, which the
+console shows as 2124-3001 "A software update is required" (Restart / Later). No download is
+forced: the version list is untouched. The table is blawar/titledb's `versions.json`
+(`NX_VERSION_GATE_URL`), refetched every 24 h and cached in `$NX_DATA/title-versions.json`;
+a failed fetch keeps the last good table. Unknown titles and versions that are not 8 hex
+digits are allowed. `NX_VERSION_GATE=0` turns it off; `NX_VERSION_GATE_OVERRIDES` takes
+`<title id>=<%08x minimum>` or `<title id>=all`, comma-separated. `versiongate.go`.
+
 ## Known scaling ceilings (recorded, fine for one console)
 
 - `ensure` holds the global projection mutex across up to three core RPCs,
