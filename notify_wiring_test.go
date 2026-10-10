@@ -261,11 +261,13 @@ func TestPresenceEventCarriesTheParsersShape(t *testing.T) {
 	if extras["appInfo:appId"] != "0100000000010000" || extras["appInfo:acdIndex"] != 3 {
 		t.Errorf("extras = %v", extras)
 	}
-	// Nothing published means nothing sent, rather than zero values that read
-	// as "index 0" and "title 0000000000000000".
-	// appField is the exception: "{}" at minimum, or the console drops the event.
+	// No game is the all-zero id the console itself publishes from HOME: the
+	// parser fails the whole event without appInfo:appId, appInfo:presenceGroupId
+	// and appField (mask 0x3eb, friends 0x1a74a0). acdIndex is optional and stays
+	// out when nobody published one, rather than reading as "index 0".
 	empty := presenceEventExtras(Presence{State: "ONLINE", ACDIndex: -1})
-	if len(empty) != 1 || empty["appField"] != "{}" {
-		t.Errorf("extras for a bare ONLINE = %v, want only appField \"{}\"", empty)
+	if len(empty) != 3 || empty["appField"] != "{}" || empty["appInfo:appId"] != "0000000000000000" ||
+		empty["appInfo:presenceGroupId"] != "0000000000000000" {
+		t.Errorf("extras for a bare ONLINE = %v, want appField \"{}\" and all-zero ids", empty)
 	}
 }

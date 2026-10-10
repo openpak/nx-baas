@@ -1031,9 +1031,19 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		// A console re-logs in every hour while it plays; the login knows no
 		// title, so it must not overwrite the one the device already published
 		// (2026-09-22: a game dropping off the friend list at each login).
+		//
+		// The claim is INACTIVE, signed in with no game, which is all a login
+		// knows. The console never publishes ONLINE without a running title
+		// (friends 22.5.0 0x194a00: ONLINE only while an application runs),
+		// and an ONLINE here reached friends as "online" at HOME, then the
+		// device's own INACTIVE landed in the same second and the console,
+		// which applies only a later createdAt, kept the ONLINE: the
+		// friend-online pop-up for the game started next never came
+		// (2026-10-10, Harbor to a Switch). INACTIVE still holds the core
+		// session open (stateRank 1).
 		client, clientOS := requestClient(r), requestClientOS(r)
 		if !s.deviceClaimLive(u, form.Get("id")) {
-			s.noteClientPresence(u, form.Get("id"), client, clientOS, "ONLINE", "", "", "", -1)
+			s.noteClientPresence(u, form.Get("id"), client, clientOS, "INACTIVE", "", "", "", -1)
 		}
 		s.reportOnline(r.Context(), u, client, clientOS)
 		res := map[string]any{

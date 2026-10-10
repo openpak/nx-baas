@@ -18,6 +18,7 @@ package main
 
 import (
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -133,14 +134,14 @@ func (s *server) notifyPresenceIfChanged(userID, before string) {
 		if viewer == nil || !presenceVisible(viewer, u, true) {
 			continue
 		}
-		// One id per (subject, viewer, state). The state belongs in the id,
-		// not just the timestamp: going online and starting a title inside
-		// the same wall-clock second are two different things to be told, and
-		// a second-granular id alone would dedup the second one away. Two
-		// submissions of the *same* state stay idempotent, and a newer state
-		// coalesces over a pending older one inside B's outbox.
+		// One id per (subject, viewer, change): createdAt is strictly
+		// increasing per pair (nextPresenceStamp), so a state that comes back
+		// inside the same second (INACTIVE, PLAYING, INACTIVE) is a new event
+		// rather than a duplicate of the first, and a newer state coalesces
+		// over a pending older one inside B's outbox.
+		createdAt := nextPresenceStamp(u.ID, viewer.ID, agg.UpdatedAt)
 		s.SubmitNotification(PenneDelivery{
-			ID:     fmt.Sprintf("presence:%s:%s:%d:%s", u.ID, viewer.ID, agg.UpdatedAt, after),
+			ID:     fmt.Sprintf("presence:%s:%s:%d:%s", u.ID, viewer.ID, createdAt, after),
 			UserID: viewer.ID,
 			Kind:   EventPresenceUpdated,
 			// The parser's own paths, recovered from the module: the presence
@@ -152,7 +153,7 @@ func (s *server) notifyPresenceIfChanged(userID, before string) {
 			// [firmware, friends module 0xa7510].
 			Payload: map[string]any{
 				"friendId":  u.ID, // kept: our own surfaces read it
-				"createdAt": agg.UpdatedAt,
+				"createdAt": createdAt,
 				"value": map[string]any{
 					"userId":    u.ID,
 					"state":     agg.State,
@@ -167,22 +168,62 @@ func (s *server) notifyPresenceIfChanged(userID, before string) {
 
 // presenceEventExtras renders the app fields a presence event carries, with the
 // types the console publishes them in: the ids as quoted 16-hex strings, the
-// catalog index as a number, and nothing at all when the console published
-// nothing (docs/switch/firmware-22.5.0-followup-2026-09-12.md §15).
+// catalog index as a number (docs/switch/firmware-22.5.0-followup-2026-09-12.md §15).
+//
+// appField, appInfo:appId and appInfo:presenceGroupId are all required. The
+// event parser keeps a field mask and, at the end of the document, fails the
+// whole presence_updated unless userId, state, appId, presenceGroupId,
+// appField, updatedAt, logoutAt and $.createdAt all arrived (mask 0x3eb; only
+// pf and acdIndex are optional) [firmware: friends 22.5.0 0x1a74a0, 23.0.1
+// 0x1aaea0; docs/switch/friends-presence-firmware-2026-09-19.md §6]. So "no
+// game" is the all-zero id, exactly as the console publishes it from HOME
+// ("%016llx" of 0), never an absent key: until 2026-10-10 every INACTIVE,
+// OFFLINE and title-less ONLINE event was dropped by the console, which then
+// never saw a friend leave and so never saw them come back.
 func presenceEventExtras(p Presence) map[string]any {
-	// appField is always a JSON-object string: the event parser drops the
-	// whole presence_updated on "" or a missing one [firmware, 0x1a7670].
-	out := map[string]any{"appField": appFieldOrEmpty(p.AppField)}
-	if p.AppID != "" {
-		out["appInfo:appId"] = p.AppID
-	}
-	if p.PresenceGroupID != "" {
-		out["appInfo:presenceGroupId"] = p.PresenceGroupID
+	// appField is a JSON-object string: "" fails the parse too [firmware, 0x1a7670].
+	out := map[string]any{
+		"appField":                appFieldOrEmpty(p.AppField),
+		"appInfo:appId":           hexIDOrZero(p.AppID),
+		"appInfo:presenceGroupId": hexIDOrZero(p.PresenceGroupID),
 	}
 	if p.ACDIndex >= 0 {
 		out["appInfo:acdIndex"] = p.ACDIndex
 	}
 	return out
+}
+
+// hexIDOrZero is a title id as the console writes one, "0000000000000000" for none.
+func hexIDOrZero(id string) string {
+	if id == "" {
+		return "0000000000000000"
+	}
+	return id
+}
+
+// presenceStamps hands out each (friend, viewer) pair's $.createdAt. The friends
+// module applies a presence_updated only when its createdAt is later than the
+// time it already holds for that friend, and that time is the previous event's
+// value.updatedAt (value.logoutAt for an offline one) [firmware: friends 22.5.0
+// 0x191790, 23.0.1 0x1950d0]. Two changes inside one wall-clock second (going
+// INACTIVE right after signing in, PLAYING to ONLINE as a session closes) would
+// otherwise leave the second unapplied and the console showing the first for
+// as long as nothing else changes. Strictly increasing per pair, starting from
+// the state change's own second.
+var presenceStamps = struct {
+	sync.Mutex
+	last map[string]int64
+}{last: map[string]int64{}}
+
+func nextPresenceStamp(subjectID, viewerID string, at int64) int64 {
+	presenceStamps.Lock()
+	defer presenceStamps.Unlock()
+	key := subjectID + "|" + viewerID
+	if prev := presenceStamps.last[key]; at <= prev {
+		at = prev + 1
+	}
+	presenceStamps.last[key] = at
+	return at
 }
 
 // ---------- invitations (C's seam) ----------

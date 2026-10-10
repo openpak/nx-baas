@@ -3,6 +3,25 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.52.0 — 2026-10-10
+
+- **A Switch now gets "<friend> is online" for friends on Harbor (and for every friend).** The
+  console's `presence_updated` parser fails the whole event unless `userId`, `state`,
+  `appInfo:appId`, `appInfo:presenceGroupId`, `appField`, `updatedAt`, `logoutAt` and
+  `$.createdAt` are all present (field mask `0x3eb`, friends 22.5.0 `0x1a74a0`, 23.0.1
+  `0x1aaea0`). Events without a game left the two app ids out, so the console dropped every
+  INACTIVE, OFFLINE and title-less ONLINE, never saw a friend leave, and so never saw them
+  come back: the pop-up needs a cached Offline before the Online. "No game" is now the
+  all-zero id the console itself publishes.
+- **Sign-in is INACTIVE, not ONLINE.** A login claimed ONLINE with no title, which a console
+  never publishes; the device's own INACTIVE then landed in the same second and the console,
+  which applies only a later `createdAt`, kept the ONLINE.
+- **`createdAt` is strictly increasing per friend and viewer**, so two changes inside one second
+  (PLAYING to ONLINE as a session closes) are both applied.
+- **Signing in at HOME keeps the last departure as `logoutAt`.** overlayDisp shows the pop-up only
+  for a friend offline more than 1799 s (23.0.1 `0x31b2f0`), counted from the `logoutAt` the
+  console cached; stamping "now" at sign-in silenced every game started within half an hour.
+
 ## v0.51.3 — 2026-10-10
 
 - **No personal data in logs.** Account, NSA, device and pairing ids, pids, nicknames, e-mail

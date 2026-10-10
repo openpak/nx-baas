@@ -158,6 +158,31 @@ func departedAt(e *DevicePresence, at int64) int64 {
 	return at
 }
 
+// departureBefore answers when a device last stopped reading as online to its
+// friends, given the entry it had before this claim. Only a live ONLINE or
+// PLAYING claim leaves now. A device that was gone, lapsed, never seen or
+// already at HOME (INACTIVE reads as offline) keeps the departure it had: a
+// console switched on after a night off was not "online a moment ago".
+//
+// It matters to the console's friend-online pop-up. overlayDisp drops it unless
+// the friend was offline for more than 1799 seconds (23.0.1 0x31b2f0 `cmp w22,
+// #0x707; b.le`), and the friends module measures that from the offline time it
+// cached, which for an offline friend is the logoutAt we sent [friends 22.5.0
+// 0x1a74a0, 0x1a1790]. Stamping "now" at sign-in made every game started within
+// half an hour of switching on silent.
+func departureBefore(prev *DevicePresence, now int64) int64 {
+	switch {
+	case prev == nil:
+		return 0
+	case stateRank(prev.State) == 0, strings.ToUpper(prev.State) == "INACTIVE":
+		return prev.LogoutAt
+	case prev.ExpiresAt != 0 && prev.ExpiresAt <= now:
+		return prev.ExpiresAt // lapsed: they left when it ran out, at the latest
+	default:
+		return now
+	}
+}
+
 // devicePresenceWins picks between two live claims: higher rank first, then
 // the more recent state change. Deterministic, so two renders of the same
 // evidence agree.
@@ -207,7 +232,7 @@ func (s *server) noteClientPresence(u *User, deviceID, client, clientOS, state, 
 			u.DevicePresence = map[string]*DevicePresence{}
 		}
 		prev := u.DevicePresence[deviceID]
-		left := departedAt(prev, now)
+		left := departureBefore(prev, now)
 		if stateRank(state) == 0 {
 			u.DevicePresence[deviceID] = &DevicePresence{DeviceID: deviceID, State: "OFFLINE",
 				UpdatedAt: now, LogoutAt: left}
@@ -216,11 +241,14 @@ func (s *server) noteClientPresence(u *User, deviceID, client, clientOS, state, 
 				AppID: appID, AppField: appField, PresenceGroupID: groupID, ACDIndex: acdIndex,
 				UpdatedAt: now, ExpiresAt: now + lease, Client: client, OS: clientOS}
 			if e.State == "INACTIVE" {
-				// Back at HOME (the title closed, or the console just signed
-				// in): friends see this as offline from now, so "last online"
-				// is now, as Nintendo's server stamps it. Without it they read
-				// the previous departure -- "last online 14 h ago" seconds
-				// after the person put the game down (2026-10-08, Harbor).
+				// Back at HOME after a title closed: friends see this as
+				// offline from now, so "last online" is now. Without it they
+				// read the previous departure -- "last online 14 h ago"
+				// seconds after the person put the game down (2026-10-08,
+				// Harbor). Signing in at HOME from offline is not a departure
+				// and keeps the old one (departureBefore): the console's
+				// "is now online" pop-up needs that moment to be more than
+				// 30 minutes before the game starts.
 				e.LogoutAt = left
 			}
 			u.DevicePresence[deviceID] = e
@@ -229,7 +257,7 @@ func (s *server) noteClientPresence(u *User, deviceID, client, clientOS, state, 
 		// builds, scripts). The aggregate never trusts it over device entries.
 		u.Presence.State = strings.ToUpper(state)
 		u.Presence.UpdatedAt = now
-		if stateRank(state) == 0 || strings.ToUpper(state) == "INACTIVE" {
+		if (stateRank(state) == 0 || strings.ToUpper(state) == "INACTIVE") && left > 0 {
 			u.Presence.LogoutAt = left
 		}
 		if stateRank(state) > 0 {
