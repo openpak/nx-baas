@@ -2476,6 +2476,11 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "user transfer is not implemented by OpenPak", 501)
 		return
 	}
+	if isPlayFab(host) {
+		// Before the body read: login bodies carry identity tokens (playfab.go).
+		playfabUnavailable(w, r)
+		return
+	}
 	if strings.Contains(host, ".er.srv.nintendo.net") {
 		// eupld's error reports, before the shared 1 MiB body read (errorreport.go).
 		s.errorReport(w, r)
