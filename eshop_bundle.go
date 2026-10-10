@@ -37,6 +37,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"nx-baas/redact"
 	"sort"
 	"time"
 )
@@ -148,7 +149,7 @@ func (s *shopState) redeemBundle(deviceID, accountID, baasUserID string) []strin
 		granted := had == nil || had.Status != "active"
 		ent, _, err := s.acquire(accountID, baasUserID, e.ApplicationID, deviceID, 0)
 		if err != nil {
-			log.Printf("[shop] bundle: %s for %s on %s: %v", e.ApplicationID, accountID, deviceID, err)
+			log.Printf("[shop] bundle: %s for %s on %s: %v", e.ApplicationID, redact.Tag(accountID), redact.Tag(deviceID), redact.Err(err))
 			continue
 		}
 		s.mu.Lock()
@@ -206,7 +207,7 @@ func (s *server) beachBundle(w http.ResponseWriter, r *http.Request, p string) b
 		// pre_install stays false: OpenPak never ships software pre-installed, so there
 		// is nothing a console could have redeemed that way (the literal answer).
 		log.Printf("[shop] beach %s %s device=%s -> digital_bundle=%v (%d bundled), pre_install=false",
-			r.Method, p, device, redeemed, len(b))
+			r.Method, redact.Path(p), redact.Tag(device), redeemed, len(b))
 		writeJSON(w, 200, map[string]any{"digital_bundle": redeemed, "pre_install": false})
 	case "/v1/devices/digital_bundle/contents":
 		b := s.shop.deviceBundle(device)
@@ -217,12 +218,12 @@ func (s *server) beachBundle(w http.ResponseWriter, r *http.Request, p string) b
 			})
 		}
 		log.Printf("[shop] beach %s %s shop_id=%q device=%s -> %d bundled application(s)",
-			r.Method, p, r.URL.Query().Get("shop_id"), device, len(contents))
+			r.Method, redact.Path(p), redact.IDs(r.URL.Query().Get("shop_id")), redact.Tag(device), len(contents))
 		writeJSON(w, 200, map[string]any{"contents": contents, "redeemed": bundleRedeemed(b)})
 	case "/v1/devices/target/set":
 		account, baasUser := s.shopPrincipal(r)
 		if device == "" || account == "" {
-			log.Printf("[shop] beach %s %s: device=%q account=%q -> 401 (redemption needs both)", r.Method, p, device, account)
+			log.Printf("[shop] beach %s %s: device=%s account=%s -> 401 (redemption needs both)", r.Method, redact.Path(p), redact.Tag(device), redact.Tag(account))
 			beachErr(w, 401, "1002", "device and account identity required")
 			return true
 		}
@@ -231,7 +232,7 @@ func (s *server) beachBundle(w http.ResponseWriter, r *http.Request, p string) b
 		s.shop.linkDevice(device, account, baasUser)
 		done := s.shop.redeemBundle(device, account, baasUser)
 		log.Printf("[shop] beach %s %s device=%s account=%s -> redeemed %v (reply shape unverified: NIM does not read it)",
-			r.Method, p, device, account, done)
+			r.Method, redact.Path(p), redact.Tag(device), redact.Tag(account), done)
 		w.WriteHeader(http.StatusOK)
 	case "/v1/devices/target/clear":
 		if device == "" {
@@ -240,8 +241,8 @@ func (s *server) beachBundle(w http.ResponseWriter, r *http.Request, p string) b
 		}
 		account, _ := s.shopPrincipal(r)
 		cleared := s.shop.clearBundle(device, account)
-		log.Printf("[shop] beach %s %s device=%s account=%q -> cleared %v (meaning unverified on hardware)",
-			r.Method, p, device, account, cleared)
+		log.Printf("[shop] beach %s %s device=%s account=%s -> cleared %v (meaning unverified on hardware)",
+			r.Method, redact.Path(p), redact.Tag(device), redact.Tag(account), cleared)
 		w.WriteHeader(http.StatusOK)
 	default:
 		return false

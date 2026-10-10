@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"log"
+	"nx-baas/redact"
 	"sync/atomic"
 	"time"
 
@@ -55,7 +56,7 @@ func (b *openpakBackend) markOnline(pid uint64) {
 		}
 		now := time.Now().Unix()
 		if last := markOnlineLastLog.Load(); now-last >= 60 && markOnlineLastLog.CompareAndSwap(last, now) {
-			log.Printf("[nx-baas] mark online (logged at most once a minute): %v", err)
+			log.Printf("[nx-baas] mark online (logged at most once a minute): %v", redact.Err(err))
 		}
 	})
 }

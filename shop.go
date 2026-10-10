@@ -31,7 +31,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"nx-baas/redact"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -90,7 +92,7 @@ func (s *server) savanna(w http.ResponseWriter, r *http.Request, body []byte) {
 		// The applet's query is recorded in full once per page load: which scene and
 		// parameters qlaunch sends is still a hardware question (report, eShop "Needs
 		// hardware" 1).
-		log.Printf("[shop] savanna scene %s query=%q ua=%q", p, r.URL.RawQuery, r.UserAgent())
+		log.Printf("[shop] savanna scene %s query=%q ua=%q", p, redact.Query(r.URL.RawQuery), redact.IDs(r.UserAgent()))
 		if s.shop == nil {
 			s.shop = newShopState("")
 		}
@@ -322,7 +324,7 @@ func (s *server) shopAcquire(w http.ResponseWriter, r *http.Request, tid string)
 		writeJSON(w, 404, map[string]any{"error": map[string]any{"code": "2001", "message": "no such title"}})
 		return
 	}
-	log.Printf("[shop] acquire: account %s title %s -> elicense %s (device %s, new=%v)", account, tid, e.ELicenseID, device, created)
+	log.Printf("[shop] acquire: account %s title %s -> elicense %s (device %s, new=%v)", redact.Tag(account), tid, redact.Tag(e.ELicenseID), redact.Tag(device), created)
 	writeJSON(w, 200, map[string]any{
 		"title_id": e.TitleID, "elicense_id": e.ELicenseID, "rights_id": e.RightsID,
 		"version": e.Version, "status": e.Status, "already_owned": !created,
@@ -413,7 +415,12 @@ func (s *server) shopDiagReport(w http.ResponseWriter, r *http.Request, body []b
 	payload["ua"] = r.UserAgent()
 	payload["at"] = timeNowUnix()
 	if b, err := json.Marshal(payload); err == nil {
-		log.Printf("[shop] diag: %s", b)
+		keys := make([]string, 0, len(payload))
+		for k := range payload {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		log.Printf("[shop] diag: %d bytes, fields %s", len(b), strings.Join(keys, ","))
 	}
 	d := s.shopDiag()
 	d.mu.Lock()

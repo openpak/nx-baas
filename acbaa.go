@@ -46,6 +46,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"nx-baas/redact"
 	"os"
 	"strconv"
 	"strings"
@@ -124,7 +125,7 @@ func (s *server) acbaa(w http.ResponseWriter, r *http.Request, body []byte) {
 		s.acbaaUploadLandProfile(w, r, body)
 		return
 	}
-	log.Printf("[acbaa] unmapped route: %s %s (acbaa.go)", r.Method, r.URL.Path)
+	log.Printf("[acbaa] unmapped route: %s %s (acbaa.go)", r.Method, redact.Path(r.URL.Path))
 	acbaaError(w, 404, "3004")
 }
 
@@ -143,7 +144,7 @@ func acbaaError(w http.ResponseWriter, status int, code string) {
 func (s *server) acbaaRegisterLand(w http.ResponseWriter, r *http.Request, body []byte) {
 	v, err := msgpackDecode(body)
 	if err != nil {
-		log.Printf("[acbaa] POST /api/v1/lands: bad msgpack (%dB): %v", len(body), err)
+		log.Printf("[acbaa] POST /api/v1/lands: bad msgpack (%dB): %v", len(body), redact.Err(err))
 		http.Error(w, "bad msgpack", 400)
 		return
 	}
@@ -169,8 +170,8 @@ func (s *server) acbaaRegisterLand(w http.ResponseWriter, r *http.Request, body 
 	s.acbaaNames[uid] = rec
 	s.acbaaSaveLocked()
 	s.mu.Unlock()
-	log.Printf("[acbaa] register land name=%q display_id=%d in_app_id=%d region=%d hemisphere=%d bearer=%s",
-		name, displayID, inAppID, region, hemisphere, bearerSummary(r.Header.Get("Authorization")))
+	log.Printf("[acbaa] register land name=%s display_id=%s in_app_id=%s region=%d hemisphere=%d bearer=%s",
+		redact.Text(name), redact.Tag(displayID), redact.Tag(inAppID), region, hemisphere, bearerSummary(r.Header.Get("Authorization")))
 	// Answer exactly {id, password} per the documented shape. A nested land
 	// record was tried here and the flow never advanced past setup, so back
 	// to the documented bytes: anything extra risks a strict reader.
@@ -225,7 +226,7 @@ func msgpackOrdered(pairs ...any) []byte {
 func (s *server) acbaaRegisterUser(w http.ResponseWriter, r *http.Request, body []byte) {
 	v, err := msgpackDecode(body)
 	if err != nil {
-		log.Printf("[acbaa] POST /api/v1/users: bad msgpack (%dB): %v", len(body), err)
+		log.Printf("[acbaa] POST /api/v1/users: bad msgpack (%dB): %v", len(body), redact.Err(err))
 		http.Error(w, "bad msgpack", 400)
 		return
 	}
@@ -248,8 +249,8 @@ func (s *server) acbaaRegisterUser(w http.ResponseWriter, r *http.Request, body 
 	s.acbaaNames[id] = rec
 	s.acbaaSaveLocked()
 	s.mu.Unlock()
-	log.Printf("[acbaa] register user name=%q id=%d bearer=%s",
-		name, id, bearerSummary(r.Header.Get("Authorization")))
+	log.Printf("[acbaa] register user name=%s id=%s bearer=%s",
+		redact.Text(name), redact.Tag(id), bearerSummary(r.Header.Get("Authorization")))
 	w.Header().Set("Content-Type", "application/x-msgpack")
 	w.WriteHeader(200)
 	w.Write(msgpackOrdered(
@@ -305,7 +306,7 @@ func acbaaLegacyID(auth, name string) uint64 {
 func (s *server) acbaaMigrateUID(oldUID, newPID uint64) {
 	s.mu.Lock()
 	if s.migrateUIDLocked(oldUID, newPID) {
-		log.Printf("[acbaa] migrated uid=%d to NEX pid=%d", oldUID, newPID)
+		log.Printf("[acbaa] migrated uid=%s to NEX pid=%s", redact.Tag(oldUID), redact.Tag(newPID))
 	}
 	s.acbaaSaveLocked()
 	s.mu.Unlock()
@@ -433,7 +434,7 @@ func acbaaUserPassword(id uint64) string {
 func (s *server) acbaaAuthToken(w http.ResponseWriter, r *http.Request, body []byte) {
 	v, err := msgpackDecode(body)
 	if err != nil {
-		log.Printf("[acbaa] POST /api/v1/auth_token: bad msgpack (%dB): %v", len(body), err)
+		log.Printf("[acbaa] POST /api/v1/auth_token: bad msgpack (%dB): %v", len(body), redact.Err(err))
 		http.Error(w, "bad msgpack", 400)
 		return
 	}
@@ -446,12 +447,12 @@ func (s *server) acbaaAuthToken(w http.ResponseWriter, r *http.Request, body []b
 	id := msgpackReadUintOf(cred["id"])
 	password, _ := cred["password"].(string)
 	if id == 0 || subtle.ConstantTimeCompare([]byte(password), []byte(acbaaUserPassword(id))) != 1 {
-		log.Printf("[acbaa] POST /api/v1/auth_token: bad credentials for id=%d", id)
+		log.Printf("[acbaa] POST /api/v1/auth_token: bad credentials for id=%s", redact.Tag(id))
 		acbaaError(w, 401, "4001")
 		return
 	}
 	token := acbaaMintToken(id)
-	log.Printf("[acbaa] auth token for id=%d expires in 1h", id)
+	log.Printf("[acbaa] auth token for id=%s expires in 1h", redact.Tag(id))
 	w.Header().Set("Content-Type", "application/x-msgpack")
 	w.WriteHeader(200)
 	w.Write(msgpackOrdered(
@@ -504,36 +505,36 @@ func (s *server) acbaaBindUserLand(w http.ResponseWriter, r *http.Request, body 
 	}
 	uid, err := strconv.ParseUint(seg[3], 10, 64)
 	if err != nil || uid == 0 {
-		log.Printf("[acbaa] PUT %s: bad user id", r.URL.Path)
+		log.Printf("[acbaa] PUT %s: bad user id", redact.Path(r.URL.Path))
 		acbaaError(w, 404, "3004")
 		return
 	}
 	uid = s.acbaaResolveUID(uid)
 	if !s.acbaaCallerOwns(r.Header.Get("Authorization"), uid) {
-		log.Printf("[acbaa] PUT %s: caller does not own uid=%d", r.URL.Path, uid)
+		log.Printf("[acbaa] PUT %s: caller does not own uid=%s", redact.Path(r.URL.Path), redact.Tag(uid))
 		acbaaError(w, 401, "4001")
 		return
 	}
 	v, err := msgpackDecode(body)
 	if err != nil {
-		log.Printf("[acbaa] PUT %s: bad msgpack (%dB): %v", r.URL.Path, len(body), err)
+		log.Printf("[acbaa] PUT %s: bad msgpack (%dB): %v", redact.Path(r.URL.Path), len(body), redact.Err(err))
 		http.Error(w, "bad msgpack", 400)
 		return
 	}
 	link, ok := v.(map[string]any)
 	if !ok {
-		log.Printf("[acbaa] PUT %s: body is %T, want map", r.URL.Path, v)
+		log.Printf("[acbaa] PUT %s: body is %T, want map", redact.Path(r.URL.Path), v)
 		http.Error(w, "want map", 400)
 		return
 	}
 	landID := msgpackReadUintOf(link["id"])
 	password, _ := link["password"].(string)
 	if landID == 0 || subtle.ConstantTimeCompare([]byte(password), []byte(acbaaLandPassword(landID))) != 1 {
-		log.Printf("[acbaa] PUT %s: bad land credentials for land=%d", r.URL.Path, landID)
+		log.Printf("[acbaa] PUT %s: bad land credentials for land=%s", redact.Path(r.URL.Path), redact.Tag(landID))
 		acbaaError(w, 401, "4001")
 		return
 	}
-	log.Printf("[acbaa] bind user=%d to land=%d", uid, landID)
+	log.Printf("[acbaa] bind user=%s to land=%s", redact.Tag(uid), redact.Tag(landID))
 	s.mu.Lock()
 	if s.acbaaUserLand == nil {
 		s.acbaaUserLand = map[uint64]uint64{}
@@ -576,7 +577,7 @@ func (s *server) acbaaCallerOwns(auth string, uid uint64) bool {
 func (s *server) acbaaUpdatedAddresses(w http.ResponseWriter, r *http.Request, body []byte) {
 	v, err := msgpackDecode(body)
 	if err != nil {
-		log.Printf("[acbaa] POST /api/v1/lands/updated_addresses: bad msgpack (%dB): %v", len(body), err)
+		log.Printf("[acbaa] POST /api/v1/lands/updated_addresses: bad msgpack (%dB): %v", len(body), redact.Err(err))
 		http.Error(w, "bad msgpack", 400)
 		return
 	}
@@ -604,7 +605,7 @@ func (s *server) acbaaUpdatedAddresses(w http.ResponseWriter, r *http.Request, b
 func (s *server) acbaaNotificationToken(w http.ResponseWriter, r *http.Request, body []byte) {
 	v, err := msgpackDecode(body)
 	if err != nil {
-		log.Printf("[acbaa] POST /api/v1/notification_tokens: bad msgpack (%dB): %v", len(body), err)
+		log.Printf("[acbaa] POST /api/v1/notification_tokens: bad msgpack (%dB): %v", len(body), redact.Err(err))
 		http.Error(w, "bad msgpack", 400)
 		return
 	}
@@ -645,7 +646,7 @@ func (s *server) acbaaWebResource(w http.ResponseWriter, r *http.Request, body [
 	}
 	v, err := msgpackDecode(body)
 	if err != nil {
-		log.Printf("[acbaa] PUT web resource %s: bad msgpack (%dB): %v", name, len(body), err)
+		log.Printf("[acbaa] PUT web resource %s: bad msgpack (%dB): %v", name, len(body), redact.Err(err))
 		http.Error(w, "bad msgpack", 400)
 		return
 	}
@@ -775,15 +776,15 @@ func (s *server) acbaaSaveLocked() {
 	}
 	b, err := json.Marshal(acbaaDisk{Profiles: s.acbaaProfiles, Resources: s.acbaaResources, Names: s.acbaaNames, LandProfiles: s.acbaaLandProfiles, UserLand: s.acbaaUserLand, UIDMap: s.acbaaUIDMap, FriendReqs: s.acbaaFriendReqs, Friends: s.acbaaFriendList})
 	if err != nil {
-		log.Printf("[acbaa] store marshal: %v", err)
+		log.Printf("[acbaa] store marshal: %v", redact.Err(err))
 		return
 	}
 	if err := os.WriteFile(s.acbaaPath+".tmp", b, 0o600); err != nil {
-		log.Printf("[acbaa] store write: %v", err)
+		log.Printf("[acbaa] store write: %v", redact.Err(err))
 		return
 	}
 	if err := os.Rename(s.acbaaPath+".tmp", s.acbaaPath); err != nil {
-		log.Printf("[acbaa] store rename: %v", err)
+		log.Printf("[acbaa] store rename: %v", redact.Err(err))
 	}
 }
 
@@ -829,7 +830,7 @@ func (s *server) acbaaSendFriendRequest(w http.ResponseWriter, r *http.Request, 
 	from := s.acbaaResolveUID(acbaaBearerID(r.Header.Get("Authorization")))
 	to, err := strconv.ParseUint(r.URL.Query().Get("target_user_id"), 10, 64)
 	if from == 0 || err != nil || to == 0 || to == from {
-		log.Printf("[acbaa] friend request from=%d target=%q: refused", from, r.URL.Query().Get("target_user_id"))
+		log.Printf("[acbaa] friend request from=%s target=%s: refused", redact.Tag(from), redact.Tag(r.URL.Query().Get("target_user_id")))
 		acbaaError(w, 400, "3004")
 		return
 	}
@@ -860,7 +861,7 @@ func (s *server) acbaaSendFriendRequest(w http.ResponseWriter, r *http.Request, 
 	}
 	s.acbaaSaveLocked()
 	s.mu.Unlock()
-	log.Printf("[acbaa] friend request from=%d to=%d meta=%dB approved=%v", from, to, len(meta), approved)
+	log.Printf("[acbaa] friend request from=%s to=%s meta=%dB approved=%v", redact.Tag(from), redact.Tag(to), len(meta), approved)
 	w.Header().Set("Content-Type", "application/x-msgpack")
 	w.WriteHeader(200)
 	w.Write(msgpackOrdered("id", id, "approved", approved))
@@ -907,7 +908,7 @@ func (s *server) acbaaAnswerFriendRequest(w http.ResponseWriter, r *http.Request
 	req, ok := s.acbaaFriendReqs[id]
 	if !ok || req.To != me {
 		s.mu.Unlock()
-		log.Printf("[acbaa] friend request %d answered by %d: not theirs", id, me)
+		log.Printf("[acbaa] friend request %s answered by %s: not theirs", redact.Tag(id), redact.Tag(me))
 		acbaaError(w, 404, "3004")
 		return
 	}
@@ -918,7 +919,7 @@ func (s *server) acbaaAnswerFriendRequest(w http.ResponseWriter, r *http.Request
 	}
 	s.acbaaSaveLocked()
 	s.mu.Unlock()
-	log.Printf("[acbaa] friend request %d from=%d to=%d action=%q befriended=%v", id, req.From, req.To, action, !refused)
+	log.Printf("[acbaa] friend request %s from=%s to=%s action=%q befriended=%v", redact.Tag(id), redact.Tag(req.From), redact.Tag(req.To), action, !refused)
 	w.Header().Set("Content-Type", "application/x-msgpack")
 	w.WriteHeader(200)
 	w.Write(msgpack(map[string]any{}))
@@ -934,7 +935,7 @@ func (s *server) acbaaFriends(w http.ResponseWriter, r *http.Request) {
 	for _, f := range list {
 		friends = append(friends, map[string]any{"user_id": f})
 	}
-	log.Printf("[acbaa] friends of %d -> %d", me, len(friends))
+	log.Printf("[acbaa] friends of %s -> %d", redact.Tag(me), len(friends))
 	w.Header().Set("Content-Type", "application/x-msgpack")
 	w.WriteHeader(200)
 	w.Write(msgpackOrdered("count", len(friends), "friends", friends))
@@ -964,7 +965,7 @@ func (s *server) acbaaFriendRequests(w http.ResponseWriter, r *http.Request) {
 	if out == nil {
 		out = []any{}
 	}
-	log.Printf("[acbaa] friend requests type=%q for %d -> %d", typ, me, len(out))
+	log.Printf("[acbaa] friend requests type=%q for %s -> %d", typ, redact.Tag(me), len(out))
 	w.Header().Set("Content-Type", "application/x-msgpack")
 	w.WriteHeader(200)
 	w.Write(msgpackOrdered("count", len(out), "friend_requests", out))
@@ -1036,14 +1037,14 @@ func (s *server) acbaaUploadProfile(w http.ResponseWriter, r *http.Request, body
 	pathUID := uid
 	uid = s.acbaaResolveUID(uid)
 	if _, err := msgpackDecode(body); err != nil {
-		log.Printf("[acbaa] profile upload uid=%d: bad msgpack (%dB): %v", uid, len(body), err)
+		log.Printf("[acbaa] profile upload uid=%s: bad msgpack (%dB): %v", redact.Tag(uid), len(body), redact.Err(err))
 		http.Error(w, "bad msgpack", 400)
 		return
 	}
 	sha := s.acbaaRememberProfile(uid, body)
 	sum1 := sha1.Sum(body)
 	now := time.Now().Unix()
-	log.Printf("[acbaa] profile upload uid=%d %dB sha256=%s", uid, len(body), sha[:16])
+	log.Printf("[acbaa] profile upload uid=%s %dB sha256=%s", redact.Tag(uid), len(body), sha[:16])
 	w.Header().Set("Content-Type", "application/x-msgpack")
 	w.WriteHeader(200)
 	w.Write(msgpackOrdered(
@@ -1066,12 +1067,12 @@ func (s *server) acbaaUploadLandProfile(w http.ResponseWriter, r *http.Request, 
 	}
 	landID, err := strconv.ParseUint(seg[3], 10, 64)
 	if err != nil || landID == 0 {
-		log.Printf("[acbaa] PUT %s: bad land id", r.URL.Path)
+		log.Printf("[acbaa] PUT %s: bad land id", redact.Path(r.URL.Path))
 		acbaaError(w, 404, "3004")
 		return
 	}
 	if _, err := msgpackDecode(body); err != nil {
-		log.Printf("[acbaa] land profile upload land=%d: bad msgpack (%dB): %v", landID, len(body), err)
+		log.Printf("[acbaa] land profile upload land=%s: bad msgpack (%dB): %v", redact.Tag(landID), len(body), redact.Err(err))
 		http.Error(w, "bad msgpack", 400)
 		return
 	}
@@ -1083,7 +1084,7 @@ func (s *server) acbaaUploadLandProfile(w http.ResponseWriter, r *http.Request, 
 	s.acbaaLandProfiles[landID] = acbaaProfile{SHA: hex.EncodeToString(sum[:]), Size: len(body)}
 	s.acbaaSaveLocked()
 	s.mu.Unlock()
-	log.Printf("[acbaa] land profile upload land=%d %dB", landID, len(body))
+	log.Printf("[acbaa] land profile upload land=%s %dB", redact.Tag(landID), len(body))
 	// Answer the stored record like the player profile does: the game reads
 	// the same $.id/$.digest/$.created_at shape out of it (observed: the
 	// first land upload immediately followed the fixed player-profile
@@ -1143,6 +1144,9 @@ func bearerSummary(auth string) string {
 	sub, _ := payload["sub"].(string)
 	if kid == "" && iss == "" && sub == "" {
 		return "opaque"
+	}
+	if sub != "" {
+		sub = redact.Tag(sub)
 	}
 	return fmt.Sprintf("kid=%s iss=%s sub=%s", kid, iss, sub)
 }

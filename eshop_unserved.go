@@ -20,6 +20,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"nx-baas/redact"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -79,13 +80,13 @@ func (s *server) pearljam(w http.ResponseWriter, r *http.Request, body []byte) {
 		account = s.bearerHeader(r, "Authorization") != nil
 	}
 	if !device || !account {
-		log.Printf("[shop] pearljam %s %s %s -> 401 (device token ok=%v, account token ok=%v)", endpoint, r.Method, p, device, account)
+		log.Printf("[shop] pearljam %s %s %s -> 401 (device token ok=%v, account token ok=%v)", endpoint, r.Method, redact.Path(p), device, account)
 		writeJSON(w, 401, map[string]any{"error": map[string]any{"code": "0401",
 			"message": "pearljam " + endpoint + " needs a valid device token and account token"}})
 		return
 	}
 	log.Printf("[shop] pearljam %s %s %s app=%s -> 200 {} (unverified: NIM passes the body to its caller unread)",
-		endpoint, r.Method, p, r.Header.Get("X-Nintendo-Application-Id"))
+		endpoint, r.Method, redact.Path(p), r.Header.Get("X-Nintendo-Application-Id"))
 	writeJSON(w, 200, map[string]any{})
 }
 
@@ -94,7 +95,7 @@ func (s *server) pearljam(w http.ResponseWriter, r *http.Request, body []byte) {
 func keepPearljamRequest(endpoint string, r *http.Request, body []byte) {
 	dir := filepath.Join(getenv("NX_DATA", "/data"), "pearljam")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		log.Printf("[shop] pearljam: keep request: %v", err)
+		log.Printf("[shop] pearljam: keep request: %v", redact.Err(err))
 		return
 	}
 	var b strings.Builder
@@ -107,7 +108,7 @@ func keepPearljamRequest(endpoint string, r *http.Request, body []byte) {
 	b.Write(body)
 	name := fmt.Sprintf("%s-%d-%s.txt", time.Now().UTC().Format("20060102T150405"), time.Now().UnixNano()%1e9, endpoint)
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(b.String()), 0o600); err != nil {
-		log.Printf("[shop] pearljam: keep request: %v", err)
+		log.Printf("[shop] pearljam: keep request: %v", redact.Err(err))
 	}
 }
 
@@ -132,7 +133,7 @@ func (s *server) bvc(w http.ResponseWriter, r *http.Request) {
 	h.Set("Server", "AkamaiNetStorage")
 	h.Set("Accept-Ranges", "bytes")
 	if b := s.shop.blockedFirmware(v); b != nil {
-		log.Printf("[shop] bvc %s %s%s -> 200: firmware %s is on the blocklist (NIM refuses it with 2137-8164)", r.Method, hostOf(r), r.URL.Path, v)
+		log.Printf("[shop] bvc %s %s%s -> 200: firmware %s is on the blocklist (NIM refuses it with 2137-8164)", r.Method, hostOf(r), redact.Path(r.URL.Path), v)
 		h.Set("Content-Type", "text/plain")
 		h.Set("Content-Length", "0")
 		h.Set("ETag", fmt.Sprintf(`"d41d8cd98f00b204e9800998ecf8427e:%d.000000"`, b.AddedAt))
@@ -140,7 +141,7 @@ func (s *server) bvc(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	log.Printf("[shop] bvc %s %s%s -> 404: this firmware version is not listed", r.Method, hostOf(r), r.URL.Path)
+	log.Printf("[shop] bvc %s %s%s -> 404: this firmware version is not listed", r.Method, hostOf(r), redact.Path(r.URL.Path))
 	h["Content-Type"] = nil // Akamai sends none; nil stops net/http sniffing one
 	h.Set("Content-Length", "10")
 	w.WriteHeader(http.StatusNotFound)
@@ -199,15 +200,15 @@ func (s *server) nimUnserved(w http.ResponseWriter, r *http.Request, body []byte
 	// OpenPak has no family groups, so nobody is in one and nobody can lend:
 	// an empty candidate list is the true answer, not a placeholder.
 	case p == "/v1/accounts/vphyms":
-		log.Printf("[shop] nim %s %s -> no virtual cards (OpenPak has no family lending)", r.Method, p)
+		log.Printf("[shop] nim %s %s -> no virtual cards (OpenPak has no family lending)", r.Method, redact.Path(p))
 		writeJSON(w, 200, map[string]any{"vphyms": []any{}})
 		return true
 	case p == "/v1/accounts/vphym-borrowers/candidates":
-		log.Printf("[shop] nim %s %s -> no borrowers", r.Method, p)
+		log.Printf("[shop] nim %s %s -> no borrowers", r.Method, redact.Path(p))
 		writeJSON(w, 200, map[string]any{"candidates": []any{}})
 		return true
 	case strings.HasPrefix(p, "/v1/accounts/in-same-family"):
-		log.Printf("[shop] nim %s %s -> not in a family", r.Method, p)
+		log.Printf("[shop] nim %s %s -> not in a family", r.Method, redact.Path(p))
 		writeJSON(w, 200, map[string]any{"inSameFamily": false})
 		return true
 
@@ -215,7 +216,7 @@ func (s *server) nimUnserved(w http.ResponseWriter, r *http.Request, body []byte
 	// checks [nim: /v1/nearness-checks, /prune]. Nothing of ours brokers
 	// device-to-device transfers, so there are no checks outstanding.
 	case strings.HasPrefix(p, "/v1/nearness-checks"):
-		log.Printf("[shop] nim %s %s -> no nearness checks", r.Method, p)
+		log.Printf("[shop] nim %s %s -> no nearness checks", r.Method, redact.Path(p))
 		writeJSON(w, 200, map[string]any{"nearnessChecks": []any{}})
 		return true
 
@@ -224,7 +225,7 @@ func (s *server) nimUnserved(w http.ResponseWriter, r *http.Request, body []byte
 	// on OpenPak to believe: we serve no system images and must never point
 	// one at an update it cannot get.
 	case strings.HasPrefix(p, "/v1/system_update_meta"):
-		log.Printf("[shop] nim %s %s -> no system update", r.Method, p)
+		log.Printf("[shop] nim %s %s -> no system update", r.Method, redact.Path(p))
 		writeJSON(w, 200, map[string]any{"system_update_metas": []any{}})
 		return true
 	// aqua: "which system version must I have before content delivery?"
@@ -240,7 +241,7 @@ func (s *server) nimUnserved(w http.ResponseWriter, r *http.Request, body []byte
 	// requirement, go ahead" answer on every console; we serve no system images,
 	// so we never name a real floor.
 	case strings.HasPrefix(p, "/required_system_update_meta"):
-		log.Printf("[shop] nim aqua required system update device=%s -> none (0100000000000816 v0)", r.URL.Query().Get("device_id"))
+		log.Printf("[shop] nim aqua required system update device=%s -> none (0100000000000816 v0)", redact.Tag(r.URL.Query().Get("device_id")))
 		writeJSON(w, 200, map[string]any{
 			"contents_delivery_required_title_id":      "0100000000000816",
 			"contents_delivery_required_title_version": 0,
@@ -251,11 +252,11 @@ func (s *server) nimUnserved(w http.ResponseWriter, r *http.Request, body []byte
 	// the family/account notification fan-out [/v1/accounts/notify,
 	// /v1/accounts/notify-to-family]. Nothing produces either yet.
 	case strings.HasPrefix(p, "/v1/direct-messages"):
-		log.Printf("[shop] nim %s %s -> no messages", r.Method, p)
+		log.Printf("[shop] nim %s %s -> no messages", r.Method, redact.Path(p))
 		writeJSON(w, 200, map[string]any{"messages": []any{}, "count": 0})
 		return true
 	case p == "/v1/accounts/notify", p == "/v1/accounts/notify-to-family":
-		log.Printf("[shop] nim %s %s -> accepted, nothing to fan out", r.Method, p)
+		log.Printf("[shop] nim %s %s -> accepted, nothing to fan out", r.Method, redact.Path(p))
 		w.WriteHeader(http.StatusOK)
 		return true
 
@@ -292,7 +293,7 @@ func (s *server) nimUnserved(w http.ResponseWriter, r *http.Request, body []byte
 				"icon": "/ashigaru/icon/" + t.TitleID,
 			})
 		}
-		log.Printf("[shop] nim %s %s q=%q -> %d title(s)", r.Method, p, q, len(items))
+		log.Printf("[shop] nim %s %s q=%s -> %d title(s)", r.Method, redact.Path(p), redact.Text(q), len(items))
 		writeJSON(w, 200, map[string]any{"acds": items, "count": len(items), "original_count": len(items)})
 		return true
 	}

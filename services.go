@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"nx-baas/redact"
 	"strings"
 )
 
@@ -73,13 +74,13 @@ func (s *server) olsc(w http.ResponseWriter, r *http.Request, body []byte) {
 func (s *server) frs(w http.ResponseWriter, r *http.Request, _ []byte) {
 	const knownGood = "/v1/friend_recommendations"
 	if strings.HasPrefix(r.URL.Path, knownGood) {
-		log.Printf("[nx-baas] frs %s", r.URL.Path)
+		log.Printf("[nx-baas] frs %s", redact.Path(r.URL.Path))
 		// No recommendations of any kind: nintendo_account, nintendo_3ds
 		// and nintendo_network_id all read the same $.items[].
 		writeJSON(w, 200, map[string]any{"items": []any{}})
 		return
 	}
-	log.Printf("[nx-baas] frs UNSUPPORTED %s %s (answered grpc-status 12)", r.Method, r.URL.Path)
+	log.Printf("[nx-baas] frs UNSUPPORTED %s %s (answered grpc-status 12)", r.Method, redact.Path(r.URL.Path))
 	w.Header().Set("Content-Type", "application/grpc")
 	w.Header().Set("Grpc-Status", "12") // UNIMPLEMENTED
 	w.Header().Set("Grpc-Message", "operation not implemented by this server")
@@ -89,7 +90,7 @@ func (s *server) frs(w http.ResponseWriter, r *http.Request, _ []byte) {
 // serviceStatus is the "is this game's online service up" check. Saying yes for
 // everything we serve is right; saying nothing at all reads as an outage.
 func (s *server) serviceStatus(w http.ResponseWriter, r *http.Request, _ []byte) {
-	log.Printf("[nx-baas] service status %s", r.URL.Path)
+	log.Printf("[nx-baas] service status %s", redact.Path(r.URL.Path))
 	writeJSON(w, 200, map[string]any{"status": "available", "type": "NORMAL"})
 }
 
@@ -98,7 +99,7 @@ func (s *server) serviceStatus(w http.ResponseWriter, r *http.Request, _ []byte)
 func newSavesProxy(base string) *httputil.ReverseProxy {
 	target, err := url.Parse(base)
 	if err != nil {
-		log.Fatalf("[nx-baas] SAVES_URL %q: %v", base, err)
+		log.Fatalf("[nx-baas] SAVES_URL %q: %v", base, redact.Err(err))
 	}
 	return &httputil.ReverseProxy{
 		Director: func(r *http.Request) {

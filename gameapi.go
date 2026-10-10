@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"nx-baas/redact"
 	"os"
 	"strconv"
 	"strings"
@@ -160,7 +161,7 @@ func (s *server) photonRoom(w http.ResponseWriter, r *http.Request) {
 	// the departure.
 	s.noteDevicePresence(u, "photon:"+in.Identity, "PLAYING", in.AppID,
 		base64.StdEncoding.EncodeToString(appParam), in.AppID, -1)
-	log.Printf("[nx-baas] photon-room pid=%d app=%s room=%s", pid, in.AppID, in.Room)
+	log.Printf("[nx-baas] photon-room pid=%s app=%s room=%s", redact.Tag(pid), in.AppID, redact.Tag(in.Room))
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -187,7 +188,7 @@ func (s *server) photonRoomLeave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.noteDevicePresence(u, "photon:"+in.Identity, "OFFLINE", "", "", "", -1)
-	log.Printf("[nx-baas] photon-room-leave pid=%d", pid)
+	log.Printf("[nx-baas] photon-room-leave pid=%s", redact.Tag(pid))
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -329,7 +330,7 @@ func (s *server) sendInvitation(w http.ResponseWriter, r *http.Request, from uin
 		createLegacyInvitation(sender, name, target, in.AppParamBase64, appID)
 		sent++
 	}
-	log.Printf("[nx-baas] invitation %s(%d) -> %d/%d target(s)", name, from, sent, len(in.TargetPIDs))
+	log.Printf("[nx-baas] invitation %s(%s) -> %d/%d target(s)", redact.Text(name), redact.Tag(from), sent, len(in.TargetPIDs))
 	writeJSON(w, 200, map[string]any{"ok": true, "sent": sent})
 }
 
@@ -387,7 +388,7 @@ func (s *server) mintToken(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, http.StatusServiceUnavailable, "no signing key")
 		return
 	}
-	log.Printf("[nx-baas] minted token for pid=%d (%s)", in.PID, id.Nickname)
+	log.Printf("[nx-baas] minted token for pid=%s (%s)", redact.Tag(in.PID), redact.Text(id.Nickname))
 	writeJSON(w, 200, map[string]any{"pid": in.PID, "username": id.Nickname, "friend_code": id.FriendCode, "token": tok})
 }
 
@@ -419,7 +420,7 @@ func (s *server) penneTestNotification(w http.ResponseWriter, r *http.Request) {
 	res := s.submitNotification(PenneDelivery{
 		ID: in.ID, UserID: in.UserID, Kind: in.Kind, Payload: in.Payload,
 	}, true)
-	log.Printf("[nx-baas] penne: test notification user=%s kind=%s -> %s", in.UserID, in.Kind, res.Outcome)
+	log.Printf("[nx-baas] penne: test notification user=%s kind=%s -> %s", redact.Tag(in.UserID), in.Kind, res.Outcome)
 	writeJSON(w, 200, map[string]any{"accepted": res.Accepted, "duplicate": res.Duplicate, "outcome": string(res.Outcome), "id": res.ID})
 }
 

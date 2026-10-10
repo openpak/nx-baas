@@ -26,6 +26,7 @@ package main
 import (
 	"context"
 	"log"
+	"nx-baas/redact"
 	"os"
 	"strconv"
 	"strings"
@@ -486,7 +487,7 @@ func (s *server) registerCoreSession(b *openpakBackend, u *User, titleID, client
 	}
 	s.liveSessionClient[u.ID] = client
 	s.liveSessionOS[u.ID] = clientOS
-	log.Printf("[nx-baas] presence: core session for %s namespace=%s title=%q client=%q os=%q", accountID, b.namespace, titleID, client, clientOS)
+	log.Printf("[nx-baas] presence: core session for %s namespace=%s title=%q client=%q os=%q", redact.Tag(accountID), b.namespace, titleID, client, clientOS)
 }
 
 // renewCoreSession heartbeats the account's session so the core's shorter

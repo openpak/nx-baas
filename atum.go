@@ -32,6 +32,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"nx-baas/redact"
 	"os"
 	"strconv"
 	"strings"
@@ -108,7 +109,7 @@ func (s *server) atum(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 	}
 	if did := deviceIDFromUA(r.UserAgent()); did != "" && did != device && device != "" {
-		log.Printf("[shop] atum: UA device %s does not match token device %s", did, device)
+		log.Printf("[shop] atum: UA device %s does not match token device %s", redact.Tag(did), redact.Tag(device))
 	}
 
 	// The catalog is the authority on what exists and what the bytes hash to.
@@ -330,7 +331,7 @@ func (s *server) serveContentRange(w http.ResponseWriter, r *http.Request, path 
 	}
 	n, err := io.Copy(w, io.NewSectionReader(f, c.Offset+start, end-start+1))
 	if err != nil && n != end-start+1 {
-		log.Printf("[shop] atum: %s for %s/%s: %d/%d bytes (client %s)", err, titleID, c.ContentID, n, end-start+1, device)
+		log.Printf("[shop] atum: %s for %s/%s: %d/%d bytes (client %s)", redact.Err(err), titleID, c.ContentID, n, end-start+1, redact.Tag(device))
 	}
 	s.shop.noteServed(titleID, c, start, n)
 }
@@ -383,7 +384,7 @@ func (s *shopState) failOpenTasks(titleID, reason string) {
 // ("403/edge_token_not_grantable") observed in the NIM strings; other statuses log for the
 // hardware capture to refine.
 func atumErr(w http.ResponseWriter, r *http.Request, status int, message, detail string) {
-	log.Printf("[shop] atum %d %s %s: %s", status, r.Method, r.URL.Path, message)
+	log.Printf("[shop] atum %d %s %s: %s", status, r.Method, redact.Path(r.URL.Path), message)
 	http.Error(w, message, status)
 }
 

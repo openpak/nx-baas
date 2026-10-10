@@ -3,6 +3,22 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.51.3 — 2026-10-10
+
+- **No personal data in logs.** Account, NSA, device and pairing ids, pids, nicknames, e-mail
+  addresses, friend and pairing codes, tokens, tickets, Authorization headers, request
+  paths and queries, and client addresses are no longer logged. An id appears as a short
+  per-process tag (`redact.Tag`: keyed HMAC prefix, key random per start), so two lines about
+  one console still match within a run and cannot be compared across restarts. Paths keep
+  their route words, queries keep only parameter names, and user agents keep their firmware and
+  platform text with every id-shaped run tagged. Title ids stay readable.
+- Request and response bodies, header values, query values and raw Penne frames are logged
+  only with `NXBAAS_TRACE_BODIES=1`, which is for local debugging and never production. The
+  net/http servers use a scrubbing error logger, so a TLS handshake error no longer names the
+  client address.
+- `TestLogsCarryNoPersonalData` sends a request carrying those values and fails if any of them
+  reaches the log.
+
 ## v0.48.0 — 2026-09-27
 
 - **Confirmed on hardware: the push.** A parent's save was pushed, acknowledged, fetched and

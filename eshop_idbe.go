@@ -38,6 +38,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"nx-baas/redact"
 	"os"
 	"path/filepath"
 	"strings"
@@ -207,13 +208,13 @@ func (s *server) idbe(w http.ResponseWriter, r *http.Request, body []byte) {
 		if s.shopTitleByAppID(tid) != nil {
 			what = "an OpenPak store title; Switch ids have no idbe file and cabinet asks for none"
 		}
-		log.Printf("[shop] idbe %s %s title=%s version=%q (%s) -> 404", r.Method, p, tid, version, what)
+		log.Printf("[shop] idbe %s %s title=%s version=%q (%s) -> 404", r.Method, redact.Path(p), tid, version, what)
 		writeJSON(w, 404, map[string]any{"status": 404, "title": "no icon data"})
 		return
 	}
 	b, mod, err := idbeFile(platform, name)
 	if err != nil {
-		log.Printf("[shop] idbe %s %s title=%s (%s) -> 404: %v", r.Method, p, tid, platform, err)
+		log.Printf("[shop] idbe %s %s title=%s (%s) -> 404: %v", r.Method, redact.Path(p), tid, platform, redact.Err(err))
 		writeJSON(w, 404, map[string]any{"status": 404, "title": "no icon data"})
 		return
 	}
@@ -224,14 +225,14 @@ func (s *server) idbe(w http.ResponseWriter, r *http.Request, body []byte) {
 	h.Set("Last-Modified", mod.UTC().Format(http.TimeFormat))
 	h.Set("Accept-Ranges", "bytes")
 	if inm := r.Header.Get("If-None-Match"); inm != "" && strings.Contains(inm, etag) {
-		log.Printf("[shop] idbe %s %s -> 304", r.Method, p)
+		log.Printf("[shop] idbe %s %s -> 304", r.Method, redact.Path(p))
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
 	h.Set("Content-Type", "application/octet-stream")
 	h.Set("Content-Length", fmt.Sprint(len(b)))
 	log.Printf("[shop] idbe %s %s title=%s -> 200: Nintendo's %s file relayed (%d bytes, key index %d; rendering unverified on hardware)",
-		r.Method, p, tid, platform, len(b), b[1])
+		r.Method, redact.Path(p), tid, platform, len(b), b[1])
 	w.WriteHeader(200)
 	if r.Method != http.MethodHead {
 		w.Write(b)

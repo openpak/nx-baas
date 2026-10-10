@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"nx-baas/redact"
 	"strconv"
 	"strings"
 	"time"
@@ -58,7 +59,7 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 	if fro := r.Header.Get("X-Fro-Result"); fro != "" && fro != "000-0000" {
 		log.Printf("[nx-baas] penne: console reports last frontline result %s (try %s, npc %s, exec %s) on %s",
 			fro, r.Header.Get("X-Login-Try"), r.Header.Get("X-Npc"),
-			r.Header.Get("X-Execution"), p)
+			r.Header.Get("X-Execution"), redact.Path(p))
 	}
 	params := map[string]any{
 		// Horizon 22.5.0 validates every child before accepting this object.
@@ -90,11 +91,11 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 			case err == nil:
 				store.Revoke(id, now)
 			case store.KnowsAssoc(id):
-				log.Printf("[nx-baas] penne: rotation denied for a known id (%v)", err)
+				log.Printf("[nx-baas] penne: rotation denied for a known id (%v)", redact.Err(err))
 				writeJSON(w, 403, map[string]any{"status": 403, "title": "forbidden"})
 				return
 			default:
-				log.Printf("[nx-baas] penne: console presented an id this store never minted (device %s, user %s); minting a fresh registration", deviceID, userID)
+				log.Printf("[nx-baas] penne: console presented an id this store never minted (device %s, user %s); minting a fresh registration", redact.Tag(deviceID), redact.Tag(userID))
 			}
 		}
 		id, password := store.Register(deviceID, userID, "", now)
@@ -109,7 +110,7 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 			// keyed by the BAAS account the outbox delivers to. Recorded as a
 			// cert it is an address no delivery can ever find.
 			store.NoteAccount(assoc.ID, accountID, store.ResolveUser(userID))
-			log.Printf("[nx-baas] penne: notification token for console account %s (registration %s, first guess %q)", accountID, assoc.ID, store.ResolveUser(userID))
+			log.Printf("[nx-baas] penne: notification token for console account %s (registration %s, first guess %s)", redact.Tag(accountID), redact.Tag(assoc.ID), redact.Tag(store.ResolveUser(userID)))
 		}
 		if !ok {
 			writeJSON(w, 401, map[string]any{"status": 401, "title": "authentication required"})
@@ -131,7 +132,7 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 			// The id token names this profile's own account.
 			store.NoteAccount(assoc.ID, accountID, "")
 			if store.BindAccount(accountID, nsa) {
-				log.Printf("[nx-baas] penne: console account %s is %s (links)", accountID, nsa)
+				log.Printf("[nx-baas] penne: console account %s is %s (links)", redact.Tag(accountID), redact.Tag(nsa))
 			}
 		}
 		writeJSON(w, 200, map[string]any{"nsa_id": nsa})
@@ -149,7 +150,7 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 			revoked = store.Revoke(a.ID, now)
 			store.RevokeDevice(deviceID, now)
 		}
-		log.Printf("[nx-baas] penne: DELETE revoked %d credential(s) for device %s", revoked, deviceID)
+		log.Printf("[nx-baas] penne: DELETE revoked %d credential(s) for device %s", revoked, redact.Tag(deviceID))
 		writeJSON(w, 200, map[string]any{"result": "ok"})
 	case strings.HasPrefix(host, "val.") && p == "/v1/frontlines":
 		writeJSON(w, 200, map[string]any{"current_time": now.Unix(), "frontline_fqdn": frontline, "persistent_connection_params_simple": params})
@@ -196,7 +197,7 @@ func (s *server) penne(w http.ResponseWriter, r *http.Request, body []byte) {
 		dump(r, body, "!! UNHANDLED penne/npns")
 		writeJSON(w, 404, map[string]any{})
 	}
-	log.Printf("[nx-baas] penne %s %s%s -> handled", r.Method, host, p)
+	log.Printf("[nx-baas] penne %s %s%s -> handled", r.Method, host, redact.Path(p))
 }
 
 // penneCred reads the Penne id out of a request body. The firmware carries two
@@ -262,7 +263,7 @@ func (s *server) penneAuthedAssoc(store *penneStore, in map[string]any, userID, 
 		// An id this store never minted, from a console that registered against
 		// the old build: adopt it under the account the request already proved.
 		if a, ok := store.Adopt(id, pw, deviceID, store.ResolveUser(userID), now); ok {
-			log.Printf("[nx-baas] penne: adopted a pre-existing id for user %s device %s", userID, deviceID)
+			log.Printf("[nx-baas] penne: adopted a pre-existing id for user %s device %s", redact.Tag(userID), redact.Tag(deviceID))
 			return a, true
 		}
 		// A known id with a wrong password is a denial, never a fallback.

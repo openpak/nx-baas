@@ -31,6 +31,7 @@ package main
 import (
 	"encoding/json"
 	"log"
+	"nx-baas/redact"
 	"strings"
 
 	"nx-baas/internal/penne"
@@ -51,14 +52,14 @@ func (s *server) penneNotePresence(p penne.Table) bool {
 
 	u := s.store.User(userID)
 	if u == nil {
-		log.Printf("[nx-baas] penne: presence for unknown user %s; ignored", userID)
+		log.Printf("[nx-baas] penne: presence for unknown user %s; ignored", redact.Tag(userID))
 		return false
 	}
 
 	state, appID, appField, groupID, acdIndex := presenceFromExtras(doc, stateByte)
 	// Only a real console speaks Penne: emulators publish over REST.
 	s.noteClientPresence(u, device, "switch", "", state, appID, appField, groupID, acdIndex)
-	log.Printf("[nx-baas] penne: presence user=%s device=%s byte=%d %s app=%s field=%q", userID, device, stateByte, state, appID, appField)
+	log.Printf("[nx-baas] penne: presence user=%s device=%s byte=%d %s app=%s field(%d)", redact.Tag(userID), redact.Tag(device), stateByte, state, appID, len(appField))
 	return true
 }
 

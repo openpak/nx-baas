@@ -27,6 +27,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"nx-baas/redact"
 	"strconv"
 	"sync"
 	"time"
@@ -119,7 +120,7 @@ func (s *server) accountLock(accountID string) string {
 	defer cancel()
 	st, err := src.accountStatus(ctx, accountID)
 	if err != nil {
-		log.Printf("[bans] status of %s unavailable (%v); allowing, last known %q", accountID, err, e.lock)
+		log.Printf("[bans] status of %s unavailable (%v); allowing, last known %q", redact.Tag(accountID), redact.Err(err), e.lock)
 		return e.lock // a stale answer beats none; none is "allowed"
 	}
 	lock := ""
@@ -133,7 +134,7 @@ func (s *server) accountLock(accountID string) string {
 	c.by[accountID] = banEntry{lock: lock, at: time.Now()}
 	c.mu.Unlock()
 	if lock != "" {
-		log.Printf("[bans] account %s is %s: refusing", accountID, lock)
+		log.Printf("[bans] account %s is %s: refusing", redact.Tag(accountID), lock)
 	}
 	return lock
 }

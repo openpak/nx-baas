@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"nx-baas/redact"
 	"slices"
 	"strings"
 	"time"
@@ -133,7 +134,7 @@ func (s *server) beach(w http.ResponseWriter, r *http.Request, body []byte) {
 	}
 	device := s.deviceIdentity(r)
 	p := r.URL.Path
-	log.Printf("[shop] beach %s %s device=%s", r.Method, p, device)
+	log.Printf("[shop] beach %s %s device=%s", r.Method, redact.Path(p), redact.Tag(device))
 
 	// Device-scoped registrations. wiki: /v1/devices/<id>/notification_token/register;
 	// NIM strings add /v1/devices/<id>/penne_id/register.
@@ -174,7 +175,7 @@ func (s *server) beach(w http.ResponseWriter, r *http.Request, body []byte) {
 			return
 		}
 		l := s.shop.linkDevice(device, account, baasUser)
-		log.Printf("[shop] beach: linked device %s to account %s (at %d)", l.DeviceID, l.AccountID, l.LinkedAt)
+		log.Printf("[shop] beach: linked device %s to account %s (at %d)", redact.Tag(l.DeviceID), redact.Tag(l.AccountID), l.LinkedAt)
 		writeJSON(w, 200, map[string]any{"device": linkObj(l)})
 	case p == "/v1/my/devices/hac/unlink_all" && r.Method == "POST":
 		if account == "" {
@@ -268,7 +269,7 @@ func (s *server) shopPrincipal(r *http.Request) (accountID, baasUserID string) {
 	accountID, baasUserID = s.shopPrincipalUnchecked(r)
 	// A banned account is nobody to the store: no acquisition, no tasks, no ownership.
 	if accountID != "" && s.naLock(accountID) != "" {
-		log.Printf("[shop] principal: account %s is locked; refusing", accountID)
+		log.Printf("[shop] principal: account %s is locked; refusing", redact.Tag(accountID))
 		return "", ""
 	}
 	return accountID, baasUserID
@@ -289,7 +290,7 @@ func (s *server) shopPrincipalUnchecked(r *http.Request) (accountID, baasUserID 
 		if iss == baasIssuer && str(claims, "typ") == "id_token" && s.store != nil {
 			if u := s.store.User(sub); u != nil && u.NaID != "" {
 				if headerID != "" && headerID != u.NaID {
-					log.Printf("[shop] principal: header %s disagrees with nsa token's account %s; refusing", headerID, u.NaID)
+					log.Printf("[shop] principal: header %s disagrees with nsa token's account %s; refusing", redact.Tag(headerID), redact.Tag(u.NaID))
 					return "", ""
 				}
 				return u.NaID, u.ID
@@ -302,7 +303,7 @@ func (s *server) shopPrincipalUnchecked(r *http.Request) (accountID, baasUserID 
 			continue
 		}
 		if headerID != "" && headerID != sub {
-			log.Printf("[shop] principal: header %s disagrees with token sub %s; refusing", headerID, sub)
+			log.Printf("[shop] principal: header %s disagrees with token sub %s; refusing", redact.Tag(headerID), redact.Tag(sub))
 			return "", ""
 		}
 		// Map the NA id to this adapter's BAAS user so entitlement rows carry both.
@@ -418,7 +419,7 @@ func (s *server) dragons(w http.ResponseWriter, r *http.Request, body []byte) {
 	device := s.deviceIdentity(r)
 	p = strings.TrimPrefix(p, "/v1")
 	p = strings.TrimPrefix(p, "/v2")
-	log.Printf("[shop] dragons %s %s host=%s device=%s", r.Method, p, shortHost(host), device)
+	log.Printf("[shop] dragons %s %s host=%s device=%s", r.Method, redact.Path(p), shortHost(host), redact.Tag(device))
 
 	switch {
 	// dragonst: the edge token issuer for c2 content. wiki: {title_ids, na_id_tokens,
@@ -527,7 +528,7 @@ func (s *server) dragons(w http.ResponseWriter, r *http.Request, body []byte) {
 		for _, id := range in.ELicenseIDs {
 			if e := s.shop.entitlementByELicense(id); e != nil {
 				s.shop.revoke(e.AccountID, e.TitleID)
-				log.Printf("[shop] dragons: elicense %s revoked (title %s account %s)", id, e.TitleID, e.AccountID)
+				log.Printf("[shop] dragons: elicense %s revoked (title %s account %s)", redact.Tag(id), e.TitleID, redact.Tag(e.AccountID))
 			}
 		}
 		w.WriteHeader(200)

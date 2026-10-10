@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"nx-baas/redact"
 	"strings"
 )
 
@@ -21,7 +22,7 @@ import (
 func (s *server) tabiji(w http.ResponseWriter, r *http.Request, body []byte) {
 	p := r.URL.Path
 	if _, genuine := s.pidForIDToken(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")); !genuine {
-		log.Printf("[tabiji] %s %s: no valid NSA id token", r.Method, p)
+		log.Printf("[tabiji] %s %s: no valid NSA id token", r.Method, redact.Path(p))
 		writeJSON(w, 401, map[string]any{"status": 401, "code": "unauthorized", "detail": "invalid id token"})
 		return
 	}

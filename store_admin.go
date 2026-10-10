@@ -21,6 +21,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"nx-baas/redact"
 	"os"
 	"path/filepath"
 	"sort"
@@ -85,7 +86,7 @@ func adminErr(status int, code, format string, a ...any) *adminError {
 func writeAdminErr(w http.ResponseWriter, err error) {
 	var ae *adminError
 	if !errors.As(err, &ae) {
-		log.Printf("[store-admin] internal: %v", err)
+		log.Printf("[store-admin] internal: %v", redact.Err(err))
 		ae = adminErr(500, "internal", "%v", err)
 	}
 	writeJSON(w, ae.status, map[string]any{"error": ae.code, "message": ae.msg})
@@ -663,7 +664,7 @@ func (s *shopState) removePackage(rel string) {
 		return
 	}
 	if err := os.Remove(filepath.Join(s.dir, rel)); err != nil && !os.IsNotExist(err) {
-		log.Printf("[store-admin] removing %s: %v", rel, err)
+		log.Printf("[store-admin] removing %s: %v", rel, redact.Err(err))
 	}
 }
 
@@ -762,7 +763,7 @@ func (s *server) adminUpload(w http.ResponseWriter, r *http.Request, tid string)
 	}
 	contents, err := verifyNSP(tmp, n, &meta)
 	if err != nil {
-		log.Printf("[store-admin] %s: upload refused: %v", tid, err)
+		log.Printf("[store-admin] %s: upload refused: %v", tid, redact.Err(err))
 		return err
 	}
 	var cnmt string

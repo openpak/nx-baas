@@ -15,6 +15,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"nx-baas/redact"
 	"strconv"
 	"strings"
 	"time"
@@ -59,13 +60,13 @@ func (s *server) netdiag(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/v1/ip":
 		ip, public := clientIP(r)
 		if public {
-			log.Printf("[netdiag] global IP probe -> %s", ip)
+			log.Printf("[netdiag] global IP probe -> %s", redact.Addr(ip))
 		} else {
 			// Not a defect to route around silently: no hop in front of this
 			// server passes the console's address on, so this is the closest
 			// true answer available. PROXY protocol on the Traefik TCP router
 			// is what would carry the real one.
-			log.Printf("[netdiag] global IP probe -> %s (no public address visible; the console is hidden behind TLS passthrough)", ip)
+			log.Printf("[netdiag] global IP probe -> %s (no public address visible; the console is hidden behind TLS passthrough)", redact.Addr(ip))
 		}
 		// Exactly one key. qlaunch parses this with a SAX handler [firmware
 		// 22.5.0, qlaunch 0x164240; handler vtable 0x1156828] whose Key()
@@ -76,7 +77,7 @@ func (s *server) netdiag(w http.ResponseWriter, r *http.Request) {
 		// console, 2026-09-24.
 		writeJSON(w, 200, map[string]any{"global_ip": ip})
 	default:
-		log.Printf("[netdiag] UNMAPPED %s %s%s", r.Method, host, r.URL.Path)
+		log.Printf("[netdiag] UNMAPPED %s %s%s", r.Method, host, redact.Path(r.URL.Path))
 		http.Error(w, "no such netdiag route", 404)
 	}
 }
@@ -92,11 +93,11 @@ func (s *server) telemetry(w http.ResponseWriter, r *http.Request, body []byte) 
 	kind := "play report"
 	ok := p == "/post" || p == "/api/v1/realtime_reports"
 	if !ok {
-		log.Printf("[telemetry] UNMAPPED %s %s%s", r.Method, host, p)
+		log.Printf("[telemetry] UNMAPPED %s %s%s", r.Method, host, redact.Path(p))
 		http.Error(w, "no such route", 404)
 		return
 	}
-	log.Printf("[telemetry] %s %d bytes discarded (OpenPak collects no %ss)", p, len(body), kind)
+	log.Printf("[telemetry] %s %d bytes discarded (OpenPak collects no %ss)", redact.Path(p), len(body), kind)
 	w.WriteHeader(200)
 }
 

@@ -18,6 +18,7 @@ import (
 	"log"
 	"math/big"
 	"net/url"
+	"nx-baas/redact"
 	"os"
 	"path/filepath"
 	"sync"
@@ -155,7 +156,7 @@ func (p *projectionStore) saveLocked() {
 	b, _ := json.MarshalIndent(p, "", " ")
 	tmp := p.path + ".tmp"
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		log.Printf("[nx-baas] openpak: projection save: %v", err)
+		log.Printf("[nx-baas] openpak: projection save: %v", redact.Err(err))
 		return
 	}
 	_ = os.Rename(tmp, p.path)
@@ -330,7 +331,7 @@ func (b *openpakBackend) LoginPID(email, password string) (uint64, string, error
 	res, err := b.identity.VerifyPassword(ctx, req)
 	if isTransient(err) {
 		// One retry: a dead connection must not read as a wrong password on a television.
-		log.Printf("[openpak] retrying login after transient error: %v", err)
+		log.Printf("[openpak] retrying login after transient error: %v", redact.Err(err))
 		res, err = b.identity.VerifyPassword(ctx, req)
 	}
 	if err != nil {

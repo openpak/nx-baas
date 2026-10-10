@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"nx-baas/redact"
 	"os"
 	"strings"
 	"time"
@@ -34,7 +35,7 @@ import (
 func newForwarder(name, base string) *httputil.ReverseProxy {
 	target, err := url.Parse(strings.TrimRight(base, "/"))
 	if err != nil || target.Host == "" {
-		log.Fatalf("[nx-baas] %s forward URL %q: %v", name, base, err)
+		log.Fatalf("[nx-baas] %s forward URL %q: %v", name, base, redact.Err(err))
 	}
 	return &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
@@ -44,7 +45,7 @@ func newForwarder(name, base string) *httputil.ReverseProxy {
 		// Streamed both ways: store uploads are gigabytes, content downloads too.
 		FlushInterval: -1,
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			log.Printf("[nx-baas] forward to %s failed: %s %s%s: %v", name, r.Method, hostOf(r), r.URL.Path, err)
+			log.Printf("[nx-baas] forward to %s failed: %s %s%s: %v", name, r.Method, hostOf(r), redact.Path(r.URL.Path), redact.Err(err))
 			writeJSON(w, http.StatusBadGateway, map[string]any{"status": 502, "title": name + " unreachable"})
 		},
 	}
@@ -98,7 +99,7 @@ func (s *server) forwardMoved(w http.ResponseWriter, r *http.Request) bool {
 	if strings.HasPrefix(r.URL.Path, "/internal/") && s.movedFamily(host) {
 		// The services serve their admin routes on the same listener this forwards to;
 		// a console host must never reach them, whatever path it asks for.
-		log.Printf("[nx-baas] refused %s %s%s: /internal/ is not a console route", r.Method, host, r.URL.Path)
+		log.Printf("[nx-baas] refused %s %s%s: /internal/ is not a console route", r.Method, host, redact.Path(r.URL.Path))
 		http.NotFound(w, r)
 		return true
 	}
@@ -156,7 +157,7 @@ func (s *Store) importPctlRollback(path string) {
 		PctlDevices map[string]*PctlDevice `json:"pctlDevices"`
 	}
 	if err := json.Unmarshal(b, &top); err != nil {
-		log.Printf("[nx-baas] %s is not nx-pctl's state (%v); not applied", path, err)
+		log.Printf("[nx-baas] %s is not nx-pctl's state (%v); not applied", path, redact.Err(err))
 		return
 	}
 	raw, ok := top["pctlDevices"]
@@ -165,7 +166,7 @@ func (s *Store) importPctlRollback(path string) {
 		return
 	}
 	if err := json.Unmarshal(raw, &in.PctlDevices); err != nil || in.PctlDevices == nil {
-		log.Printf("[nx-baas] %s: pctlDevices is not an object of records (%v); not applied", path, err)
+		log.Printf("[nx-baas] %s: pctlDevices is not an object of records (%v); not applied", path, redact.Err(err))
 		return
 	}
 	s.mu.Lock()

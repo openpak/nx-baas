@@ -38,6 +38,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"nx-baas/redact"
 	"slices"
 	"sort"
 	"strings"
@@ -84,7 +85,7 @@ func (s *server) versionLookup(w http.ResponseWriter, r *http.Request, body []by
 	id := strings.ToLower(strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/a/"), "/dv"))
 	t, _ := s.shop.meta(id)
 	if t == nil {
-		log.Printf("[shop] superfly dv %s -> not in the catalog", id)
+		log.Printf("[shop] superfly dv %s -> not in the catalog", redact.IDs(id))
 		writeJSON(w, 404, map[string]any{"status": 404, "title": "no version record"})
 		return
 	}
@@ -94,7 +95,7 @@ func (s *server) versionLookup(w http.ResponseWriter, r *http.Request, body []by
 		out = append(out, map[string]any{"title_id": patchIDFor(t.TitleID), "title_type": "Patch", "version": t.Patch.Version})
 	}
 	s.shop.mu.Unlock()
-	log.Printf("[shop] superfly dv %s -> %d version record(s)", id, len(out))
+	log.Printf("[shop] superfly dv %s -> %d version record(s)", redact.IDs(id), len(out))
 	writeJSONValue(w, 200, out)
 }
 
@@ -158,7 +159,7 @@ func (s *server) pushmo(w http.ResponseWriter, r *http.Request, body []byte) {
 	} else {
 		tasks = s.pushmoTasks(s.penneShopAccounts(id))
 	}
-	log.Printf("[shop] pushmo %s/%s -> %d task(s)", kind, id, len(tasks))
+	log.Printf("[shop] pushmo %s/%s -> %d task(s)", kind, redact.IDs(id), len(tasks))
 	writeETagged(w, r, []byte(mustJSON(map[string]any{"tasks": tasks})))
 }
 
@@ -250,7 +251,7 @@ func (s *server) veer(w http.ResponseWriter, r *http.Request, body []byte) {
 		writeJSON(w, 404, map[string]any{"status": 404, "title": "not found"})
 		return
 	}
-	log.Printf("[shop] veer policy context=%q last_vendor=%q -> atum", r.URL.Query().Get("context"), r.URL.Query().Get("last_vendor"))
+	log.Printf("[shop] veer policy context=%q last_vendor=%q -> atum", redact.IDs(r.URL.Query().Get("context")), redact.IDs(r.URL.Query().Get("last_vendor")))
 	writeJSON(w, 200, map[string]any{
 		"ttl":     86400,
 		"weights": []any{map[string]any{"vendor": "atum", "weight": 100}},

@@ -28,6 +28,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"nx-baas/redact"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -69,7 +70,7 @@ func newVersionGateFromEnv() *versionGate {
 	}
 	var err error
 	if g.overrides, err = parseVersionOverrides(os.Getenv("NX_VERSION_GATE_OVERRIDES")); err != nil {
-		log.Fatalf("[version-gate] NX_VERSION_GATE_OVERRIDES: %v", err)
+		log.Fatalf("[version-gate] NX_VERSION_GATE_OVERRIDES: %v", redact.Err(err))
 	}
 	return g
 }
@@ -176,13 +177,13 @@ func (g *versionGate) loadCache() {
 	body, err := os.ReadFile(g.cachePath)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			log.Printf("[version-gate] cache %s: %v", g.cachePath, err)
+			log.Printf("[version-gate] cache %s: %v", g.cachePath, redact.Err(err))
 		}
 		return
 	}
 	t, err := parseTitleVersions(body)
 	if err != nil {
-		log.Printf("[version-gate] cache %s unreadable: %v", g.cachePath, err)
+		log.Printf("[version-gate] cache %s unreadable: %v", g.cachePath, redact.Err(err))
 		return
 	}
 	g.mu.Lock()
@@ -210,7 +211,7 @@ func (g *versionGate) refresh() error {
 			err = os.Rename(tmp, g.cachePath)
 		}
 		if err != nil {
-			log.Printf("[version-gate] cache write: %v", err)
+			log.Printf("[version-gate] cache write: %v", redact.Err(err))
 		}
 	}
 	log.Printf("[version-gate] table: %d titles fetched", len(t))
@@ -222,7 +223,7 @@ func (g *versionGate) run() {
 	for {
 		wait := versionGateRefresh
 		if err := g.refresh(); err != nil {
-			log.Printf("[version-gate] refresh failed, keeping %d titles: %v", g.size(), err)
+			log.Printf("[version-gate] refresh failed, keeping %d titles: %v", g.size(), redact.Err(err))
 			wait = versionGateRetry
 		}
 		time.Sleep(wait)

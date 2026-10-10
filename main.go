@@ -34,6 +34,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"nx-baas/redact"
 	"os"
 	"sort"
 	"strconv"
@@ -198,7 +199,21 @@ func hostOf(r *http.Request) string {
 	return h
 }
 
+// dump logs a request the server does not (fully) understand. By default it
+// names the route, the header names and the body's size: header values, query
+// values and bodies carry tokens, ids and names. NXBAAS_TRACE_BODIES=1 (never in
+// production) adds the full headers and body.
 func dump(r *http.Request, body []byte, tag string) {
+	if !redact.Bodies {
+		names := make([]string, 0, len(r.Header))
+		for k := range r.Header {
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		log.Printf("[nx-baas] %s %s %s%s hdr{%s} body(%d) ct=%q", tag, r.Method, hostOf(r), redact.URL(r.URL),
+			strings.Join(names, ","), len(body), r.Header.Get("Content-Type"))
+		return
+	}
 	var hdr strings.Builder
 	for k, v := range r.Header {
 		if k == "Authorization" && len(v) > 0 && len(v[0]) > 40 {
@@ -258,14 +273,14 @@ func (s *server) bearerUser(r *http.Request) *User {
 	c := s.validBearer(r)
 	if c == nil {
 		if a := r.Header.Get("Authorization"); !strings.HasPrefix(a, "Bearer ") {
-			log.Printf("[nx-baas] auth: %s %s carries no bearer", r.Method, r.URL.Path)
+			log.Printf("[nx-baas] auth: %s %s carries no bearer", r.Method, redact.Path(r.URL.Path))
 		} else if raw := s.bearer(r); raw == nil {
-			log.Printf("[nx-baas] auth: %s %s bearer does not verify against this server's key", r.Method, r.URL.Path)
+			log.Printf("[nx-baas] auth: %s %s bearer does not verify against this server's key", r.Method, redact.Path(r.URL.Path))
 		} else if str(raw, "typ") != "token" || str(raw, "iss") != baasIssuer {
 			log.Printf("[nx-baas] auth: %s %s bearer is typ=%q iss=%q, want typ=token from this issuer",
-				r.Method, r.URL.Path, str(raw, "typ"), str(raw, "iss"))
+				r.Method, redact.Path(r.URL.Path), str(raw, "typ"), str(raw, "iss"))
 		} else {
-			log.Printf("[nx-baas] auth: %s %s bearer has expired", r.Method, r.URL.Path)
+			log.Printf("[nx-baas] auth: %s %s bearer has expired", r.Method, redact.Path(r.URL.Path))
 		}
 		return nil
 	}
@@ -273,9 +288,9 @@ func (s *server) bearerUser(r *http.Request) *User {
 	u := s.store.User(sub)
 	if u == nil {
 		// The give-away: an application token's subject is the device id.
-		log.Printf("[nx-baas] auth: %s %s bearer names sub=%q, which is not a user "+
+		log.Printf("[nx-baas] auth: %s %s bearer names sub=%s, which is not a user "+
 			"(an application token from /1.0.0/application/token has the DEVICE id as its subject; "+
-			"a user-scoped call needs the accessToken from /1.0.0/login)", r.Method, r.URL.Path, sub)
+			"a user-scoped call needs the accessToken from /1.0.0/login)", r.Method, redact.Path(r.URL.Path), redact.Tag(sub))
 	}
 	return u
 }
@@ -864,7 +879,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				writeAvatarJPEG(w, r, img, "public, max-age=300")
 				return
 			} else {
-				log.Printf("[nx-baas] avatar fetch %s: %v", id.AvatarURL, ferr)
+				log.Printf("[nx-baas] avatar fetch %s: %v", redact.Link(id.AvatarURL), redact.Err(ferr))
 			}
 		}
 		if avatar == "" {
@@ -926,10 +941,10 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		tok := s.validBearer(r)
 		if uid := str(tok, "sub"); uid != "" && img.RawContent != "" {
 			if raw, err := base64.StdEncoding.DecodeString(img.RawContent); err != nil {
-				log.Printf("[nx-baas] image_upload: not base64 (%d bytes): %v", len(img.RawContent), err)
+				log.Printf("[nx-baas] image_upload: not base64 (%d bytes): %v", len(img.RawContent), redact.Err(err))
 			} else if u := s.store.User(uid); u != nil {
 				s.store.Update(u, func(u *User) { u.Avatar, u.AvatarAt = img.RawContent, time.Now().Unix() })
-				log.Printf("[nx-baas] image_upload: stored %d bytes for %s", len(raw), uid)
+				log.Printf("[nx-baas] image_upload: stored %d bytes for %s", len(raw), redact.Tag(uid))
 				// And on to the account, so the picture a person set on their
 				// console is the one the website and the app show.
 				s.shareAvatar(u.ID, img.RawContent)
@@ -957,7 +972,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 
 	case p == "/1.0.0/users" && r.Method == "POST":
 		u, d := s.store.NewUser()
-		log.Printf("[nx-baas] new device account %s for user %s", d.ID, u.ID)
+		log.Printf("[nx-baas] new device account %s for user %s", redact.Tag(d.ID), redact.Tag(u.ID))
 		w.Header().Set("Location", "/1.0.0/users/"+u.ID)
 		writeJSON(w, 201, s.userObj(u, nil, d.Password))
 		return
@@ -986,7 +1001,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 					baasLocked(w, r, s.naLockOfToken(form.Get("idToken")))
 					return
 				}
-				log.Printf("[nx-baas] federation failed: %v", err)
+				log.Printf("[nx-baas] federation failed: %v", redact.Err(err))
 				baasErr(w, r, 400, "invalid_idp_account", "Invalid IdP Account", "IdP account is invalid")
 				return
 			}
@@ -994,7 +1009,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		// A console whose device account is linked to a banned account signs in to nothing:
 		// no token, no presence, no notification binding.
 		if lock := s.userLock(u); lock != "" {
-			log.Printf("[nx-baas] %s refused: user=%s pid=%d is %s", seg[1], u.ID, u.PID, lock)
+			log.Printf("[nx-baas] %s refused: user=%s pid=%s is %s", seg[1], redact.Tag(u.ID), redact.Tag(u.PID), lock)
 			baasLocked(w, r, lock)
 			return
 		}
@@ -1034,7 +1049,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		// accessToken, expiresIn, idToken, tokenType and user. Membership is
 		// answered on capi's memberships endpoint, which is where the console
 		// actually asks.
-		log.Printf("[nx-baas] %s user=%s pid=%d ua=%s", seg[1], u.ID, u.PID, r.UserAgent())
+		log.Printf("[nx-baas] %s user=%s pid=%s ua=%s", seg[1], redact.Tag(u.ID), redact.Tag(u.PID), redact.IDs(r.UserAgent()))
 		writeJSON(w, 200, res)
 		return
 
@@ -1135,7 +1150,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		case "link":
 			nu, err := s.link(u, form.Get("idToken"))
 			if err != nil {
-				log.Printf("[nx-baas] link failed: %v", err)
+				log.Printf("[nx-baas] link failed: %v", redact.Err(err))
 				baasErr(w, r, 400, "invalid_idp_account", "Invalid IdP Account", "IdP account is invalid")
 				return
 			}
@@ -1155,7 +1170,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				return
 			}
 			if err := s.acct.RegenerateFriendCode(u.PID); err != nil {
-				log.Printf("[nx-baas] generate_code: %v", err)
+				log.Printf("[nx-baas] generate_code: %v", redact.Err(err))
 				baasErr(w, r, 500, "internal_server_error", "Internal Server Error", "Internal Server Error")
 				return
 			}
@@ -1191,7 +1206,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				// adapter (SOC-03); the local mirror only feeds this server's
 				// own reads.
 				if err := s.setBlock(u, other, true); err != nil {
-					log.Printf("[nx-baas] block failed user=%s target=%s: %v", u.ID, target, err)
+					log.Printf("[nx-baas] block failed user=%s target=%s: %v", redact.Tag(u.ID), redact.Tag(target), redact.Err(err))
 					status, code, title, detail := baasFailure(err)
 					baasErr(w, r, status, code, title, detail)
 					return
@@ -1253,7 +1268,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			return
 		}
 		if err := s.setBlock(u, other, false); err != nil {
-			log.Printf("[nx-baas] unblock failed user=%s target=%s: %v", u.ID, seg[4], err)
+			log.Printf("[nx-baas] unblock failed user=%s target=%s: %v", redact.Tag(u.ID), redact.Tag(seg[4]), redact.Err(err))
 			status, code, title, detail := baasFailure(err)
 			baasErr(w, r, status, code, title, detail)
 			return
@@ -1325,7 +1340,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			} else {
 				s.reportOnline(r.Context(), u, client, clientOS)
 			}
-			log.Printf("[nx-baas] presence user=%s pid=%d device=%s client=%q os=%q %s app=%s field=%q", u.ID, u.PID, device, client, clientOS, state, appID, appField)
+			log.Printf("[nx-baas] presence user=%s pid=%s device=%s client=%q os=%q %s app=%s field(%d)", redact.Tag(u.ID), redact.Tag(u.PID), redact.Tag(device), client, clientOS, state, appID, len(appField))
 			writeJSON(w, 200, s.userObj(u, s.identity(u), ""))
 		default:
 			dump(r, body, "!! UNHANDLED device_accounts")
@@ -1466,7 +1481,7 @@ func (s *server) link(u *User, idTok string) (*User, error) {
 		return nil, err
 	}
 	nu := s.store.Link(u, pid, id.BaasUserID, id.NaID)
-	log.Printf("[nx-baas] linked user %s -> pid %d (%s)", nu.ID, pid, id.Nickname)
+	log.Printf("[nx-baas] linked user %s -> pid %s", redact.Tag(nu.ID), redact.Tag(pid))
 	return nu, nil
 }
 
@@ -1614,7 +1629,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			return
 		}
 		if err := s.removeFriend(me, target); err != nil {
-			log.Printf("[nx-baas] friend-remove failed user=%s other=%s: %v", me.ID, seg[3], err)
+			log.Printf("[nx-baas] friend-remove failed user=%s other=%s: %v", redact.Tag(me.ID), redact.Tag(seg[3]), redact.Err(err))
 			status, code, title, detail := baasFailure(err)
 			baasErr(w, r, status, code, title, detail)
 			return
@@ -1750,7 +1765,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			// The request did not commit, so this is an error, never a
 			// success with a timestamp (the old code logged the failure and
 			// answered 201 anyway).
-			log.Printf("[nx-baas] friend-request failed user=%s target=%s: %v", me.ID, target.BaasUserID, err)
+			log.Printf("[nx-baas] friend-request failed user=%s target=%s: %v", redact.Tag(me.ID), redact.Tag(target.BaasUserID), redact.Err(err))
 			status, code, title, detail := baasFailure(err)
 			baasErr(w, r, status, code, title, detail)
 			return
@@ -1877,7 +1892,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		if err != nil {
 			// No commit, no success: the console is told, in its own error
 			// contract, and can re-sync.
-			log.Printf("[nx-baas] friend-request %s failed user=%s ref=%s: %v", state, me.ID, seg[1], err)
+			log.Printf("[nx-baas] friend-request %s failed user=%s ref=%s: %v", state, redact.Tag(me.ID), redact.Tag(seg[1]), redact.Err(err))
 			status, code, title, detail := baasFailure(err)
 			baasErr(w, r, status, code, title, detail)
 			return
@@ -2001,7 +2016,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		// are no terms to accept on a private network, and users/me already
 		// reports the EULA and privacy policy as agreed — so this confirms
 		// rather than 404s, which is what keeps account setup moving.
-		log.Printf("[nx-baas] NA term_confirm for user=%s", form.Get("userId"))
+		log.Printf("[nx-baas] NA term_confirm for user=%s", redact.Tag(form.Get("userId")))
 		writeJSON(w, 200, map[string]any{"status": 200})
 		return
 
@@ -2037,7 +2052,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			return
 		}
 		if s.pidLock(pid) != "" {
-			log.Printf("[nx-baas] NA silent authorize refused: pid=%d is locked", pid)
+			log.Printf("[nx-baas] NA silent authorize refused: pid=%s is locked", redact.Tag(pid))
 			naAuthorizeLocked(w, r, form.Get("redirect_uri"), form.Get("state"))
 			return
 		}
@@ -2068,11 +2083,11 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		// id_token when response_type mentions one, and no /api/token exchange
 		// was ever seen either, so "what did it ask for" is still an
 		// assumption taken from the firmware rather than from this server.
-		// ponytail: a diagnostic, and it puts a 15-minute id_token in the
-		// journal. Drop it once the NxFriends fetch is understood.
-		log.Printf("[nx-baas] NA silent authorize pid=%d client=%s naID=%q response_type=%q scope=%q state=%q nonce=%q -> %s",
-			pid, c.ClientID, c.NaID, form.Get("response_type"), form.Get("scope"),
-			form.Get("state"), form.Get("nonce"), dest)
+		// ponytail: a diagnostic; drop it once the NxFriends fetch is understood.
+		// The redirect's fragment carries an id_token, so only its names are logged.
+		log.Printf("[nx-baas] NA silent authorize pid=%s client=%s naID=%s response_type=%q scope=%q state=%s nonce=%s -> %s",
+			redact.Tag(pid), c.ClientID, redact.Tag(c.NaID), form.Get("response_type"), form.Get("scope"),
+			redact.Tag(form.Get("state")), redact.Tag(form.Get("nonce")), redact.Link(dest))
 		http.Redirect(w, r, dest, http.StatusFound)
 		return
 
@@ -2090,12 +2105,12 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 				lock = lockBanned
 			}
 			if lock != "" {
-				log.Printf("[nx-baas] NA login refused for %q: account is %s", form.Get("email"), lock)
+				log.Printf("[nx-baas] NA login refused for %s: account is %s", redact.Tag(form.Get("email")), lock)
 				s.authorizePage(w, r, q, `<p class="err">`+lockedPageMessage(lock)+`</p>`)
 				return
 			}
 			if err != nil {
-				log.Printf("[nx-baas] NA login failed for %q: %v", form.Get("email"), err)
+				log.Printf("[nx-baas] NA login failed for %s: %v", redact.Tag(form.Get("email")), redact.Err(err))
 				s.authorizePage(w, r, q, `<p class="err">Wrong e-mail or password.</p>`)
 				return
 			}
@@ -2112,7 +2127,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			// ponytail: the redirect shape is inferred from the response_type the console sends;
 			// both the query (code) and fragment (session_token_code / id_token) forms are covered.
 			dest := s.authorizeRedirect(q, code)
-			log.Printf("[nx-baas] NA authorize ok pid=%d response_type=%q -> %s", pid, q.Get("response_type"), dest)
+			log.Printf("[nx-baas] NA authorize ok pid=%s response_type=%q -> %s", redact.Tag(pid), q.Get("response_type"), redact.Link(dest))
 			http.Redirect(w, r, dest, http.StatusFound)
 			return
 		}
@@ -2151,7 +2166,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		// Codes and refresh tokens minted before a ban stop here: no token for a banned
 		// account, whichever grant it arrives on.
 		if lock := s.pidLock(c.PID); lock != "" {
-			log.Printf("[nx-baas] NA token refused: pid=%d is %s", c.PID, lock)
+			log.Printf("[nx-baas] NA token refused: pid=%s is %s", redact.Tag(c.PID), lock)
 			naTokenLocked(w, lock)
 			return
 		}
@@ -2233,7 +2248,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			"timezone":  map[string]any{"id": "Europe/London", "name": "Europe/London", "utcOffset": "+01:00", "utcOffsetSeconds": 3600},
 			"updatedAt": now,
 		}
-		log.Printf("[nx-baas] users/me -> id=%s nickname=%q", me["id"], nick)
+		log.Printf("[nx-baas] users/me -> id=%s nickname=%s", redact.Tag(me["id"]), redact.Text(nick))
 		writeJSON(w, 200, me)
 		return
 	}
@@ -2452,7 +2467,7 @@ var minimal = os.Getenv("NX_MINIMAL") != "" // bisecting 2124-0292: only the NA 
 
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	host := hostOf(r)
-	log.Printf("[nx-baas] %s %s%s ua=%q", r.Method, host, r.URL.RequestURI(), r.UserAgent())
+	log.Printf("[nx-baas] %s %s%s ua=%q", r.Method, host, redact.URL(r.URL), redact.IDs(r.UserAgent()))
 	// A family that moved to its own service is forwarded before anything here reads the
 	// body (split.go); with no forward URL configured this is a no-op.
 	if s.forwardMoved(w, r) {
@@ -2472,7 +2487,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// OpenPak does not implement transfer; say so in the log rather than hide
 	// it inside somebody else's 404.
 	if strings.HasPrefix(host, "migration.") || strings.HasPrefix(host, "transfer.") {
-		log.Printf("[nx-baas] user transfer is not implemented: %s %s%s", r.Method, host, r.URL.Path)
+		log.Printf("[nx-baas] user transfer is not implemented: %s %s%s", r.Method, host, redact.Path(r.URL.Path))
 		http.Error(w, "user transfer is not implemented by OpenPak", 501)
 		return
 	}
@@ -2506,6 +2521,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rec := &recorder{ResponseWriter: w, status: 200}
 		w = rec
 		defer func() {
+			if !redact.Bodies {
+				log.Printf("[nx-baas] DBG <<< %d %s %s%s body(%d)", rec.status, r.Method, host, redact.Path(r.URL.Path), rec.buf.Len())
+				return
+			}
 			log.Printf("[nx-baas] DBG <<< %d %s %s%s body(%d)=%s", rec.status, r.Method, host, r.URL.Path, rec.buf.Len(), pctlPinInBody.ReplaceAll(rec.buf.Bytes(), []byte(`${1}****"`)))
 		}()
 	}
@@ -2692,7 +2711,7 @@ func newBackend() accountBackend {
 	if os.Getenv("ACCOUNT_BACKEND") == "openpak" {
 		b, err := newOpenpakBackend(context.Background(), getenv("NX_DATA", "/data"))
 		if err != nil {
-			log.Fatalf("[nx-baas] openpak backend: %v", err)
+			log.Fatalf("[nx-baas] openpak backend: %v", redact.Err(err))
 		}
 		log.Printf("[nx-baas] identity backend: openpak account core (%s)", getenv("ACCOUNT_GRPC_ADDR", "127.0.0.1:7000"))
 		return b
@@ -2768,7 +2787,7 @@ func main() {
 	if u := os.Getenv("NEWS_INTERNAL_URL"); u != "" {
 		f, err := newNewsForwarder(u, os.Getenv("NEWS_INTERNAL_CA"), os.Getenv("NEWS_INTERNAL_SERVER_NAME"))
 		if err != nil {
-			log.Fatalf("[nx-baas] NEWS_INTERNAL_URL: %v", err)
+			log.Fatalf("[nx-baas] NEWS_INTERNAL_URL: %v", redact.Err(err))
 		}
 		s.news = f
 		log.Printf("[nx-baas] news: forwarding openpak_* lists and title topics to %s", u)
@@ -2815,7 +2834,7 @@ func main() {
 		"api-lp1.pctl.srv.nintendo.net"}, getenv("NX_CA_DIR", "/data/ca"))
 	var handler http.Handler = s
 	if up := os.Getenv("NX_UPSTREAM"); up != "" {
-		log.Printf("[nx-baas] CAPTURE MODE: forwarding everything to %s and logging bodies", up)
+		log.Printf("[nx-baas] CAPTURE MODE: forwarding everything to %s; bodies and headers are logged only with NXBAAS_TRACE_BODIES=1", up)
 		handler = newCaptureProxy(up)
 	}
 	// ponytail: Traefik sends every unrouted *nintendo.* SNI here; sign a cert per name on
@@ -2874,7 +2893,7 @@ func main() {
 		// Diagnostic: every TLS handshake by SNI, so a connection that never speaks HTTP (the Penne
 		// persistent frontline) is still visible in the log.
 		tlsConf.GetConfigForClient = func(h *tls.ClientHelloInfo) (*tls.Config, error) {
-			log.Printf("[nx-baas] TLS hello sni=%s from=%s alpn=%v", h.ServerName, h.Conn.RemoteAddr(), h.SupportedProtos)
+			log.Printf("[nx-baas] TLS hello sni=%s from=%s alpn=%v", h.ServerName, redact.Addr(h.Conn.RemoteAddr()), h.SupportedProtos)
 			return clientCertFor(h, tlsConf)
 		}
 	}
@@ -2887,7 +2906,7 @@ func main() {
 	}
 	srv := &http.Server{
 		Addr: getenv("NX_ADDR", ":443"), Handler: handler,
-		TLSConfig: tlsConf,
+		TLSConfig: tlsConf, ErrorLog: redact.ErrorLog(),
 	}
 	// The game-facing API (Photon room presence, invitations) is plain HTTP on an internal
 	// port -- consoles never reach it, only the Photon server, the emulator and rig tooling.
@@ -2897,7 +2916,7 @@ func main() {
 			log.Printf("[nx-baas] WARNING: game API on %s has no NX_INTERNAL_KEY; keep the port off any untrusted network", addr)
 		}
 		log.Printf("[nx-baas] game API listening %s (photon-room, invitations, mint-token)", addr)
-		log.Fatal(http.ListenAndServe(addr, s.gameAPI()))
+		log.Fatal((&http.Server{Addr: addr, Handler: s.gameAPI(), ErrorLog: redact.ErrorLog()}).ListenAndServe())
 	}()
 	log.Printf("[nx-baas] listening %s (BAAS + Nintendo Account); account backend %s; users=%d devices=%d", srv.Addr, getenv("ACCOUNT_BACKEND", "legacy"), len(s.store.Users), len(s.store.Devices))
 	// The console's web applet enforces certificate checking unless Atmosphère patches it, so
@@ -2907,8 +2926,8 @@ func main() {
 	if addr := getenv("NX_HTTP_ADDR", ""); addr != "" {
 		go func() {
 			log.Printf("[nx-baas] plain HTTP on %s (link page without TLS)", addr)
-			if err := http.ListenAndServe(addr, handler); err != nil {
-				log.Printf("[nx-baas] plain HTTP listener stopped: %v", err)
+			if err := (&http.Server{Addr: addr, Handler: handler, ErrorLog: redact.ErrorLog()}).ListenAndServe(); err != nil {
+				log.Printf("[nx-baas] plain HTTP listener stopped: %v", redact.Err(err))
 			}
 		}()
 	}
@@ -2943,7 +2962,7 @@ func naProfile(id *Identity) (country, birthday string) {
 	country, birthday = id.Country, id.Birthday
 	if country == "" {
 		country = getenv("NA_FALLBACK_COUNTRY", "GB")
-		log.Printf("[nx-baas] users/me: account %s has no country of its own; serving %s", id.NaID, country)
+		log.Printf("[nx-baas] users/me: account %s has no country of its own; serving %s", redact.Tag(id.NaID), country)
 	}
 	if birthday == "" || birthday == "0000-00-00" {
 		birthday = getenv("NA_FALLBACK_BIRTHDAY", "2000-01-01")

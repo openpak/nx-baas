@@ -34,6 +34,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"nx-baas/redact"
 	"sort"
 	"strings"
 )
@@ -72,7 +73,7 @@ func (s *server) bcat(w http.ResponseWriter, r *http.Request, body []byte) {
 	// {filename,url,size,digest,data_id}.
 	case strings.Contains(p, "/v1/list/"):
 		key := p[strings.LastIndex(p, "/")+1:]
-		log.Printf("[bcat] list %s l=%q (%s)", key, r.URL.Query().Get("l"), shortHost(hostOf(r)))
+		log.Printf("[bcat] list %s l=%q (%s)", redact.IDs(key), r.URL.Query().Get("l"), shortHost(hostOf(r)))
 		s.bcatDoc(w, r, map[string]any{
 			"required_application_version": 0,
 			"directories":                  []any{},

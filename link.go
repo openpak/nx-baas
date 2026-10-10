@@ -25,6 +25,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"nx-baas/redact"
 	"strconv"
 	"strings"
 	"sync"
@@ -334,7 +335,7 @@ func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) b
 			out["no_phone_reason"] = "NX_LINK_BASE_URL is not set, so there is no address a phone could open"
 			log.Printf("[link] no phone path offered: NX_LINK_BASE_URL is unset")
 		}
-		log.Printf("[link] code %s opened by an in-app client (%s)", code, r.UserAgent())
+		log.Printf("[link] code %s opened by an in-app client (%s)", redact.Tag(code), redact.IDs(r.UserAgent()))
 		writeJSON(w, 200, out)
 		return true
 
@@ -359,7 +360,7 @@ func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) b
 			return true
 		}
 		s.links.update(code, func(p *pendingLink) { p.State = linkApproved })
-		log.Printf("[link] code %s approved on the console for %s (pid %d)", code, p.Username, p.PID)
+		log.Printf("[link] code %s approved on the console for %s (pid %s)", redact.Tag(code), redact.Tag(p.Username), redact.Tag(p.PID))
 		writeJSON(w, 200, map[string]any{"state": "approved", "redirect": s.finishLink(p)})
 		return true
 
@@ -426,7 +427,7 @@ func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) b
 		// by clearing a cookie is not a limit.
 		key := strconv.FormatUint(sess.PID, 10)
 		if blocked, left := s.guesses.blocked(key); blocked {
-			log.Printf("[link] %s is out of attempts for %s", sess.Username, left.Round(time.Minute))
+			log.Printf("[link] %s is out of attempts for %s", redact.Tag(sess.Username), left.Round(time.Minute))
 			s.phoneConfirmPage(w, sess.Username, form.Get("pair"),
 				"Too many wrong codes. Wait a few minutes and try again.")
 			return true
@@ -452,7 +453,7 @@ func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) b
 		s.links.update(entered, func(p *pendingLink) {
 			p.State, p.PID, p.Username, p.NaID = linkClaimed, sess.PID, sess.Username, id.NaID
 		})
-		log.Printf("[link] code %s claimed by %s (pid %d)", entered, sess.Username, sess.PID)
+		log.Printf("[link] code %s claimed by %s (pid %s)", redact.Tag(entered), redact.Tag(sess.Username), redact.Tag(sess.PID))
 		s.phoneDonePage(w, sess.Username)
 		return true
 	}
@@ -703,5 +704,5 @@ func (s *server) markSignedIn(pair string, sess phoneSession) {
 	s.links.update(code, func(p *pendingLink) {
 		p.State, p.Username = linkSignedIn, sess.Username
 	})
-	log.Printf("[link] %s signed in on the phone; console may show its code", sess.Username)
+	log.Printf("[link] %s signed in on the phone; console may show its code", redact.Tag(sess.Username))
 }

@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"nx-baas/redact"
 	"os"
 	"sort"
 	"strings"
@@ -277,16 +278,16 @@ func (s *shopState) save() {
 		return
 	}
 	if err := os.MkdirAll(s.dir, 0o755); err != nil {
-		log.Printf("[shop] save: %v", err)
+		log.Printf("[shop] save: %v", redact.Err(err))
 		return
 	}
 	b, err := json.MarshalIndent(s, "", " ")
 	if err != nil {
-		log.Printf("[shop] save: %v", err)
+		log.Printf("[shop] save: %v", redact.Err(err))
 		return
 	}
 	if err := os.WriteFile(s.dir+"/state.json.tmp", b, 0o600); err != nil {
-		log.Printf("[shop] save: %v", err)
+		log.Printf("[shop] save: %v", redact.Err(err))
 		return
 	}
 	os.Rename(s.dir+"/state.json.tmp", s.dir+"/state.json")
@@ -309,7 +310,7 @@ func (s *shopState) loadCatalogFile() {
 	}
 	var entries []*ShopTitle
 	if err := json.Unmarshal(b, &entries); err != nil {
-		log.Printf("[shop] catalog.json: %v", err)
+		log.Printf("[shop] catalog.json: %v", redact.Err(err))
 		return
 	}
 	s.catalogMod = st.ModTime()

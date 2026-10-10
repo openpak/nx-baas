@@ -61,6 +61,7 @@ import (
 	"log"
 	"math/big"
 	"net/http"
+	"nx-baas/redact"
 	"os"
 	"strconv"
 	"strings"
@@ -238,7 +239,7 @@ func newHarborDevices(ca *harborDeviceCA, path string) *harborDevices {
 	if path != "" {
 		if b, err := os.ReadFile(path); err == nil {
 			if err := json.Unmarshal(b, d); err != nil {
-				log.Printf("[harbor-devices] %s does not parse (%v); starting empty and keeping the file aside", path, err)
+				log.Printf("[harbor-devices] %s does not parse (%v); starting empty and keeping the file aside", path, redact.Err(err))
 				os.Rename(path, path+".invalid")
 				d.Devices = map[string]*harborDevice{}
 			}
@@ -273,7 +274,7 @@ func (d *harborDevices) save() {
 		return
 	}
 	if err := os.WriteFile(d.path+".tmp", b, 0o600); err != nil {
-		log.Printf("[harbor-devices] could not write the store: %v", err)
+		log.Printf("[harbor-devices] could not write the store: %v", redact.Err(err))
 		return
 	}
 	os.Rename(d.path+".tmp", d.path)
@@ -727,7 +728,7 @@ func (s *server) harborDevicesHandler(w http.ResponseWriter, r *http.Request, bo
 		}
 		dev, fresh, err := s.harbor.enrol(&req, presented)
 		if err != nil {
-			log.Printf("[harbor-devices] enrolment refused: %v", err)
+			log.Printf("[harbor-devices] enrolment refused: %v", redact.Err(err))
 			writeEnrolError(w, err)
 			return
 		}
@@ -813,7 +814,7 @@ func (s *server) bindDeviceAccount(accountID, di string) bool {
 func (s *server) initHarborDevices() {
 	ca, err := loadHarborDeviceCA()
 	if err != nil {
-		log.Printf("[harbor-devices] enrolment OFF: %v", err)
+		log.Printf("[harbor-devices] enrolment OFF: %v", redact.Err(err))
 		return
 	}
 	if ca == nil {

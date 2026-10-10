@@ -36,6 +36,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"nx-baas/redact"
 	"path"
 	"strings"
 	"time"
@@ -71,7 +72,7 @@ func (s *server) nso(w http.ResponseWriter, r *http.Request, body []byte) {
 	}
 	if p == "/_openpak/diag" && r.Method == http.MethodPost {
 		// What the page saw (the keys L and R send, gamepad buttons): logged, nothing kept.
-		log.Printf("[nso] page diag: %.400s", body)
+		log.Printf("[nso] page diag: %d bytes", len(body))
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -81,8 +82,8 @@ func (s *server) nso(w http.ResponseWriter, r *http.Request, body []byte) {
 	}
 	q := r.URL.Query()
 	log.Printf("[nso] lhub %s %s%s src_app_id=%q from=%q type=%q app_id=%q referer=%q ua=%q",
-		r.Method, host, p, q.Get("src_app_id"), q.Get("from"), q.Get("type"), q.Get("app_id"),
-		r.Referer(), r.UserAgent())
+		r.Method, host, redact.Path(p), redact.IDs(q.Get("src_app_id")), redact.IDs(q.Get("from")), redact.IDs(q.Get("type")), redact.IDs(q.Get("app_id")),
+		redact.Link(r.Referer()), redact.IDs(r.UserAgent()))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	fmt.Fprint(w, lhubPage)
@@ -103,7 +104,7 @@ func (s *server) zncLobby(w http.ResponseWriter, r *http.Request, body []byte) {
 	}
 	q := r.URL.Query()
 	log.Printf("[nso] znc lobby %s %s%s app_id=%q param=%q ua=%q -> OpenPak voice chat lobby",
-		r.Method, hostOf(r), p, q.Get("app_id"), q.Get("param"), r.UserAgent())
+		r.Method, hostOf(r), redact.Path(p), redact.IDs(q.Get("app_id")), redact.IDs(q.Get("param")), redact.IDs(r.UserAgent()))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	fmt.Fprint(w, lobbyPage)
@@ -140,7 +141,7 @@ func (s *server) lobbyVoice(w http.ResponseWriter, r *http.Request) {
 	req.Header.Set("Authorization", "Bearer "+key)
 	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
 	if err != nil {
-		log.Printf("[nso] lobby voice: website unreachable: %v", err)
+		log.Printf("[nso] lobby voice: website unreachable: %v", redact.Err(err))
 		writeJSON(w, 503, map[string]any{"status": 503, "title": "voice chat unavailable"})
 		return
 	}

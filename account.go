@@ -13,6 +13,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"nx-baas/redact"
 	"strings"
 	"time"
 )
@@ -194,7 +195,7 @@ func (a *accountClient) RegenerateFriendCode(uint64) error {
 
 func logErr(what string, err error) {
 	if err != nil {
-		log.Printf("[nx-baas] account: %s: %v", what, err)
+		log.Printf("[nx-baas] account: %s: %v", what, redact.Err(err))
 	}
 }
 

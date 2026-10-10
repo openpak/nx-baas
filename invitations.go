@@ -37,9 +37,11 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
+	"nx-baas/redact"
 	"os"
 	"regexp"
 	"sort"
@@ -239,16 +241,16 @@ func (st *invitationStore) highestIDLocked() uint64 {
 func (st *invitationStore) saveLocked() {
 	b, err := json.MarshalIndent(st, "", " ")
 	if err != nil {
-		log.Printf("[nx-baas] invitations: marshal: %v", err)
+		log.Printf("[nx-baas] invitations: marshal: %v", redact.Err(err))
 		return
 	}
 	tmp := st.path + ".tmp"
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		log.Printf("[nx-baas] invitations: save: %v", err)
+		log.Printf("[nx-baas] invitations: save: %v", redact.Err(err))
 		return
 	}
 	if err := os.Rename(tmp, st.path); err != nil {
-		log.Printf("[nx-baas] invitations: save: %v", err)
+		log.Printf("[nx-baas] invitations: save: %v", redact.Err(err))
 	}
 }
 
@@ -401,7 +403,7 @@ func notifyCommitted(ev InvitationEvent) {
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
-				log.Printf("[nx-baas] invitations: notify panicked: %v", r)
+				log.Printf("[nx-baas] invitations: notify panicked: %s", redact.IDs(fmt.Sprint(r)))
 			}
 		}()
 		invitationNotify(ev)
@@ -695,7 +697,7 @@ func (s *server) invitationGroupCreate(w http.ResponseWriter, r *http.Request, b
 	st.mu.Unlock()
 
 	log.Printf("[nx-baas] five: group %s by %s -> %d/%d receiver(s) (denied=%d unknown=%d)",
-		group.ID, me.ID, len(invitations), len(receivers), len(denied), len(unknown))
+		redact.Tag(group.ID), redact.Tag(me.ID), len(invitations), len(receivers), len(denied), len(unknown))
 	for _, inv := range invitations {
 		notifyCommitted(InvitationEvent{
 			EventID: "invitation:" + inv.ID, Type: "friend_invitation_received",
@@ -873,7 +875,7 @@ func (s *server) invitationInbox(w http.ResponseWriter, r *http.Request, uid str
 		return
 	}
 	if uid != me.ID {
-		log.Printf("[nx-baas] five: cross-account inbox denied: principal=%s path=%s", me.ID, uid)
+		log.Printf("[nx-baas] five: cross-account inbox denied: principal=%s path=%s", redact.Tag(me.ID), redact.Tag(uid))
 		fiveError(w, r, http.StatusForbidden, "0006", "operation_is_not_permitted")
 		return
 	}
@@ -983,7 +985,7 @@ func (s *server) invitationMarkAllRead(w http.ResponseWriter, r *http.Request, u
 		return
 	}
 	if uid != me.ID {
-		log.Printf("[nx-baas] five: cross-account mark_as_read denied: principal=%s path=%s", me.ID, uid)
+		log.Printf("[nx-baas] five: cross-account mark_as_read denied: principal=%s path=%s", redact.Tag(me.ID), redact.Tag(uid))
 		fiveError(w, r, http.StatusForbidden, "0006", "operation_is_not_permitted")
 		return
 	}
@@ -1109,7 +1111,7 @@ func (s *server) applyRead(w http.ResponseWriter, receiverID string, ids map[str
 		return s.invitationSenderGone(inv, now)
 	})
 	st.mu.Unlock()
-	log.Printf("[nx-baas] five: mark read for %s: %d applied, %d unread left", receiverID, applied, unread)
+	log.Printf("[nx-baas] five: mark read for %s: %d applied, %d unread left", redact.Tag(receiverID), applied, unread)
 	writeJSON(w, 200, map[string]any{"count": unread})
 }
 
@@ -1176,7 +1178,7 @@ func createLegacyInvitation(sender *User, senderName string, receiver *User, app
 		dropped := queue[0]
 		queue = queue[1:]
 		delete(st.Invitations, dropped.ID)
-		log.Printf("[nx-baas] invitation: queue full for %s, dropped %s", receiver.ID, dropped.ID)
+		log.Printf("[nx-baas] invitation: queue full for %s, dropped %s", redact.Tag(receiver.ID), redact.Tag(dropped.ID))
 	}
 	inv := &invitationRecord{
 		Type: "friend", SenderID: sender.ID, ReceiverID: receiver.ID,
@@ -1211,7 +1213,7 @@ func popLegacyInvitations(s *server, receiver *User) []*invitationRecord {
 			continue
 		}
 		if !s.legacySessionLive(inv.SenderID, inv.ApplicationID) {
-			log.Printf("[nx-baas] invitation: dropping stale room invite %s (sender %s offline)", inv.ID, inv.SenderID)
+			log.Printf("[nx-baas] invitation: dropping stale room invite %s (sender %s offline)", redact.Tag(inv.ID), redact.Tag(inv.SenderID))
 			delete(st.Invitations, id)
 			continue
 		}

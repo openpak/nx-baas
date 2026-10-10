@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"nx-baas/redact"
 	"strings"
 )
 
@@ -21,7 +22,7 @@ func isPlayFab(host string) bool {
 }
 
 func playfabUnavailable(w http.ResponseWriter, r *http.Request) {
-	log.Printf("[nx-baas] playfab is not served by OpenPak yet: %s %s%s -> 503", r.Method, hostOf(r), r.URL.Path)
+	log.Printf("[nx-baas] playfab is not served by OpenPak yet: %s %s%s -> 503", r.Method, hostOf(r), redact.Path(r.URL.Path))
 	writeJSON(w, http.StatusServiceUnavailable, map[string]any{
 		"code":         http.StatusServiceUnavailable,
 		"status":       "ServiceUnavailable",

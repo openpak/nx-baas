@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"nx-baas/redact"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -46,7 +47,7 @@ func (s *server) followCoreEvents(b *openpakBackend) {
 		page, err := events.PollEvents(ctx, &accountv1.PollEventsRequest{SinceVersion: version, Limit: 500})
 		cancel()
 		if err != nil {
-			log.Printf("[nx-baas] core events: %v", err)
+			log.Printf("[nx-baas] core events: %v", redact.Err(err))
 			time.Sleep(10 * time.Second)
 			continue
 		}

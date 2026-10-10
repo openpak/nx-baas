@@ -35,6 +35,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"nx-baas/redact"
 	"os"
 	"strings"
 	"time"
@@ -124,7 +125,7 @@ func (f *newsForwarder) forward(w http.ResponseWriter, r *http.Request) {
 	req.Header.Set("X-Forwarded-Host", hostOf(r))
 	resp, err := f.client.Do(req)
 	if err != nil {
-		log.Printf("[news] forward %s%s: %v", hostOf(r), r.URL.RequestURI(), err)
+		log.Printf("[news] forward %s%s: %v", hostOf(r), redact.URL(r.URL), redact.Err(err))
 		http.Error(w, "news service unreachable", http.StatusBadGateway)
 		return
 	}
@@ -139,7 +140,7 @@ func (f *newsForwarder) forward(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(resp.StatusCode)
 	n, _ := io.Copy(w, resp.Body)
-	log.Printf("[news] %s %s%s -> %d (%d bytes, etag %s)", r.Method, shortHost(hostOf(r)), r.URL.RequestURI(),
+	log.Printf("[news] %s %s%s -> %d (%d bytes, etag %s)", r.Method, shortHost(hostOf(r)), redact.URL(r.URL),
 		resp.StatusCode, n, resp.Header.Get("ETag"))
 }
 

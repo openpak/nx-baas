@@ -24,6 +24,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"nx-baas/redact"
 	"strings"
 	"time"
 
@@ -128,7 +129,7 @@ func (p *penneRemote) work() {
 					downSince = time.Time{}
 				}
 				if err != nil {
-					log.Printf("[nx-baas] penne: %s to nx-penne failed: %v", j.what, err)
+					log.Printf("[nx-baas] penne: %s to nx-penne failed: %v", j.what, redact.Err(err))
 				}
 				break
 			}
@@ -137,7 +138,7 @@ func (p *penneRemote) work() {
 			}
 			left := penneRetryFor - time.Since(downSince)
 			if left <= 0 {
-				log.Printf("[nx-baas] penne: %s to nx-penne failed: %v", j.what, err)
+				log.Printf("[nx-baas] penne: %s to nx-penne failed: %v", j.what, redact.Err(err))
 				break
 			}
 			time.Sleep(min(wait, left))
@@ -189,7 +190,7 @@ func (s *server) penneSubmitRemote(d PenneDelivery, wait bool) PenneSubmission {
 		ID        string `json:"id"`
 	}
 	if err := p.call("POST", "/internal/penne/notifications", in, &out); err != nil {
-		log.Printf("[nx-baas] notify: %s for %s -> nx-penne unreachable: %v", d.Kind, d.UserID, err)
+		log.Printf("[nx-baas] notify: %s for %s -> nx-penne unreachable: %v", d.Kind, redact.Tag(d.UserID), redact.Err(err))
 		return PenneSubmission{Outcome: "nx_penne_unreachable", ID: d.ID}
 	}
 	return PenneSubmission{Accepted: out.Accepted, Duplicate: out.Duplicate, Outcome: penneOutcome(out.Outcome), ID: out.ID}
@@ -202,7 +203,7 @@ func (s *server) penneTopicMessage(topic, name, receivers, body string) (subscri
 		if err := p.call("POST", "/internal/penne/topic-messages", map[string]any{
 			"topic": topic, "name": name, "receivers": receivers, "body": body,
 		}, &out); err != nil {
-			log.Printf("[nx-baas] penne: topic message %q to nx-penne failed: %v", topic, err)
+			log.Printf("[nx-baas] penne: topic message %q to nx-penne failed: %v", topic, redact.Err(err))
 		}
 		return out.Subscribers, out.Delivered
 	}
@@ -231,7 +232,7 @@ func (s *server) penneCloseUser(userID string) {
 	}
 	if s.penneHub != nil {
 		if n := s.penneHub.closeUser(userID); n > 0 {
-			log.Printf("[bans] closed %d notification connection(s) of user %s", n, userID)
+			log.Printf("[bans] closed %d notification connection(s) of user %s", n, redact.Tag(userID))
 		}
 	}
 }
@@ -263,7 +264,7 @@ func (s *server) penneRegistration(penneID string) (live bool, userID string, us
 			Users  []string `json:"users"`
 		}
 		if err := p.call("GET", "/internal/penne/registrations/"+url.PathEscape(penneID), nil, &out); err != nil {
-			log.Printf("[nx-baas] penne: registration %s from nx-penne: %v", penneID, err)
+			log.Printf("[nx-baas] penne: registration %s from nx-penne: %v", redact.Tag(penneID), redact.Err(err))
 		}
 		return out.Live, out.UserID, out.Users
 	}
@@ -316,7 +317,7 @@ func (s *server) localTopicMessage(topic, name, receivers, body string) (subscri
 func (s *server) localBindToken(tok, userID string) bool {
 	store := s.notifStore()
 	if acct := store.TokenAccount(tok); acct != "" && store.BindAccount(acct, userID) {
-		log.Printf("[nx-baas] penne: console account %s is %s (olsc token upload)", acct, userID)
+		log.Printf("[nx-baas] penne: console account %s is %s (olsc token upload)", redact.Tag(acct), redact.Tag(userID))
 		return true
 	}
 	return false

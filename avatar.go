@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"nx-baas/redact"
 	"time"
 )
 
@@ -41,7 +42,7 @@ func (s *server) shareAvatar(subject, base64JPEG string) {
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 		if err != nil {
-			log.Printf("[nx-baas] avatar: could not reach the website: %v", err)
+			log.Printf("[nx-baas] avatar: could not reach the website: %v", redact.Err(err))
 			return
 		}
 		defer resp.Body.Close()
@@ -49,7 +50,7 @@ func (s *server) shareAvatar(subject, base64JPEG string) {
 			log.Printf("[nx-baas] avatar: website answered %s", resp.Status)
 			return
 		}
-		log.Printf("[nx-baas] avatar shared with the account for subject %s", subject)
+		log.Printf("[nx-baas] avatar shared with the account for subject %s", redact.Tag(subject))
 	}()
 }
 

@@ -27,7 +27,6 @@ package main
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -35,6 +34,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"nx-baas/redact"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -69,7 +69,7 @@ func (s *server) errorReports() *reportSpool {
 // bodies at 1 MiB; a report with a screenshot can be larger.
 func (s *server) errorReport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost || r.URL.Path != "/" {
-		log.Printf("[error-report] UNMAPPED %s %s%s", r.Method, hostOf(r), r.URL.Path)
+		log.Printf("[error-report] UNMAPPED %s %s%s", r.Method, hostOf(r), redact.Path(r.URL.Path))
 		http.Error(w, "no such route", 404)
 		return
 	}
@@ -79,7 +79,7 @@ func (s *server) errorReport(w http.ResponseWriter, r *http.Request) {
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
 	if err != nil {
-		log.Printf("!! ERROR REPORT: reading upload: %v", err)
+		log.Printf("!! ERROR REPORT: reading upload: %v", redact.Err(err))
 		http.Error(w, "report too large or truncated", http.StatusRequestEntityTooLarge)
 		return
 	}
@@ -92,7 +92,7 @@ func (s *server) errorReport(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := sp.keepRaw(id, r.Header.Get("Content-Type"), body); err != nil {
 		// Not accepted if not kept: the console will upload it again.
-		log.Printf("!! ERROR REPORT: keeping raw payload: %v", err)
+		log.Printf("!! ERROR REPORT: keeping raw payload: %v", redact.Err(err))
 		http.Error(w, "cannot store the report", 503)
 		return
 	}
@@ -114,10 +114,10 @@ func (s *server) errorReport(w http.ResponseWriter, r *http.Request) {
 		out["attachment_b64"] = base64.StdEncoding.EncodeToString(rep.attachment)
 	}
 	if err := sp.enqueue(id, out); err != nil {
-		log.Printf("!! ERROR REPORT %s: spooling the forward: %v (raw payload kept)", id, err)
+		log.Printf("!! ERROR REPORT %s: spooling the forward: %v (raw payload kept)", redact.Tag(id), redact.Err(err))
 	}
 	log.Printf("[error-report] %s: code=%s title=%s fw=%s device=%s account=%s, %d bytes, %d field(s)",
-		id, rep.errorCode, rep.titleID, rep.firmware, device, account, len(body), len(rep.fields))
+		redact.Tag(id), rep.errorCode, rep.titleID, rep.firmware, redact.Tag(device), redact.Tag(account), len(body), len(rep.fields))
 	w.WriteHeader(200)
 }
 
@@ -175,13 +175,13 @@ func decodeErrorReport(contentType string, body []byte) decodedReport {
 				break
 			}
 			if err != nil {
-				log.Printf("!! ERROR REPORT: multipart part %d: %v", i, err)
+				log.Printf("!! ERROR REPORT: multipart part %d: %v", i, redact.Err(err))
 				rep.fields["decode_error"] = err.Error()
 				break
 			}
 			data, err := io.ReadAll(part)
 			if err != nil {
-				log.Printf("!! ERROR REPORT: multipart part %d body: %v", i, err)
+				log.Printf("!! ERROR REPORT: multipart part %d body: %v", i, redact.Err(err))
 				break
 			}
 			pct := part.Header.Get("Content-Type")
@@ -202,7 +202,7 @@ func decodeErrorReport(contentType string, body []byte) decodedReport {
 			if rep.attachment == nil {
 				rep.attachment = data
 			} else {
-				log.Printf("[error-report] extra attachment %q (%s, %d bytes) kept in the raw payload only", part.FileName(), pct, len(data))
+				log.Printf("[error-report] extra attachment %s (%s, %d bytes) kept in the raw payload only", redact.Tag(part.FileName()), pct, len(data))
 			}
 		}
 		if len(attachments) > 0 {
@@ -216,8 +216,8 @@ func decodeErrorReport(contentType string, body []byte) decodedReport {
 			rep.fields[k] = v
 		}
 	default:
-		log.Printf("!! ERROR REPORT: unknown upload shape: content type %q, %d bytes, starts %s",
-			contentType, len(body), hex.EncodeToString(body[:min(len(body), 32)]))
+		log.Printf("!! ERROR REPORT: unknown upload shape: content type %q, %d bytes",
+			contentType, len(body))
 		rep.fields["decode_error"] = "unrecognized content type " + contentType
 	}
 	rep.errorCode = fieldString(rep.fields["ErrorCode"])
@@ -248,8 +248,8 @@ func decodeErrorReport(contentType string, body []byte) decodedReport {
 func decodeReportMsgpack(b []byte) map[string]any {
 	v, err := msgpackDecode(b)
 	if err != nil {
-		log.Printf("!! ERROR REPORT: msgpack part does not decode (%v); %d bytes starting %s",
-			err, len(b), hex.EncodeToString(b[:min(len(b), 32)]))
+		log.Printf("!! ERROR REPORT: msgpack part does not decode (%v); %d bytes",
+			redact.Err(err), len(b))
 		return map[string]any{"decode_error": err.Error()}
 	}
 	m, ok := v.(map[string]any)
@@ -385,14 +385,14 @@ func (sp *reportSpool) flush() int {
 		}
 		req, err := http.NewRequest(http.MethodPost, base+"/api/v1/internal/crash-reports", bytes.NewReader(b))
 		if err != nil {
-			log.Printf("!! ERROR REPORT forward: %v", err)
+			log.Printf("!! ERROR REPORT forward: %v", redact.Err(err))
 			return sent
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Internal-Key", key)
 		resp, err := sp.http.Do(req)
 		if err != nil {
-			log.Printf("[error-report] forward failed (%v); %d still spooled, retrying later", err, len(files)-sent)
+			log.Printf("[error-report] forward failed (%v); %d still spooled, retrying later", redact.Err(err), len(files)-sent)
 			return sent // the website is down: stop hammering it
 		}
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
@@ -406,7 +406,7 @@ func (sp *reportSpool) flush() int {
 			rej := filepath.Join(dir, "rejected")
 			os.MkdirAll(rej, 0o700)
 			os.Rename(f, filepath.Join(rej, filepath.Base(f)))
-			log.Printf("!! ERROR REPORT %s refused by the website: %s; moved to spool/rejected", filepath.Base(f), resp.Status)
+			log.Printf("!! ERROR REPORT %s refused by the website: %s; moved to spool/rejected", redact.Tag(filepath.Base(f)), resp.Status)
 		default:
 			log.Printf("[error-report] website answered %s; retrying later", resp.Status)
 			return sent

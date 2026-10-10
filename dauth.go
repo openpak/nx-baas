@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"nx-baas/redact"
 	"strings"
 	"time"
 )
@@ -83,7 +84,7 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 	case p == "/v8/device_auth_tokens" && r.Method == "POST":
 		var req deviceTokenRequest
 		if err := json.Unmarshal(body, &req); err != nil {
-			log.Printf("[dauth] token request is not JSON: %v", err)
+			log.Printf("[dauth] token request is not JSON: %v", redact.Err(err))
 			http.Error(w, `{"errors":[{"code":"1000","message":"malformed request"}]}`, http.StatusBadRequest)
 			return
 		}
@@ -166,7 +167,7 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 	case strings.HasPrefix(host, "dragons") && strings.HasSuffix(p, "/elicense_archives/publish"),
 		strings.HasPrefix(host, "dragons") && strings.HasSuffix(p, "/rights/publish_device_linked_elicenses"):
 		// Nothing is waiting to be published: an empty list is the "all done" answer.
-		log.Printf("[dragons] %s -> no archives", p)
+		log.Printf("[dragons] %s -> no archives", redact.Path(p))
 		writeJSON(w, 200, map[string]any{"elicense_archives": []any{}})
 
 	case strings.HasPrefix(host, "dragons") && strings.HasSuffix(p, "/report"):
@@ -184,7 +185,7 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 		writeJSON(w, 200, map[string]any{"id": "opk" + randHex(16), "password": randB64(24)})
 
 	default:
-		log.Printf("[dauth] !! UNHANDLED %s %s%s", r.Method, host, p)
+		log.Printf("[dauth] !! UNHANDLED %s %s%s", r.Method, host, redact.Path(p))
 		http.NotFound(w, r)
 	}
 }

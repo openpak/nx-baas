@@ -30,6 +30,7 @@ import (
 	"maps"
 	"math/big"
 	"net/http"
+	"nx-baas/redact"
 	"regexp"
 	"slices"
 	"sort"
@@ -124,7 +125,7 @@ func (s *server) moon(w http.ResponseWriter, r *http.Request, body []byte) {
 	case strings.HasPrefix(rest, "/devices/"):
 		s.moonDevice(w, r, body, device, strings.TrimPrefix(rest, "/devices/"))
 	default:
-		log.Printf("[moon] no handler for %s %s", r.Method, r.URL.Path)
+		log.Printf("[moon] no handler for %s %s", r.Method, redact.Path(r.URL.Path))
 		moonError(w, moonNotFound)
 	}
 }
@@ -142,7 +143,7 @@ func (s *server) moonSearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if code == "" {
-		log.Printf("[moon] search with no pairing-code filter: %s", r.URL.RawQuery)
+		log.Printf("[moon] search with no pairing-code filter: %s", redact.Query(r.URL.RawQuery))
 		moonItems(w, nil)
 		return
 	}
@@ -153,7 +154,7 @@ func (s *server) moonSearch(w http.ResponseWriter, r *http.Request) {
 		// ponytail: one global counter per minute, not per-IP -- Traefik splices
 		// the console connection so no handler here sees a source address
 		// (docs/switch, §U3). Per-IP when PROXY protocol lands.
-		log.Printf("[moon] pairing-code lookups throttled; refusing %q", code)
+		log.Printf("[moon] pairing-code lookups throttled; refusing %s", redact.Tag(code))
 		moonItems(w, nil)
 		return
 	}
@@ -162,11 +163,11 @@ func (s *server) moonSearch(w http.ResponseWriter, r *http.Request) {
 		pctlSearchMiss()
 		// An empty list, not a 404: the console asked a question ("which device
 		// has this code"), and "none" is an answer to it.
-		log.Printf("[moon] pairing code %q: no record", code)
+		log.Printf("[moon] pairing code %s: no record", redact.Tag(code))
 		moonItems(w, nil)
 		return
 	}
-	log.Printf("[moon] pairing code %q -> device %s", code, d.Hex())
+	log.Printf("[moon] pairing code %s -> device %s", redact.Tag(code), redact.Tag(d.Hex()))
 	moonItems(w, []any{moonDeviceObj(d)})
 }
 
@@ -177,7 +178,7 @@ func (s *server) moonDevice(w http.ResponseWriter, r *http.Request, body []byte,
 	id, tail, _ := strings.Cut(rest, "/")
 	d := s.store.PctlByMoonID(id)
 	if d == nil {
-		log.Printf("[moon] device id %q not found (console spelled it that way)", id)
+		log.Printf("[moon] device id %s not found (console spelled it that way)", redact.Tag(id))
 		moonError(w, moonNotFound)
 		return
 	}
@@ -192,11 +193,11 @@ func (s *server) moonDevice(w http.ResponseWriter, r *http.Request, body []byte,
 		}
 		bound := s.store.PctlActivate(d.Hex(), device)
 		if bound == nil {
-			log.Printf("[moon] activate refused: %s is claimed by another console", d.Hex())
+			log.Printf("[moon] activate refused: %s is claimed by another console", redact.Tag(d.Hex()))
 			moonError(w, moonForbidden)
 			return
 		}
-		log.Printf("[moon] device %s activated by %s", bound.Hex(), device)
+		log.Printf("[moon] device %s activated by %s", redact.Tag(bound.Hex()), redact.Tag(device))
 		// The console hands over its whole state here, setting and PIN included
 		// (hardware, v0.42.0). That is the document the parent side edits from.
 		if set, ok := jsonObj(body)["parentalControlSetting"].(map[string]any); ok {
@@ -219,7 +220,7 @@ func (s *server) moonDevice(w http.ResponseWriter, r *http.Request, body []byte,
 
 	// Everything else needs this console to be the one that claimed the record.
 	if device == "" || d.DauthID != device {
-		log.Printf("[moon] %s %s: bearer device %q is not %q", r.Method, r.URL.Path, device, d.DauthID)
+		log.Printf("[moon] %s %s: bearer device %s is not %s", r.Method, redact.Path(r.URL.Path), redact.Tag(device), redact.Tag(d.DauthID))
 		moonError(w, moonForbidden)
 		return
 	}
@@ -233,7 +234,7 @@ func (s *server) moonDevice(w http.ResponseWriter, r *http.Request, body []byte,
 		writeJSON(w, 200, moonDeviceObj(d))
 	case tail == "" && r.Method == http.MethodDelete:
 		s.store.PctlUnlink(d.Hex())
-		log.Printf("[moon] device %s unlinked by the console", d.Hex())
+		log.Printf("[moon] device %s unlinked by the console", redact.Tag(d.Hex()))
 		w.WriteHeader(http.StatusNoContent)
 	case tail == "parental_control_setting" && r.Method == http.MethodGet:
 		s.moonSetting(w, r, d)
@@ -250,7 +251,7 @@ func (s *server) moonDevice(w http.ResponseWriter, r *http.Request, body []byte,
 		switch r.Method {
 		case http.MethodPut, http.MethodPost:
 			s.store.PctlAddOwner(d.Hex(), na)
-			log.Printf("[moon] device %s owner %s linked", d.Hex(), na)
+			log.Printf("[moon] device %s owner %s linked", redact.Tag(d.Hex()), redact.Tag(na))
 			writeJSON(w, 200, map[string]any{"nintendoAccountId": na})
 		case http.MethodDelete:
 			// This is how a console unlinks: it lists the owners and deletes
@@ -258,7 +259,7 @@ func (s *server) moonDevice(w http.ResponseWriter, r *http.Request, body []byte,
 			// So a record left with no owner is a console that has left.
 			if s.store.PctlRemoveOwner(d.Hex(), na) == 0 {
 				s.store.PctlUnlink(d.Hex())
-				log.Printf("[moon] device %s unlinked: its last owner %s was removed", d.Hex(), na)
+				log.Printf("[moon] device %s unlinked: its last owner %s was removed", redact.Tag(d.Hex()), redact.Tag(na))
 			}
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -269,7 +270,7 @@ func (s *server) moonDevice(w http.ResponseWriter, r *http.Request, body []byte,
 		// the parent side reads wrong-PIN attempts and play time out of them. A
 		// console that cannot hand them over spools retries instead.
 		n := s.store.PctlAddEvents(d.Hex(), body)
-		log.Printf("[moon] device %s uploaded events (%d bytes, %d held)", d.Hex(), len(body), n)
+		log.Printf("[moon] device %s uploaded events (%d bytes, %d held)", redact.Tag(d.Hex()), len(body), n)
 		writeJSON(w, 200, map[string]any{"result": "ok"})
 	case strings.HasPrefix(tail, "players/") && (r.Method == http.MethodPut || r.Method == http.MethodDelete):
 		// The console's own users, one call each after pairing: a nickname and
@@ -285,7 +286,7 @@ func (s *server) moonDevice(w http.ResponseWriter, r *http.Request, body []byte,
 		nick, _ := doc["nickname"].(string)
 		img, _ := doc["imageData"].(string)
 		s.store.PctlSetPlayer(d.Hex(), player, &PctlPlayer{Nickname: nick, ImageData: img})
-		log.Printf("[moon] device %s player %s is %q", d.Hex(), player, nick)
+		log.Printf("[moon] device %s player %s is %s", redact.Tag(d.Hex()), redact.Tag(player), redact.Tag(nick))
 		writeJSON(w, 200, map[string]any{"nickname": nick})
 	case strings.HasPrefix(tail, "players") && r.Method == http.MethodGet:
 		// The console's players, for the parent app's icons. Empty until the
@@ -296,7 +297,7 @@ func (s *server) moonDevice(w http.ResponseWriter, r *http.Request, body []byte,
 		// to copy from on a first console, and inventing one would be a lie.
 		moonError(w, moonNotFound)
 	default:
-		log.Printf("[moon] no handler for %s %s (tail %q)", r.Method, r.URL.Path, tail)
+		log.Printf("[moon] no handler for %s %s (tail %s)", r.Method, redact.Path(r.URL.Path), redact.Path(tail))
 		moonError(w, moonNotFound)
 	}
 }
@@ -578,7 +579,7 @@ func (s *server) moonMii(w http.ResponseWriter, path string) {
 		img, err = pctlFacePNG(img)
 	}
 	if err != nil || len(img) > 64<<10 {
-		log.Printf("[moon] mii %s: %d bytes, err %v", account, len(img), err)
+		log.Printf("[moon] mii %s: %d bytes, err %v", redact.Tag(account), len(img), redact.Err(err))
 		moonError(w, moonNotFound)
 		return
 	}
@@ -1481,8 +1482,8 @@ func (s *server) pctlPairing(w http.ResponseWriter, r *http.Request) {
 	json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in)
 	d := s.store.PctlNewPairing(in.AccountID)
 	s.store.PctlNameParent(d.Hex(), in.DisplayName)
-	log.Printf("[moon] pairing code %s for account=%q device=%s (expires %ds)",
-		d.PairingCode, in.AccountID, d.Hex(), int(pctlPairingTTL.Seconds()))
+	log.Printf("[moon] pairing code %s for account=%s device=%s (expires %ds)",
+		redact.Tag(d.PairingCode), redact.Tag(in.AccountID), redact.Tag(d.Hex()), int(pctlPairingTTL.Seconds()))
 	writeJSON(w, 200, map[string]any{
 		"moon_id": d.Hex(), "pairing_code": d.PairingCode, "expires_at": d.PairingExpires,
 	})
@@ -1502,11 +1503,11 @@ func (s *server) pctlPairing(w http.ResponseWriter, r *http.Request) {
 func (s *server) pctlMovie(w http.ResponseWriter, r *http.Request) {
 	path := getenv("PCTL_MOVIE", "")
 	if path == "" {
-		log.Printf("[moon] movie %s%s -- no PCTL_MOVIE configured, answering 404", hostOf(r), r.URL.Path)
+		log.Printf("[moon] movie %s%s -- no PCTL_MOVIE configured, answering 404", hostOf(r), redact.Path(r.URL.Path))
 		http.NotFound(w, r)
 		return
 	}
-	log.Printf("[moon] movie %s%s -> %s", hostOf(r), r.URL.Path, path)
+	log.Printf("[moon] movie %s%s -> %s", hostOf(r), redact.Path(r.URL.Path), path)
 	w.Header().Set("Content-Type", "video/mp4")
 	http.ServeFile(w, r, path)
 }
@@ -1596,7 +1597,7 @@ func (s *server) pctlDeviceRoute(w http.ResponseWriter, r *http.Request) {
 		// told: it stays linked on its own side and gets a 404 at its next
 		// sync, so this is for a console that is already gone or reset.
 		s.store.PctlUnlink(d.Hex())
-		log.Printf("[moon] device %s removed by account %q", d.Hex(), account)
+		log.Printf("[moon] device %s removed by account %s", redact.Tag(d.Hex()), redact.Tag(account))
 		w.WriteHeader(http.StatusNoContent)
 	case len(parts) == 2 && parts[1] == "setting" && r.Method == http.MethodPut:
 		s.pctlPutSetting(w, r, d)
@@ -1674,7 +1675,7 @@ func (s *server) pctlPutSetting(w http.ResponseWriter, r *http.Request, d *PctlD
 	}
 	d = s.store.PctlByMoonID(d.Hex())
 	tag := pctlServedETag(d)
-	log.Printf("[moon] device %s: parent set setting=%t code=%t, served etag %s", d.Hex(), doc != nil, in.UnlockCode != nil, tag)
+	log.Printf("[moon] device %s: parent set setting=%t code=%t, served etag %s", redact.Tag(d.Hex()), doc != nil, in.UnlockCode != nil, tag)
 	s.pctlPush(d)
 	writeJSON(w, 200, map[string]any{"etag": tag, "updated_at": d.UpdatedAt})
 }
@@ -1698,20 +1699,20 @@ func (s *server) pctlPush(d *PctlDevice) {
 	// kept, the Penne registration made under the same device certificate is the same
 	// console's: penneDeviceMessage looks that up from DauthID.
 	if d.NotificationToken == "" && d.DauthID == "" {
-		log.Printf("[moon] device %s: no notification token; the console fetches on its own schedule", d.Hex())
+		log.Printf("[moon] device %s: no notification token; the console fetches on its own schedule", redact.Tag(d.Hex()))
 		return
 	}
 	body, _ := json.Marshal(map[string]any{"deviceId": d.Hex(), "eventId": pctlSettingChanged})
 	token, n, err := s.penneDeviceMessage(d.NotificationToken, d.DauthID, pctlSettingChanged, "pctl", string(body))
 	if err != nil {
-		log.Printf("[moon] device %s: push not delivered (%v); the console fetches on its own schedule", d.Hex(), err)
+		log.Printf("[moon] device %s: push not delivered (%v); the console fetches on its own schedule", redact.Tag(d.Hex()), redact.Err(err))
 		return
 	}
 	if token == "" {
-		log.Printf("[moon] device %s: no notification token; the console fetches on its own schedule", d.Hex())
+		log.Printf("[moon] device %s: no notification token; the console fetches on its own schedule", redact.Tag(d.Hex()))
 		return
 	}
-	log.Printf("[moon] device %s: pushed %s on %d connection(s) of registration %s", d.Hex(), pctlSettingChanged, n, token)
+	log.Printf("[moon] device %s: pushed %s on %d connection(s) of registration %s", redact.Tag(d.Hex()), pctlSettingChanged, n, redact.Tag(token))
 }
 
 // pctlSettingChanged is the first value of pctl's eventId enum (vaddr 0x13ab20).

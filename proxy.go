@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"nx-baas/redact"
 	"regexp"
 	"strings"
 )
@@ -37,6 +38,10 @@ func newCaptureProxy(upstream string) http.Handler {
 			var hdr strings.Builder
 			for k, v := range res.Header {
 				hdr.WriteString(" " + k + ": " + strings.Join(v, ",") + ";")
+			}
+			if !redact.Bodies {
+				log.Printf("[capture] <<< %d %s %s%s body(%d)", res.StatusCode, res.Request.Method, res.Request.Host, redact.Path(res.Request.URL.Path), len(b))
+				return nil
 			}
 			log.Printf("[capture] <<< %d %s %s%s hdr{%s} body(%d)=%s", res.StatusCode, res.Request.Method, res.Request.Host, res.Request.URL.RequestURI(), hdr.String(), len(b), b)
 			return nil
