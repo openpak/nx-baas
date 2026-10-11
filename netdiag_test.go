@@ -191,3 +191,15 @@ func TestErrorReportUploadIsAccepted(t *testing.T) {
 		t.Fatalf("a crash report was refused (%d); erpt will keep retrying it", w.Code)
 	}
 }
+
+// A play report names its events and application, and nothing else is read.
+func TestReportEvents(t *testing.T) {
+	body := msgpackOrdered("application_id", "0100c2500fc20000", "event_id", "online_error", "data", msgpackOrdered("user", "secret"))
+	got := reportEvents(body)
+	if got != " [application_id=0100c2500fc20000 event_id=online_error]" {
+		t.Fatalf("got %q", got)
+	}
+	if reportEvents([]byte("\xc1 not msgpack")) != " [not msgpack: first byte 0xc1]" {
+		t.Fatal("non-msgpack body named events")
+	}
+}

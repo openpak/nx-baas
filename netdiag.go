@@ -11,11 +11,13 @@ package main
 // report and drop it, which is what stops the console spooling retries forever.
 
 import (
+	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"nx-baas/redact"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -97,8 +99,59 @@ func (s *server) telemetry(w http.ResponseWriter, r *http.Request, body []byte) 
 		http.Error(w, "no such route", 404)
 		return
 	}
-	log.Printf("[telemetry] %s %d bytes discarded (OpenPak collects no %ss)", redact.Path(p), len(body), kind)
+	log.Printf("[telemetry] %s %d bytes discarded (OpenPak collects no %ss)%s", redact.Path(p), len(body), kind, reportEvents(body))
 	w.WriteHeader(200)
+}
+
+// reportEvents names what a play report is about: the event ids and application ids it carries,
+// the only fields read (a game's error event is the console's own account of a failure no server
+// saw). Every other value stays unread. For a body that is not msgpack, only its first byte.
+func reportEvents(body []byte) string {
+	v, err := msgpackDecode(body)
+	if err != nil {
+		if len(body) == 0 {
+			return ""
+		}
+		return fmt.Sprintf(" [not msgpack: first byte 0x%02x]", body[0])
+	}
+	seen := map[string]bool{}
+	var out []string
+	var walk func(v any, depth int)
+	walk = func(v any, depth int) {
+		if depth > 6 || len(out) >= 12 {
+			return
+		}
+		switch t := v.(type) {
+		case map[string]any:
+			for k, x := range t {
+				lk := strings.ToLower(k)
+				if strings.Contains(lk, "event") || lk == "application_id" || lk == "app_id" {
+					var val string
+					switch y := x.(type) {
+					case string:
+						val = y
+					case int64, uint64:
+						val = fmt.Sprintf("%016x", msgpackReadUintOf(y))
+					}
+					if val != "" && len(val) <= 64 && !seen[k+"="+val] {
+						seen[k+"="+val] = true
+						out = append(out, k+"="+val)
+					}
+				}
+				walk(x, depth+1)
+			}
+		case []any:
+			for _, x := range t {
+				walk(x, depth+1)
+			}
+		}
+	}
+	walk(v, 0)
+	sort.Strings(out)
+	if len(out) == 0 {
+		return ""
+	}
+	return " [" + strings.Join(out, " ") + "]"
 }
 
 // serveZeros writes n bytes of nothing, with Range support.
