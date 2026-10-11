@@ -94,7 +94,7 @@ const (
 	maxNonces         = 10000
 	enrolPerHour      = 10
 	enrolLiveWindow   = 30 * 24 * time.Hour // an enrolment with other keys waits this long
-	sessionLiveWindow = 90 * time.Second    // Harbor says it is alive every 30 s
+	sessionLiveWindow = 45 * time.Second    // Harbor says it is alive every 30 s; a process that was killed (nothing released its claim) is replaced after this
 	lastSeenSaveEvery = time.Hour
 
 	consoleSessionHeader = "X-OpenPak-Console-Session"

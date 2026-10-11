@@ -345,15 +345,24 @@ func TestHarborConcurrentSessions(t *testing.T) {
 	wantInUse(t, "second session's live ping", post(s, "/harbor/v1/devices/live", nil, out.TLS, "second"))
 	wantInUse(t, "second session's edge token", post(s, "/v8/edge_tokens", map[string]any{"token_requests": []any{map[string]any{"client_id": "x", "vendor_id": "akamai"}}}, out.TLS, "second"))
 
-	clock.t = clock.t.Add(60 * time.Second)
+	// Harbor pings every 30 s: a console that keeps pinging keeps its claim, and one more beat
+	// than that (a late one) does not lose it.
+	clock.t = clock.t.Add(30 * time.Second)
 	if w := post(s, "/harbor/v1/devices/live", nil, out.TLS, "first"); w.Code != http.StatusNoContent {
 		t.Fatalf("first session's ping = %d", w.Code)
 	}
-	clock.t = clock.t.Add(60 * time.Second)
+	clock.t = clock.t.Add(30 * time.Second)
 	wantInUse(t, "second session while the first pings", post(s, "/harbor/v1/devices/live", nil, out.TLS, "second"))
 
+	// A killed process releases nothing: the next one takes over once its beat is missed, well
+	// inside the 90 s the claim used to last.
+	if sessionLiveWindow > 60*time.Second {
+		t.Fatalf("sessionLiveWindow = %v, a killed Harbor would wait too long", sessionLiveWindow)
+	}
 	clock.t = clock.t.Add(sessionLiveWindow + time.Second)
 	tokenSub(t, post(s, "/v8/device_auth_tokens", tokenBody, out.TLS, "second"))
+	// ...and the one it replaced is the stranger now.
+	wantInUse(t, "the replaced session", post(s, "/harbor/v1/devices/live", nil, out.TLS, "first"))
 
 	// A release frees the id at once.
 	if w := post(s, "/harbor/v1/devices/release", nil, out.TLS, "second"); w.Code != http.StatusNoContent {
