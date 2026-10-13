@@ -2483,6 +2483,14 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.forwardMoved(w, r) {
 		return
 	}
+	if isSpelunky(host) {
+		// Before the body read: /nso carries the raw identity token (spelunky2.go).
+		// Unset, this falls through to the catch-all below, which logs and 404s.
+		if fwd := spelunky2Forwarder(); fwd != nil {
+			fwd.ServeHTTP(w, r)
+			return
+		}
+	}
 	// The friends module fetches its app catalog and art from a configured
 	// host, so this matches on the path before host routing claims it
 	// (eshop_unserved.go). It declines anything that is not /v1/apps/<id>/.
