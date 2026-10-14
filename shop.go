@@ -639,6 +639,7 @@ func storePage() string {
 		navButton("cat:all", "Browse", `<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>`) +
 		navButton("search", "Search", `<circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/>`) +
 		navButton("owned", "Your Titles", `<path d="M12 20s-7.5-4.6-7.5-10A4.5 4.5 0 0 1 12 7.4 4.5 4.5 0 0 1 19.5 10c0 5.4-7.5 10-7.5 10z"/>`) +
+		strings.Replace(navButton("updates", "Updates", `<path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19.5h14"/>`), "</button>", `<span class="cnt" id="ucount" hidden></span></button>`, 1) +
 		`<button class="leave" id="close" type="button"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></span>Close</button>` +
 		`</nav><section id="main"><div class="top"><button class="backbtn" id="backbtn" type="button" hidden>‹ Back</button>` +
 		`<span class="note" id="note">All titles are free</span><img id="who" class="who" alt="" hidden></div>` +
@@ -684,6 +685,8 @@ border:1px solid transparent;border-radius:999px;text-align:left;font-weight:650
 .nav.on{background:var(--raised);border-color:var(--line);box-shadow:inset 0 -.6vh 0 var(--cursor),var(--shadow-sm);color:var(--ink)}
 .nav.on .ic{background:var(--accent-weak);border-color:var(--accent-line);color:var(--accent)}
 .leave{margin-top:auto;color:var(--muted)}
+.cnt{margin-left:auto;display:inline-flex;align-items:center;justify-content:center;min-width:4.4vh;height:4.4vh;padding:0 1vh;border-radius:999px;
+background:var(--accent);color:var(--on-accent);font-size:2.3vh;font-weight:700}
 #main{position:fixed;left:23vw;right:0;top:0;bottom:0;overflow-y:auto;padding:0 2.6vw 5vh}
 .top{display:flex;align-items:center;gap:1.4vw;height:11vh}
 .top .note{flex:1}
@@ -821,12 +824,15 @@ var DAY=86400;
 function within(s){return s&&(Date.now()/1000-s)<30*DAY;}
 function changed(t){return t.revised_at||t.updated_at||0;}
 function isNew(t){return within(t.released_at||t.updated_at);}
+// An update is waiting when the account owns the title at an older version than the catalog's.
+function needsUpdate(t){return t.ownership==='owned'&&typeof(t.version_owned)==='number'&&t.version_owned<t.version;}
+function count(){var n=catalog?catalog.filter(needsUpdate).length:0,c=$('ucount');c.textContent=n;c.hidden=!n;}
 function isUpdated(t){return !isNew(t)&&within(t.revised_at);}
 function load(){
  if(catalog){return Promise.resolve(catalog);}
  return api('/catalog?lang='+encodeURIComponent(lang)).then(function(r){
   if(r.status!==200){throw new Error(String(r.status));}
-  catalog=r.body.titles||[];return catalog;});
+  catalog=r.body.titles||[];count();return catalog;});
 }
 // The top bar: Back where a step can be undone (touch has no B button), the note otherwise.
 function chrome(){$('backbtn').hidden=!back;$('note').hidden=!!back;}
@@ -838,7 +844,7 @@ function select(v){
 function art(t){return '<div class="art"><img src="'+esc(t.icon)+'" alt="" loading="lazy" decoding="async"></div>';}
 var CATNAME={game:'Games',emulator:'Emulators',tool:'Tools',advanced:'Advanced',theme:'Themes',misc:'Misc'};
 function card(t){
- var badge=t.ownership==='owned'?'<span class="badge own">Owned</span>':isNew(t)?'<span class="badge">New</span>':isUpdated(t)?'<span class="badge upd">Updated</span>':'';
+ var badge=needsUpdate(t)?'<span class="badge">Update</span>':t.ownership==='owned'?'<span class="badge own">Owned</span>':isNew(t)?'<span class="badge">New</span>':isUpdated(t)?'<span class="badge upd">Updated</span>':'';
  return '<button class="card" data-tid="'+esc(t.title_id)+'">'+badge+'<img src="'+esc(t.icon)+'" alt="" loading="lazy" decoding="async">'+
   '<span class="n">'+esc(t.name)+'</span><span class="c">'+esc(CATNAME[t.category]||'Misc')+'</span></button>';
 }
@@ -891,6 +897,10 @@ function section(v,focusFirst){
  if(v==='search'){return search();}
  load().then(function(ts){
   ts=ts.slice();
+  if(v==='updates'){
+   if(!token){return info('Updates','Sign-in has not reached the shop yet, so it cannot tell which titles have updates.');}
+   return grid(ts.filter(needsUpdate),'Updates','Everything is up to date.','name');
+  }
   if(v==='owned'){
    if(!token){return info('Your Titles','Sign-in has not reached the shop yet, so it cannot tell which titles are yours.');}
    return grid(ts.filter(function(t){return t.ownership==='owned';}),'Your Titles','You have no titles from this shop yet.','name');
@@ -930,7 +940,7 @@ function detail(tid){
   var t=r.body;
   if(r.status!==200||!t){show('This title is not in the OpenPak shop.');return section('highlights',true);}
   var own=t.ownership, act='';
-  if(own==='owned'){act='<button class="act" id="dl">Download</button>';}
+  if(own==='owned'){act='<button class="act" id="dl">'+(needsUpdate(t)?'Update':'Download')+'</button>';}
   else if(own==='revoked'){act='<p class="msg">This title is no longer licensed on this account.</p>';}
   else if(!bridge.present){act='<p class="msg">Getting titles needs the console. This page is open in a plain browser.</p>';}
   else{act='<button class="act" id="acq">Free download</button>';}
