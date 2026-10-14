@@ -52,9 +52,9 @@ type DevicePresence struct {
 	AppField        string `json:"appField,omitempty"`
 	ACDIndex        int    `json:"acdIndex,omitempty"`
 	PresenceGroupID string `json:"presenceGroupId,omitempty"`
-	UpdatedAt       int64  `json:"updatedAt"` // last state change (never moved by a render)
-	ExpiresAt       int64  `json:"expiresAt"` // lease deadline; 0 = not leased (explicit offline)
-	LogoutAt        int64  `json:"logoutAt"`  // set when this device said it is done
+	UpdatedAt       int64  `json:"updatedAt"`        // last state change (never moved by a render)
+	ExpiresAt       int64  `json:"expiresAt"`        // lease deadline; 0 = not leased (explicit offline)
+	LogoutAt        int64  `json:"logoutAt"`         // set when this device said it is done
 	Client          string `json:"client,omitempty"` // see Presence.Client
 	OS              string `json:"os,omitempty"`     // see Presence.OS
 }

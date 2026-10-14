@@ -35,6 +35,7 @@ func (s *server) switchIdentity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pid := in.PID
+	applicationID := ""
 	switch {
 	case in.OpenPak != "":
 		var ok bool
@@ -48,6 +49,11 @@ func (s *server) switchIdentity(w http.ResponseWriter, r *http.Request) {
 			apiErr(w, http.StatusUnauthorized, "id_token not proven")
 			return
 		}
+		// Only expose an application claim after proving the whole token. Title
+		// servers (PlayFab) bind their login to this value, never an unsigned JWT.
+		claims, _ := parseJWT(in.IDToken, &s.key.PublicKey)
+		application, _ := claims["nintendo"].(map[string]any)
+		applicationID = str(application, "ai")
 		// pid can be 0 here, and that is deliberately not a 401: the token is genuine and we
 		// simply do not know the account. servers/nex maps 401 to TokenExpired and the console
 		// fetches a fresh token and retries, so answering 401 for an unknown account is a
@@ -78,7 +84,8 @@ func (s *server) switchIdentity(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"pid": id.PID, "baas_user_id": id.BaasUserID, "nickname": id.Nickname, "friends": friends,
 		// The core account, so a title server can ask the core about it directly.
-		"account_id": accountID,
+		"account_id":     accountID,
+		"application_id": applicationID,
 		// Where the player lives, so a game server can place their room on the region node for it.
 		"country": id.Country})
 }

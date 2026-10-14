@@ -44,6 +44,10 @@ import (
 // route that returns 200 is indistinguishable from one that works.
 func (s *server) bcat(w http.ResponseWriter, r *http.Request, body []byte) {
 	p := r.URL.Path
+	if s.bcatFiles != nil && nativeBCATForwardPath(hostOf(r), p) {
+		s.bcatFiles.forward(w, r)
+		return
+	}
 	if s.news != nil && newsForwardPath(hostOf(r), p) {
 		// OpenPak's News topics and the title topic lookups are the news
 		// service's signed documents (news.go).
@@ -82,6 +86,27 @@ func (s *server) bcat(w http.ResponseWriter, r *http.Request, body []byte) {
 		dump(r, body, "!! UNHANDLED bcat route (docs/firmware-22.5.0-followup-2026-09-12.md §21)")
 		http.Error(w, "no such bcat route", 404)
 	}
+}
+
+// Game BCAT and News have separate renderers. Only native per-title lists
+// and our own signed file URLs go to the shared game dataset service.
+func nativeBCATForwardPath(host, path string) bool {
+	if strings.HasPrefix(host, "bcat-data-") {
+		return strings.HasPrefix(path, "/bcat/")
+	}
+	if !strings.HasPrefix(host, "bcat-list-") {
+		return false
+	}
+	title, ok := strings.CutPrefix(path, "/api/nx/v1/list/nx_data_")
+	if !ok || len(title) != 16 {
+		return false
+	}
+	for _, c := range title {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // bcatDoc writes a msgpack document with the ETag the module's conditional GET

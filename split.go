@@ -53,6 +53,14 @@ func newForwarder(name, base string) *httputil.ReverseProxy {
 
 // forwardersFromEnv installs the forwarders whose URLs are set.
 func (s *server) forwardersFromEnv() {
+	if u := os.Getenv("NX_PLAYFAB_URL"); u != "" {
+		s.playfabFwd = newForwarder("playfab", u)
+		// Preserve the SDK error envelope even when the upstream is unavailable.
+		s.playfabFwd.ErrorHandler = func(w http.ResponseWriter, r *http.Request, _ error) {
+			playfabUnavailable(w, r)
+		}
+		log.Printf("[nx-baas] Core Keeper PlayFab forwarding enabled")
+	}
 	if u := os.Getenv("NX_SHOP_URL"); u != "" {
 		s.shopFwd = newForwarder("nx-shop", u)
 		log.Printf("[nx-baas] eShop moved: forwarding its hosts and /internal/store to %s", u)

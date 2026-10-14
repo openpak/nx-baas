@@ -24,10 +24,10 @@ import (
 // it: sessions with leases that expire unless heartbeated.
 type fakeSessions struct {
 	accountv1.SessionsClient
-	mu     sync.Mutex
-	leases map[string]int64 // session id -> unix expiry
-	byAcct map[string]string
-	titles map[string]string // the title each account's session was registered with
+	mu      sync.Mutex
+	leases  map[string]int64 // session id -> unix expiry
+	byAcct  map[string]string
+	titles  map[string]string // the title each account's session was registered with
 	clients map[string]string // the client each account's session was registered with
 	oses    map[string]string // the OS each account's session was registered with
 	// namespace is what the core reports these sessions under; another

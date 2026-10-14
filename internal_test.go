@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // A retail console's BAAS id token carries no binding claim -- only an emulator build adds one --
@@ -51,6 +52,62 @@ func TestSwitchIdentityProvesAPlainConsoleIDToken(t *testing.T) {
 	unknown := s.idToken(stranger, nil, "", nil)
 	if w := do(t, s, "POST", "/internal/switch/identity", "", `{"id_token":"`+unknown+`"}`); w.Code != 404 {
 		t.Fatalf("unlinked account answered %d, want 404 -- 401 puts the console in a refresh loop: %s", w.Code, w.Body)
+	}
+}
+
+func TestSwitchIdentityExposesOnlyVerifiedApplication(t *testing.T) {
+	s, _ := banServer(t)
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.key = key
+	u := s.store.User("aaaa")
+	application := map[string]any{"nintendo": map[string]any{"ai": "010070201D1BA000"}}
+	tok := s.idToken(u, nil, "Keeper", application)
+	w := do(t, s, "POST", "/internal/switch/identity", "", `{"id_token":"`+tok+`"}`)
+	// banServer's host account is locked. Even a genuine title token cannot
+	// escape that existing check.
+	if w.Code != 403 {
+		t.Fatalf("banned ID-token accepted: %d", w.Code)
+	}
+	// The fixture's second account is allowed.
+	u = s.store.User("bbbb")
+	if u == nil {
+		t.Fatal("missing allowed user")
+	}
+	tok = s.idToken(u, nil, "Keeper", application)
+	w = do(t, s, "POST", "/internal/switch/identity", "", `{"id_token":"`+tok+`"}`)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"application_id":"010070201D1BA000"`) || !strings.Contains(w.Body.String(), `"account_id":"acc-4"`) {
+		t.Fatalf("missing verified application/account: %d %s", w.Code, w.Body)
+	}
+	claims, err := parseJWT(tok, &key.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, change := range map[string]func(map[string]any){
+		"expired":      func(c map[string]any) { c["exp"] = time.Now().Unix() - 1 },
+		"wrong issuer": func(c map[string]any) { c["iss"] = "other" },
+		"wrong type":   func(c map[string]any) { c["typ"] = "token" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := make(map[string]any)
+			for k, v := range claims {
+				c[k] = v
+			}
+			change(c)
+			bad := signJWT(map[string]any{"alg": "RS256"}, c, key)
+			if w := do(t, s, "POST", "/internal/switch/identity", "", `{"id_token":"`+bad+`"}`); w.Code != 401 {
+				t.Fatalf("invalid token exposed identity: %d", w.Code)
+			}
+		})
+	}
+	if w := do(t, s, "POST", "/internal/switch/identity", "", `{"id_token":"`+tok+`x"}`); w.Code != 401 {
+		t.Fatal("tampered token accepted")
+	}
+	w = do(t, s, "POST", "/internal/switch/identity", "", `{"pid":1800000004}`)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"application_id":""`) {
+		t.Fatal("PID-only lookup asserted an application")
 	}
 }
 

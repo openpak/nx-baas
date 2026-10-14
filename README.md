@@ -24,6 +24,13 @@ The eShop, Penne and parental controls are being split out into nx-shop, nx-penn
 services ask this one about accounts on `/internal/identity` (game-API listener, strict
 `NX_INTERNAL_KEY`).
 
+PlayFab is a separate service under `servers/playfab`. Set
+`NX_PLAYFAB_URL=http://openpak-playfab:22650` to forward Core Keeper's
+`94845.playfabapi.com` requests before body/debug logging. Other PlayFab titles
+still receive the SDK's 503 envelope. `/internal/switch/identity` returns the
+verified `application_id` when called with an `id_token`; PID/openpak lookups
+do not assert application scope.
+
 ## OpenPak backend (`ACCOUNT_BACKEND=openpak`)
 
 Identity source is the OpenPak account core over internal gRPC instead of
@@ -130,6 +137,13 @@ logs the request. With `NEWS_INTERNAL_URL` (plus `NEWS_INTERNAL_CA` and
 `NEWS_INTERNAL_SERVER_NAME` when the news service speaks TLS under its own CA) the bcat hosts
 forward `/api/nx/v1/list/openpak_*` and `/api/nx/v1/titles/<tid>/topics` to it verbatim;
 unset, bcat.go's own answers stay. `news.go` has the details.
+
+`BCAT_INTERNAL_URL` independently relays native per-title game BCAT lists
+(`nx_data_<title-id>`) and `/bcat/` signed file URLs to the shared game
+dataset service, e.g. `http://openpak-bcat:20044`. Harbor's website relay
+points to that same service through `BCAT_URL`. Native News routing keeps
+its existing service. See the [native game BCAT runbook](../news/docs/native-game-bcat.md)
+for the 23.0.1 verification-key patch, signing and outstanding console tests.
 
 ## Native OpenPak store
 

@@ -58,6 +58,10 @@ import (
 // empty object: an unmapped acbaa route that returns 200 is indistinguishable
 // from one that works.
 func (s *server) acbaa(w http.ResponseWriter, r *http.Request, body []byte) {
+	if r.Method == http.MethodPost && r.URL.Path == "/api/v1/emigrations" {
+		s.acbaaEmigration(w, r, body)
+		return
+	}
 	if r.Method == http.MethodPost && r.URL.Path == "/api/v1/lands" {
 		s.acbaaRegisterLand(w, r, body)
 		return

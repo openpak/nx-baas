@@ -85,6 +85,8 @@ type server struct {
 	// news forwards the News list and topic routes to the news service
 	// (NEWS_INTERNAL_URL, news.go). nil keeps bcat.go's own answers.
 	news *newsForwarder
+	// bcatFiles relays native game BCAT to the shared dataset service.
+	bcatFiles *newsForwarder
 	// versions refuses an outdated title at aauth (versiongate.go); nil lets every version in.
 	versions *versionGate
 	// liveSessions maps BAAS user id -> the core session the adapter registered
@@ -149,6 +151,8 @@ type server struct {
 	penneRemote *penneRemote
 	// pctlFwd forwards parental controls to nx-pctl once they have moved (split.go).
 	pctlFwd *httputil.ReverseProxy
+	// playfabFwd serves only explicitly supported PlayFab titles (playfab.go).
+	playfabFwd *httputil.ReverseProxy
 	// Penne record store: what this server has written to each account's
 	// records, and its digests (penne_records.go).
 	recordStore *penneRecordStore
@@ -2511,6 +2515,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if isPlayFab(host) {
 		// Before the body read: login bodies carry identity tokens (playfab.go).
+		if s.playfabFwd != nil && strings.EqualFold(host, "94845.playfabapi.com") {
+			s.playfabFwd.ServeHTTP(w, r)
+			return
+		}
 		playfabUnavailable(w, r)
 		return
 	}
@@ -2810,6 +2818,14 @@ func main() {
 		s.news = f
 		log.Printf("[nx-baas] news: forwarding openpak_* lists and title topics to %s", u)
 	}
+	if u := os.Getenv("BCAT_INTERNAL_URL"); u != "" {
+		f, err := newNewsForwarder(u, "", "")
+		if err != nil {
+			log.Fatalf("[nx-baas] BCAT_INTERNAL_URL: %v", redact.Err(err))
+		}
+		s.bcatFiles = f
+		log.Printf("[nx-baas] game BCAT: shared dataset relay configured")
+	}
 	s.jwks = jwksFor(&key.PublicKey, s.idKid, getenv("BAAS_ID_KID", "00000000-0000-0000-0000-000000000002"), s.accKid, s.naKid)
 	cert := selfSigned([]string{baasHost, "m-lp1.baas.nintendo.com", "cdn-image-e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com",
 		"accounts.nintendo.com", "api.accounts.nintendo.com", "cdn.accounts.nintendo.com",
@@ -2830,7 +2846,7 @@ func main() {
 		"dragons.hac.lp1.dragons.nintendo.net", "dragonst.hac.lp1.dragons.nintendo.net",
 		// BCAT/News, prepo and the connection test (bcat.go, netdiag.go). The
 		// ctest-dl/ctest-ul probes are plain HTTP and need no name here.
-		"bcat-list-lp1.cdn.nintendo.net", "bcat-topics-lp1.cdn.nintendo.net",
+		"bcat-list-lp1.cdn.nintendo.net", "bcat-topics-lp1.cdn.nintendo.net", "bcat-data-lp1.cdn.nintendo.net",
 		"api.hac.lp1.ctest.srv.nintendo.net", "fw-api.lp1.nso.nintendo.net",
 		"receive-lp1.dg.srv.nintendo.net", "realtime-receive-lp1.dg.srv.nintendo.net",
 		"receive.hac.lp1.er.srv.nintendo.net",

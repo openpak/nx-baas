@@ -452,10 +452,10 @@ func TestNARefreshBindsTheConsoleAndHealsItsAddresses(t *testing.T) {
 	s.store.RememberNA("bbbbbbbbbbbb0002", pid)
 
 	form := url.Values{
-		"refresh_token":                {s.naRefreshToken(naCode{PID: pid, Username: "Leia", ClientID: "6ffd70c434d303c8", NaID: "bbbbbbbbbbbb0002"})},
-		"device_authentication_token":  {s.deviceToken(cert, "81333c548b2e876d")},
-		"client_id":                    {"6ffd70c434d303c8"},
-		"scope":                        {"user"},
+		"refresh_token":               {s.naRefreshToken(naCode{PID: pid, Username: "Leia", ClientID: "6ffd70c434d303c8", NaID: "bbbbbbbbbbbb0002"})},
+		"device_authentication_token": {s.deviceToken(cert, "81333c548b2e876d")},
+		"client_id":                   {"6ffd70c434d303c8"},
+		"scope":                       {"user"},
 	}
 	r := httptest.NewRequest("POST", "https://accounts.nintendo.com/connect/1.0.0/api/token", strings.NewReader(form.Encode()))
 	r.Host = "accounts.nintendo.com"
@@ -472,4 +472,3 @@ func TestNARefreshBindsTheConsoleAndHealsItsAddresses(t *testing.T) {
 		t.Fatalf("after the refresh, ResolveUser(cert) = %q", got)
 	}
 }
-

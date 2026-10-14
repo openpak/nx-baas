@@ -10,7 +10,7 @@ import (
 // Microsoft's PlayFab (`<titleid>.playfabapi.com`): We Were Here and Minecraft Dungeons log in
 // there. The family is redirected so a console never reaches Microsoft, and Traefik's
 // catch-all sends the connection here with an on-demand OpenPak-CA certificate. OpenPak runs
-// no PlayFab service yet, so every call gets PlayFab's own error envelope with
+// a service for Core Keeper when NX_PLAYFAB_URL is set. Other titles get an error with
 // ServiceUnavailable (errorCode 1123 in the SDKs' PlayFabErrorCode): the game's SDK reads it
 // as an ordinary outage instead of failing to parse the generic catch-all's `{}`.
 //
@@ -22,7 +22,7 @@ func isPlayFab(host string) bool {
 }
 
 func playfabUnavailable(w http.ResponseWriter, r *http.Request) {
-	log.Printf("[nx-baas] playfab is not served by OpenPak yet: %s %s%s -> 503", r.Method, hostOf(r), redact.Path(r.URL.Path))
+	log.Printf("[nx-baas] playfab unavailable: %s %s%s -> 503", r.Method, hostOf(r), redact.Path(r.URL.Path))
 	writeJSON(w, http.StatusServiceUnavailable, map[string]any{
 		"code":         http.StatusServiceUnavailable,
 		"status":       "ServiceUnavailable",
