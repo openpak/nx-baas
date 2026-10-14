@@ -616,12 +616,13 @@ var shopCategories = []struct{ key, label, icon string }{
 	{"misc", "Misc", `<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>`},
 }
 
-func categoryNav() string {
-	var b strings.Builder
+// shopCatsJS hands the category list to the page: Browse's chip row is built from it.
+func shopCatsJS() string {
+	var cs []map[string]string
 	for _, c := range shopCategories {
-		b.WriteString(navButton("cat:"+c.key, c.label, c.icon))
+		cs = append(cs, map[string]string{"key": c.key, "label": c.label})
 	}
-	return b.String()
+	return "var CATS=" + mustJSON(cs) + ";"
 }
 
 // navButton is one sidebar entry with its inline SVG icon.
@@ -635,19 +636,21 @@ func storePage() string {
 		`<style>` + storeCSS + `</style></head><body>` +
 		`<nav id="side"><div class="logo"><img src="` + logoDataURI + `" alt="">OpenPak Shop</div>` +
 		navButton("highlights", "Highlights", `<path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/>`) +
+		navButton("cat:all", "Browse", `<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>`) +
 		navButton("search", "Search", `<circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/>`) +
 		navButton("owned", "Your Titles", `<path d="M12 20s-7.5-4.6-7.5-10A4.5 4.5 0 0 1 12 7.4 4.5 4.5 0 0 1 19.5 10c0 5.4-7.5 10-7.5 10z"/>`) +
-		`<div class="gap"></div>` +
-		categoryNav() +
-		`<div class="gap"></div>` +
-		`<button class="nav sub" data-view="recent">Recent Releases</button>` +
-		`<button class="nav sub" data-view="updates">Recently Updated</button>` +
-		`</nav><section id="main"><div class="top"><span class="note">All titles are free</span>` +
-		`<img id="who" class="who" alt="" hidden></div>` +
+		`<button class="leave" id="close" type="button"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></span>Close</button>` +
+		`</nav><section id="main"><div class="top"><button class="backbtn" id="backbtn" type="button" hidden>‹ Back</button>` +
+		`<span class="note" id="note">All titles are free</span><img id="who" class="who" alt="" hidden></div>` +
 		`<div id="banner" class="banner"></div><div id="app"><p class="empty">Loading…</p></div></section>` +
-		`<script>` + shopBridgeJS + footerJS + shopAppJS + `</script></body></html>`
+		`<script>` + shopBridgeJS + footerJS + shopCatsJS() + shopAppJS + `</script></body></html>`
 }
 
+// storeCSS is built for two hands at once: a D-pad that moves focus between neighbours, and a
+// thumb on the handheld's screen. So every target is at least 8vh (about 58px of the 720), the
+// rows and columns line up so a D-pad press lands where the eye expects, there is always a
+// visible Back and Close (touch has no B button), and the one bold element is the selection
+// cursor, which also grows the focused tile a little so it reads from across a room.
 const storeCSS = `
 /* The website's design tokens (website/web/src/input.css, 2026-10 "console HOME menu" redesign):
    cool grey shell, white tiles, slate ink, indigo for primary, and a cyan selection cursor that
@@ -665,76 +668,94 @@ const storeCSS = `
 --ok:#4fd486;--ok-weak:#1f3a2b;--ok-line:#2f5c42;--bad:#ff7676;--bad-weak:#432528;--bad-line:#6e3439;
 --warn:#f6bd4f;--warn-weak:#3f3320;--warn-line:#6a5328;
 --shadow-sm:0 1px 0 rgba(0,0,0,.25);--shadow:0 1px 0 rgba(0,0,0,.25),0 8px 18px -10px rgba(0,0,0,.6)}}
-*{box-sizing:border-box}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+[hidden]{display:none!important}
 html,body{margin:0;height:100%;background:var(--paper);color:var(--ink);overflow:hidden;
 font:2.9vh/1.55 "Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
-button{font:inherit;color:inherit;cursor:pointer}
-#side{position:fixed;left:0;top:0;bottom:0;width:26vw;overflow-y:auto;padding:2.4vh 1.4vw;border-right:1px solid var(--line)}
-.logo{display:flex;align-items:center;gap:1vw;font-weight:750;letter-spacing:-.02em;font-size:3.4vh;padding:0 .8vw 2.6vh}
+button{font:inherit;color:inherit;cursor:pointer;touch-action:manipulation}
+/* The rail: four places and a way out, each a 9.4vh bar. The rail never scrolls. */
+#side{position:fixed;left:0;top:0;bottom:0;width:23vw;display:flex;flex-direction:column;padding:2vh 1.2vw 2.4vh;border-right:1px solid var(--line)}
+.logo{display:flex;align-items:center;gap:1vw;font-weight:750;letter-spacing:-.02em;font-size:3.2vh;padding:0 .8vw 2.4vh}
 .logo img{width:5.6vh;height:5.6vh}
-.nav{display:flex;align-items:center;gap:1vw;width:100%;margin:.4vh 0;padding:1.3vh 1.3vw;background:none;
-border:1px solid transparent;border-radius:999px;text-align:left;font-weight:600;font-size:3vh;color:var(--ink-2)}
-.nav.sub{font-size:2.6vh;padding:1vh 1.3vw;font-weight:500}
-.nav .ic{width:2.2vw;text-align:center;display:inline-flex;justify-content:center}
-.nav .ic svg{width:3.2vh;height:3.2vh}
-.nav.on{background:var(--raised);border-color:var(--line);box-shadow:inset 0 -.5vh 0 var(--cursor),var(--shadow-sm);color:var(--ink)}
-.gap{height:1.2vh;border-bottom:1px solid var(--line);margin:0 1vw 1.2vh}
-#main{position:fixed;left:26vw;right:0;top:0;bottom:0;overflow-y:auto;padding:0 3vw 4vh}
-.top{display:flex;align-items:center;justify-content:space-between;height:11vh}
-.note{color:var(--muted);font-size:2.2vh;font-weight:700}
-.who{width:8vh;height:8vh;border-radius:50%;border:2px solid var(--raised);box-shadow:0 0 0 1px var(--line-2),var(--shadow);object-fit:cover;background:var(--raised)}
+.nav,.leave{display:flex;align-items:center;gap:1vw;width:100%;min-height:9.4vh;margin:.5vh 0;padding:0 1vw 0 .8vw;background:none;
+border:1px solid transparent;border-radius:999px;text-align:left;font-weight:650;font-size:3vh;color:var(--ink-2)}
+.nav .ic,.leave .ic{flex:none;display:inline-flex;align-items:center;justify-content:center;width:6vh;height:6vh;border-radius:50%;background:var(--paper-2);border:1px solid var(--line)}
+.nav .ic svg,.leave .ic svg{width:3.4vh;height:3.4vh}
+.nav.on{background:var(--raised);border-color:var(--line);box-shadow:inset 0 -.6vh 0 var(--cursor),var(--shadow-sm);color:var(--ink)}
+.nav.on .ic{background:var(--accent-weak);border-color:var(--accent-line);color:var(--accent)}
+.leave{margin-top:auto;color:var(--muted)}
+#main{position:fixed;left:23vw;right:0;top:0;bottom:0;overflow-y:auto;padding:0 2.6vw 5vh}
+.top{display:flex;align-items:center;gap:1.4vw;height:11vh}
+.top .note{flex:1}
+.top .backbtn{margin-right:auto}
+.top .who{margin-left:auto}
+.note{color:var(--muted);font-size:2.3vh;font-weight:700}
+.who{width:7.4vh;height:7.4vh;border-radius:50%;border:2px solid var(--raised);box-shadow:0 0 0 1px var(--line-2),var(--shadow);object-fit:cover;background:var(--raised)}
+.backbtn{display:inline-flex;align-items:center;min-height:8vh;padding:0 2.2vw;border-radius:999px;font-weight:650;font-size:2.9vh;
+background:var(--raised);color:var(--ink);border:1px solid var(--line-2);box-shadow:var(--shadow-sm)}
 .banner{display:none;background:var(--bad-weak);border:1px solid var(--bad-line);color:var(--bad);border-radius:16px;padding:1.6vh 1.6vw;margin-bottom:2vh;font-size:2.4vh}
-h1{font-size:5vh;font-weight:750;letter-spacing:-.03em;line-height:1.1;margin:0 0 2.4vh}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:2.8vh 1.6vw}
-.card{position:relative;display:block;width:100%;padding:0;background:var(--raised);border:1px solid var(--line);border-radius:20px;
-overflow:hidden;text-align:left;box-shadow:var(--shadow-sm)}
-.strip{position:absolute;z-index:1;top:1.6vh;left:1.2vw;display:inline-flex;align-items:center;gap:.5vw;padding:.3vh .9vw;border-radius:999px;
-font-size:1.9vh;font-weight:650;background:var(--raised);color:var(--accent);border:1px solid var(--accent-line)}
-.art{position:relative;height:30vh;overflow:hidden;
-background:var(--paper-2)}
-.art .blur{position:absolute;inset:-4vh;background-size:cover;background-position:center;filter:blur(3vh) saturate(1.2);opacity:.35}
-.art img{position:relative;display:block;height:20vh;width:20vh;margin:5vh auto;border-radius:22%;box-shadow:var(--shadow)}
-.cap{display:flex;align-items:center;justify-content:space-between;gap:1vw;padding:1.8vh 1.4vw;font-size:2.9vh;font-weight:650;letter-spacing:-.01em}
-.cap .n{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.badge{flex:none;display:inline-flex;align-items:center;gap:.4vw;padding:.3vh .9vw;border-radius:999px;font-size:1.9vh;font-weight:650;
+h1{font-size:5vh;font-weight:750;letter-spacing:-.03em;line-height:1.1;margin:0}
+.head{display:flex;align-items:center;justify-content:space-between;gap:2vw;margin:0 0 2.2vh;min-height:8vh}
+/* Browse: the category row. It wraps rather than scrolls, so every choice is on screen. */
+.chips{display:flex;flex-wrap:wrap;gap:1vh .8vw;margin:0 0 2.6vh}
+.chip,.sort{display:inline-flex;align-items:center;gap:.7vw;min-height:8vh;padding:0 1.6vw;border-radius:999px;font-size:2.6vh;font-weight:600;
+border:1px solid var(--line-2);background:var(--raised);color:var(--ink-2);white-space:nowrap}
+.chip.on{background:var(--accent-weak);border-color:var(--accent-line);color:var(--ink);box-shadow:inset 0 -.5vh 0 var(--cursor)}
+.sort{flex:none}
+.sort b{font-weight:500;color:var(--muted)}
+/* Titles are square tiles like the HOME menu's: icon on top, name under it, at most two lines. */
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:2.4vh 1.1vw}
+/* A perfect square: four columns share 68.5vw, so one is 17.125vw tall too (aspect-ratio where the browser has it, this height where it does not). */
+.card{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:17.125vw;overflow:hidden;padding:1vh .6vw;background:var(--raised);
+border:1px solid var(--line);border-radius:20px;text-align:center;box-shadow:var(--shadow-sm)}
+@supports (aspect-ratio:1/1){.card{height:auto;aspect-ratio:1/1}}
+.card img{display:block;width:15vh;height:15vh;border-radius:22%;background:var(--paper-2);box-shadow:var(--shadow)}
+.card .n{margin-top:1.4vh;font-size:2.5vh;font-weight:650;letter-spacing:-.01em;line-height:1.25;width:100%;
+overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.card .c{display:block;margin-top:.3vh;font-size:2vh;color:var(--muted)}
+.badge{position:absolute;top:1.4vh;right:1.2vh;display:inline-flex;align-items:center;gap:.4vw;padding:.3vh .9vw;border-radius:999px;font-size:2vh;font-weight:650;
 background:var(--accent-weak);border:1px solid var(--accent-line);color:var(--accent)}
 .badge::before{content:"";width:.9vh;height:.9vh;border-radius:50%;background:currentColor}
 .badge.own{background:var(--ok-weak);border-color:var(--ok-line);color:var(--ok)}
 .badge.upd{background:var(--paper-2);border-color:var(--line-2);color:var(--ink-2)}
-.detail{--ring-gap:var(--raised);display:grid;grid-template-columns:40vh 1fr;gap:2.6vw;background:var(--raised);border:1px solid var(--line);border-radius:20px;padding:3vh 2vw;box-shadow:var(--shadow-sm)}
-.detail .art{height:40vh;border-radius:16px}
-.detail .art img{width:26vh;height:26vh;margin:7vh auto}
-.detail h1{margin:0 0 .6vh}
-.pub{color:var(--muted);margin:0 0 2vh}
-.desc{margin:0 0 2.4vh;font-size:2.6vh;color:var(--ink-2);white-space:pre-line}
-h2{font-size:3.2vh;font-weight:700;margin:4vh 0 1.4vh}
-.notes{background:var(--raised);border:1px solid var(--line);border-radius:14px;padding:2vh 1.6vw;font-size:2.4vh}
-.shots{display:flex;gap:1.2vw;overflow-x:auto;margin-top:3vh;padding-bottom:1vh}
-.shots img{height:32vh;border-radius:12px;border:1px solid var(--line);box-shadow:var(--shadow-sm);flex:none}
-.src{overflow-wrap:anywhere}
-.sortbar{display:flex;gap:.8vw;margin:-1vh 0 2.4vh}
-.sort{font:inherit;font-size:2.3vh;padding:.9vh 1.3vw;border-radius:999px;border:1px solid var(--line-2);background:var(--raised);color:var(--ink-2)}
-.sort.on{background:var(--accent-weak);border-color:var(--accent-line);color:var(--ink);font-weight:600}
-.kv{display:grid;grid-template-columns:auto 1fr;gap:.6vh 1.6vw;font-size:2.4vh;margin-bottom:3vh}
-.kv b{color:var(--muted);font-weight:500}
-.act{display:inline-flex;align-items:center;justify-content:center;min-height:7vh;padding:0 2.4vw;border-radius:999px;font-weight:600;font-size:2.8vh;
+/* Detail: the whole decision fits above the fold -- icon, name, three facts, the button. The
+   rest (about, what's new, screenshots, details) scrolls underneath. */
+.detail{--ring-gap:var(--raised);display:grid;grid-template-columns:34vh 1fr;gap:2.6vw;align-items:center;background:var(--raised);border:1px solid var(--line);border-radius:20px;padding:3vh 2vw;box-shadow:var(--shadow-sm)}
+.detail .art{display:flex;align-items:center;justify-content:center;height:34vh;border-radius:16px;background:var(--paper-2)}
+.detail .art img{width:24vh;height:24vh;border-radius:22%;box-shadow:var(--shadow)}
+.pub{color:var(--muted);margin:.6vh 0 1.8vh}
+.facts{display:flex;flex-wrap:wrap;gap:1vh .7vw;margin:0 0 2.8vh}
+.facts span{padding:.6vh 1.2vw;border-radius:999px;font-size:2.3vh;font-weight:600;background:var(--paper-2);border:1px solid var(--line);color:var(--ink-2)}
+.acts{display:flex;flex-wrap:wrap;gap:1.4vh 1vw}
+.act{display:inline-flex;align-items:center;justify-content:center;min-height:9.4vh;padding:0 3vw;border-radius:999px;font-weight:650;font-size:3.1vh;
 color:var(--on-accent);border:1px solid var(--accent);background:var(--accent)}
 .act.plain{background:var(--raised);color:var(--ink);border-color:var(--line-2);box-shadow:var(--shadow-sm)}
-.msg{color:var(--ink-2);font-size:2.6vh}
+.desc{margin:0 0 2.4vh;font-size:2.6vh;color:var(--ink-2);white-space:pre-line;max-width:60em}
+h2{font-size:3.2vh;font-weight:700;margin:4vh 0 1.4vh}
+.notes{background:var(--raised);border:1px solid var(--line);border-radius:14px;padding:2vh 1.6vw;font-size:2.4vh}
+.shots{display:flex;gap:1.2vw;overflow-x:auto;margin-top:3vh;padding:.6vh .6vh 1.4vh}
+.shots img{height:32vh;border-radius:12px;border:1px solid var(--line);box-shadow:var(--shadow-sm);flex:none}
+.src{overflow-wrap:anywhere}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:1vh 2vw;font-size:2.4vh;margin:0}
+.kv b{color:var(--muted);font-weight:500}
+.msg{color:var(--ink-2);font-size:2.6vh;margin:0}
 .empty{color:var(--muted);font-size:2.8vh;padding:4vh 0}
-.search{width:100%;font:inherit;font-size:3vh;min-height:7vh;padding:0 1.6vw;border:1px solid var(--line-2);border-radius:12px;margin-bottom:2.6vh;
+.search{width:100%;font:inherit;font-size:3vh;min-height:9.4vh;padding:0 1.8vw;border:1px solid var(--line-2);border-radius:999px;margin-bottom:2.6vh;
 background:var(--raised);color:var(--ink)}
 /* The selection cursor: a gap in the page's own colour, then the cyan ring. A D-pad moves focus,
    so :focus is what the player sees as the cursor; hover selects for a pointer. Inside the detail
    tile the gap is the tile's colour (--ring-gap). It breathes between two cyans where motion is
-   welcome, and is a static ring where the browser cannot say. */
-.nav:hover,.nav:focus,.card:hover,.card:focus,.act:hover,.act:focus,.search:focus,.sort:hover,.sort:focus{outline:none;
-box-shadow:0 0 0 3px var(--ring-gap,var(--paper)),0 0 0 7px var(--cursor)}
-.nav:focus,.sort:focus,.act:focus{position:relative;z-index:1}
+   welcome, and is a static ring where the browser cannot say. A tile also grows a touch, so it
+   reads from across the room. */
+.nav:hover,.nav:focus,.leave:hover,.leave:focus,.card:hover,.card:focus,.act:hover,.act:focus,.search:focus,.sort:hover,.sort:focus,
+.chip:hover,.chip:focus,.backbtn:hover,.backbtn:focus{outline:none;box-shadow:0 0 0 3px var(--ring-gap,var(--paper)),0 0 0 7px var(--cursor)}
+.nav:focus,.leave:focus,.sort:focus,.chip:focus,.backbtn:focus,.act:focus{position:relative;z-index:1}
 .search:focus{border-color:var(--cursor)}
-.card:focus{transform:translateY(-2px)}
+.card:focus{-webkit-transform:scale(1.03);transform:scale(1.03);z-index:1}
 @keyframes breathe{50%{box-shadow:0 0 0 3px var(--ring-gap,var(--paper)),0 0 0 7px var(--cursor-2)}}
-@media (prefers-reduced-motion:no-preference){.nav:hover,.nav:focus,.card:hover,.card:focus,.act:hover,.act:focus,.sort:hover,.sort:focus{animation:breathe 1.6s ease-in-out infinite}}
+@media (prefers-reduced-motion:no-preference){.nav:hover,.nav:focus,.leave:hover,.leave:focus,.card:hover,.card:focus,.act:hover,.act:focus,.sort:hover,.sort:focus,
+.chip:hover,.chip:focus,.backbtn:hover,.backbtn:focus{animation:breathe 1.6s ease-in-out infinite}}
+.nav:active,.leave:active,.card:active,.act:active,.sort:active,.chip:active,.backbtn:active{background:var(--accent-weak)}
 @media (prefers-color-scheme:dark){.card,.detail,.notes{border-color:transparent}}
 `
 
@@ -807,16 +828,19 @@ function load(){
   if(r.status!==200){throw new Error(String(r.status));}
   catalog=r.body.titles||[];return catalog;});
 }
+// The top bar: Back where a step can be undone (touch has no B button), the note otherwise.
+function chrome(){$('backbtn').hidden=!back;$('note').hidden=!!back;}
 function select(v){
+ if(v.indexOf('cat:')===0){v='cat:all';}
  var b=document.querySelectorAll('.nav');
  for(var i=0;i<b.length;i++){b[i].className=b[i].className.replace(/ on/g,'')+(b[i].getAttribute('data-view')===v?' on':'');}
 }
-// The blurred backdrop is the costliest thing this browser draws; only the detail page has it.
-function art(t,blur){return '<div class="art">'+(blur?'<div class="blur" style="background-image:url('+esc(t.icon)+')"></div>':'')+'<img src="'+esc(t.icon)+'" alt="" loading="lazy" decoding="async"></div>';}
+function art(t){return '<div class="art"><img src="'+esc(t.icon)+'" alt="" loading="lazy" decoding="async"></div>';}
+var CATNAME={game:'Games',emulator:'Emulators',tool:'Tools',advanced:'Advanced',theme:'Themes',misc:'Misc'};
 function card(t){
- var badge=t.ownership==='owned'?'<span class="badge own">OWNED</span>':isNew(t)?'<span class="badge">NEW</span>':isUpdated(t)?'<span class="badge upd">UPDATED</span>':'';
- return '<button class="card" data-tid="'+esc(t.title_id)+'"><div class="strip">'+esc(t.category||'Homebrew')+'</div>'+
-  art(t)+'<div class="cap"><span class="n">'+esc(t.name)+'</span>'+badge+'</div></button>';
+ var badge=t.ownership==='owned'?'<span class="badge own">Owned</span>':isNew(t)?'<span class="badge">New</span>':isUpdated(t)?'<span class="badge upd">Updated</span>':'';
+ return '<button class="card" data-tid="'+esc(t.title_id)+'">'+badge+'<img src="'+esc(t.icon)+'" alt="" loading="lazy" decoding="async">'+
+  '<span class="n">'+esc(t.name)+'</span><span class="c">'+esc(CATNAME[t.category]||'Misc')+'</span></button>';
 }
 function wire(root){
  var b=(root||app).querySelectorAll('.card:not([data-w])');
@@ -839,23 +863,29 @@ function pager(el,ts){
  function near(){if(el.isConnected&&main.scrollTop+main.clientHeight>main.scrollHeight-main.clientHeight){more();}}
  main.addEventListener('scroll',near);
 }
-// The sort bar: a grid's order until another view starts (each view passes its default).
+// The sort button: one press steps to the next order (a grid's order lasts until another view
+// starts; each view passes its default). One button is one stop for the D-pad and one tap.
 var sortBy=null;
 var sorts={name:['Name',function(a,b){return (a.name||'').localeCompare(b.name||'');}],
  updated:['Recently updated',function(a,b){return changed(b)-changed(a);}],
  size:['Largest',function(a,b){return (b.size_bytes||0)-(a.size_bytes||0);}]};
-function grid(ts,title,empty,def){
+function chips(v){
+ return '<div class="chips">'+CATS.map(function(c){var k='cat:'+c.key;
+  return '<button class="chip'+(k===v?' on':'')+'" data-view="'+k+'">'+esc(c.label)+'</button>';}).join('')+'</div>';
+}
+function grid(ts,title,empty,def,v){
  var by=sortBy||def||'name'; ts=ts.slice().sort(sorts[by][1]);
- var bar=ts.length>1?'<div class="sortbar">'+Object.keys(sorts).map(function(k){
-  return '<button class="sort'+(k===by?' on':'')+'" data-sort="'+k+'">'+sorts[k][0]+'</button>';}).join('')+'</div>':'';
- app.innerHTML=(title?'<h1>'+title+'</h1>':'')+bar+(ts.length?'<div class="grid"></div>':'<p class="empty">'+empty+'</p>');
+ var bar=ts.length>1?'<button class="sort" id="sort" type="button"><b>Sort</b> '+sorts[by][0]+'</button>':'';
+ app.innerHTML='<div class="head"><h1>'+title+'</h1>'+bar+'</div>'+(v?chips(v):'')+(ts.length?'<div class="grid"></div>':'<p class="empty">'+empty+'</p>');
  if(ts.length){pager(app.querySelector('.grid'),ts);}
- var b=app.querySelectorAll('.sort');
- for(var i=0;i<b.length;i++){b[i].addEventListener('click',function(){sortBy=this.getAttribute('data-sort');var k=sortBy;view();var f=app.querySelector('.sort[data-sort="'+k+'"]');if(f){f.focus();}});}
+ var s=$('sort');
+ if(s){s.addEventListener('click',function(){var k=Object.keys(sorts);sortBy=k[(k.indexOf(by)+1)%k.length];view();$('sort').focus();});}
+ var c=app.querySelectorAll('.chip');
+ for(var i=0;i<c.length;i++){c[i].addEventListener('click',function(){var k=this.getAttribute('data-view');section(k,false);var f=app.querySelector('.chip[data-view="'+k+'"]');if(f){f.focus();}});}
 }
 function section(v,focusFirst){
  if(!view||view.v!==v){sortBy=null;}
- view=function(){section(v,false);}; view.v=v; back=null; select(v); hide();
+ view=function(){section(v,false);}; view.v=v; back=null; select(v); hide(); chrome();
  if(v==='nso'){return info('Nintendo Switch Online','Memberships are not sold on OpenPak: online play and every other Nintendo Switch Online feature are already included with your OpenPak account.');}
  if(v==='redeem'){return info('Redeem Code','Codes are not needed on OpenPak: every title in this shop is free to get.');}
  if(v==='search'){return search();}
@@ -868,11 +898,9 @@ function section(v,focusFirst){
   if(v.indexOf('cat:')===0){
    // The sidebar's categories (shopCategories); a category none of them names is Misc.
    var c=v.slice(4), named={game:'Games',emulator:'Emulators',tool:'Tools',advanced:'Advanced',theme:'Themes',misc:'Misc'};
-   if(c==='all'){return grid(ts,'All Apps','The shop is empty for now.');}
-   return grid(ts.filter(function(t){return c==='misc'?(!named[t.category]||t.category==='misc'):t.category===c;}),named[c],'No titles in this category yet.');
+   if(c==='all'){return grid(ts,'All Apps','The shop is empty for now.','name',v);}
+   return grid(ts.filter(function(t){return c==='misc'?(!named[t.category]||t.category==='misc'):t.category===c;}),named[c],'No titles in this category yet.','name',v);
   }
-  if(v==='recent'||v==='updates'){
-   return grid(ts,v==='recent'?'Recent Releases':'Recently Updated','Nothing here yet.','updated');}
   ts.sort(sorts.updated[1]);
   grid(ts.slice(0,PAGE),'New and updated','The shop is empty for now.','updated');
   if(focusFirst){var c=app.querySelector('.card');if(c){c.focus();}}
@@ -892,11 +920,11 @@ function search(){
  q.addEventListener('keydown',function(e){if(e.key==='Enter'||e.keyCode===13){e.preventDefault();kb();}});
 }
 function info(h,body){
- app.innerHTML='<h1>'+esc(h)+'</h1><p class="msg">'+esc(body)+'</p>';
+ app.innerHTML='<div class="head"><h1>'+esc(h)+'</h1></div><p class="msg">'+esc(body)+'</p>';
 }
 function detail(tid){
  var from=view; hide();
- view=function(){detail(tid);}; back=function(){from();};
+ view=function(){detail(tid);}; back=function(){from();}; chrome();
  app.innerHTML='<p class="empty">Loading…</p>';
  api('/catalog/'+encodeURIComponent(tid)+'?lang='+encodeURIComponent(lang)).then(function(r){
   var t=r.body;
@@ -905,21 +933,21 @@ function detail(tid){
   if(own==='owned'){act='<button class="act" id="dl">Download</button>';}
   else if(own==='revoked'){act='<p class="msg">This title is no longer licensed on this account.</p>';}
   else if(!bridge.present){act='<p class="msg">Getting titles needs the console. This page is open in a plain browser.</p>';}
-  else{act='<button class="act" id="acq">Free Download</button>';}
-  var dist=t.distribution||{}, cats={game:'Games',emulator:'Emulators',tool:'Tools',advanced:'Advanced',theme:'Themes'};
+  else{act='<button class="act" id="acq">Free download</button>';}
+  var dist=t.distribution||{};
   var shots=(t.screenshots||[]).map(function(u){return '<img src="'+esc(u)+'" alt="">';}).join('');
-  app.innerHTML='<div class="detail">'+art(t,true)+'<div><h1>'+esc(t.name)+'</h1><p class="pub">'+esc(t.publisher||'')+'</p>'+
-   '<div class="kv"><b>Category</b><span>'+esc(cats[t.category]||'Misc')+'</span>'+
-   '<b>Version</b><span>'+esc(t.version_label||t.version)+'</span>'+
-   '<b>Size</b><span>'+human(t.size_bytes||0)+'</span>'+
+  var facts='<span>'+esc(CATNAME[t.category]||'Misc')+'</span><span>Version '+esc(t.version_label||t.version)+'</span><span>'+human(t.size_bytes||0)+'</span>';
+  app.innerHTML='<div class="detail">'+art(t)+'<div><h1>'+esc(t.name)+'</h1><p class="pub">'+esc(t.publisher||'')+'</p>'+
+   '<div class="facts">'+facts+'</div><div class="acts">'+act+'</div></div></div>'+
+   (t.description?'<h2>About</h2><p class="desc">'+esc(t.description)+'</p>':'')+
+   (t.changelog?'<h2>What\'s new</h2><p class="desc notes">'+esc(t.changelog)+'</p>':'')+
+   (shots?'<div class="shots">'+shots+'</div>':'')+
+   '<h2>Details</h2><div class="kv">'+
    (t.released_at?'<b>Released</b><span>'+esc(new Date(t.released_at*1000).toLocaleDateString())+'</span>':'')+
    (changed(t)?'<b>Updated</b><span>'+esc(new Date(changed(t)*1000).toLocaleDateString())+'</span>':'')+
    '<b>Play modes</b><span>'+esc((t.compatibility||[]).join(', ')||'—')+'</span>'+
    (dist.permission?'<b>License</b><span>'+esc(dist.permission)+'</span>':'')+
-   (dist.source?'<b>Source</b><span class="src">'+esc(dist.source)+'</span>':'')+'</div>'+act+'</div></div>'+
-   (shots?'<div class="shots">'+shots+'</div>':'')+
-   (t.description?'<h2>About</h2><p class="desc">'+esc(t.description)+'</p>':'')+
-   (t.changelog?'<h2>What\'s new</h2><p class="desc notes">'+esc(t.changelog)+'</p>':'');
+   (dist.source?'<b>Source</b><span class="src">'+esc(dist.source)+'</span>':'')+'</div>';
   var a=$('acq')||$('dl');
   if($('acq')){$('acq').addEventListener('click',function(){acquire(t);});}
   if($('dl')){$('dl').addEventListener('click',function(){startDownload(t);});}
@@ -961,9 +989,9 @@ function startDownload(t){
   var id=r.body.id;
   syncRights(function(){
    handOff(t);
-   app.innerHTML='<div class="detail">'+art(t,true)+'<div><h1>'+esc(t.name)+'</h1>'+
-    '<p class="msg">The download has started. Returning to the HOME Menu…</p>'+
-    '<button class="act" id="done">Close the shop</button> <button class="act plain" id="cancel">Cancel download</button></div></div>';
+   app.innerHTML='<div class="detail">'+art(t)+'<div><h1>'+esc(t.name)+'</h1>'+
+    '<p class="pub">The download has started. Returning to the HOME Menu…</p>'+
+    '<div class="acts"><button class="act" id="done">Close the shop</button><button class="act plain" id="cancel">Cancel download</button></div></div></div>';
    $('done').addEventListener('click',closeShop);
    $('cancel').addEventListener('click',function(){api('/tasks/'+id+'/cancel',{method:'POST'}).then(function(){handOff(t);detail(t.title_id);});});
    $('done').focus();
@@ -982,6 +1010,7 @@ document.addEventListener('keydown',function(e){
  if(k==='Escape'||k==='Backspace'||k===27||k===8){e.preventDefault();if(back){back();}else{closeShop();}}
 });
 nxFooterSetup({B:function(){if(back){back();}else{closeShop();}}},report);
+$('backbtn').addEventListener('click',function(){if(back){back();}});
 var navs=document.querySelectorAll('.nav');
 for(var i=0;i<navs.length;i++){navs[i].addEventListener('click',function(){section(this.getAttribute('data-view'),true);});}
 

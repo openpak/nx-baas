@@ -212,11 +212,12 @@ const lhubCSS = `
 --ok:#4fd486;--ok-weak:#1f3a2b;--ok-line:#2f5c42;--bad:#ff7676;--bad-weak:#432528;--bad-line:#6e3439;
 --warn:#f6bd4f;--warn-weak:#3f3320;--warn-line:#6a5328;
 --shadow-sm:0 1px 0 rgba(0,0,0,.25);--shadow:0 1px 0 rgba(0,0,0,.25),0 8px 18px -10px rgba(0,0,0,.6)}}
-*{box-sizing:border-box}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+[hidden]{display:none!important}
 html,body{margin:0;height:100%;overflow:hidden;background:var(--paper);color:var(--ink);-webkit-font-smoothing:antialiased;
 font:2.9vh/1.5 "Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 body{display:flex;flex-direction:column}
-button{font:inherit;color:inherit;cursor:pointer}
+button{font:inherit;color:inherit;cursor:pointer;touch-action:manipulation}
 .wrap{flex:1;min-height:0;display:flex;align-items:center;padding:0 9vw}
 .left{width:30vw;display:flex;flex-direction:column}
 .tag{margin:0 0 1vh;font-size:2.2vh;font-weight:700;color:var(--muted)}
@@ -224,7 +225,7 @@ button{font:inherit;color:inherit;cursor:pointer}
 .mark img{width:8vh;height:8vh;padding:1vh;border-radius:12px;background:var(--raised);box-shadow:var(--shadow)}
 .mark span{font-size:9vh;font-weight:800;letter-spacing:-.035em;line-height:1;color:var(--accent)}
 .sub{margin:1vh 0 3vh;font-weight:650;font-size:2.6vh;color:var(--ink-2)}
-.guide{align-self:flex-start;min-height:6.4vh;padding:0 2.4vw;border-radius:999px;font-weight:600;font-size:2.7vh;color:var(--on-accent);
+.guide{align-self:flex-start;min-height:8.4vh;padding:0 2.8vw;border-radius:999px;font-weight:650;font-size:2.9vh;color:var(--on-accent);
 border:1px solid var(--accent);background:var(--accent)}
 .who{display:inline-flex;align-self:flex-start;align-items:center;gap:.6vw;margin:2.4vh 0 0;padding:.4vh 1vw;border-radius:999px;font-size:2vh;font-weight:650;
 background:var(--ok-weak);border:1px solid var(--ok-line);color:var(--ok)}
@@ -232,9 +233,9 @@ background:var(--ok-weak);border:1px solid var(--ok-line);color:var(--ok)}
 .right{flex:1;display:flex;flex-direction:column;justify-content:center;padding-left:2vw}
 .right.full{padding:0 1vw}
 .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:2.4vh 1.6vw}
-.it{background:var(--raised);border:1px solid var(--line);border-radius:20px;padding:2vh .6vw 1.8vh;text-align:center;box-shadow:var(--shadow-sm)}
-.it .ico{display:block;width:11vh;height:11vh;margin:0 auto 1vh}
-.it .t{font-size:2.5vh;font-weight:650;letter-spacing:-.01em}
+.it{display:block;width:100%;min-height:26vh;background:var(--raised);border:1px solid var(--line);border-radius:20px;padding:2.4vh .6vw 2vh;text-align:center;box-shadow:var(--shadow-sm)}
+.it .ico{display:block;width:12vh;height:12vh;margin:0 auto 1.4vh}
+.it .t{font-size:2.7vh;font-weight:650;letter-spacing:-.01em}
 h1{font-size:5vh;font-weight:750;letter-spacing:-.03em;line-height:1.1;margin:0 0 1.2vh;display:flex;align-items:center}
 h1 .ico{width:6.4vh;height:6.4vh;margin-right:1.2vw}
 .lead{margin:0 0 2.6vh;font-size:2.7vh;color:var(--ink-2)}
@@ -242,22 +243,27 @@ h1 .ico{width:6.4vh;height:6.4vh;margin-right:1.2vw}
 .rows.one{grid-template-columns:1fr}
 .row{background:var(--raised);border:1px solid var(--line);border-radius:16px;padding:1.8vh 1.6vw;text-align:left;box-shadow:var(--shadow-sm)}
 .row b{display:block;font-size:2.8vh;font-weight:650;letter-spacing:-.01em;margin-bottom:.3vh}
-.row span{font-size:2.3vh;color:var(--ink-2)}
+.row span{font-size:2.4vh;color:var(--ink-2)}
+.back{display:inline-flex;align-items:center;align-self:flex-start;min-height:8vh;margin:0 0 2vh;padding:0 2.4vw;border-radius:999px;font-weight:650;font-size:2.8vh;
+background:var(--raised);color:var(--ink);border:1px solid var(--line-2);box-shadow:var(--shadow-sm)}
 .url{font-weight:650;color:var(--accent)}
 .dots{flex:none;display:flex;justify-content:center;align-items:center;gap:1.6vw;font-size:2.2vh;color:var(--muted);margin:0 0 1.8vh}
 .dots b{display:inline-flex;align-items:center;justify-content:center;width:3.6vh;height:3vh;border:1px solid var(--line-2);border-radius:.8vh;font-size:1.7vh;color:var(--ink);background:var(--raised)}
-#dots i{display:inline-block;width:1.1vh;height:1.1vh;margin:0 .6vw;border-radius:50%;background:var(--line-2)}
-#dots i.on{width:3vh;border-radius:999px;background:var(--cursor)}
-.cta{flex:none;align-self:center;width:62vw;min-height:7.6vh;margin:0 0 3vh;border-radius:999px;font-size:2.9vh;font-weight:600;
+/* A dot is a 6vh tap target around a 1.1vh mark: touch jumps straight to a page. */
+#dots .d{display:inline-flex;align-items:center;justify-content:center;width:6vh;height:6vh;padding:0;border:0;background:none}
+#dots i{display:block;width:1.1vh;height:1.1vh;border-radius:50%;background:var(--line-2)}
+#dots .on i{width:3vh;border-radius:999px;background:var(--cursor)}
+.cta{flex:none;align-self:center;width:62vw;min-height:9.4vh;margin:0 0 3vh;border-radius:999px;font-size:2.9vh;font-weight:600;
 background:var(--accent);color:var(--on-accent);border:1px solid var(--accent)}
-.side{position:absolute;top:42%;width:7vh;height:7vh;border-radius:50%;border:1px solid var(--line-2);background:var(--raised);font-size:4vh;line-height:1}
+.side{position:absolute;top:40%;width:9vh;height:9vh;border-radius:50%;border:1px solid var(--line-2);background:var(--raised);font-size:5vh;line-height:1;box-shadow:var(--shadow-sm)}
+.side:active,.it:active,.guide:active,.cta:active,.back:active{background:var(--accent-weak)}
 .side.l{left:2vw}.side.r{right:2vw}
 /* The selection cursor: a gap in the page's own colour, then the cyan ring. The D-pad moves focus, so
    :focus is what the player sees as the cursor; hover selects for a pointer. It breathes between two
    cyans where motion is welcome, and is a static ring where the browser cannot say. */
-.it:hover,.it:focus,.row:hover,.row:focus,.guide:hover,.guide:focus,.cta:hover,.cta:focus{outline:none;box-shadow:0 0 0 3px var(--paper),0 0 0 7px var(--cursor)}
+.it:hover,.it:focus,.row:hover,.row:focus,.guide:hover,.guide:focus,.cta:hover,.cta:focus,.back:hover,.back:focus{outline:none;box-shadow:0 0 0 3px var(--paper),0 0 0 7px var(--cursor)}
 @keyframes breathe{50%{box-shadow:0 0 0 3px var(--paper),0 0 0 7px var(--cursor-2)}}
-@media (prefers-reduced-motion:no-preference){.it:hover,.it:focus,.row:hover,.row:focus,.guide:hover,.guide:focus,.cta:hover,.cta:focus{animation:breathe 1.6s ease-in-out infinite}}
+@media (prefers-reduced-motion:no-preference){.it:hover,.it:focus,.row:hover,.row:focus,.guide:hover,.guide:focus,.cta:hover,.cta:focus,.back:hover,.back:focus{animation:breathe 1.6s ease-in-out infinite}}
 @media (prefers-color-scheme:dark){.it,.row{border-color:transparent}}
 `
 
@@ -310,10 +316,11 @@ var last=0;
 function flip(d){var now=Date.now();if(now-last<250){return;}last=now;go(cur+d);}
 function go(i){
  cur=(i+PAGES.length)%PAGES.length;
- $('page').innerHTML=PAGES[cur].h; $('tag').textContent=PAGES[cur].tag;
+ $('page').innerHTML=(cur?'<button class="back" id="back" type="button">‹ OpenPak Online</button>':'')+PAGES[cur].h; $('tag').textContent=PAGES[cur].tag;
  // The mark, the guide button and the wide button belong to the main page; a topic page gets the whole width.
  $('left').style.display=cur?'none':''; $('cta').style.display=cur?'none':''; $('page').className='right'+(cur?' full':'');
- var d='';for(var k=0;k<PAGES.length;k++){d+='<i class="'+(k===cur?'on':'')+'"></i>';} $('dots').innerHTML=d;
+ var d='';for(var k=0;k<PAGES.length;k++){d+='<button class="d'+(k===cur?' on':'')+'" data-i="'+k+'" tabindex="-1" aria-label="Page '+(k+1)+'"><i></i></button>';} $('dots').innerHTML=d;
+ var bk=$('back'); if(bk){bk.addEventListener('click',function(){go(0);});}
  var b=$('page').querySelectorAll('.it');
  for(var j=0;j<b.length;j++){b[j].addEventListener('click',function(){go(+this.getAttribute('data-go'));});}
  var f=$('page').querySelector('.it,.row'); if(f){f.focus();}
@@ -323,6 +330,12 @@ function leave(){
  try{window.close();}catch(e){}
  try{history.back();}catch(e){}
 }
+$('dots').addEventListener('click',function(e){var t=e.target;while(t&&t!==this&&!t.getAttribute('data-i')){t=t.parentNode;}if(t&&t!==this){go(+t.getAttribute('data-i'));}});
+// Touch: swipe sideways to turn the page, like L and R.
+var sx=0,sy=0;
+document.addEventListener('touchstart',function(e){var t=e.touches[0];sx=t.clientX;sy=t.clientY;});
+document.addEventListener('touchend',function(e){var t=e.changedTouches[0],dx=t.clientX-sx,dy=t.clientY-sy;
+ if(Math.abs(dx)>60&&Math.abs(dx)>Math.abs(dy)*1.5){flip(dx<0?1:-1);}});
 $('prev').addEventListener('click',function(){go(cur-1);});
 $('next').addEventListener('click',function(){go(cur+1);});
 $('guide').addEventListener('click',function(){go(6);});
