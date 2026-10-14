@@ -52,13 +52,15 @@ func (s *server) netdiag(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[netdiag] upload probe: %d bytes", n)
 		w.WriteHeader(200)
 	case r.URL.Path == "/v1/time":
-		// NIM reads the whole body as one JSON number and divides by 1000
-		// [firmware, nim FUN_00292400 / FUN_00292560, 63-byte buffer], so this
-		// is Unix milliseconds and nothing else -- no object, no wrapper.
+		// NIM's ntc (firmware 23.0.1, nim 7a0ecce9, SAX handler at VA 0x19d9c0/0x19da70) accepts
+		// only an object with the single key "unixtime" whose value is a STRING of at most 19
+		// digits, Unix milliseconds; a bare number is rejected (parse error 0x89a74) and the
+		// console retries every 5 s. Confirmed on hardware 2026-10-14: the bare number was
+		// requested, answered 200 and retried.
 		ms := time.Now().UnixMilli()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
-		w.Write([]byte(strconv.FormatInt(ms, 10)))
+		w.Write([]byte(`{"unixtime":"` + strconv.FormatInt(ms, 10) + `"}`))
 	case r.URL.Path == "/v1/ip":
 		ip, public := clientIP(r)
 		if public {

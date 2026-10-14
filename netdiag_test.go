@@ -102,23 +102,36 @@ func TestGlobalIPProbeDoesNotInventAnAddress(t *testing.T) {
 	}
 }
 
-// NIM reads the whole body as one number and divides by 1000. Anything that is
-// not a bare integer -- an object, a quoted string, a trailing newline in the
-// wrong place -- sets the clock wrong or not at all.
-func TestNetworkClockIsABareMillisecondNumber(t *testing.T) {
+// NIM (23.0.x) parses the body as one JSON object with the single key "unixtime" whose
+// value is a string of at most 19 digits, Unix milliseconds. A bare number, a numeric
+// value or an extra key is rejected and the console retries every 5 s.
+func TestNetworkClockIsAUnixtimeStringObject(t *testing.T) {
 	s := &server{}
 	r := httptest.NewRequest("GET", "https://api.hac.lp1.ctest.srv.nintendo.net/v1/time", nil)
 	r.Host = "api.hac.lp1.ctest.srv.nintendo.net"
 	w := httptest.NewRecorder()
 	s.netdiag(w, r)
 
-	body := w.Body.String()
-	ms, err := strconv.ParseInt(body, 10, 64)
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("body %q is not a JSON object: %v", w.Body.String(), err)
+	}
+	if len(body) != 1 {
+		t.Fatalf("body %q must have exactly one key", w.Body.String())
+	}
+	str, ok := body["unixtime"].(string)
+	if !ok {
+		t.Fatalf("unixtime must be a string, got %T", body["unixtime"])
+	}
+	if len(str) == 0 || len(str) > 19 {
+		t.Fatalf("unixtime %q must be 1..19 digits", str)
+	}
+	ms, err := strconv.ParseInt(str, 10, 64)
 	if err != nil {
-		t.Fatalf("body %q is not a bare integer: %v", body, err)
+		t.Fatalf("unixtime %q is not decimal: %v", str, err)
 	}
 	if delta := ms/1000 - time.Now().Unix(); delta > 5 || delta < -5 {
-		t.Fatalf("clock is %ds off -- the body must be milliseconds, not seconds", delta)
+		t.Fatalf("clock is %ds off -- the value must be milliseconds, not seconds", delta)
 	}
 	if w.Body.Len() > 63 {
 		t.Fatalf("body is %d bytes; NIM reads at most 63", w.Body.Len())
