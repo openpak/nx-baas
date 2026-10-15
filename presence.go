@@ -147,6 +147,24 @@ func aggregatePresence(u *User, now int64, lease time.Duration) Presence {
 		UpdatedAt: best.UpdatedAt, LogoutAt: out.LogoutAt, Client: best.Client, OS: best.OS}
 }
 
+// homeAsOnline is what friends are shown for somebody sitting at HOME. A console with no game
+// running publishes INACTIVE, which the friends module reads as offline, so a person signed in
+// and waiting was invisible. With NX_HOME_AS_ONLINE=1 they are served as ONLINE (no title) and
+// the platform they are on goes in the description, "Harbor" or "Switch". Off unless set.
+// ponytail: whether the HOME friend list draws sys_description is unverified (a friend on
+// another platform already carries one and shows plain "Online"); the state is the part that
+// is known to work.
+func homeAsOnline(p Presence) Presence {
+	if p.State != "INACTIVE" || getenv("NX_HOME_AS_ONLINE", "") != "1" {
+		return p
+	}
+	p.State = "ONLINE"
+	if p.AppID == "" && (p.AppField == "" || p.AppField == "{}") {
+		p.AppField = descriptionAppField(clientLabel("switch", p.Client))
+	}
+	return p
+}
+
 // departedAt answers when a device's claim, ending at `at`, stopped reading as
 // online to friends. INACTIVE already reads as offline, so a claim that went
 // INACTIVE keeps the moment it did: staying at HOME, or switching off from

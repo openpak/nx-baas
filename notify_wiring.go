@@ -128,7 +128,7 @@ func (s *server) notifyPresenceIfChanged(userID, before string) {
 		return
 	}
 	now := time.Now().Unix()
-	agg := aggregatePresence(u, now, presenceLease())
+	agg := homeAsOnline(aggregatePresence(u, now, presenceLease()))
 	for _, f := range id.Friends {
 		viewer := s.store.User(f.BaasUserID)
 		if viewer == nil || !presenceVisible(viewer, u, true) {

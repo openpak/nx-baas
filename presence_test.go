@@ -674,3 +674,25 @@ func TestLogoutAtIsStampedWhenPresenceGoesInactiveOrOffline(t *testing.T) {
 		t.Errorf("after the sweep: %+v, want OFFLINE at %d", agg, deadline)
 	}
 }
+
+// A console at HOME (INACTIVE) is served as ONLINE with its platform in the description, only
+// when asked for; a title or an offline claim is left alone.
+func TestHomeAsOnline(t *testing.T) {
+	home := Presence{State: "INACTIVE", Client: "harbor", UpdatedAt: 5, LogoutAt: 3}
+	if got := homeAsOnline(home); got != home {
+		t.Fatalf("flag off must not change anything: %+v", got)
+	}
+	t.Setenv("NX_HOME_AS_ONLINE", "1")
+	got := homeAsOnline(home)
+	if got.State != "ONLINE" || got.AppField != `{"sys_description":"Harbor"}` || got.AppID != "" {
+		t.Fatalf("home with harbor: %+v", got)
+	}
+	if got := homeAsOnline(Presence{State: "INACTIVE"}); got.AppField != `{"sys_description":"Switch"}` {
+		t.Fatalf("home on a console: %+v", got)
+	}
+	for _, p := range []Presence{{State: "OFFLINE"}, {State: "PLAYING", AppID: "0100a5a020d5e000"}, {State: "ONLINE"}} {
+		if got := homeAsOnline(p); got != p {
+			t.Fatalf("%s must be left alone: %+v", p.State, got)
+		}
+	}
+}

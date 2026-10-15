@@ -254,7 +254,7 @@ func (s *server) visiblePresence(viewer *User, f Friend, now int64) map[string]a
 			}
 		}
 	}
-	return presenceObj(agg)
+	return presenceObj(homeAsOnline(agg))
 }
 
 // ---------- core mutations (SOC-03) ----------
