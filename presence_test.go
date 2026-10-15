@@ -775,9 +775,9 @@ func TestTestPF(t *testing.T) {
 
 func TestReservedIDs(t *testing.T) {
 	for _, c := range []struct{ ns, client, want string }{
-		{"switch", "", "01fe00ff00001000"}, {"switch", "harbor", "01fe00ff00002000"},
-		{"np", "pier", "01fe00ff00006000"}, {"np", "", "01fe00ff00007000"}, {"xbox360", "wharf", "01fe00ff00008000"},
-		{"wiiu", "cemu", "01fe00ff0000f000"}, {"3ds", "", "01fe00ff0000c000"}, {"switch", "switch", "01fe00ff00001000"},
+		{"switch", "", "01fe00fe00001000"}, {"switch", "harbor", "01fe00fe00002000"},
+		{"np", "pier", "01fe00fe00006000"}, {"np", "", "01fe00fe00007000"}, {"xbox360", "wharf", "01fe00fe00008000"},
+		{"wiiu", "cemu", "01fe00fe0000f000"}, {"3ds", "", "01fe00fe0000c000"}, {"switch", "switch", "01fe00fe00001000"},
 		{"", "", ""}, {"unknown", "", ""}, {"np", "someemu", ""},
 	} {
 		if got := reservedID(c.ns, c.client); got != c.want {
@@ -787,7 +787,7 @@ func TestReservedIDs(t *testing.T) {
 	t.Setenv("NX_HOME_AS_ONLINE", "1")
 	t.Setenv("NX_PLATFORM_TITLE", "1")
 	got := homeAsOnline(Presence{State: "INACTIVE", Client: "harbor"})
-	if got.State != "ONLINE" || got.AppID != "01fe00ff00002000" || got.PresenceGroupID != got.AppID {
+	if got.State != "ONLINE" || got.AppID != "01fe00fe00002000" || got.PresenceGroupID != got.AppID {
 		t.Fatalf("home on harbor: %+v", got)
 	}
 	// A real title is never replaced by the platform's.

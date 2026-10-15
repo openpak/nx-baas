@@ -4,7 +4,7 @@ package main
 //
 // The Switch friend list draws a state ("Online") or the name of a title, and names a title only
 // from what the viewer has -- or, when it has not got it, from the control NCA it asks atum for.
-// So the platform is carried as a title of its own: 01fe00ff<n>000, named "Pier", "Harbor",
+// So the platform is carried as a title of its own: 01fe00fe<n>000, named "Pier", "Harbor",
 // "PS3"... by nx-shop (reserved.go there, built by hbstore-tools/reserved.py). The order of
 // reservedKeys is the id and is shared with reserved.py's PLATFORMS: only ever append.
 
@@ -12,6 +12,11 @@ import (
 	"fmt"
 	"strings"
 )
+
+// reservedGeneration is the id's first eight digits. A console keeps the control data of every id
+// it has fetched and never asks again, so a changed name or picture is a new generation (shared
+// with reserved.py's GENERATION and nx-shop's accepted prefix): 01fe00ff was the first.
+const reservedGeneration = "01fe00fe"
 
 var reservedKeys = []string{
 	"switch", "harbor", "ryujinx", "eden", "citron", "pier", "ps3", "wharf", "xbox360", "wii", "wiiu",
@@ -34,7 +39,7 @@ func reservedID(namespace, client string) string {
 	}
 	for i, k := range reservedKeys {
 		if k == key {
-			return fmt.Sprintf("01fe00ff%05x000", i+1)
+			return fmt.Sprintf("%s%05x000", reservedGeneration, i+1)
 		}
 	}
 	if p, ok := reservedNamespace[key]; ok && p != key { // a console reporting its own name as the client
