@@ -66,7 +66,13 @@ func onlineNotificationOf(p *FriendPreference) bool {
 // produces identical entries — a stable etag (SOC-05).
 func (s *server) relationshipObj(viewer *User, f Friend, now int64) map[string]any {
 	user := s.friendObj(f, now)
-	user["presence"] = s.visiblePresence(viewer, f, now)
+	presence, on := s.visiblePresenceOn(viewer, f, now)
+	user["presence"] = presence
+	if on != "" && getenv("NX_PLATFORM_IN_NAME", "") == "1" {
+		if name, ok := user["nickname"].(string); ok && name != "" {
+			user["nickname"] = nameWithPlatform(name, on)
+		}
+	}
 	// The friend's play log, under the group that carries it when this
 	// viewer may see it: what "recently played" and the same-app filters
 	// read, from $.items[*].friend.extras.*.playLog [§A.1].
@@ -222,6 +228,13 @@ func (s *server) prefOf(viewer *User, friendBaasID string) *FriendPreference {
 // may not see it (PRE-03). It never invents recency: timestamps come from the
 // state changes that produced the entry, not from this render.
 func (s *server) visiblePresence(viewer *User, f Friend, now int64) map[string]any {
+	p, _ := s.visiblePresenceOn(viewer, f, now)
+	return p
+}
+
+// visiblePresenceOn is visiblePresence plus where the friend is live, as a person reads it
+// ("Harbor", "Switch", "Pier"), or "" when they are not live or the viewer may not see them.
+func (s *server) visiblePresenceOn(viewer *User, f Friend, now int64) (map[string]any, string) {
 	lease := presenceLease()
 	subject := s.store.User(f.BaasUserID)
 	if subject == nil {
@@ -235,12 +248,12 @@ func (s *server) visiblePresence(viewer *User, f Friend, now int64) map[string]a
 				p.State = "PLAYING"
 			}
 		}
-		return presenceObj(p)
+		return presenceObj(p), ""
 	}
 	// The caller renders the core's friend list, so friendship is established;
 	// presenceVisible answers the privacy half.
 	if !presenceVisible(viewer, subject, true) {
-		return presenceObj(Presence{State: "OFFLINE", UpdatedAt: now})
+		return presenceObj(Presence{State: "OFFLINE", UpdatedAt: now}), ""
 	}
 	agg := aggregatePresence(subject, now, lease)
 	if agg.State == "OFFLINE" {
@@ -250,11 +263,33 @@ func (s *server) visiblePresence(viewer *User, f Friend, now int64) map[string]a
 		if b, ok := s.acct.(*openpakBackend); ok {
 			if elsewhere, live := s.presenceFromCore(b.accountFor(f.PID), b.namespace, now); live {
 				elsewhere.LogoutAt = agg.LogoutAt
-				return presenceObj(elsewhere)
+				on := ""
+				if cp, ok := s.corePresenceOf(b.accountFor(f.PID)); ok {
+					on = clientLabel(cp.Namespace, cp.Client)
+				}
+				return presenceObj(elsewhere), on
 			}
 		}
+		return presenceObj(agg), ""
 	}
-	return presenceObj(homeAsOnline(agg))
+	return presenceObj(homeAsOnline(agg)), clientLabel("switch", agg.Client)
+}
+
+// nameWithPlatform is a friend's name as the friend list shows it when NX_PLATFORM_IN_NAME=1:
+// "Name (Pier)". The friend list draws no platform of its own and ignores the presence
+// description, so the name is the one line of text we control. The console keeps 32 bytes of a
+// nickname, so the name gives up its own tail to make room, never half a character.
+// ponytail: the name carries it everywhere the list shows it; a badge on the avatar would not.
+func nameWithPlatform(name, platform string) string {
+	suffix := " (" + platform + ")"
+	if name == "" || platform == "" || strings.HasSuffix(name, suffix) || len(suffix) > 16 {
+		return name
+	}
+	rs := []rune(name)
+	for len(rs) > 0 && len(string(rs))+len(suffix) > 32 {
+		rs = rs[:len(rs)-1]
+	}
+	return strings.TrimRight(string(rs), " ") + suffix
 }
 
 // ---------- core mutations (SOC-03) ----------

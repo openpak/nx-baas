@@ -737,3 +737,22 @@ func TestRenewWithoutADeviceExtendsTheConsolesClaims(t *testing.T) {
 		t.Fatalf("claims that must not move did: %+v %+v %+v", got["harbor"], got["gone"], got["lapsedgame"])
 	}
 }
+
+func TestNameWithPlatform(t *testing.T) {
+	for _, c := range []struct{ name, platform, want string }{
+		{"AndroidTest", "Pier", "AndroidTest (Pier)"},
+		{"hansolo", "Harbor", "hansolo (Harbor)"},
+		{"Leia", "Switch", "Leia (Switch)"},
+		{"Leia (Switch)", "Switch", "Leia (Switch)"},
+		{"", "Pier", ""},
+		{"x", "", "x"},
+		// 32 bytes is the console's limit: the name gives way, the platform stays.
+		{"AVeryLongNicknameThatFillsTheLimit", "Wharf", "AVeryLongNicknameThatFil (Wharf)"},
+		{"ÀÀÀÀÀÀÀÀÀÀÀÀÀÀÀÀÀÀÀÀ", "Pier", "ÀÀÀÀÀÀÀÀÀÀÀÀ (Pier)"},
+	} {
+		got := nameWithPlatform(c.name, c.platform)
+		if got != c.want || len(got) > 32 {
+			t.Errorf("nameWithPlatform(%q,%q) = %q (%d bytes), want %q", c.name, c.platform, got, len(got), c.want)
+		}
+	}
+}
