@@ -8,7 +8,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -133,44 +132,4 @@ func (s *server) synthPlayLog(subject *User, wait bool) string {
 		return ""
 	}
 	return playLogJSON(b.playHistory(b.accountFor(subject.PID), wait))
-}
-
-// parsePlayLog reads a play log string back into entries, for the console records that carry it as
-// fields: at most 20, entries it cannot read skipped.
-func parsePlayLog(pl string) []detailPlay {
-	var raw []struct {
-		AppID string `json:"appInfo:appId"`
-		Group string `json:"appInfo:presenceGroupId"`
-		Count int64  `json:"totalPlayCount"`
-		Time  int64  `json:"totalPlayTime"`
-		First int64  `json:"firstPlayedAt"`
-		Last  int64  `json:"lastPlayedAt"`
-	}
-	if json.Unmarshal([]byte(pl), &raw) != nil {
-		return nil
-	}
-	out := []detailPlay{}
-	for _, r := range raw {
-		var app, grp uint64
-		if _, err := fmt.Sscanf(r.AppID, "%x", &app); err != nil || app == 0 {
-			continue
-		}
-		fmt.Sscanf(r.Group, "%x", &grp)
-		out = append(out, detailPlay{App: app, Group: grp, Count: clampU32(r.Count), Time: clampU32(r.Time),
-			First: r.First, Last: r.Last})
-		if len(out) == 20 {
-			break
-		}
-	}
-	return out
-}
-
-func clampU32(v int64) uint32 {
-	switch {
-	case v < 0:
-		return 0
-	case v > 0xFFFFFFFF:
-		return 0xFFFFFFFF
-	}
-	return uint32(v)
 }
