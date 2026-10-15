@@ -36,12 +36,6 @@ type fakeSessions struct {
 	gone      bool // the core lost everything (restart)
 }
 
-// GetPlayHistory: these tests do not play anything.
-func (x *fakeSessions) GetPlayHistory(context.Context, *accountv1.GetPlayHistoryRequest, ...grpc.CallOption,
-) (*accountv1.GetPlayHistoryResponse, error) {
-	return &accountv1.GetPlayHistoryResponse{}, nil
-}
-
 func newFakeSessions() *fakeSessions {
 	return &fakeSessions{leases: map[string]int64{}, byAcct: map[string]string{}}
 }
