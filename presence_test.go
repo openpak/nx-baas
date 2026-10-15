@@ -756,3 +756,28 @@ func TestNameWithPlatform(t *testing.T) {
 		}
 	}
 }
+
+func TestTestPF(t *testing.T) {
+	if _, ok := testPF("harbor"); ok {
+		t.Fatal("unset must send nothing")
+	}
+	t.Setenv("NX_PF_TEST", "switch=1, Harbor=2,pier=9,wharf=x")
+	if v, ok := testPF("harbor"); !ok || v != 2 {
+		t.Fatalf("harbor: %d %v", v, ok)
+	}
+	if v, ok := testPF(""); !ok || v != 1 {
+		t.Fatalf("a console with no client is switch: %d %v", v, ok)
+	}
+	for _, c := range []string{"pier", "wharf", "eden"} {
+		if _, ok := testPF(c); ok {
+			t.Fatalf("%s: out-of-range, unparsable and unlisted must send nothing", c)
+		}
+	}
+	p := presenceObj(Presence{State: "ONLINE", Client: "harbor", ACDIndex: -1})
+	if p["pf"] != 2 {
+		t.Fatalf("friend list entry: %v", p["pf"])
+	}
+	if v := presenceEventValue("u", Presence{State: "ONLINE", Client: "harbor"}); v["pf"] != 2 {
+		t.Fatalf("event: %v", v["pf"])
+	}
+}

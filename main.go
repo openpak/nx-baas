@@ -537,7 +537,29 @@ func presenceObj(p Presence) map[string]any {
 		}
 		ex["friends"] = friends
 	}
-	return map[string]any{"state": p.State, "extras": ex, "updatedAt": p.UpdatedAt, "logoutAt": p.LogoutAt}
+	out := map[string]any{"state": p.State, "extras": ex, "updatedAt": p.UpdatedAt, "logoutAt": p.LogoutAt}
+	if pf, ok := testPF(p.Client); ok {
+		out["pf"] = pf
+	}
+	return out
+}
+
+// testPF is a probe, not a feature: NX_PF_TEST="switch=1,harbor=2" gives a client's presence a `pf`
+// (a one-byte enum the friends module stores per friend and the friend's page may draw as
+// "Online (<platform>)"). Its value space is unknown and only a capture settles it, so this
+// sends nothing unless asked and only small numbers. Remove with the experiment.
+func testPF(client string) (int, bool) {
+	if client == "" {
+		client = "switch"
+	}
+	for _, kv := range strings.Split(getenv("NX_PF_TEST", ""), ",") {
+		if k, v, ok := strings.Cut(strings.TrimSpace(kv), "="); ok && strings.EqualFold(k, client) {
+			if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 3 {
+				return n, true
+			}
+		}
+	}
+	return 0, false
 }
 
 func (s *server) userObj(u *User, id *Identity, devicePassword string) map[string]any {

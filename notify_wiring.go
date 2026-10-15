@@ -154,16 +154,26 @@ func (s *server) notifyPresenceIfChanged(userID, before string) {
 			Payload: map[string]any{
 				"friendId":  u.ID, // kept: our own surfaces read it
 				"createdAt": createdAt,
-				"value": map[string]any{
-					"userId":    u.ID,
-					"state":     agg.State,
-					"updatedAt": agg.UpdatedAt,
-					"logoutAt":  agg.LogoutAt,
-					"extras":    map[string]any{"friends": presenceEventExtras(agg)},
-				},
+				"value":     presenceEventValue(u.ID, agg),
 			},
 		})
 	}
+}
+
+// presenceEventValue is the presence a presence_updated event carries: the same fields the friend
+// list carries, so a cached friend does not change shape between the two.
+func presenceEventValue(userID string, agg Presence) map[string]any {
+	v := map[string]any{
+		"userId":    userID,
+		"state":     agg.State,
+		"updatedAt": agg.UpdatedAt,
+		"logoutAt":  agg.LogoutAt,
+		"extras":    map[string]any{"friends": presenceEventExtras(agg)},
+	}
+	if pf, ok := testPF(agg.Client); ok { // the probe, see testPF
+		v["pf"] = pf
+	}
+	return v
 }
 
 // presenceEventExtras renders the app fields a presence event carries, with the
