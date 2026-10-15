@@ -312,18 +312,41 @@ func (s *server) noteClientPresence(u *User, deviceID, client, clientOS, state, 
 // Only presence we are still hearing a live connection for is renewed.
 func (s *server) renewDevicePresence(userID, deviceID string) {
 	u := s.store.User(userID)
-	if u == nil || deviceID == "" {
+	if u == nil {
 		return
 	}
 	now := time.Now().Unix()
 	lease := int64(presenceLease().Seconds())
-	s.store.Update(u, func(u *User) {
-		e := u.DevicePresence[deviceID]
+	extend := func(e *DevicePresence) {
 		if e == nil || e.ExpiresAt == 0 || stateRank(e.State) == 0 {
 			return // never claimed, or claimed as gone: not ours to extend
 		}
 		if e.ExpiresAt > now { // still live: push the lease out
 			e.ExpiresAt = now + lease
+		}
+	}
+	s.store.Update(u, func(u *User) {
+		if deviceID != "" {
+			extend(u.DevicePresence[deviceID])
+			return
+		}
+		// No device named: a console that reconnected has published nothing on its new
+		// connection, but the person it signed in is still where they said they were. Every
+		// claim a real console made for them stays alive while its connection is up; an
+		// emulator's claims are renewed by its own heartbeat and are left alone.
+		// A claim that lapsed while the console was still connected (it publishes on change and
+		// at connect, and a reconnect publishes nothing) is revived when it was HOME: nothing says
+		// they left, and the last thing they said was "signed in, no game". One that was a game
+		// is not: a console that crashed in a title must not come back showing it.
+		for _, e := range u.DevicePresence {
+			if e == nil || e.Client != "switch" {
+				continue
+			}
+			if e.ExpiresAt != 0 && e.ExpiresAt <= now && strings.ToUpper(e.State) == "INACTIVE" {
+				e.ExpiresAt = now + lease
+				continue
+			}
+			extend(e)
 		}
 	})
 }

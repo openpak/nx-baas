@@ -706,3 +706,34 @@ func TestTestAppID(t *testing.T) {
 		t.Fatal("mapping")
 	}
 }
+
+// A renewal with no device named extends every live claim a real console made for the user (a
+// console that reconnected has published nothing on its new connection) and leaves an
+// emulator's claims, a claim already gone and a lapsed game alone; a lapsed HOME claim comes back.
+func TestRenewWithoutADeviceExtendsTheConsolesClaims(t *testing.T) {
+	s := &server{store: loadStore(t.TempDir() + "/baas.json")}
+	u, _ := s.store.NewUser()
+	now := time.Now().Unix()
+	soon := now + 30
+	s.store.Update(u, func(u *User) {
+		u.DevicePresence = map[string]*DevicePresence{
+			"console":    {DeviceID: "console", State: "INACTIVE", Client: "switch", ExpiresAt: soon},
+			"harbor":     {DeviceID: "harbor", State: "INACTIVE", Client: "harbor", ExpiresAt: soon},
+			"gone":       {DeviceID: "gone", State: "OFFLINE", Client: "switch", ExpiresAt: soon},
+			"lapsed":     {DeviceID: "lapsed", State: "INACTIVE", Client: "switch", ExpiresAt: now - 5},
+			"lapsedgame": {DeviceID: "lapsedgame", State: "PLAYING", AppID: "0100", Client: "switch", ExpiresAt: now - 5},
+		}
+	})
+	s.renewDevicePresence(u.ID, "")
+	got := s.store.User(u.ID).DevicePresence
+	lease := int64(presenceLease().Seconds())
+	if got["console"].ExpiresAt < now+lease-2 {
+		t.Fatalf("console claim not extended: %d", got["console"].ExpiresAt-now)
+	}
+	if got["lapsed"].ExpiresAt < now+lease-2 {
+		t.Fatalf("a lapsed HOME claim on a live connection must come back: %d", got["lapsed"].ExpiresAt-now)
+	}
+	if got["harbor"].ExpiresAt != soon || got["gone"].ExpiresAt != soon || got["lapsedgame"].ExpiresAt != now-5 {
+		t.Fatalf("claims that must not move did: %+v %+v %+v", got["harbor"], got["gone"], got["lapsedgame"])
+	}
+}
