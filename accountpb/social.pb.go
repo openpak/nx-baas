@@ -634,11 +634,13 @@ func (x *ListFriendsResponse) GetFriends() []*Friend {
 }
 
 type Friend struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	AccountId     string                 `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
-	DisplayName   string                 `protobuf:"bytes,2,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	AccountId        string                 `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	DisplayName      string                 `protobuf:"bytes,2,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
+	LastSeenUnix     int64                  `protobuf:"varint,3,opt,name=last_seen_unix,json=lastSeenUnix,proto3" json:"last_seen_unix,omitempty"`             // latest recorded authentication or adapter activity; 0 = unknown
+	FriendsSinceUnix int64                  `protobuf:"varint,4,opt,name=friends_since_unix,json=friendsSinceUnix,proto3" json:"friends_since_unix,omitempty"` // when the friendship was accepted; 0 = unknown
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *Friend) Reset() {
@@ -683,6 +685,20 @@ func (x *Friend) GetDisplayName() string {
 		return x.DisplayName
 	}
 	return ""
+}
+
+func (x *Friend) GetLastSeenUnix() int64 {
+	if x != nil {
+		return x.LastSeenUnix
+	}
+	return 0
+}
+
+func (x *Friend) GetFriendsSinceUnix() int64 {
+	if x != nil {
+		return x.FriendsSinceUnix
+	}
+	return 0
 }
 
 type ListIncomingRequestsRequest struct {
@@ -1420,11 +1436,13 @@ const file_openpak_account_v1_social_proto_rawDesc = "" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\"K\n" +
 	"\x13ListFriendsResponse\x124\n" +
-	"\afriends\x18\x01 \x03(\v2\x1a.openpak.account.v1.FriendR\afriends\"J\n" +
+	"\afriends\x18\x01 \x03(\v2\x1a.openpak.account.v1.FriendR\afriends\"\x9e\x01\n" +
 	"\x06Friend\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12!\n" +
-	"\fdisplay_name\x18\x02 \x01(\tR\vdisplayName\"<\n" +
+	"\fdisplay_name\x18\x02 \x01(\tR\vdisplayName\x12$\n" +
+	"\x0elast_seen_unix\x18\x03 \x01(\x03R\flastSeenUnix\x12,\n" +
+	"\x12friends_since_unix\x18\x04 \x01(\x03R\x10friendsSinceUnix\"<\n" +
 	"\x1bListIncomingRequestsRequest\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\"<\n" +

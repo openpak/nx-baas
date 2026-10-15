@@ -30,6 +30,8 @@ type fakeCore struct {
 	incoming   map[string][]string
 	outgoing   map[string][]string
 	blocks     map[string]bool // "blocker\x00blocked"
+	// friendsSince is when the core says each account became somebody's friend.
+	friendsSince map[string]int64
 }
 
 func newFakeCore() *fakeCore {
@@ -143,7 +145,8 @@ func (x fakeSocial) ListFriends(ctx context.Context, r *accountv1.ListFriendsReq
 	out := &accountv1.ListFriendsResponse{}
 	for _, id := range x.f.friends[r.GetAccountId()] {
 		if a := x.f.accounts[id]; a != nil {
-			out.Friends = append(out.Friends, &accountv1.Friend{AccountId: id, DisplayName: a.GetDisplayName()})
+			out.Friends = append(out.Friends, &accountv1.Friend{AccountId: id, DisplayName: a.GetDisplayName(),
+				FriendsSinceUnix: x.f.friendsSince[id]})
 		}
 	}
 	return out, nil

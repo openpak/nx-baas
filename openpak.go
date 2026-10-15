@@ -398,7 +398,7 @@ func (b *openpakBackend) Identity(pid uint64) (*Identity, error) {
 		return nil, fmt.Errorf("list friends: %w", err)
 	}
 	for _, f := range friends.GetFriends() {
-		if fr := b.friendView(f.GetAccountId(), f.GetDisplayName()); fr != nil {
+		if fr := b.friendView(f.GetAccountId(), f.GetDisplayName(), f.GetFriendsSinceUnix()); fr != nil {
 			id.Friends = append(id.Friends, *fr)
 		}
 	}
@@ -407,7 +407,7 @@ func (b *openpakBackend) Identity(pid uint64) (*Identity, error) {
 		return nil, fmt.Errorf("list incoming: %w", err)
 	}
 	for _, f := range incoming.GetRequesters() {
-		if fr := b.friendView(f.GetAccountId(), f.GetDisplayName()); fr != nil {
+		if fr := b.friendView(f.GetAccountId(), f.GetDisplayName(), 0); fr != nil {
 			id.FriendRequests = append(id.FriendRequests, *fr)
 		}
 	}
@@ -416,7 +416,7 @@ func (b *openpakBackend) Identity(pid uint64) (*Identity, error) {
 		return nil, fmt.Errorf("list outgoing: %w", err)
 	}
 	for _, f := range outgoing.GetAddressees() {
-		if fr := b.friendView(f.GetAccountId(), f.GetDisplayName()); fr != nil {
+		if fr := b.friendView(f.GetAccountId(), f.GetDisplayName(), 0); fr != nil {
 			id.SentRequests = append(id.SentRequests, *fr)
 		}
 	}
@@ -426,7 +426,10 @@ func (b *openpakBackend) Identity(pid uint64) (*Identity, error) {
 // friendView renders one core account as a BAAS Friend. Accounts without a
 // console projection are skipped: they have no pid/friend code to render and
 // fabricating one would break identity guarantees (SW-04).
-func (b *openpakBackend) friendView(accountID, displayName string) *Friend {
+// friendView renders a friend of the core's list. since is when the friendship was accepted (0 for a
+// pending request, which has none): what a console's friend page shows as "When You Became Friends".
+// Before the core said, this carried the time the friend was first seen here, which is not it.
+func (b *openpakBackend) friendView(accountID, displayName string, since int64) *Friend {
 	// Copy the projection under the lock; the core call below must not hold
 	// it (SOC-05: a global lock across per-friend network calls serialises a
 	// whole friend list behind the slowest identity lookup).
@@ -447,6 +450,9 @@ func (b *openpakBackend) friendView(accountID, displayName string) *Friend {
 	}
 	f := &Friend{PID: prCopy.PID, BaasUserID: prCopy.BaasUserID, NaID: prCopy.NaID, FriendCode: prCopy.FriendCode,
 		Nickname: nick, CreatedAt: prCopy.CreatedAt}
+	if since > 0 {
+		f.CreatedAt = since
+	}
 	// Country, same as a looked-up user gets. Without it a friend list entry
 	// goes out with country "" -- which is the state the console refused in a
 	// search result, and a friend list that stays empty after a friendship the
