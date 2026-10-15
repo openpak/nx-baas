@@ -1563,6 +1563,14 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 	myID := s.identity(me)
 
 	switch {
+	case len(seg) == 3 && seg[0] == "users" && seg[2] == "friend_details" && r.Method == "GET":
+		// Harbor's friends module asks for the page records instead of building them (friend_detail.go).
+		if s.requireCaller(w, r, seg[1]) == nil {
+			return
+		}
+		s.friendDetails(w, r, me, myID, now)
+		return
+
 	case len(seg) == 3 && seg[0] == "users" && seg[2] == "friends" && r.Method == "GET":
 		if s.requireCaller(w, r, seg[1]) == nil {
 			return

@@ -40,6 +40,8 @@ type openpakBackend struct {
 	social    accountv1.SocialClient
 	sessions  accountv1.SessionsClient
 	register  accountv1.RegistrationClient // nil in tests that do not rename
+	plays     *playHistoryCache            // a friend's play history, see playhistory.go
+	playOnce  sync.Once
 	proj      *projectionStore
 	namespace string
 	nexKey    []byte

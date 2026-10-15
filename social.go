@@ -135,9 +135,15 @@ func (s *server) visiblePlayLog(viewer, subject *User, areFriends bool) (group, 
 	if subject == nil {
 		return "", ""
 	}
+	// What the core knows of their play, for somebody who uploaded no log of their own (a console
+	// does; an emulator never does). Read before the lock: it may refresh in the background.
+	synth := s.synthPlayLog(subject, false)
 	s.store.mu.Lock()
 	defer s.store.mu.Unlock()
 	group, pl = playLogGroup(subject)
+	if pl == "" && synth != "" {
+		group, pl = "friends", synth
+	}
 	if viewer != nil && viewer.ID == subject.ID {
 		return group, pl
 	}
