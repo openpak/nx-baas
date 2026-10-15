@@ -70,6 +70,8 @@ func parseClient(v string) string {
 var platformLabels = map[string]string{
 	"switch": "Switch", "wiiu": "Wii U", "wii": "Wii", "3ds": "3DS", "nds": "NDS", "ds": "NDS",
 	"np": "PS3", "ps3": "PS3", "xbox360": "Xbox 360", "xbox-360": "Xbox 360", "xbl": "Xbox 360",
+	"ps4": "PS4", "ps5": "PS5", "psp": "PSP", "vita": "PS Vita", "psvita": "PS Vita", "xbox": "Xbox",
+	"xboxone": "Xbox One", "xbox-one": "Xbox One",
 }
 
 // emulatorLabels is what an emulator calls itself, by the client it reports.

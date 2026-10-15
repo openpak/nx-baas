@@ -779,6 +779,8 @@ func TestReservedIDs(t *testing.T) {
 		{"np", "pier", "01fe00fe00006000"}, {"np", "", "01fe00fe00007000"}, {"xbox360", "wharf", "01fe00fe00008000"},
 		{"wiiu", "cemu", "01fe00fe0000f000"}, {"3ds", "", "01fe00fe0000c000"}, {"switch", "switch", "01fe00fe00001000"},
 		{"", "", ""}, {"unknown", "", ""}, {"np", "someemu", ""},
+		{"ps4", "", "01fe00fe00018000"}, {"ps5", "", "01fe00fe00019000"}, {"psp", "", "01fe00fe0001a000"},
+		{"vita", "", "01fe00fe0001b000"}, {"xbox", "", "01fe00fe0001c000"}, {"xbox-one", "", "01fe00fe0001d000"},
 	} {
 		if got := reservedID(c.ns, c.client); got != c.want {
 			t.Errorf("reservedID(%q,%q) = %q, want %q", c.ns, c.client, got, c.want)

@@ -21,13 +21,15 @@ const reservedGeneration = "01fe00fe"
 var reservedKeys = []string{
 	"switch", "harbor", "ryujinx", "eden", "citron", "pier", "ps3", "wharf", "xbox360", "wii", "wiiu",
 	"3ds", "nds", "dolphin", "cemu", "azahar", "melonds", "xemu", "xenia", "pcsx2", "rpcs3", "ppsspp",
-	"vita3k",
+	"vita3k", "ps4", "ps5", "psp", "vita", "xbox", "xboxone",
 }
 
 // reservedNamespace maps a presence namespace to the platform it is, for a real console.
 var reservedNamespace = map[string]string{
 	"switch": "switch", "np": "ps3", "ps3": "ps3", "xbox360": "xbox360", "xbox-360": "xbox360",
 	"xbl": "xbox360", "wii": "wii", "wiiu": "wiiu", "3ds": "3ds", "nds": "nds", "ds": "nds",
+	"ps4": "ps4", "ps5": "ps5", "psp": "psp", "vita": "vita", "psvita": "vita", "xbox": "xbox",
+	"xboxone": "xboxone", "xbox-one": "xboxone",
 }
 
 // reservedID is the title id naming where somebody is: the emulator when the client is one, the
