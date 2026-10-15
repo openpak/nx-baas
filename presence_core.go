@@ -128,7 +128,9 @@ func (s *server) presenceFromCore(accountID, namespace string, now int64) (Prese
 		out.AppField = descriptionAppField(presenceDescription(clientLabel(p.Namespace, p.Client),
 			p.TitleID, siteTitleNames.name(p.Namespace, p.TitleID)))
 	}
-	if id := testAppID(p.Client); id != "" { // the probe, see testAppID
+	if id := reservedID(p.Namespace, p.Client); id != "" && platformTitle() {
+		// Listed as playing the platform's own title: the console draws its name and picture,
+		// where a description it ignores would say nothing (reserved.go).
 		out.AppID, out.PresenceGroupID = id, id
 	}
 	return out, true

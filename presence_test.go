@@ -679,6 +679,7 @@ func TestLogoutAtIsStampedWhenPresenceGoesInactiveOrOffline(t *testing.T) {
 // when asked for; a title or an offline claim is left alone.
 func TestHomeAsOnline(t *testing.T) {
 	home := Presence{State: "INACTIVE", Client: "harbor", UpdatedAt: 5, LogoutAt: 3}
+	t.Setenv("NX_PLATFORM_TITLE", "")
 	if got := homeAsOnline(home); got != home {
 		t.Fatalf("flag off must not change anything: %+v", got)
 	}
@@ -694,16 +695,6 @@ func TestHomeAsOnline(t *testing.T) {
 		if got := homeAsOnline(p); got != p {
 			t.Fatalf("%s must be left alone: %+v", p.State, got)
 		}
-	}
-}
-
-func TestTestAppID(t *testing.T) {
-	if got := testAppID("harbor"); got != "" {
-		t.Fatalf("unset: %q", got)
-	}
-	t.Setenv("NX_HOME_TEST_APPIDS", "harbor=01fe000000000000, Switch=0100a5a020d5e000")
-	if testAppID("harbor") != "01fe000000000000" || testAppID("") != "0100a5a020d5e000" || testAppID("pier") != "" {
-		t.Fatal("mapping")
 	}
 }
 
@@ -779,5 +770,28 @@ func TestTestPF(t *testing.T) {
 	}
 	if v := presenceEventValue("u", Presence{State: "ONLINE", Client: "harbor"}); v["pf"] != 2 {
 		t.Fatalf("event: %v", v["pf"])
+	}
+}
+
+func TestReservedIDs(t *testing.T) {
+	for _, c := range []struct{ ns, client, want string }{
+		{"switch", "", "01fe00ff00001000"}, {"switch", "harbor", "01fe00ff00002000"},
+		{"np", "pier", "01fe00ff00006000"}, {"np", "", "01fe00ff00007000"}, {"xbox360", "wharf", "01fe00ff00008000"},
+		{"wiiu", "cemu", "01fe00ff0000f000"}, {"3ds", "", "01fe00ff0000c000"}, {"switch", "switch", "01fe00ff00001000"},
+		{"", "", ""}, {"unknown", "", ""}, {"np", "someemu", ""},
+	} {
+		if got := reservedID(c.ns, c.client); got != c.want {
+			t.Errorf("reservedID(%q,%q) = %q, want %q", c.ns, c.client, got, c.want)
+		}
+	}
+	t.Setenv("NX_HOME_AS_ONLINE", "1")
+	t.Setenv("NX_PLATFORM_TITLE", "1")
+	got := homeAsOnline(Presence{State: "INACTIVE", Client: "harbor"})
+	if got.State != "ONLINE" || got.AppID != "01fe00ff00002000" || got.PresenceGroupID != got.AppID {
+		t.Fatalf("home on harbor: %+v", got)
+	}
+	// A real title is never replaced by the platform's.
+	if got := homeAsOnline(Presence{State: "INACTIVE", Client: "harbor", AppID: "0100a5a020d5e000"}); got.AppID != "0100a5a020d5e000" {
+		t.Fatalf("a title was replaced: %+v", got)
 	}
 }
