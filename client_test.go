@@ -45,6 +45,11 @@ func TestClientLabels(t *testing.T) {
 		{"switch", "", "Switch"}, {"switch", "switch", "Switch"}, {"switch", "ryujinx", "Ryujinx"},
 		{"switch", "eden", "Eden"}, {"switch", "citron", "Citron"}, {"wiiu", "", "Wii U"},
 		{"3ds", "", "3DS"}, {"wiiu", "cemu", "Cemu"}, {"3ds", "azahar", "Azahar"},
+		// A real console is its platform, an emulator is itself.
+		{"np", "", "PS3"}, {"np", "pier", "Pier"}, {"xbox360", "", "Xbox 360"}, {"xbox360", "wharf", "Wharf"},
+		{"switch", "harbor", "Harbor"}, {"wii", "", "Wii"}, {"wii", "dolphin", "Dolphin"},
+		{"nds", "", "NDS"}, {"3ds", "3ds", "3DS"}, {"np", " Pier ", "Pier"}, {"", "", ""},
+		{"np", "someemu", "Someemu"},
 	} {
 		if got := clientLabel(c.ns, c.client); got != c.want {
 			t.Errorf("clientLabel(%q,%q) = %q, want %q", c.ns, c.client, got, c.want)

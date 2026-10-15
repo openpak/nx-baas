@@ -66,47 +66,43 @@ func parseClient(v string) string {
 	return name
 }
 
-// platformName is how a person reads a presence namespace.
-func platformName(namespace string) string {
-	switch strings.ToLower(namespace) {
-	case "switch":
-		return "Switch"
-	case "wiiu":
-		return "Wii U"
-	case "3ds":
-		return "3DS"
-	case "":
-		return ""
-	default:
-		return strings.ToUpper(namespace[:1]) + namespace[1:]
-	}
+// platformLabels is what a real console's network is called, by presence namespace.
+var platformLabels = map[string]string{
+	"switch": "Switch", "wiiu": "Wii U", "wii": "Wii", "3ds": "3DS", "nds": "NDS", "ds": "NDS",
+	"np": "PS3", "ps3": "PS3", "xbox360": "Xbox 360", "xbox-360": "Xbox 360", "xbl": "Xbox 360",
 }
 
-// clientLabel names what somebody is on: the client when one is known, the
-// platform otherwise. The same table lives in the website and nn-friends.
+// emulatorLabels is what an emulator calls itself, by the client it reports.
+var emulatorLabels = map[string]string{
+	"harbor": "Harbor", "ryujinx": "Ryujinx", "eden": "Eden", "citron": "Citron",
+	"pier": "Pier", "wharf": "Wharf", "cemu": "Cemu", "azahar": "Azahar", "dolphin": "Dolphin",
+	"melonds": "melonDS", "xemu": "xemu", "xenia": "Xenia", "pcsx2": "PCSX2", "rpcs3": "RPCS3",
+	"ppsspp": "PPSSPP", "vita3k": "Vita3K",
+}
+
+// clientLabel names what somebody is on: the emulator when the client is one, the console's
+// platform when it is real hardware (no client, or the console's own), so "PS3" is a PS3 and
+// "Pier" is somebody on the emulator. The same table lives in nx-baas, the website, nn-friends
+// and np-account.
 func clientLabel(namespace, client string) string {
-	switch strings.ToLower(client) {
-	case "":
-		return platformName(namespace)
-	case "switch":
-		return "Switch"
-	case "ryujinx":
-		return "Ryujinx"
-	case "eden":
-		return "Eden"
-	case "citron":
-		return "Citron"
-	case "wiiu":
-		return "Wii U"
-	case "3ds":
-		return "3DS"
-	case "cemu":
-		return "Cemu"
-	case "azahar":
-		return "Azahar"
-	default:
-		return strings.ToUpper(client[:1]) + client[1:]
+	c := strings.ToLower(strings.TrimSpace(client))
+	if e, ok := emulatorLabels[c]; ok {
+		return e
 	}
+	if p, ok := platformLabels[c]; ok {
+		return p
+	}
+	if c != "" {
+		return strings.ToUpper(c[:1]) + c[1:] // an emulator this table has not heard of yet
+	}
+	ns := strings.ToLower(strings.TrimSpace(namespace))
+	if p, ok := platformLabels[ns]; ok {
+		return p
+	}
+	if ns == "" {
+		return ""
+	}
+	return strings.ToUpper(ns[:1]) + ns[1:]
 }
 
 // presenceDescription is the line shown for a friend who is somewhere this
