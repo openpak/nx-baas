@@ -162,7 +162,26 @@ func homeAsOnline(p Presence) Presence {
 	if p.AppID == "" && (p.AppField == "" || p.AppField == "{}") {
 		p.AppField = descriptionAppField(clientLabel("switch", p.Client))
 	}
+	if id := testAppID(p.Client); id != "" && p.AppID == "" {
+		p.AppID, p.PresenceGroupID = id, id
+	}
 	return p
+}
+
+// testAppID is a probe, not a feature: NX_HOME_TEST_APPIDS="harbor=01fe000000000000,switch=..."
+// gives a client an app id so the friend list can be seen drawing a title for it (and the
+// requests the viewer makes to name it measured). An empty client is "switch". Remove with the
+// experiment.
+func testAppID(client string) string {
+	if client == "" {
+		client = "switch"
+	}
+	for _, kv := range strings.Split(getenv("NX_HOME_TEST_APPIDS", ""), ",") {
+		if k, v, ok := strings.Cut(strings.TrimSpace(kv), "="); ok && strings.EqualFold(k, client) {
+			return v
+		}
+	}
+	return ""
 }
 
 // departedAt answers when a device's claim, ending at `at`, stopped reading as

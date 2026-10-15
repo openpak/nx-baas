@@ -696,3 +696,13 @@ func TestHomeAsOnline(t *testing.T) {
 		}
 	}
 }
+
+func TestTestAppID(t *testing.T) {
+	if got := testAppID("harbor"); got != "" {
+		t.Fatalf("unset: %q", got)
+	}
+	t.Setenv("NX_HOME_TEST_APPIDS", "harbor=01fe000000000000, Switch=0100a5a020d5e000")
+	if testAppID("harbor") != "01fe000000000000" || testAppID("") != "0100a5a020d5e000" || testAppID("pier") != "" {
+		t.Fatal("mapping")
+	}
+}

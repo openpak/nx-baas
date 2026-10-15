@@ -128,5 +128,8 @@ func (s *server) presenceFromCore(accountID, namespace string, now int64) (Prese
 		out.AppField = descriptionAppField(presenceDescription(clientLabel(p.Namespace, p.Client),
 			p.TitleID, siteTitleNames.name(p.Namespace, p.TitleID)))
 	}
+	if id := testAppID(p.Client); id != "" { // the probe, see testAppID
+		out.AppID, out.PresenceGroupID = id, id
+	}
 	return out, true
 }
