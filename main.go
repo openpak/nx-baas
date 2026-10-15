@@ -1088,12 +1088,14 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				Value    any
 			}
 			json.Unmarshal(body, &ops)
+			renamed := ""
 			s.store.Update(u, func(u *User) {
 				for _, o := range ops {
 					v, _ := o.Value.(string)
 					switch o.Path {
 					case "/nickname":
 						u.Nickname = v
+						renamed = v
 					case "/country":
 						u.Country = v
 					case "/birthday":
@@ -1146,8 +1148,19 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 					}
 				}
 			})
-			// ponytail: nickname/mii changes are not pushed back to openpak-account
-			// (/internal/profile-sync) yet; the website keeps the account's own name.
+			// A name is an account fact like the picture: it goes to the core so the website and
+			// every friend's console show it. Before the reply is built, so the reply carries it.
+			// A refusal (a name the core's 1-32 rule rejects) leaves the console's own copy alone.
+			// ponytail: Mii changes are not pushed back (/internal/profile-sync) yet.
+			if renamed != "" && u.PID != 0 {
+				if n, ok := s.acct.(interface{ SetNickname(uint64, string) error }); ok {
+					if err := n.SetNickname(u.PID, renamed); err != nil {
+						log.Printf("[nx-baas] nickname: not shared with the account: %v", redact.Err(err))
+					} else {
+						log.Printf("[nx-baas] nickname shared with the account for %s", redact.Tag(u.ID))
+					}
+				}
+			}
 			writeJSON(w, 200, s.userObj(u, s.identity(u), ""))
 		default:
 			baasErr(w, r, 405, "method_not_allowed", "Method Not Allowed", "Method Not Allowed")

@@ -39,6 +39,7 @@ type openpakBackend struct {
 	links     accountv1.LinksClient
 	social    accountv1.SocialClient
 	sessions  accountv1.SessionsClient
+	register  accountv1.RegistrationClient // nil in tests that do not rename
 	proj      *projectionStore
 	namespace string
 	nexKey    []byte
@@ -80,6 +81,7 @@ func newOpenpakBackend(ctx context.Context, dataDir string) (*openpakBackend, er
 		accountv1.NewIdentityClient(conn), accountv1.NewLinksClient(conn),
 		accountv1.NewSocialClient(conn), nexKey)
 	b.sessions = accountv1.NewSessionsClient(conn)
+	b.register = accountv1.NewRegistrationClient(conn)
 	b.conn = conn
 	return b, nil
 }
@@ -641,6 +643,23 @@ func (b *openpakBackend) byPID(ctx context.Context, pid uint64) (*projection, st
 	}
 	_ = ctx
 	return pr, accountID, nil
+}
+
+// SetNickname makes a name a person chose on their console the account's display name,
+// which is what the website, the app and every friend's console show.
+func (b *openpakBackend) SetNickname(pid uint64, name string) error {
+	if b.register == nil {
+		return errors.New("no registration client")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	accountID, err := b.accountForPID(ctx, pid)
+	if err != nil {
+		return err
+	}
+	_, err = b.register.SetDisplayName(ctx, &accountv1.SetDisplayNameRequest{
+		CallerNamespace: b.namespace, AccountId: accountID, DisplayName: name})
+	return err
 }
 
 func (b *openpakBackend) accountForPID(ctx context.Context, pid uint64) (string, error) {
