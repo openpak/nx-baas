@@ -423,9 +423,9 @@ func (b *openpakBackend) Identity(pid uint64) (*Identity, error) {
 	return id, nil
 }
 
-// friendView renders one core account as a BAAS Friend. Accounts without a
-// console projection are skipped: they have no pid/friend code to render and
-// fabricating one would break identity guarantees (SW-04).
+// friendView renders one core account as a BAAS Friend, minting its console
+// projection first if it has none (ensure is idempotent and core-linked, so
+// the identity is real, not fabricated: SW-04).
 // friendView renders a friend of the core's list. since is when the friendship was accepted (0 for a
 // pending request, which has none): what a console's friend page shows as "When You Became Friends".
 // Before the core said, this carried the time the friend was first seen here, which is not it.
@@ -442,7 +442,17 @@ func (b *openpakBackend) friendView(accountID, displayName string, since int64) 
 	}
 	b.proj.mu.Unlock()
 	if prCopy == nil {
-		return nil
+		// Every account has a Switch identity: one that has never been on a
+		// console gets its pid, BAAS id and friend code on first sight here.
+		ectx, ecancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer ecancel()
+		minted, err := b.ensure(ectx, accountID)
+		if err != nil {
+			logErr("friendView ensure", err)
+			return nil
+		}
+		c := *minted
+		prCopy = &c
 	}
 	nick := prCopy.Nickname
 	if displayName != "" {

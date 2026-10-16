@@ -11,6 +11,14 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.54.13 — 2026-10-16
+
+- **Every friend gets a Switch identity, whether or not they have used a Switch.** The console's
+  friend list skipped any core friend without a Switch projection, so a friend who only plays on
+  Xbox or PlayStation never appeared, and neither did their online state. `friendView` now mints
+  the pid, BAAS id and friend code on first sight (`ensure`, core-linked), so cross-platform
+  presence reaches the console.
+
 ## v0.52.0 — 2026-10-10
 
 - **A Switch now gets "<friend> is online" for friends on Harbor (and for every friend).** The
