@@ -19,7 +19,7 @@ of truth; this file is the readable summary.
   parser reads and hashes. Proven on Harbor: push, `nn.bcat.EventWatcher` receive, list fetch
   two seconds later. `NX_PENNE_NEWS_RECEIVER` still overrides the token.
 
-## v0.54.16 — 2026-10-16
+## v0.54.17 — 2026-10-16
 
 - **A friend coming online on another platform (Pier, Xbox, Wii U) now notifies the Switch.** The core
   announces no presence change, so the console read such a friend only when it re-fetched its list
