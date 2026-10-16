@@ -11,6 +11,13 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.54.14 — 2026-10-16
+
+- **A friend who never used a Switch now shows their name and picture.** `friendView` and `Resolve`
+  fall back to the account's display name when the projection has none, and the `/1/<baas id>`
+  thumbnail route resolves the account through the core when no console record exists, instead of
+  serving the default image.
+
 ## v0.54.13 — 2026-10-16
 
 - **Every friend gets a Switch identity, whether or not they have used a Switch.** The console's

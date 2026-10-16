@@ -881,6 +881,8 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			pid, _ = strconv.ParseUint(strings.TrimSuffix(strings.TrimPrefix(p, "/avatar/"), ".jpg"), 10, 64)
 		} else if u := s.store.User(p[3:]); u != nil {
 			pid = u.PID
+		} else if f := s.resolveFriend(p[3:]); f != nil {
+			pid = f.PID // an account that has never been on a console
 		}
 		id, err := s.acct.Identity(pid)
 		avatar := ""

@@ -471,6 +471,9 @@ func (b *openpakBackend) friendView(accountID, displayName string, since int64) 
 	defer cancel()
 	if acc, err := b.identity.GetAccount(ctx, &accountv1.GetAccountRequest{AccountId: accountID}); err == nil {
 		f.Country = acc.GetCountry()
+		if f.Nickname == "" {
+			f.Nickname = acc.GetDisplayName() // a projection minted by ensure has none
+		}
 	} else {
 		logErr("friendView get-account", err)
 	}
@@ -506,6 +509,9 @@ func (b *openpakBackend) Resolve(q url.Values) (*Friend, error) {
 	defer cancel()
 	if acc, err := b.identity.GetAccount(ctx, &accountv1.GetAccountRequest{AccountId: accountID}); err == nil {
 		f.Country = acc.GetCountry()
+		if f.Nickname == "" {
+			f.Nickname = acc.GetDisplayName()
+		}
 	} else {
 		logErr("resolve get-account", err) // silence here is why country stayed empty
 	}
