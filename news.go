@@ -146,20 +146,21 @@ func (f *newsForwarder) forward(w http.ResponseWriter, r *http.Request) {
 
 // ---------- push ----------
 
-// newsReceiverToken is the Penne Meta routing token a news message is addressed to: the
-// bcat program id, by the friends module's precedent (it listens under its own program
-// id). Unconfirmed; NX_PENNE_NEWS_RECEIVER overrides it without a rebuild.
+// newsReceiverToken is the Penne Meta routing token a news message is addressed to. bcat
+// registers its npns listen key with ListenToByName("bcat") (23.0.1 bcat, rodata 0x3119e7),
+// not its program id like friends; confirmed on Harbor 2026-10-16 (the frame reaches
+// nn.bcat.EventWatcher and the list is fetched). NX_PENNE_NEWS_RECEIVER overrides it.
 var newsReceiverToken = func() string {
 	if v := os.Getenv("NX_PENNE_NEWS_RECEIVER"); v != "" {
 		return v
 	}
-	return "0x010000000000000c"
+	return "bcat"
 }()
 
 // POST /internal/news/push {"topic_id":"openpak_news","revision":7[,"wait_range":600]
 // [,"subscription":"<raw topic>"]}
 //
-// Delivers {"type":"news","topic_id","revision"[,"wait_range"]} to every live connection
+// Delivers {"type":"news","topic_id","revision"[,"wait_range"]} (revision as a JSON string) to every live connection
 // subscribed to the topic. "subscription" names the Penne topic string when it differs
 // from the News topic id (the naming is what hardware still has to show); without it the
 // topic id itself is matched. Live delivery only: a console that is offline refreshes on
@@ -185,7 +186,9 @@ func (s *server) newsPush(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, http.StatusBadRequest, "topic_id and revision required")
 		return
 	}
-	msg := map[string]any{"type": "news", "topic_id": in.TopicID, "revision": in.Revision}
+	// bcat reads "$.revision" with its string getter and hashes it; a bare number is ignored
+	// and nothing is fetched (23.0.1 bcat FUN_00206f50, proven on Harbor 2026-10-16).
+	msg := map[string]any{"type": "news", "topic_id": in.TopicID, "revision": in.Revision.String()}
 	if in.WaitRange != "" {
 		msg["wait_range"] = in.WaitRange
 	}

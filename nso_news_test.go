@@ -223,7 +223,7 @@ func TestNewsPushNeedsTheKeyAndReachesSubscribers(t *testing.T) {
 	select {
 	case out := <-subscribed.send:
 		if !bytes.Contains(out.frame, []byte(`"type":"news"`)) || !bytes.Contains(out.frame, []byte(`"topic_id":"openpak_news"`)) ||
-			!bytes.Contains(out.frame, []byte(`"revision":7`)) {
+			!bytes.Contains(out.frame, []byte(`"revision":"7"`)) {
 			t.Errorf("frame does not carry the news message: %q", out.frame)
 		}
 	default:

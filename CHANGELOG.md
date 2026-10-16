@@ -11,6 +11,14 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.54.16 — 2026-10-16
+
+- **A news push now makes consoles fetch the channel.** bcat registers its npns listen key by
+  name (`ListenToByName("bcat")`), so `/internal/news/push` frames are addressed to `bcat`
+  instead of the program id, and `revision` goes out as a JSON string, which is what bcat's
+  parser reads and hashes. Proven on Harbor: push, `nn.bcat.EventWatcher` receive, list fetch
+  two seconds later. `NX_PENNE_NEWS_RECEIVER` still overrides the token.
+
 ## v0.54.15 — 2026-10-16
 
 - **A picture set on the website reaches a console that already cached the default.** A friend known
