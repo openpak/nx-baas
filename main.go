@@ -2820,6 +2820,7 @@ func main() {
 		// One presence reconciler beside the one core-event poller: leases,
 		// heartbeats and expiries on the adapter's clock (PRE-02).
 		go s.reconcilePresenceLoop()
+		go s.followCorePresence(b)
 	}
 	// B workstream: the penne state file lives beside the BAAS store; the
 	// sweeper drives delivery retries, expiry and retention (NTF-05). Once Penne

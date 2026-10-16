@@ -19,6 +19,15 @@ of truth; this file is the readable summary.
   parser reads and hashes. Proven on Harbor: push, `nn.bcat.EventWatcher` receive, list fetch
   two seconds later. `NX_PENNE_NEWS_RECEIVER` still overrides the token.
 
+## v0.54.16 — 2026-10-16
+
+- **A friend coming online on another platform (Pier, Xbox, Wii U) now notifies the Switch.** The core
+  announces no presence change, so the console read such a friend only when it re-fetched its list
+  and never got the "is online" pop-up. `followCorePresence` polls the core's presence for every
+  Switch user's non-Switch friends every 5 s and submits a `presence_updated` on each change
+  (online, game, offline), with the same visibility rules as a Switch friend. First sight of an
+  offline friend and friends with live Switch presence are skipped.
+
 ## v0.54.15 — 2026-10-16
 
 - **A picture set on the website reaches a console that already cached the default.** A friend known
