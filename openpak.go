@@ -477,6 +477,9 @@ func (b *openpakBackend) friendView(accountID, displayName string, since int64) 
 	} else {
 		logErr("friendView get-account", err)
 	}
+	if site := getenv("WEBSITE_INTERNAL_URL", ""); site != "" {
+		f.PictureAt = websitePictureAt(site + "/media/avatars/" + accountID + "/console.jpg")
+	}
 	return f
 }
 

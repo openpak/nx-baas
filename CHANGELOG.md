@@ -11,6 +11,13 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.54.15 — 2026-10-16
+
+- **A picture set on the website reaches a console that already cached the default.** A friend known
+  only to the core had an unversioned thumbnail URL, so a console that fetched the default once
+  never asked again. `friendView` now reads the picture's Last-Modified from the website and
+  `friendObj` appends it as `?v=`.
+
 ## v0.54.14 — 2026-10-16
 
 - **A friend who never used a Switch now shows their name and picture.** `friendView` and `Resolve`

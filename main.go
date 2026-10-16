@@ -739,6 +739,9 @@ func (s *server) friendObj(f Friend, now int64) map[string]any {
 			picAt, picKnown = at, true
 		}
 	}
+	if f.PictureAt > 0 && !picKnown {
+		picAt, picKnown = f.PictureAt, true // versioned, so a console drops the default it cached
+	}
 	thumbURL, thumb2URL := cdnHost+"/1/"+f.BaasUserID, cdnHost+"/2/"+f.BaasUserID
 	if picKnown {
 		thumbURL += fmt.Sprintf("?v=%d", picAt)

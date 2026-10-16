@@ -37,6 +37,7 @@ type Friend struct {
 	FriendCode       string `json:"friendCode"`
 	Avatar           string `json:"avatar"`
 	CreatedAt        int64  `json:"createdAt"`
+	PictureAt        int64  `json:"-"` // when the account's website picture last changed; 0 = none
 	PresenceStatus   int    `json:"presenceStatus"`
 	PresenceAppField string `json:"presenceAppField"`
 	PresenceAppID    string `json:"presenceAppId"`
