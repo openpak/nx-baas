@@ -1,110 +1,66 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package main
 
-// Pushing presence that changed on another platform.
+// Presence that changed on another platform, as the core tells it.
 //
-// presenceFromCore lets a console READ a friend who is on Pier, Xbox or a
-// Wii U, but the core announces no presence change, and a console only
-// re-reads its list when told something happened. So a friend signing in on
-// another platform never produced the "<friend> is online" a Switch friend
-// does. This loop closes that: it looks at the core's presence for the
-// non-Switch friends of every Switch user, and submits a presence_updated for
-// each change, the same notification notifyPresenceIfChanged sends for a Switch
-// friend.
-//
-// ponytail: polling at corePushEvery, one GetPresence per friend through the
-// 10 s cache; a presence-change event in the core's stream (and a batched
-// lookup) replaces this if the friend count ever makes it matter.
+// The core emits presence_changed to each friend who is online on a network, naming whose
+// presence moved. A console only re-reads its list when told something happened, so this is what
+// turns "somebody signed in on Pier" into the same presence_updated a Switch friend produces.
+// Only the friend's own console hears it: a network where none of the person's friends are
+// online is never sent anything.
 
 import (
 	"context"
 	"fmt"
 	"strings"
 	"time"
-
-	accountv1 "nx-baas/accountpb"
 )
 
-const corePushEvery = 5 * time.Second
-
-func (s *server) followCorePresence(b *openpakBackend) {
-	last := map[string]string{} // friend account -> state|app|appField last pushed
-	for ; ; time.Sleep(corePushEvery) {
-		s.pushCorePresence(b, last)
-	}
-}
-
-func (s *server) pushCorePresence(b *openpakBackend, last map[string]string) {
+// notifyCorePresence sends one viewer (a Switch user, by core account) the presence of subject
+// (the core account whose presence moved).
+func (s *server) notifyCorePresence(b *openpakBackend, viewerAccount, subjectAccount string) {
 	b.proj.mu.Lock()
-	var viewers []*User
-	for _, pr := range b.proj.ByAccount {
-		if u := s.store.User(pr.BaasUserID); u != nil {
-			viewers = append(viewers, u)
-		}
-	}
+	vpr, spr := b.proj.ByAccount[viewerAccount], b.proj.ByAccount[subjectAccount]
 	b.proj.mu.Unlock()
-
-	// friend account -> the Switch users who have them as a friend
-	watchers := map[string][]*User{}
-	for _, v := range viewers {
+	if vpr == nil {
+		return // not a Switch user here
+	}
+	if spr == nil { // never on a console: the friend list mints its identity, so do it now
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		acc := b.accountFor(v.PID)
-		res, err := b.social.ListFriends(ctx, &accountv1.ListFriendsRequest{AccountId: acc})
-		cancel()
-		if err != nil {
-			logErr("core presence push list-friends", err)
-			continue
-		}
-		for _, f := range res.GetFriends() {
-			watchers[f.GetAccountId()] = append(watchers[f.GetAccountId()], v)
+		defer cancel()
+		var err error
+		if spr, err = b.ensure(ctx, subjectAccount); err != nil {
+			logErr("presence push ensure", err)
+			return
 		}
 	}
-
+	viewer := s.store.User(vpr.BaasUserID)
+	if viewer == nil || containsID(viewer.Blocks, spr.BaasUserID) {
+		return
+	}
 	now := time.Now().Unix()
-	for friendID, vs := range watchers {
-		b.proj.mu.Lock()
-		pr := b.proj.ByAccount[friendID]
-		b.proj.mu.Unlock()
-		if pr == nil {
-			continue // no Switch identity yet: the friend list mints one, this waits
-		}
-		// A friend with a live Switch presence is pushed by notifyPresenceIfChanged.
-		if u := s.store.User(pr.BaasUserID); u != nil && aggregatePresence(u, now, presenceLease()).State != "OFFLINE" {
-			delete(last, friendID)
-			continue
-		}
-		if p, ok := s.corePresenceOf(friendID); ok && strings.EqualFold(p.Namespace, b.namespace) {
-			continue
-		}
-		agg, live := s.presenceFromCore(friendID, b.namespace, now)
-		if !live {
-			agg = Presence{State: "OFFLINE", UpdatedAt: now, LogoutAt: now, ACDIndex: -1}
-		}
-		snap := agg.State + "|" + agg.AppID + "|" + agg.AppField
-		prev, seen := last[friendID]
-		last[friendID] = snap
-		if !seen {
-			if !live {
-				continue // first sight of an offline friend is not news
-			}
-		} else if prev == snap {
-			continue
-		}
-		for _, v := range vs {
-			if containsID(v.Blocks, pr.BaasUserID) {
-				continue
-			}
-			createdAt := nextPresenceStamp(pr.BaasUserID, v.ID, agg.UpdatedAt)
-			s.SubmitNotification(PenneDelivery{
-				ID:     fmt.Sprintf("presence:%s:%s:%d:%s", pr.BaasUserID, v.ID, createdAt, snap),
-				UserID: v.ID,
-				Kind:   EventPresenceUpdated,
-				Payload: map[string]any{
-					"friendId":  pr.BaasUserID,
-					"createdAt": createdAt,
-					"value":     presenceEventValue(pr.BaasUserID, agg),
-				},
-			})
-		}
+	// A friend with a live Switch presence is pushed by notifyPresenceIfChanged.
+	if u := s.store.User(spr.BaasUserID); u != nil && aggregatePresence(u, now, presenceLease()).State != "OFFLINE" {
+		return
 	}
+	s.coreSeen().forget(subjectAccount) // the event is the news; the 10 s cache would answer with the old state
+	if p, ok := s.corePresenceOf(subjectAccount); ok && strings.EqualFold(p.Namespace, b.namespace) {
+		return
+	}
+	agg, live := s.presenceFromCore(subjectAccount, b.namespace, now)
+	if !live {
+		agg = Presence{State: "OFFLINE", UpdatedAt: now, LogoutAt: now, ACDIndex: -1}
+	}
+	snap := agg.State + "|" + agg.AppID + "|" + agg.AppField
+	createdAt := nextPresenceStamp(spr.BaasUserID, viewer.ID, agg.UpdatedAt)
+	s.SubmitNotification(PenneDelivery{
+		ID:     fmt.Sprintf("presence:%s:%s:%d:%s", spr.BaasUserID, viewer.ID, createdAt, snap),
+		UserID: viewer.ID,
+		Kind:   EventPresenceUpdated,
+		Payload: map[string]any{
+			"friendId":  spr.BaasUserID,
+			"createdAt": createdAt,
+			"value":     presenceEventValue(spr.BaasUserID, agg),
+		},
+	})
 }

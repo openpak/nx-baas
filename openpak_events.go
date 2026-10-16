@@ -61,6 +61,11 @@ func (s *server) followCoreEvents(b *openpakBackend) {
 				// Integration wiring: the state above is committed, so the
 				// native notification may now be submitted (notify_wiring.go).
 				s.notifyCoreFriendEvent(b, e.GetType(), e.GetAccountId(), e.GetSubjectId(), e.GetVersion())
+			case "presence_changed":
+				// account = a friend online on this network, subject = whose presence moved.
+				if e.GetNamespace() == b.namespace { // addressed to a friend on another network: not ours
+					s.notifyCorePresence(b, e.GetAccountId(), e.GetSubjectId())
+				}
 			case "account_unbanned":
 				s.forgetBan(e.GetAccountId())
 			case "account_banned", "account_deleted", "account_delete_started", "credential_revoked", "link_unlinked":

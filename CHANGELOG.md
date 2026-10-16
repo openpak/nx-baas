@@ -11,6 +11,13 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.54.18 — 2026-10-16
+
+- **Presence on another platform arrives as a core event, not a poll.** The core (v0.16.0) now sends
+  `presence_changed` to each friend online on a network, scoped to it. `followCoreEvents` handles
+  those addressed to `switch` and sends the viewer one `presence_updated` for the account that moved
+  (`notifyCorePresence`). The 5 s poller from v0.54.17 is gone.
+
 ## v0.54.16 — 2026-10-16
 
 - **A news push now makes consoles fetch the channel.** bcat registers its npns listen key by

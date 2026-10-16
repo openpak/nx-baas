@@ -41,6 +41,14 @@ type corePresenceCache struct {
 	byID map[string]corePresence
 }
 
+// forget drops what is remembered about one account, so the next lookup asks the core.
+func (c *corePresenceCache) forget(accountID string) {
+	c.mu.Lock()
+	delete(c.at, accountID)
+	delete(c.byID, accountID)
+	c.mu.Unlock()
+}
+
 // coreSeen is per server, not per process: two servers in one test binary do
 // not share what the core told one of them.
 func (s *server) coreSeen() *corePresenceCache {
