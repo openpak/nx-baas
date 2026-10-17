@@ -11,6 +11,13 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.54.19 — 2026-10-17
+
+- **Every core account has a Switch identity, not just the ones that touched a Switch.** A minute
+  after start and every minute after, `provisionAllAccounts` walks the core's account directory
+  (`Identity.ListAccounts`) and mints the pid, BAAS id and friend code of any account without one,
+  so a new account is on the Switch network within a minute, with its display name.
+
 ## v0.54.18 — 2026-10-16
 
 - **Presence on another platform arrives as a core event, not a poll.** The core (v0.16.0) now sends
