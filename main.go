@@ -151,6 +151,8 @@ type server struct {
 	penneRemote *penneRemote
 	// pctlFwd forwards parental controls to nx-pctl once they have moved (split.go).
 	pctlFwd *httputil.ReverseProxy
+	// bcatFwd is nx-bcat once the bcat hosts have moved (NX_BCAT_URL, split.go).
+	bcatFwd *httputil.ReverseProxy
 	// playfabFwd serves only explicitly supported PlayFab titles (playfab.go).
 	playfabFwd *httputil.ReverseProxy
 	// Penne record store: what this server has written to each account's

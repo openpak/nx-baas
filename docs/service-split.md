@@ -14,6 +14,7 @@ per-service convention, plus one small shared module:
 | **nx-shop** | the native eShop: savanna/bugyo pages and API, store admin, atum and the d4c family, beach, dragonst, tigers, the store rights routes of dragons, pushmo/tagaya/superfly/veer/aqua/sun, bundles, idbe, bvc, pearljam | `shop/` (catalog, state, packages), `idbe/`, `pearljam/` |
 | **nx-penne** | Penne: registrations (god), login tickets (val), the persistent frontline (fro-), delivery, topic and device messages | `penne.json` |
 | **nx-pctl** | parental controls: moon (`api-*.pctl`), the explainer movie, `/internal/pctl` for the website | `pctl.json` |
+| **nx-bcat** | the BCAT hosts (bcat-list/topics/data): signed News channels, native game data, the topic push; holds the BCAT signing and News AES keys. Content stays in the news service, read over its internal API (`../nx-bcat/README.md`). `NX_BCAT_URL` forwards the bcat hosts to it | `builds/` (a cache of what news published) |
 | **nx-common** | shared Go module: `nxtls`, `nxjwt`, `nxhttp`, `internalkey`, `nxapi` (the internal contract and its client) | none |
 
 The local directories sit beside this one (`../nx-shop`, `../nx-penne`, `../nx-pctl`,

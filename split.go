@@ -74,7 +74,14 @@ func (s *server) forwardersFromEnv() {
 		s.pctlFwd = newForwarder("nx-pctl", u)
 		log.Printf("[nx-baas] parental controls moved: forwarding the pctl hosts and /internal/pctl to %s", u)
 	}
+	if u := os.Getenv("NX_BCAT_URL"); u != "" {
+		s.bcatFwd = newForwarder("nx-bcat", u)
+		log.Printf("[nx-baas] BCAT moved: forwarding the bcat hosts (News lists, game data) to %s", u)
+	}
 }
+
+// isBcatHost names the BCAT hosts (bcat-list, bcat-topics, bcat-data): nx-bcat's.
+func isBcatHost(host string) bool { return strings.HasPrefix(host, "bcat-") }
 
 // isPctlHost names the parental-controls hosts: moon's API host and the explainer movie's.
 func isPctlHost(host string) bool {
@@ -131,13 +138,18 @@ func (s *server) forwardMoved(w http.ResponseWriter, r *http.Request) bool {
 		s.pctlFwd.ServeHTTP(w, r)
 		return true
 	}
+	if s.bcatFwd != nil && isBcatHost(host) {
+		s.bcatFwd.ServeHTTP(w, r)
+		return true
+	}
 	return false
 }
 
 // movedFamily reports whether host belongs to a family this process forwards.
 func (s *server) movedFamily(host string) bool {
 	return s.shopFwd != nil && (isShopHost(host) || strings.HasPrefix(host, "dragons.")) ||
-		s.penneFwd != nil && isPenneHost(host) || s.pctlFwd != nil && isPctlHost(host)
+		s.penneFwd != nil && isPenneHost(host) || s.pctlFwd != nil && isPctlHost(host) ||
+		s.bcatFwd != nil && isBcatHost(host)
 }
 
 // forwardRead forwards a request whose body this process already read.
