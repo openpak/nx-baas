@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-// OpenPak account server (openpak-account) client: the source of truth for identity, friend
+// OpenPak account server client: the source of truth for identity, friend
 // codes and the friend graph. Its /internal/* endpoints are guarded by source network
 // (internal_net.conf), so this service must run on the same compose network.
 type accountClient struct {
@@ -153,7 +153,7 @@ func (a *accountClient) FriendAccept(pid, from uint64, accept bool) error {
 	return a.postJSON("/internal/friend-accept", map[string]any{"pid": pid, "from": from, "accept": accept}, nil)
 }
 
-// RemoveFriend on the legacy stack: its only lever is friend-accept with
+// RemoveFriend on the earlier account stack: its only lever is friend-accept with
 // accept=false, which ends a pending request and is best-effort for an
 // accepted friendship. The core contract request for a real removal there is
 // in the ledger; until it lands, a removal that could not commit comes back
@@ -162,14 +162,14 @@ func (a *accountClient) RemoveFriend(pid, other uint64) error {
 	return a.FriendAccept(pid, other, false)
 }
 
-// Block/Unblock on the legacy stack: that core has no block contract, so the
+// Block/Unblock on the earlier account stack: that core has no block contract, so the
 // adapter's local mirror is the enforcement surface there. The openpak core —
 // the target backend — owns the durable block; this is a documented
 // limitation of the fallback backend, not a model to copy.
 func (a *accountClient) Block(uint64, uint64) error   { return nil }
 func (a *accountClient) Unblock(uint64, uint64) error { return nil }
 
-// nexToken is openpak-account's signNexToken, byte for byte: the "openpak" claim the game servers
+// nexToken matches the earlier account server's NEX token signing, byte for byte: the "openpak" claim the game servers
 // (Photon, NPLN) use to bind a login to a PID. Shared OPENPAK_SECRET.
 func (a *accountClient) nexToken(pid uint64, username string) string {
 	if len(a.secret) == 0 {
@@ -183,7 +183,7 @@ func (a *accountClient) nexToken(pid uint64, username string) string {
 
 func (a *accountClient) nexSigningKey() []byte { return a.secret }
 
-// The legacy backend keeps no account-id projection: friend codes come from
+// The earlier account backend keeps no account-id projection: friend codes come from
 // the account server there, and nothing asks this path for one.
 func (a *accountClient) friendCodeForAccount(string) (string, bool) { return "", false }
 func (a *accountClient) accountForFriendCode(string) (string, bool) { return "", false }

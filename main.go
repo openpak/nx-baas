@@ -1,5 +1,5 @@
 // nx-baas: the BAAS (baas.nintendo.com) and Nintendo Account (accounts.nintendo.com) servers a
-// real CFW Switch talks to, backed by openpak-account for identity and the friend graph.
+// real CFW Switch talks to, backed by the account server for identity and the friend graph.
 //
 // Flow the console drives (account sysmodule, then the friends sysmodule with the same device
 // account):  dauth -> POST /1.0.0/application/token -> POST /1.0.0/users (first boot) ->
@@ -188,7 +188,7 @@ func baasErr(w http.ResponseWriter, r *http.Request, status int, code, title, de
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	// Captured from a reference reply, which sends both beside the no-cache
+	// Captured from a real reply, which sends both beside the no-cache
 	// this already had.
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Vary", "Accept-Encoding,Origin")
@@ -493,7 +493,7 @@ func (s *server) identity(u *User) *Identity {
 
 const cdnHost = "https://cdn-image-e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com"
 
-// avatarURL: the console wants an https URL, never inline data. openpak-account hands us the
+// avatarURL: the console wants an https URL, never inline data. The earlier account server hands us the
 // raw base64 JPEG; we serve it at /avatar/<pid>.jpg on the cdn-image host (in our cert + route).
 func avatarURL(pid uint64, b64 string, updatedAt int64) string {
 	if b64 == "" {
@@ -718,7 +718,7 @@ func (s *server) friendObj(f Friend, now int64) map[string]any {
 		if local.UpdatedAt > updatedAt {
 			updatedAt = local.UpdatedAt
 		}
-		// One, as the reference search result carries. Eleven of them is this
+		// One, as a real search result carries. Eleven of them is this
 		// server telling a console about every profile that ever registered,
 		// and nothing that reads a friend expects that.
 		if n := len(local.DeviceAccounts); n > 0 {
@@ -783,7 +783,7 @@ func (s *server) friendObj(f Friend, now int64) map[string]any {
 			"personalNotification": true, "personalNotificationUpdatedAt": created,
 			"presence": "FRIENDS", "presenceUpdatedAt": created,
 		},
-		// Exactly the groups a reference reply carries about somebody else:
+		// Exactly the groups a real reply carries about somebody else:
 		// foaf and self are empty, and friends has no isChatActivated. self is
 		// the visibility group only its owner sees, so putting anything in it
 		// for a stranger is both wrong and, to this console, unparsable.
@@ -3025,7 +3025,7 @@ func main() {
 // not something to leave to a constant.
 // naAddress is users/me's email and screenName. A Nintendo Account's screenName is its address
 // masked: the first two characters of the name, the first of the domain ("ne•••@e••••" in the
-// captured sample). Without an address (the legacy backend has none) the sample's values remain.
+// captured sample). Without an address (the earlier account backend has none) the sample's values remain.
 func naAddress(address string) (email, screenName string) {
 	name, domain, ok := strings.Cut(address, "@")
 	if !ok || name == "" || domain == "" {

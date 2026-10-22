@@ -710,7 +710,7 @@ func (s *server) invitationGroupCreate(w http.ResponseWriter, r *http.Request, b
 }
 
 // invitationCoreFor returns the core surface when the adapter runs on the
-// openpak core; nil otherwise (the legacy path falls back to projections).
+// openpak core; nil otherwise (the fallback uses projections).
 // Tests install a fake through invCoreOverride.
 var invCoreOverride invitationCore
 
@@ -726,7 +726,7 @@ func (s *server) invitationCoreFor() invitationCore {
 
 // legacyMayInvite is the non-core fallback: the legacy friend list plus
 // local block lists on both sides. The core path (CheckInteraction) is the
-// authoritative one; this exists so the proven legacy deployment keeps
+// authoritative one; this exists so the proven earlier deployment keeps
 // working unchanged.
 func (s *server) legacyMayInvite(me *User, targetUID string) bool {
 	target := s.store.User(targetUID)

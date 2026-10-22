@@ -1,7 +1,7 @@
 package main
 
 // Game-facing HTTP API on a plain internal port (ports.md: 20070). These are the endpoints
-// the Photon server and the emulator used to get from openpak-account:
+// the Photon server and the emulator used to get from the earlier account server:
 //
 //	POST /internal/photon-room   Photon publishes the room a player just entered, so the
 //	                             host shows up as joinable in a friend's list.
@@ -51,7 +51,7 @@ func apiErr(w http.ResponseWriter, status int, msg string) {
 
 // ---------- bearer ----------
 
-// verifyNexToken checks the "nx2." token both this server and openpak-account mint
+// verifyNexToken checks the "nx2." token both this server and the earlier account server mint
 // (nexToken): HMAC-SHA256 over "nex:<pid>.<username>.<expiry>". Returning the PID is the
 // whole point -- it is what binds a request to an account.
 func verifyNexToken(key []byte, tok string) (uint64, string, bool) {
