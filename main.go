@@ -3024,12 +3024,12 @@ func main() {
 // own. The two objects are read in the same link, and disagreeing about where someone lives is
 // not something to leave to a constant.
 // naAddress is users/me's email and screenName. A Nintendo Account's screenName is its address
-// masked: the first two characters of the name, the first of the domain ("ne•••@e••••" in the
+// masked: the first two characters of the name, the first of the domain ("pl•••@e••••" in the
 // captured sample). Without an address (the earlier account backend has none) the sample's values remain.
 func naAddress(address string) (email, screenName string) {
 	name, domain, ok := strings.Cut(address, "@")
 	if !ok || name == "" || domain == "" {
-		return "player@example.com", "ne•••@e••••"
+		return "player@example.com", "pl•••@e••••"
 	}
 	nameRunes, domainRunes := []rune(name), []rune(domain)
 	return address, string(nameRunes[:min(2, len(nameRunes))]) + "•••@" + string(domainRunes[:1]) + "••••"
