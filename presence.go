@@ -465,7 +465,7 @@ func (s *server) reconcilePresenceLoop() {
 func (s *server) reconcilePresenceOnce(now time.Time, lease time.Duration) {
 	b, ok := s.acct.(*openpakBackend)
 	if !ok {
-		return // the legacy backend keeps presence to itself
+		return // the earlier account backend keeps presence to itself
 	}
 	unix := now.Unix()
 	for _, u := range s.store.LiveUsers() {

@@ -25,8 +25,7 @@ declares itself offline.
 
 Source: `servers/splatoon-3/docs/provenance.md`, "The pre-gRPC REST chain":
 `GET /v1/accounts/config` → `{"payload": "<base64 of a JSON object>"}` whose inner object carries
-`online_license.is_available: true` — "**This is the online gate.**" A clean-room reading of the
-earlier network `splatoon-3` server under `docs/clean-room-policy.md`; no code, structure or
+`online_license.is_available: true` — "**This is the online gate.**" Recorded as observed behaviour under `docs/clean-room-policy.md`; no code, structure or
 wording carried across.
 
 `online_license.is_available` is the only field we have a measured meaning for, so the inner object

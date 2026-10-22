@@ -309,7 +309,7 @@ func (s *Store) UserByPID(pid uint64) *User {
 
 // Link = Restore User: the console just created a throwaway user + device account (POST /users)
 // and federates it with the Nintendo Account; the response must be the account's canonical BAAS
-// user (stable id = openpak-account's baasUserID, so every console and game server agree),
+// user (stable id = the account server's baasUserID, so every console and game server agree),
 // with this console's device account added to it. Any previous throwaway is discarded.
 // UserByBsDid finds the user a console identifies itself with. An unlinked user has no
 // account bs:did yet and presents its own BAAS id instead.

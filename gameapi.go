@@ -269,7 +269,7 @@ func (s *server) invitations(w http.ResponseWriter, r *http.Request) {
 // Only queues to the sender's mutual friends -- the console's own Invite Friends only ever
 // lists friends, and without the check this is a generic spam relay. With the OpenPak core
 // attached, the core's own interaction check (friendship, blocks, account status) is the
-// authority; the friend list is the fallback for the legacy backend.
+// authority; the friend list is the fallback for the earlier account backend.
 func (s *server) sendInvitation(w http.ResponseWriter, r *http.Request, from uint64, name string) {
 	var in struct {
 		TargetPIDs     []uint64 `json:"target_pids"`

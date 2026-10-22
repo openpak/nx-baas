@@ -19,7 +19,7 @@ the loading screen never reaches the tenant.
 Source: `servers/splatoon-3/docs/provenance.md`, "The pre-gRPC REST chain":
 `GET /v1/accounts/<other>` (e.g. `vphyms`) → 200 with the `{"payload": …}` envelope, even if the
 inner object is empty. No capture of this exact path exists; the 200 is what breaks the loop. That
-table is a clean-room reading of the earlier network `splatoon-3` server for facts under
+table records observed behaviour under
 `docs/clean-room-policy.md` — no code, structure or wording carried across.
 
 This is the same rule the console link already had: **no console reply may be `{}`**. The envelope

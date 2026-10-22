@@ -1,7 +1,7 @@
 # nx-baas
 
 BAAS (`*.baas.nintendo.com`) and Nintendo Account (`accounts.nintendo.com`) servers for a real
-CFW Switch on the earlier stack. Backed by `openpak-account` (`/internal/*`) for identity,
+CFW Switch. Backed by the earlier account server (`/internal/*`) for identity,
 friend codes and the friend graph; signs the same `openpak-baas-key-1` id_tokens the emulators
 use, with the `openpak` claim, so Photon / NPLN / NEX servers see one identity per account.
 
@@ -34,7 +34,7 @@ do not assert application scope.
 ## OpenPak backend (`ACCOUNT_BACKEND=openpak`)
 
 Identity source is the OpenPak account core over internal gRPC instead of
-`openpak-account`. BAAS behavior is unchanged; the Switch identifier
+the earlier account server. BAAS behavior is unchanged; the Switch identifier
 projection (pid, baas user id, friend code) is owned here, bound to core
 accounts via `Links` (namespace `switch`).
 
@@ -52,7 +52,7 @@ SWITCH_NAMESPACE=switch
 
 Projection store: `$NX_DATA/accounts.json` (account_id → pid/baas id/friend
 code). Identifiers are minted once per account and never migrate (PRD
-SW-01/SW-04). The earlier path stays available (`ACCOUNT_BACKEND` unset)
+SW-01/SW-04). The earlier account backend stays available (`ACCOUNT_BACKEND` unset)
 until cutover is accepted.
 
 ## Linking a console
@@ -111,7 +111,7 @@ back from our own VPS.
 
 Plain HTTP on an internal port — consoles never reach it; the Photon server, the
 emulator and rig tooling do. It is what those callers used to get from
-openpak-account.
+the earlier account server.
 
 | Endpoint | Caller | Notes |
 | --- | --- | --- |

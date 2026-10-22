@@ -24,7 +24,7 @@ friend-list shape. Firmware and Ghidra work remain in the private paths recorded
 Recheck current source and account contracts before treating historical gaps as current.
 
 Use Go 1.26/project licensing, independent implementation and versioned core APIs;
-no direct core database access, copied earlier implementation, secrets or firmware in
+no direct core database access, copied third-party implementation, secrets or firmware in
 commits. Missing core capabilities become concrete contract requests, not adapter-owned
 canonical substitutes. Deliver code for review with deployment/rollback instructions;
 active deployment and console changes follow the owner's existing authorization.

@@ -59,7 +59,7 @@ Contract requests (core review workflow, none blocking this branch):
 3. **Pagination**: `ListFriends` has no page contract; >300-friend accounts need one
    before the native bound can be lifted (evidence says the parser caps at 300 and
    shows no cursor).
-4. **Legacy stack removal/blocks**: openpak-account has no friend-removal or block
+4. **Earlier-backend removal/blocks**: the earlier account server has no friend-removal or block
    contract; the adapter maps removal to friend-accept(false) (pending only) and
    blocks stay adapter-local there. The OpenPak core — the target — has both.
 5. **Presence events**: no core event fires when a session expires; the adapter's

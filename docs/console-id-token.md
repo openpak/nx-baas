@@ -12,8 +12,8 @@ So a title server that can only prove a claim can only serve an emulator: with a
 finds no claim and refuses a login that is perfectly genuine. Treating a missing claim as an error
 *is* the bug.
 
-Source: `servers/nex/docs/provenance.md`, "Identity", read from the earlier network NEX core for
-facts under `docs/clean-room-policy.md` — the token's location, its shape, and which builds add a
+Source: `servers/nex/docs/provenance.md`, "Identity", recorded as facts under
+`docs/clean-room-policy.md` — the token's location, its shape, and which builds add a
 claim. No code, structure or wording was carried across. `servers/nex/docs/design.md` names this
 as the one cross-repo dependency and puts it in this repository, not that one.
 

@@ -23,8 +23,7 @@ Three separate things have to be right, each with its own measured failure:
   theoretical case — it has to be excluded deliberately.
 
 Source: `servers/splatoon-3/docs/provenance.md`, "The pre-gRPC REST chain", which records both
-failures as measured on hardware. That table is itself a clean-room reading of the
-earlier network `splatoon-3` server for facts — endpoint, key spelling, value shape — under
+failures as measured on hardware. That table records observed facts — endpoint, key spelling, value shape — under
 `docs/clean-room-policy.md`. No code, structure or wording was carried across.
 
 This is also the local case of the rule this repository already had from the console link: **no

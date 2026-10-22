@@ -84,7 +84,7 @@ integration. Check repository instructions and concurrent work before editing.
   Do not let a mock contract count as completed integration. Unrelated website, app and
   title-server changes retain their respective owners.
 - Use the project's Go 1.26 and AGPL-3.0-only conventions. Independently implement
-  behavior; earlier material is evidence of observable behavior only and must not be
+  behavior; third-party implementation source is evidence of observable behavior only and must not be
   copied, translated or structurally mirrored into OpenPak.
 - Commit no credentials, tokens, keys, firmware, decompiled Nintendo code, ROMs or asset
   dumps. Use synthetic fixtures and sanitized observations with provenance.

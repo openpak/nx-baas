@@ -1344,5 +1344,5 @@ Friends-contract gaps, from the 22.5.0 friends-module read
 - Adopt unknown device accounts on first use (consoles previously linked to the VPS) [1c94499]
 - NA token: scope as string, signed refresh tokens (survive restarts); users/me: timestamp types [4bea7df]
 - Server cert validity 2020-2036: a console clock behind ours must not see a not-yet-valid cert [690612a]
-- nx-baas: BAAS + Nintendo Account servers for a real CFW Switch, backed by openpak-account [223c063]
+- nx-baas: BAAS + Nintendo Account servers for a real CFW Switch, backed by the earlier account server [223c063]
 
