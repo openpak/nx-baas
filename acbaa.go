@@ -275,7 +275,7 @@ func (s *server) acbaaRegisterUser(w http.ResponseWriter, r *http.Request, body 
 // sub falls back to a name hash rather than refusing: refusing here would
 // lock the player out of online entirely on a token-shape surprise.
 func acbaaUserID(s *server, auth, name string) uint64 {
-	nsa := acbaaLegacyID(auth, name)
+	nsa := acbaaSubID(auth, name)
 	tok := strings.TrimPrefix(auth, "Bearer ")
 	if s != nil && s.key != nil && s.store != nil {
 		if pid, genuine := s.pidForIDToken(tok); genuine && pid != 0 && pid != nsa {
@@ -285,10 +285,10 @@ func acbaaUserID(s *server, auth, name string) uint64 {
 	return nsa
 }
 
-// acbaaLegacyID is the pre-single-identity derivation: the Bearer sub as a
+// acbaaSubID is the pre-single-identity derivation: the Bearer sub as a
 // number, else a name hash. Kept as the fallback and as the migration
 // source, not as an identity.
-func acbaaLegacyID(auth, name string) uint64 {
+func acbaaSubID(auth, name string) uint64 {
 	if sub := bearerSub(auth); sub != "" {
 		if id, err := strconv.ParseUint(sub, 16, 64); err == nil && id != 0 {
 			return id
@@ -302,7 +302,7 @@ func acbaaLegacyID(auth, name string) uint64 {
 	return 1
 }
 
-// acbaaMigrateUID moves one account's stored records from a legacy ACNH id
+// acbaaMigrateUID moves one account's stored records from an earlier ACNH id
 // to its NEX PID: profiles, resources, names and the user→land link. The
 // game re-registers (POST /users) on every online entry, so the move
 // happens before anything reads the new id, and the old key is left empty
@@ -404,10 +404,10 @@ func (s *server) migrateUIDLocked(oldUID, newPID uint64) bool {
 // acbaaResolveUID follows a migrated id forward: path uids minted before
 // the single-identity change still address the same account. Every handler
 // that takes a user id from the path or the bearer token resolves through
-// here, so a warm client still carrying its legacy id reads and writes the
+// here, so a warm client still carrying its earlier id reads and writes the
 // same records as a freshly registered one — without this a migrated
 // account's profile_status answers ng/ng for records that are on file
-// (observed 2026-09-21: profile under the NEX PID, status asked by legacy
+// (observed 2026-09-21: profile under the NEX PID, status asked by earlier
 // uid).
 func (s *server) acbaaResolveUID(uid uint64) uint64 {
 	s.mu.Lock()
@@ -555,7 +555,7 @@ func (s *server) acbaaBindUserLand(w http.ResponseWriter, r *http.Request, body 
 // acbaaCallerOwns reports whether the Authorization header proves the caller
 // is uid: either our v1 token minted for that id, or the BAAS JWT whose sub
 // hex-decodes to it (the same account both ways). Both sides resolve through
-// the uid map, so a legacy token against a migrated path (or the reverse)
+// the uid map, so an earlier token against a migrated path (or the reverse)
 // still matches the one account.
 func (s *server) acbaaCallerOwns(auth string, uid uint64) bool {
 	tok := strings.TrimPrefix(auth, "Bearer ")
@@ -754,15 +754,15 @@ func (s *server) acbaaLoad() {
 	s.acbaaFriendReqs = disk.FriendReqs
 	s.acbaaFriendList = disk.Friends
 	n := len(disk.Profiles)
-	// Proactive migration: every BAAS account whose legacy ACNH id differs
+	// Proactive migration: every BAAS account whose earlier ACNH id differs
 	// from its NEX PID gets its records moved now, not when the game
 	// happens to re-register (warm boots reuse the cached token and never
 	// POST /users, so lazy migration can wait forever while lookups miss).
 	if s.store != nil {
 		s.store.mu.Lock()
 		for sub, u := range s.store.Users {
-			if legacy, err := strconv.ParseUint(sub, 16, 64); err == nil && legacy != 0 && u != nil && u.PID != 0 && legacy != u.PID {
-				s.migrateUIDLocked(legacy, u.PID)
+			if earlier, err := strconv.ParseUint(sub, 16, 64); err == nil && earlier != 0 && u != nil && u.PID != 0 && earlier != u.PID {
+				s.migrateUIDLocked(earlier, u.PID)
 			}
 		}
 		s.store.mu.Unlock()

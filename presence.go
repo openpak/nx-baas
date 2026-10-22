@@ -103,7 +103,7 @@ func aggregatePresence(u *User, now int64, lease time.Duration) Presence {
 			return
 		}
 		if e.ExpiresAt == 0 && now-e.UpdatedAt >= int64(lease.Seconds()) {
-			// Legacy entry (the pre-lease field) with an implied lease.
+			// Old entry (the pre-lease field) with an implied lease.
 			if left := e.UpdatedAt + int64(lease.Seconds()); left > out.LogoutAt {
 				out.LogoutAt = left
 			}
@@ -127,7 +127,7 @@ func aggregatePresence(u *User, now int64, lease time.Duration) Presence {
 	// record of every state change, and letting the shadow outlive a device
 	// lease would be exactly the stale-data override this model forbids.
 	if len(u.DevicePresence) == 0 && u.Presence.State != "" && stateRank(u.Presence.State) > 0 {
-		consider(&DevicePresence{DeviceID: "legacy", State: u.Presence.State, AppID: u.Presence.AppID,
+		consider(&DevicePresence{DeviceID: "prelease", State: u.Presence.State, AppID: u.Presence.AppID,
 			AppField: u.Presence.AppField, PresenceGroupID: u.Presence.PresenceGroupID,
 			ACDIndex: u.Presence.ACDIndex, UpdatedAt: u.Presence.UpdatedAt, ExpiresAt: 0})
 	}

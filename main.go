@@ -130,7 +130,7 @@ type server struct {
 	// side was uploaded — the game byte-compares for "ok"/"ng".
 	acbaaLandProfiles map[uint64]acbaaProfile
 	acbaaUserLand     map[uint64]uint64
-	// acbaaUIDMap records legacy ACNH id -> NEX PID moves, so path uids
+	// acbaaUIDMap records earlier ACNH id -> NEX PID moves, so path uids
 	// minted before the single-identity change keep addressing the same
 	// account on warm clients.
 	acbaaUIDMap map[uint64]uint64
@@ -1558,7 +1558,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		}
 		return form.Get(k)
 	}
-	// me: the authenticated caller. The legacy path-based identity is gone:
+	// me: the authenticated caller. The path-based identity is gone:
 	// trusting /users/<id> to choose whose social state is accessed is what
 	// let one account read another's list.
 	me := s.bearerUser(r)
@@ -2995,7 +2995,7 @@ func main() {
 		log.Printf("[nx-baas] game API listening %s (photon-room, invitations, mint-token)", addr)
 		log.Fatal((&http.Server{Addr: addr, Handler: s.gameAPI(), ErrorLog: redact.ErrorLog()}).ListenAndServe())
 	}()
-	log.Printf("[nx-baas] listening %s (BAAS + Nintendo Account); account backend %s; users=%d devices=%d", srv.Addr, getenv("ACCOUNT_BACKEND", "legacy"), len(s.store.Users), len(s.store.Devices))
+	log.Printf("[nx-baas] listening %s (BAAS + Nintendo Account); account backend %s; users=%d devices=%d", srv.Addr, getenv("ACCOUNT_BACKEND", "unset"), len(s.store.Users), len(s.store.Devices))
 	// The console's web applet enforces certificate checking unless Atmosphère patches it, so
 	// the link page is also served over plain HTTP. Nothing secret crosses it: the console
 	// shows a short-lived code, the password is typed on the phone against the public site,
@@ -3029,7 +3029,7 @@ func main() {
 func naAddress(address string) (email, screenName string) {
 	name, domain, ok := strings.Cut(address, "@")
 	if !ok || name == "" || domain == "" {
-		return "legacy@example.com", "ne•••@e••••"
+		return "player@example.com", "ne•••@e••••"
 	}
 	nameRunes, domainRunes := []rune(name), []rune(domain)
 	return address, string(nameRunes[:min(2, len(nameRunes))]) + "•••@" + string(domainRunes[:1]) + "••••"

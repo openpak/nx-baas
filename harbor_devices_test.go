@@ -244,7 +244,7 @@ func TestHarborEnrolmentInertWithoutKeys(t *testing.T) {
 	c := newTestConsole(t, 0x7E00112233445566, "1234567890")
 	cert, _ := x509.ParseCertificate(c.tlsCert)
 	sub, sn := tokenSub(t, post(s, "/v8/device_auth_tokens", tokenBody, c.tlsCert, "a"))
-	if sub != legacyDauthID(cert) || sn != consoleSerial(sub) {
+	if sub != certDauthID(cert) || sn != consoleSerial(sub) {
 		t.Fatalf("sub/sn = %q %q, want the certificate's id as before", sub, sn)
 	}
 	if !s.bindDeviceAccount("any", sub) {
@@ -282,8 +282,8 @@ func TestHarborEnrolSignsAndBinds(t *testing.T) {
 
 	// dauth knows it by its new certificate, under the id it had before, with its own serial.
 	sub, sn := tokenSub(t, post(s, "/v8/device_auth_tokens", tokenBody, out.TLS, "session-a"))
-	if sub != legacyDauthID(before) || sn != c.serial {
-		t.Fatalf("enrolled dauth sub/sn wrong (sub kept: %v, serial: %v)", sub == legacyDauthID(before), sn == c.serial)
+	if sub != certDauthID(before) || sn != c.serial {
+		t.Fatalf("enrolled dauth sub/sn wrong (sub kept: %v, serial: %v)", sub == certDauthID(before), sn == c.serial)
 	}
 
 	// BaaS: the device account belongs to this console from its first login.

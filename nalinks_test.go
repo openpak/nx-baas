@@ -37,8 +37,8 @@ func TestNAAddress(t *testing.T) {
 	for in, want := range map[string][2]string{
 		"player@example.org": {"player@example.org", "pl•••@e••••"},
 		"a@b.c":              {"a@b.c", "a•••@b••••"},
-		"":                   {"legacy@example.com", "ne•••@e••••"},
-		"not-an-address":     {"legacy@example.com", "ne•••@e••••"},
+		"":                   {"player@example.com", "ne•••@e••••"},
+		"not-an-address":     {"player@example.com", "ne•••@e••••"},
 	} {
 		if email, screen := naAddress(in); email != want[0] || screen != want[1] {
 			t.Errorf("naAddress(%q) = %q, %q; want %q, %q", in, email, screen, want[0], want[1])

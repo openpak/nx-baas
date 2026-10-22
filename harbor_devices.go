@@ -282,8 +282,8 @@ func (d *harborDevices) save() {
 
 // ---- the console's identity at dauth ----
 
-// legacyDauthID is how dauth has always named a console: a hash of the certificate it presents.
-func legacyDauthID(c *x509.Certificate) string {
+// certDauthID is how dauth has always named a console: a hash of the certificate it presents.
+func certDauthID(c *x509.Certificate) string {
 	sum := sha256.Sum256(c.Raw)
 	return "cert-" + hex.EncodeToString(sum[:8])
 }
@@ -300,7 +300,7 @@ func (d *harborDevices) forCertificate(c *x509.Certificate, session string) (*ha
 	defer d.mu.Unlock()
 	dev := d.byTLS[hex.EncodeToString(sum[:])]
 	if dev == nil {
-		dev = d.byDauth[legacyDauthID(c)] // the certificate it enrolled with
+		dev = d.byDauth[certDauthID(c)] // the certificate it enrolled with
 	}
 	if dev == nil {
 		if chainErr == nil {
@@ -662,7 +662,7 @@ func (d *harborDevices) enrol(req *enrolRequest, presented *x509.Certificate) (*
 	sum := sha256.Sum256(dev.TLSCert)
 	dev.TLSCertSHA256 = hex.EncodeToString(sum[:])
 	if presented != nil {
-		dev.DauthID = legacyDauthID(presented)
+		dev.DauthID = certDauthID(presented)
 	} else {
 		dev.DauthID = deviceID
 	}
@@ -781,7 +781,7 @@ func (d *harborDevices) lookup(c *x509.Certificate) *harborDevice {
 	if dev := d.byTLS[hex.EncodeToString(sum[:])]; dev != nil {
 		return dev
 	}
-	return d.byDauth[legacyDauthID(c)]
+	return d.byDauth[certDauthID(c)]
 }
 
 func writeEnrolError(w http.ResponseWriter, err error) {

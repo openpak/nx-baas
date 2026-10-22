@@ -181,7 +181,7 @@ func TestCoreInvitationPolicyAndSessions(t *testing.T) {
 		t.Fatalf("unblock: %v", err)
 	}
 
-	// 3. Join-time session truth through the core (INV-04): a legacy row whose
+	// 3. Join-time session truth through the core (INV-04): a mailbox row whose
 	// sender is presence-offline stays deliverable while the core holds a live
 	// session for that title, and dies when the core does not.
 	s.store.Update(s.store.Users[aliceProj.BaasUserID], func(u *User) { u.Presence = Presence{State: "OFFLINE"} })
@@ -190,11 +190,11 @@ func TestCoreInvitationPolicyAndSessions(t *testing.T) {
 		AccountId: aliceID, Namespace: "switch", TitleId: title, EndpointRef: "test"}); err != nil {
 		t.Fatalf("register session: %v", err)
 	}
-	if _, ok := createLegacyInvitation(s.store.Users[aliceProj.BaasUserID], "alice",
+	if _, ok := createMailboxInvitation(s.store.Users[aliceProj.BaasUserID], "alice",
 		s.store.Users[bobProj.BaasUserID], validAppData, title); !ok {
-		t.Fatal("legacy create failed")
+		t.Fatal("mailbox create failed")
 	}
-	popped := popLegacyInvitations(s, s.store.Users[bobProj.BaasUserID])
+	popped := popMailboxInvitations(s, s.store.Users[bobProj.BaasUserID])
 	if len(popped) != 1 {
 		t.Fatalf("core-live session did not keep the invitation deliverable: %d", len(popped))
 	}

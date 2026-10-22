@@ -26,7 +26,7 @@ func (s *server) switchIdentity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		OpenPak    string `json:"openpak"`
+		OpenPak string `json:"openpak"`
 		IDToken string `json:"id_token"`
 		PID     uint64 `json:"pid"`
 	}

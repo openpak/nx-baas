@@ -32,7 +32,7 @@ active deployment and console changes follow the owner's existing authorization.
 ## Ownership and integration boundaries
 
 Own new invitation handlers, projections/persistence, title-payload adapters, fixtures
-and tests. Existing `gameapi.go` is shared legacy code: provide A a narrow replacement/
+and tests. Existing `gameapi.go` is shared older code: provide A a narrow replacement/
 wiring patch instead of competing edits. A owns shared authentication/router/core client
 and core-event polling; B owns Penne encoding and delivery.
 

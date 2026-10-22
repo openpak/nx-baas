@@ -382,7 +382,7 @@ func strMap(kv ...string) map[string][]string {
 	return m
 }
 
-// One check for the title-server surface: an openpak this backend signed resolves to the player
+// One check for the title-server surface: an openpak token this backend signed resolves to the player
 // and their friend projections; a forged one and a wrong key are refused.
 func TestInternalSwitchIdentity(t *testing.T) {
 	b, f := newTestBackend(t)

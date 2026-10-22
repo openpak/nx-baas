@@ -72,7 +72,7 @@ func fiveServer(t *testing.T) *server {
 	}
 	s.acct = &stubBackend{
 		key: []byte("0123456789abcdef0123456789abcdef"),
-		// Mutual friendships among all three, so the legacy fallback (no
+		// Mutual friendships among all three, so the non-core fallback (no
 		// core attached) allows invites unless a test removes the edge.
 		friends: map[uint64][]uint64{
 			1800000010: {1800000011, 1800000012},
@@ -470,9 +470,9 @@ func TestFiveInboxExcludesExpired(t *testing.T) {
 	}
 }
 
-// ---------- INV-04/legacy: durable mailbox, stale rooms, native visibility ----------
+// ---------- INV-04/mailbox: durable mailbox, stale rooms, native visibility ----------
 
-func TestLegacyMailboxIsDurableAndNativelyVisible(t *testing.T) {
+func TestMailboxIsDurableAndNativelyVisible(t *testing.T) {
 	s := fiveServer(t)
 	host := s.store.Users[invSenderUID]
 	joiner := s.store.Users[invReceiverUID]
@@ -485,13 +485,13 @@ func TestLegacyMailboxIsDurableAndNativelyVisible(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.gameAPI().ServeHTTP(w, r)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"sent":1`) {
-		t.Fatalf("legacy send = %d %s", w.Code, w.Body)
+		t.Fatalf("mailbox send = %d %s", w.Code, w.Body)
 	}
 
 	// It shows up in the receiver's native inbox: one lifecycle, two surfaces.
 	w = fiveDo(t, s, "GET", "/v2/users/"+invReceiverUID+"/invitations/inbox", fiveToken(s, invReceiverUID), "")
 	if !strings.Contains(w.Body.String(), `"count":1`) {
-		t.Fatalf("native inbox missed the legacy invitation: %s", w.Body)
+		t.Fatalf("native inbox missed the mailbox invitation: %s", w.Body)
 	}
 
 	// The pop consumes it, and the consumption is durable: a restart (fresh
@@ -509,51 +509,51 @@ func TestLegacyMailboxIsDurableAndNativelyVisible(t *testing.T) {
 	}
 }
 
-func TestLegacyStaleRoomIsDroppedCleanly(t *testing.T) {
+func TestMailboxStaleRoomIsDroppedCleanly(t *testing.T) {
 	s := fiveServer(t)
 	host := s.store.Users[invSenderUID]
 	joiner := s.store.Users[invReceiverUID]
 
 	// Hosted a room (presence carries the title), sent, then went away.
 	s.store.Update(host, func(u *User) { u.Presence = Presence{State: "PLAYING", AppID: "0100ed9024eb8000"} })
-	if _, ok := createLegacyInvitation(host, "host", joiner, validAppData, "0100ed9024eb8000"); !ok {
+	if _, ok := createMailboxInvitation(host, "host", joiner, validAppData, "0100ed9024eb8000"); !ok {
 		t.Fatal("create failed")
 	}
 	s.store.Update(host, func(u *User) { u.Presence = Presence{State: "OFFLINE"} })
-	if got := popLegacyInvitations(s, joiner); len(got) != 0 {
+	if got := popMailboxInvitations(s, joiner); len(got) != 0 {
 		t.Fatalf("a dead room was delivered: %d rows", len(got))
 	}
 
 	// No title recorded at send time: nothing to judge, the TTL decides.
-	if _, ok := createLegacyInvitation(host, "host", joiner, validAppData, ""); !ok {
+	if _, ok := createMailboxInvitation(host, "host", joiner, validAppData, ""); !ok {
 		t.Fatal("create failed")
 	}
-	if got := popLegacyInvitations(s, joiner); len(got) != 1 {
+	if got := popMailboxInvitations(s, joiner); len(got) != 1 {
 		t.Fatalf("unjudgeable invitation was dropped: %d rows", len(got))
 	}
 
 	// A live core session keeps the invitation deliverable.
 	s.store.Update(host, func(u *User) { u.Presence = Presence{State: "OFFLINE"} })
-	if _, ok := createLegacyInvitation(host, "host", joiner, validAppData, "0100ed9024eb8000"); !ok {
+	if _, ok := createMailboxInvitation(host, "host", joiner, validAppData, "0100ed9024eb8000"); !ok {
 		t.Fatal("create failed")
 	}
 	invCoreOverride = &fakeInvCore{live: map[string]bool{"acct-" + invSenderUID: true}}
 	t.Cleanup(func() { invCoreOverride = nil })
-	if got := popLegacyInvitations(s, joiner); len(got) != 1 {
+	if got := popMailboxInvitations(s, joiner); len(got) != 1 {
 		t.Fatalf("core-live room was dropped: %d rows", len(got))
 	}
 }
 
-func TestLegacyQueueIsBounded(t *testing.T) {
+func TestMailboxQueueIsBounded(t *testing.T) {
 	s := fiveServer(t)
 	host := s.store.Users[invSenderUID]
 	joiner := s.store.Users[invReceiverUID]
-	for i := 0; i < maxQueuedLegacyPerTarget+3; i++ {
-		if _, ok := createLegacyInvitation(host, "host", joiner, validAppData, ""); !ok {
+	for i := 0; i < maxQueuedMailboxPerTarget+3; i++ {
+		if _, ok := createMailboxInvitation(host, "host", joiner, validAppData, ""); !ok {
 			t.Fatal("create failed")
 		}
 	}
-	if got := popLegacyInvitations(s, joiner); len(got) != maxQueuedLegacyPerTarget {
+	if got := popMailboxInvitations(s, joiner); len(got) != maxQueuedMailboxPerTarget {
 		t.Fatalf("queue grew past the bound: %d", len(got))
 	}
 }
@@ -591,7 +591,7 @@ func TestNotificationHookFiresAfterCommit(t *testing.T) {
 	}
 }
 
-// ---------- legacy fallback (no core) ----------
+// ---------- non-core fallback (no core) ----------
 
 func TestOpenPakFallbackEnforcesBlocks(t *testing.T) {
 	s := fiveServer(t) // stubBackend: no core

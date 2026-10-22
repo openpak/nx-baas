@@ -151,11 +151,11 @@ type invitationRecord struct {
 	CreatedAt          int64             `json:"created_at"`
 	UpdatedAt          int64             `json:"updated_at"`
 	ExpiresAt          int64             `json:"expires_at"`
-	// Legacy marks rows created through the emulator/game-API mailbox. They
+	// Mailbox marks rows created through the emulator/game-API mailbox. They
 	// carry the sender's PID and a short TTL instead of a group.
-	Legacy         bool   `json:"legacy,omitempty"`
-	LegacyFromPID  uint64 `json:"legacy_from_pid,omitempty"`
-	LegacyFromName string `json:"legacy_from_name,omitempty"`
+	Mailbox         bool   `json:"mailbox,omitempty"`
+	MailboxFromPID  uint64 `json:"mailbox_from_pid,omitempty"`
+	MailboxFromName string `json:"mailbox_from_name,omitempty"`
 }
 
 // invitationGroup is the sender-side grouping one create call made. Kept so
@@ -629,7 +629,7 @@ func (s *server) invitationGroupCreate(w http.ResponseWriter, r *http.Request, b
 			}
 			ok, reason = allowed, why
 		} else {
-			ok = s.legacyMayInvite(me, uid)
+			ok = s.fallbackMayInvite(me, uid)
 			if !ok {
 				reason = "not_friends"
 			}
@@ -724,11 +724,11 @@ func (s *server) invitationCoreFor() invitationCore {
 	return nil
 }
 
-// legacyMayInvite is the non-core fallback: the legacy friend list plus
+// fallbackMayInvite is the non-core fallback: the plain friend list plus
 // local block lists on both sides. The core path (CheckInteraction) is the
 // authoritative one; this exists so the proven earlier deployment keeps
 // working unchanged.
-func (s *server) legacyMayInvite(me *User, targetUID string) bool {
+func (s *server) fallbackMayInvite(me *User, targetUID string) bool {
 	target := s.store.User(targetUID)
 	if target == nil || target.PID == 0 {
 		return false
@@ -1115,28 +1115,28 @@ func (s *server) applyRead(w http.ResponseWriter, receiverID string, ids map[str
 	writeJSON(w, 200, map[string]any{"count": unread})
 }
 
-// ---------- legacy game-API mailbox (emulator/console title path) ----------
+// ---------- game-API mailbox (emulator/console title path) ----------
 
-// The legacy /api/invitations mailbox keeps its wire shape (Outbound and the
+// The /api/invitations mailbox keeps its wire shape (Outbound and the
 // emulator pop it) but is now a view over this durable store: a restart no
-// longer loses queued invitations, native and legacy sends land in one
+// longer loses queued invitations, native and mailbox sends land in one
 // lifecycle, and a stale room fails the pop cleanly instead of joining into
 // nothing (INV-04). The five-minute TTL stands: it is the room-staleness bound.
 
-func invitationLegacyTTL() time.Duration { return 5 * time.Minute }
+func invitationMailboxTTL() time.Duration { return 5 * time.Minute }
 
-// maxQueuedPerTarget keeps the legacy per-target queue depth bound (unchanged
+// maxQueuedPerTarget keeps the mailbox per-target queue depth bound (unchanged
 // from the in-memory implementation).
-const maxQueuedLegacyPerTarget = 8
+const maxQueuedMailboxPerTarget = 8
 
-// legacySessionLive answers whether the sender's room plausibly still exists.
+// mailboxSessionLive answers whether the sender's room plausibly still exists.
 // Presence is the adapter's own truth (the Photon room wrote it); a live core
 // session counts too. Only positive staleness drops an invitation: a row with
 // no recorded title never carried a room we could judge, so its five-minute
 // TTL is the bound. When the adapter cannot tell, the invitation is delivered
 // and the title fails the join cleanly, which is the gate INV-04 keeps
 // separate from delivery.
-func (s *server) legacySessionLive(senderUID, appID string) bool {
+func (s *server) mailboxSessionLive(senderUID, appID string) bool {
 	if appID == "" {
 		return true // no title recorded: nothing to judge, TTL decides
 	}
@@ -1159,22 +1159,22 @@ func (s *server) legacySessionLive(senderUID, appID string) bool {
 	return false
 }
 
-// createLegacyInvitation stores one emulator-sent invitation. The friend and
+// createMailboxInvitation stores one emulator-sent invitation. The friend and
 // policy checks are the caller's (gameapi.sendInvitation kept its behavior).
-func createLegacyInvitation(sender *User, senderName string, receiver *User, appParamB64, appID string) (string, bool) {
+func createMailboxInvitation(sender *User, senderName string, receiver *User, appParamB64, appID string) (string, bool) {
 	now := time.Now()
 	st := invitationStoreFor()
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	// Bound: oldest legacy rows for this receiver are dropped first.
+	// Bound: oldest mailbox rows for this receiver are dropped first.
 	var queue []*invitationRecord
 	for _, inv := range st.Invitations {
-		if inv.Legacy && inv.ReceiverID == receiver.ID && inv.ExpiresAt > now.Unix() {
+		if inv.Mailbox && inv.ReceiverID == receiver.ID && inv.ExpiresAt > now.Unix() {
 			queue = append(queue, inv)
 		}
 	}
 	sort.Slice(queue, func(i, j int) bool { return queue[i].CreatedAt < queue[j].CreatedAt })
-	for len(queue) >= maxQueuedLegacyPerTarget {
+	for len(queue) >= maxQueuedMailboxPerTarget {
 		dropped := queue[0]
 		queue = queue[1:]
 		delete(st.Invitations, dropped.ID)
@@ -1186,8 +1186,8 @@ func createLegacyInvitation(sender *User, senderName string, receiver *User, app
 		ApplicationData: appParamB64,
 		CreatedAt:       now.Unix(),
 		UpdatedAt:       now.Unix(),
-		ExpiresAt:       now.Add(invitationLegacyTTL()).Unix(),
-		Legacy:          true, LegacyFromPID: sender.PID, LegacyFromName: senderName,
+		ExpiresAt:       now.Add(invitationMailboxTTL()).Unix(),
+		Mailbox:         true, MailboxFromPID: sender.PID, MailboxFromName: senderName,
 	}
 	inv.ID = st.nextIDLocked(now)
 	st.Invitations[inv.ID] = inv
@@ -1195,24 +1195,24 @@ func createLegacyInvitation(sender *User, senderName string, receiver *User, app
 	return inv.ID, true
 }
 
-// popLegacyInvitations returns and removes the caller's live legacy
+// popMailboxInvitations returns and removes the caller's live mailbox
 // invitations. Rows whose room went stale are dropped, not delivered: joining
 // a dead room must fail quietly on the sender's side of the wire (INV-04).
-func popLegacyInvitations(s *server, receiver *User) []*invitationRecord {
+func popMailboxInvitations(s *server, receiver *User) []*invitationRecord {
 	now := time.Now()
 	st := invitationStoreFor()
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	var out []*invitationRecord
 	for id, inv := range st.Invitations {
-		if !inv.Legacy || inv.ReceiverID != receiver.ID {
+		if !inv.Mailbox || inv.ReceiverID != receiver.ID {
 			continue
 		}
 		if inv.ExpiresAt <= now.Unix() { // room presumed long gone
 			delete(st.Invitations, id)
 			continue
 		}
-		if !s.legacySessionLive(inv.SenderID, inv.ApplicationID) {
+		if !s.mailboxSessionLive(inv.SenderID, inv.ApplicationID) {
 			log.Printf("[nx-baas] invitation: dropping stale room invite %s (sender %s offline)", redact.Tag(inv.ID), redact.Tag(inv.SenderID))
 			delete(st.Invitations, id)
 			continue

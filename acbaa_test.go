@@ -479,10 +479,10 @@ func TestAcbaaProfileStatusAndUpload(t *testing.T) {
 
 // A warm client still carrying its pre-single-identity uid must read and
 // write the records migration moved to its NEX PID: profile_status by the
-// legacy path answers ok (regression: it answered ng/ng for records on
+// earlier path answers ok (regression: it answered ng/ng for records on
 // file, observed 2026-09-21), uploads land canonical, and the land bind
-// accepts a legacy token against a legacy path.
-func TestAcbaaLegacyUIDResolvesForward(t *testing.T) {
+// accepts an earlier token against an earlier path.
+func TestAcbaaEarlierUIDResolvesForward(t *testing.T) {
 	const oldUID = uint64(12297829382472990721)
 	const newPID = uint64(1900000001)
 	s := &server{
@@ -508,11 +508,11 @@ func TestAcbaaLegacyUIDResolvesForward(t *testing.T) {
 		}
 		return status
 	}
-	legacy := "/api/v1/users/12297829382472990721/profile_status"
-	if status := get(legacy); status["user_profile"] != "ok" || status["land_profile"] != "ok" {
-		t.Fatalf("legacy status = %#v, want ok/ok", status)
+	earlier := "/api/v1/users/12297829382472990721/profile_status"
+	if status := get(earlier); status["user_profile"] != "ok" || status["land_profile"] != "ok" {
+		t.Fatalf("earlier status = %#v, want ok/ok", status)
 	}
-	// Upload under the legacy path lands on the canonical record and the
+	// Upload under the earlier path lands on the canonical record and the
 	// answer echoes the id the game sent.
 	upBody := []byte("\x81\xa4name\xa7hansolo")
 	up := httptest.NewRequest("PUT", host+"/api/v1/users/12297829382472990721/profile",
@@ -520,32 +520,32 @@ func TestAcbaaLegacyUIDResolvesForward(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, up)
 	if w.Code != 200 {
-		t.Fatalf("legacy upload: status %d, want 200", w.Code)
+		t.Fatalf("earlier upload: status %d, want 200", w.Code)
 	}
 	v, err := msgpackDecode(w.Body.Bytes())
 	if err != nil {
-		t.Fatalf("legacy upload: not msgpack: %v", err)
+		t.Fatalf("earlier upload: not msgpack: %v", err)
 	}
 	if rec, ok := v.(map[string]any); !ok || msgpackReadUintOf(rec["id"]) != oldUID {
-		t.Fatalf("legacy upload answer = %#v, want id echo %d", v, oldUID)
+		t.Fatalf("earlier upload answer = %#v, want id echo %d", v, oldUID)
 	}
 	if _, found := s.acbaaProfiles[newPID]; !found {
-		t.Fatalf("legacy upload did not land on pid %d: %#v", newPID, s.acbaaProfiles)
+		t.Fatalf("earlier upload did not land on pid %d: %#v", newPID, s.acbaaProfiles)
 	}
 	if _, stranded := s.acbaaProfiles[oldUID]; stranded {
-		t.Fatalf("legacy upload stranded a second record under %d", oldUID)
+		t.Fatalf("earlier upload stranded a second record under %d", oldUID)
 	}
-	// Bind with a legacy token against the legacy path links the canonical id.
+	// Bind with an earlier token against the earlier path links the canonical id.
 	bind := httptest.NewRequest("PUT", host+"/api/v1/users/12297829382472990721/land",
 		bytes.NewReader(msgpackOrdered("id", uint64(2720403009), "password", acbaaLandPassword(2720403009))))
 	bind.Header.Set("Authorization", "Bearer "+acbaaMintToken(oldUID))
 	w2 := httptest.NewRecorder()
 	s.ServeHTTP(w2, bind)
 	if w2.Code != 200 {
-		t.Fatalf("legacy bind: status %d, want 200", w2.Code)
+		t.Fatalf("earlier bind: status %d, want 200", w2.Code)
 	}
 	if s.acbaaUserLand[newPID] != 2720403009 {
-		t.Fatalf("legacy bind linked %#v, want user_land[%d]=2720403009", s.acbaaUserLand, newPID)
+		t.Fatalf("earlier bind linked %#v, want user_land[%d]=2720403009", s.acbaaUserLand, newPID)
 	}
 }
 

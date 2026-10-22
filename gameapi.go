@@ -43,7 +43,7 @@ const maxQueuedPerTarget = 8
 const maxAppParam = 1024
 
 // Superseded by the durable invitation store (invitations.go); the five-minute
-// staleness bound is kept there (invitationLegacyTTL).
+// staleness bound is kept there (invitationMailboxTTL).
 
 func apiErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]any{"error": msg})
@@ -239,10 +239,10 @@ func validRoomCode(room string) bool {
 
 // ---------- invitations ----------
 
-// The legacy mailbox is now a view over the durable invitation store
+// The mailbox is now a view over the durable invitation store
 // (invitations.go): the emulator and the console title path keep their exact
 // wire shape, but a restart no longer loses queued invitations, native and
-// legacy sends land in one lifecycle, and a stale room fails the pop cleanly
+// mailbox sends land in one lifecycle, and a stale room fails the pop cleanly
 // (INV-03/INV-04). The five-minute TTL stands as the room-staleness bound.
 
 func (s *server) invitations(w http.ResponseWriter, r *http.Request) {
@@ -327,7 +327,7 @@ func (s *server) sendInvitation(w http.ResponseWriter, r *http.Request, from uin
 		} else if meBlocks(sender, target.ID) || targetBlocksUser(s, target.ID, sender.ID) {
 			continue
 		}
-		createLegacyInvitation(sender, name, target, in.AppParamBase64, appID)
+		createMailboxInvitation(sender, name, target, in.AppParamBase64, appID)
 		sent++
 	}
 	log.Printf("[nx-baas] invitation %s(%s) -> %d/%d target(s)", redact.Text(name), redact.Tag(from), sent, len(in.TargetPIDs))
@@ -352,8 +352,8 @@ func (s *server) pollInvitations(w http.ResponseWriter, pid uint64) {
 		return
 	}
 	out := make([]map[string]any, 0, 4)
-	for _, inv := range popLegacyInvitations(s, receiver) {
-		out = append(out, map[string]any{"from_pid": inv.LegacyFromPID, "from_name": inv.LegacyFromName,
+	for _, inv := range popMailboxInvitations(s, receiver) {
+		out = append(out, map[string]any{"from_pid": inv.MailboxFromPID, "from_name": inv.MailboxFromName,
 			"app_param_base64": inv.ApplicationData})
 	}
 	writeJSON(w, 200, map[string]any{"invitations": out})

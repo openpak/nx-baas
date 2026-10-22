@@ -15,7 +15,7 @@ pending. Nothing here claims a console parsed a byte we served.
   session answers come from the account core over the adapter's existing gRPC
   clients (`Social.CheckInteraction`, `Sessions.ResolveSession`), and the
   semantic event is handed to workstream B through `invitationNotify`.
-- `gameapi.go` — the legacy `/api/invitations` mailbox keeps its wire shape
+- `gameapi.go` — the `/api/invitations` mailbox keeps its wire shape
   (Outbound, the emulator) but is now a view over the same durable store; it
   is no longer the in-memory map the 2026-09-11 audit called out as
   "not a native implementation".
@@ -47,12 +47,12 @@ pending. Nothing here claims a console parsed a byte we served.
    principal). Read rows are retained 7 days, then pruned.
 5. **Expiry.** The wire shape carries no expiry, so expiry is server-side:
    default 24h (`NX_INVITATION_TTL_SECONDS`, capped at 24h to match the
-   core's invitation TTL cap), legacy mailbox rows keep the 5-minute
+   core's invitation TTL cap), mailbox rows keep the 5-minute
    room-staleness TTL. Expired rows leave the inbox, the unread count, and
    the store (after retention).
-6. **Policy.** Every send and the legacy pop consult
+6. **Policy.** Every send and the mailbox pop consult
    `Social.CheckInteraction` (friendship, directional blocks, account status)
-   in the core when the adapter runs on the OpenPak core; the legacy
+   in the core when the adapter runs on the OpenPak core; the mailbox
    fallback uses the friend projection plus local block lists. Denied or
    unknown receivers are omitted from the group — nothing is committed for
    them — and an all-denied create answers the native error
@@ -60,7 +60,7 @@ pending. Nothing here claims a console parsed a byte we served.
    success or a false policy denial.
 7. **Sessions and joins.** The adapter does not mark joins. Delivery
    (inbox/alert) and a successful multiplayer join are separate gates. The
-   one place the adapter refuses delivery on session truth is the legacy
+   one place the adapter refuses delivery on session truth is the mailbox
    pop: a row that recorded the sender's title is dropped when neither the
    adapter's presence nor the core's session registry says that room is
    still live, so a dead room fails quietly instead of joining into
@@ -138,10 +138,10 @@ offline-recipient delivery after session registration.
 - Payload ≤ 1024 B decoded (the console's own
   `FriendInvitationApplicationParameterSizeMax`; the core's 4096 cap is
   looser), receivers ≤ 100/group (H), messages ≤ 16 languages × 256 B,
-  inbox page ≤ 100, legacy queue ≤ 8 per receiver (unchanged), unread rows
+  inbox page ≤ 100, mailbox queue ≤ 8 per receiver (unchanged), unread rows
   pruned at expiry + 7 days (read ones at read + 7 days).
 - Store: `$NX_DATA/invitations.json`, temp-file + rename writes, same
-  discipline as `baas.json`. **Migration:** none needed — new file. **Rollback:** delete the file or run the previous build; the legacy
+  discipline as `baas.json`. **Migration:** none needed — new file. **Rollback:** delete the file or run the previous build; the mailbox
   mailbox keeps working from the same file, and the REST surface simply
   disappears with the old binary (no shared-schema change).
 - Observability: each create/read/pop logs one line (actor, counts, group
@@ -156,9 +156,9 @@ offline-recipient delivery after session registration.
   version skew, validation and the native error strings, core policy denial
   (fake core) including the outage 502, inbox shape fixtures + filters,
   read state across restart (fresh store instance on the same file),
-  group-detail authorization, expiry, legacy durability/stale rooms/
+  group-detail authorization, expiry, mailbox durability/stale rooms/
   queue bound, event hook firing after commit with stable identity,
-  legacy block enforcement.
+  mailbox block enforcement.
 - `integration_invitations_test.go` (build tag `integration`) — the real
   core: two accounts registered through the core's own gRPC, friended,
   invitation created through the real `CheckInteraction`, blocked through
@@ -181,7 +181,7 @@ offline-recipient delivery after session registration.
 | INV-01 REST contracts, per-endpoint versions, principal binding | Implemented; console-parse pending hardware | unit tests, fixtures, F/S provenance table above |
 | INV-02 data fidelity, bounded payloads, validated base64, durable read state | Implemented | shape tests, restart tests, bounds above; `acd_index`/`application_id_match` echoed without semantics |
 | INV-03 core integration, expiry, duplicates, offline recipients, blocks, stale sessions | Implemented (adapter projection + core policy/session); core store-and-forward filed as C-1 | fake-core and real-core integration tests |
-| INV-04 join outcome recording, clean failures, delivery ≠ join | Implemented for the adapter's share (staleness refusal, TTL, provenance recorded); title-level join is hardware-pending | legacy stale-room tests; ledger note |
+| INV-04 join outcome recording, clean failures, delivery ≠ join | Implemented for the adapter's share (staleness refusal, TTL, provenance recorded); title-level join is hardware-pending | mailbox stale-room tests; ledger note |
 | J4 send → native alert/inbox → read → explicit join | REST/inbox/read demonstrable; native alert (B) and on-console join **pending hardware** | — |
 
 Native push delivery (B), console parsing, and a successful title join are
