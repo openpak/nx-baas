@@ -1,4 +1,4 @@
-package main
+package nxaccount
 
 // Authorization codes are bearer credentials: spent once at the token
 // endpoint (checked, not spent, at the session_token step before it),
@@ -11,8 +11,8 @@ import (
 )
 
 func TestTakeCodeSingleUse(t *testing.T) {
-	s := &server{Core: &core.Core{}, codes: map[string]naCode{}}
-	s.codes["c1"] = naCode{PID: 7, Created: time.Now()}
+	s := &Service{Core: &core.Core{}, codes: map[string]Code{}}
+	s.codes["c1"] = Code{PID: 7, Created: time.Now()}
 	// session_token step: checks, does not spend.
 	if _, ok := s.takeCode("c1", false); !ok {
 		t.Fatal("fresh code refused")
@@ -31,9 +31,9 @@ func TestTakeCodeSingleUse(t *testing.T) {
 }
 
 func TestTakeCodeExpiresAndPurges(t *testing.T) {
-	s := &server{Core: &core.Core{}, codes: map[string]naCode{}}
-	s.codes["old"] = naCode{PID: 7, Created: time.Now().Add(-11 * time.Minute)}
-	s.codes["fresh"] = naCode{PID: 8, Created: time.Now()}
+	s := &Service{Core: &core.Core{}, codes: map[string]Code{}}
+	s.codes["old"] = Code{PID: 7, Created: time.Now().Add(-11 * time.Minute)}
+	s.codes["fresh"] = Code{PID: 8, Created: time.Now()}
 	if _, ok := s.takeCode("old", true); ok {
 		t.Fatal("expired code accepted")
 	}

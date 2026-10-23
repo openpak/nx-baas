@@ -39,6 +39,7 @@ import (
 	"net/url"
 	"nx-baas/internal/core"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/nxaccount"
 	"nx-baas/redact"
 	"path"
 	"strings"
@@ -190,7 +191,7 @@ var lhubPage = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">` +
 	`<style>` + lhubCSS + `</style></head><body>` +
 	`<button class="side l" id="prev" tabindex="-1">‹</button><button class="side r" id="next" tabindex="-1">›</button>` +
 	`<div class="wrap"><div class="left" id="left"><p class="tag" id="tag">Everything is included</p>` +
-	`<div class="mark"><img src="` + logoDataURI + `" alt=""><span>ONLINE</span></div>` +
+	`<div class="mark"><img src="` + nxaccount.LogoDataURI + `" alt=""><span>ONLINE</span></div>` +
 	`<p class="sub">OpenPak Online</p><button class="guide" id="guide">Complete Guide</button>` +
 	`<p class="who" id="status">Membership active · included</p></div>` +
 	`<div class="right" id="page"></div></div>` +

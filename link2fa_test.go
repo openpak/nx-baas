@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"nx-baas/internal/identity"
+	"nx-baas/internal/nxaccount"
 	"regexp"
 	"strings"
 	"testing"
@@ -22,11 +23,6 @@ func twoFAServer(t *testing.T) (*server, *fakeCore) {
 	f.add2FAAccount("2fa@example.com", "TwoFA", "correct horse battery", "123456")
 	b := identity.NewOpenpakBackendWithClients(t.TempDir(), fakeIdentity{f: f}, fakeLinks{f: f}, fakeSocial{f: f}, []byte(strings.Repeat("k", 32)))
 	s.Acct = b
-	s.links = newLinkStore()
-	s.guesses = newGuesses()
-	s.phones = newPhoneStore()
-	s.pending2FA = newPending2FAStore()
-	s.codes = map[string]naCode{}
 	s.device = map[string]string{}
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -42,7 +38,7 @@ func postLink(t *testing.T, s *server, path, form string) *httptest.ResponseReco
 	r.Host = "link.openpak.org"
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
-	if !s.qrRoutes(w, r, []byte(form)) {
+	if !s.naSvc().QRRoutes(w, r, []byte(form)) {
 		t.Fatalf("%s not routed", path)
 	}
 	return w
@@ -83,7 +79,7 @@ func TestPhoneLinkSecondFactor(t *testing.T) {
 	}
 	found := false
 	for _, c := range w.Result().Cookies() {
-		if c.Name == phoneCookie && c.Value != "" {
+		if c.Name == nxaccount.PhoneCookie && c.Value != "" {
 			found = true
 		}
 	}
@@ -129,10 +125,10 @@ func TestPhoneLinkWithout2FAIsUnchanged(t *testing.T) {
 func TestPhoneLinkPasswordsAreCapped(t *testing.T) {
 	s, _ := twoFAServer(t)
 	form := url.Values{"email": {"plain@example.com"}, "password": {"wrong"}}.Encode()
-	for i := 0; i < guessLimit; i++ {
+	for i := 0; i < nxaccount.GuessLimit; i++ {
 		w := postLink(t, s, "/link", form)
 		if strings.Contains(w.Body.String(), "Too many attempts") {
-			t.Fatalf("throttled after %d wrong passwords, want %d", i+1, guessLimit)
+			t.Fatalf("throttled after %d wrong passwords, want %d", i+1, nxaccount.GuessLimit)
 		}
 	}
 	w := postLink(t, s, "/link", form)

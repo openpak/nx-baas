@@ -1,4 +1,4 @@
-package main
+package nxaccount
 
 import (
 	"nx-baas/internal/identity"

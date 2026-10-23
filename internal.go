@@ -14,6 +14,7 @@ import (
 	"nx-baas/internal/core"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
+	"nx-baas/internal/nxaccount"
 	"nx-baas/internal/presence"
 	"nx-baas/internal/store"
 	"nx-baas/internal/token"
@@ -325,8 +326,8 @@ func (s *server) switchEmulatorLinkToken(w http.ResponseWriter, r *http.Request)
 	}
 	// The same bookkeeping the authorize page does: link() resolves the token's sub through it.
 	s.Store.RememberNA(id.NaID, pr.PID)
-	c := naCode{PID: pr.PID, Username: id.Nickname, ClientID: r.URL.Query().Get("client_id"), NaID: id.NaID}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"id_token": s.naIDToken(c, "", "")})
+	c := nxaccount.Code{PID: pr.PID, Username: id.Nickname, ClientID: r.URL.Query().Get("client_id"), NaID: id.NaID}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"id_token": s.naSvc().NAIDToken(c, "", "")})
 }
 
 // switchEmulatorFriend answers POST /internal/switch/emulator/friend

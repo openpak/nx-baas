@@ -11,6 +11,7 @@ import (
 	"nx-baas/internal/dauth"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
+	"nx-baas/internal/nxaccount"
 	"nx-baas/internal/store"
 	"nx-baas/internal/token"
 	"reflect"
@@ -176,7 +177,7 @@ func TestNintendoAccountFollowsTheAccountsOwnProfile(t *testing.T) {
 	s.Store = &store.Store{}
 	id := &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "someone", Country: "IE", Birthday: "1984-03-02"}
 
-	country, birthday := naProfile(id)
+	country, birthday := nxaccount.NAProfile(id)
 	if country != "IE" || birthday != "1984-03-02" {
 		t.Fatalf("users/me served %q/%q, want the account's own IE/1984-03-02", country, birthday)
 	}
@@ -188,7 +189,7 @@ func TestNintendoAccountFollowsTheAccountsOwnProfile(t *testing.T) {
 	// With nothing on the account the fallback stands, because a Nintendo Account cannot have
 	// an empty country — but it is the only place in the stack still allowed to substitute.
 	t.Setenv("NA_FALLBACK_COUNTRY", "GB")
-	if c, _ := naProfile(&identity.Identity{NaID: "x"}); c != "GB" {
+	if c, _ := nxaccount.NAProfile(&identity.Identity{NaID: "x"}); c != "GB" {
 		t.Errorf("fallback country = %q, want GB", c)
 	}
 }

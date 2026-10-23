@@ -1,4 +1,4 @@
-package main
+package nxaccount
 
 import (
 	"encoding/json"
@@ -14,7 +14,7 @@ import (
 // The whole point of the code is that a stale one on a TV cannot be used, and that approval
 // happens on the console rather than on whoever scanned the square.
 func TestLinkCodeLifecycle(t *testing.T) {
-	s := &server{Core: &core.Core{}, links: newLinkStore()}
+	s := &Service{Core: &core.Core{}, links: newLinkStore()}
 	code, _ := s.links.new(url.Values{"client_id": {"abc"}})
 
 	if got := s.links.get(code); got == nil || got.State != linkWaiting {
@@ -33,12 +33,12 @@ func TestLinkCodeLifecycle(t *testing.T) {
 }
 
 func TestApproveRefusedUntilAPhoneClaims(t *testing.T) {
-	s := &server{Core: &core.Core{}, links: newLinkStore(), codes: map[string]naCode{}}
+	s := &Service{Core: &core.Core{}, links: newLinkStore(), codes: map[string]Code{}}
 	code, _ := s.links.new(url.Values{})
 
 	r := httptest.NewRequest(http.MethodPost, "/connect/1.0.0/qr/approve?c="+code, nil)
 	w := httptest.NewRecorder()
-	if !s.qrRoutes(w, r, nil) {
+	if !s.QRRoutes(w, r, nil) {
 		t.Fatal("approve was not routed")
 	}
 	if w.Code != http.StatusConflict {
@@ -47,7 +47,7 @@ func TestApproveRefusedUntilAPhoneClaims(t *testing.T) {
 }
 
 func TestStateReportsWhoClaimedIt(t *testing.T) {
-	s := &server{Core: &core.Core{}, links: newLinkStore()}
+	s := &Service{Core: &core.Core{}, links: newLinkStore()}
 	code, _ := s.links.new(url.Values{})
 	s.links.update(code, func(p *pendingLink) {
 		p.State, p.Username, p.PID = linkClaimed, "hansolo", 1800000003
@@ -55,7 +55,7 @@ func TestStateReportsWhoClaimedIt(t *testing.T) {
 
 	r := httptest.NewRequest(http.MethodGet, "/connect/1.0.0/qr/state?c="+code, nil)
 	w := httptest.NewRecorder()
-	s.qrRoutes(w, r, nil)
+	s.QRRoutes(w, r, nil)
 
 	body := w.Body.String()
 	if !strings.Contains(body, `"state":"claimed"`) || !strings.Contains(body, `"account":"hansolo"`) {
@@ -91,7 +91,7 @@ func TestGuessesAreCapped(t *testing.T) {
 	g := newGuesses()
 	const who = "1800000001"
 
-	for i := 0; i < guessLimit-1; i++ {
+	for i := 0; i < GuessLimit-1; i++ {
 		g.wrong(who)
 		if blocked, _ := g.blocked(who); blocked {
 			t.Fatalf("blocked after %d wrong codes, before the limit", i+1)
@@ -123,7 +123,7 @@ func TestGuessesAreCapped(t *testing.T) {
 // A code may be claimed once. A second phone entering the same code must not take over a link
 // that is already waiting for approval on the console.
 func TestCodeIsSingleUse(t *testing.T) {
-	s := &server{Core: &core.Core{}, links: newLinkStore(), phones: newPhoneStore()}
+	s := &Service{Core: &core.Core{}, links: newLinkStore(), phones: newPhoneStore()}
 	code, _ := s.links.new(url.Values{})
 	s.links.update(code, func(p *pendingLink) {
 		p.State, p.Username, p.PID = linkClaimed, "first", 1
@@ -173,7 +173,7 @@ func TestSignOutDropsTheSession(t *testing.T) {
 // The QR must reveal nothing: it carries a pairing id, and the code appears on the console
 // only once a phone has signed in against that pairing.
 func TestCodeAppearsOnlyAfterSignIn(t *testing.T) {
-	s := &server{Core: &core.Core{}, links: newLinkStore(), phones: newPhoneStore()}
+	s := &Service{Core: &core.Core{}, links: newLinkStore(), phones: newPhoneStore()}
 	code, pair := s.links.new(url.Values{})
 
 	if code == pair {
@@ -215,7 +215,7 @@ func TestGroupedCodeIsAccepted(t *testing.T) {
 // Nintendo from a device that never opted in. Without a reachable address there is no phone
 // path offered at all.
 func TestNoPhonePathIsOfferedOnANintendoHostname(t *testing.T) {
-	s := testServer(t)
+	s := &Service{Core: &core.Core{}}
 	s.links = &linkStore{by: map[string]*pendingLink{}}
 	t.Setenv("NX_LINK_BASE_URL", "")
 
@@ -223,7 +223,7 @@ func TestNoPhonePathIsOfferedOnANintendoHostname(t *testing.T) {
 	r.Host = "accounts.nintendo.com"
 	w := httptest.NewRecorder()
 
-	if !s.qrRoutes(w, r, nil) {
+	if !s.QRRoutes(w, r, nil) {
 		t.Fatal("qr/new was not handled")
 	}
 
@@ -245,14 +245,14 @@ func TestNoPhonePathIsOfferedOnANintendoHostname(t *testing.T) {
 }
 
 func TestPhonePathIsOfferedWhenAnAddressIsConfigured(t *testing.T) {
-	s := testServer(t)
+	s := &Service{Core: &core.Core{}}
 	s.links = &linkStore{by: map[string]*pendingLink{}}
 	t.Setenv("NX_LINK_BASE_URL", "https://openpak.example")
 
 	r := httptest.NewRequest("POST", "/connect/1.0.0/qr/new", nil)
 	r.Host = "accounts.nintendo.com"
 	w := httptest.NewRecorder()
-	s.qrRoutes(w, r, nil)
+	s.QRRoutes(w, r, nil)
 
 	var out map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {

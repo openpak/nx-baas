@@ -1,4 +1,4 @@
-package main
+package nxaccount
 
 // Console account linking by QR code.
 //
@@ -84,7 +84,7 @@ type phoneSession struct {
 }
 
 const (
-	phoneCookie     = "openpak_link"
+	PhoneCookie     = "openpak_link"
 	phoneSessionTTL = 15 * time.Minute
 )
 
@@ -279,7 +279,7 @@ func randCode() string {
 // are always fewer live codes than the space is wide. Ten is far more than a
 // person mistypes and far fewer than a search needs.
 const (
-	guessLimit  = 10
+	GuessLimit  = 10
 	guessWindow = 10 * time.Minute
 )
 
@@ -311,7 +311,7 @@ func (g *guesses) blocked(key string) (bool, time.Duration) {
 		delete(g.by, key)
 		return false, 0
 	}
-	return c.n >= guessLimit, time.Until(c.until)
+	return c.n >= GuessLimit, time.Until(c.until)
 }
 
 func (g *guesses) wrong(key string) {
@@ -360,7 +360,7 @@ func qrDataURI(u string) string {
 // QR built on that host does not merely fail: it sends the pairing id to Nintendo, from a device
 // that never opted into any of this. So without NX_LINK_BASE_URL there is no phone path at all,
 // and callers show the code and the password form instead of a square that leaks.
-func (s *server) linkBaseURL(r *http.Request) (string, bool) {
+func (s *Service) linkBaseURL(r *http.Request) (string, bool) {
 	if v := httpx.Getenv("NX_LINK_BASE_URL", ""); v != "" {
 		return strings.TrimRight(v, "/"), true
 	}
@@ -373,7 +373,7 @@ func (s *server) linkBaseURL(r *http.Request) (string, bool) {
 
 // qrRoutes serves the console-side polling endpoints and the phone-side page.
 // Returns true when it handled the request.
-func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) bool {
+func (s *Service) QRRoutes(w http.ResponseWriter, r *http.Request, body []byte) bool {
 	form, _ := url.ParseQuery(string(body))
 	code := r.URL.Query().Get("c")
 	if code == "" {
@@ -452,7 +452,7 @@ func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) b
 			return true
 		}
 		res, err := s.Acct.LoginPID(form.Get("email"), form.Get("password"))
-		lock := s.locks().PIDLock(res.PID)
+		lock := s.Locks.PIDLock(res.PID)
 		if errors.Is(err, identity.ErrAccountLocked) && lock == "" {
 			lock = bans.Banned
 		}
@@ -523,7 +523,7 @@ func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) b
 		return true
 
 	case r.URL.Path == "/link/signout" && r.Method == "POST":
-		if c, err := r.Cookie(phoneCookie); err == nil {
+		if c, err := r.Cookie(PhoneCookie); err == nil {
 			s.phones.drop(c.Value)
 		}
 		s.clearPhoneCookie(w, r)
@@ -575,11 +575,8 @@ func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) b
 
 // finishLink mints the same code the password form does and builds the console's redirect, so
 // both paths end identically.
-func (s *server) finishLink(p *pendingLink) string {
-	code := token.RandHex(16)
-	s.mu.Lock()
-	s.codes[code] = naCode{PID: p.PID, Username: p.Username, ClientID: p.Query.Get("client_id"), NaID: p.NaID, Created: time.Now()}
-	s.mu.Unlock()
+func (s *Service) finishLink(p *pendingLink) string {
+	code := s.IssueCode(Code{PID: p.PID, Username: p.Username, ClientID: p.Query.Get("client_id"), NaID: p.NaID, Created: time.Now()})
 	s.Store.RememberNA(p.NaID, p.PID)
 	return s.authorizeRedirect(p.Query, code)
 }
@@ -590,7 +587,7 @@ func (s *server) finishLink(p *pendingLink) string {
 // this service must render on a console browser with no network access to the website, and a
 // linked stylesheet would be one more thing to fail at exactly the wrong moment.
 
-const logoDataURI = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIiBmaWxsPSJub25lIj4gPGRlZnM+IDxsaW5lYXJHcmFkaWVudCBpZD0iYmciIHgxPSIwIiB5MT0iMCIgeDI9IjUxMiIgeTI9IjUxMiIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPiA8c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjNjM2NmYxIi8+IDxzdG9wIG9mZnNldD0iMTAwJSIgc3RvcC1jb2xvcj0iIzQzMzhjYSIvPiA8L2xpbmVhckdyYWRpZW50PiA8L2RlZnM+IDxjaXJjbGUgY3g9IjI1NiIgY3k9IjI1NiIgcj0iMjU2IiBmaWxsPSJ1cmwoI2JnKSIvPiA8Y2lyY2xlIGN4PSIyNTYiIGN5PSIyNTYiIHI9IjE4MCIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyMCIgZmlsbD0ibm9uZSIgb3BhY2l0eT0iMC45Ii8+IDxwYXRoIGQ9Ik0xNjAgMjU2YzAtNTMgNDMtOTYgOTYtOTZzOTYgNDMgOTYgOTYtNDMgOTYtOTYgOTYiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iMjAiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgZmlsbD0ibm9uZSIgb3BhY2l0eT0iMC45Ii8+IDxjaXJjbGUgY3g9IjI1NiIgY3k9IjI1NiIgcj0iMjgiIGZpbGw9IndoaXRlIiBvcGFjaXR5PSIwLjk1Ii8+IDwvc3ZnPg=="
+const LogoDataURI = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIiBmaWxsPSJub25lIj4gPGRlZnM+IDxsaW5lYXJHcmFkaWVudCBpZD0iYmciIHgxPSIwIiB5MT0iMCIgeDI9IjUxMiIgeTI9IjUxMiIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPiA8c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjNjM2NmYxIi8+IDxzdG9wIG9mZnNldD0iMTAwJSIgc3RvcC1jb2xvcj0iIzQzMzhjYSIvPiA8L2xpbmVhckdyYWRpZW50PiA8L2RlZnM+IDxjaXJjbGUgY3g9IjI1NiIgY3k9IjI1NiIgcj0iMjU2IiBmaWxsPSJ1cmwoI2JnKSIvPiA8Y2lyY2xlIGN4PSIyNTYiIGN5PSIyNTYiIHI9IjE4MCIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyMCIgZmlsbD0ibm9uZSIgb3BhY2l0eT0iMC45Ii8+IDxwYXRoIGQ9Ik0xNjAgMjU2YzAtNTMgNDMtOTYgOTYtOTZzOTYgNDMgOTYgOTYtNDMgOTYtOTYgOTYiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iMjAiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgZmlsbD0ibm9uZSIgb3BhY2l0eT0iMC45Ii8+IDxjaXJjbGUgY3g9IjI1NiIgY3k9IjI1NiIgcj0iMjgiIGZpbGw9IndoaXRlIiBvcGFjaXR5PSIwLjk1Ii8+IDwvc3ZnPg=="
 
 const pageCSS = `
 /* The site's tokens (website/web/src/input.css, 2026-10 "console HOME menu" redesign), so the
@@ -712,10 +709,10 @@ func pageHeadFor(title, class string) string {
 	return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">` +
 		`<meta name="viewport" content="width=device-width,initial-scale=1"><title>` + title + ` · OpenPak</title>` +
 		`<style>` + pageCSS + `</style></head>` + body + `<main>` +
-		`<div class="brand"><img src="` + logoDataURI + `" alt=""> OpenPak</div>`
+		`<div class="brand"><img src="` + LogoDataURI + `" alt=""> OpenPak</div>`
 }
 
-func (s *server) phoneDonePage(w http.ResponseWriter, username string) {
+func (s *Service) phoneDonePage(w http.ResponseWriter, username string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, pageHead("Almost there")+`
 <h1>Now approve it on the console</h1>
@@ -726,8 +723,8 @@ there to finish linking. You can close this page.</p></div></main></body></html>
 
 // ---------- phone session ----------
 
-func (s *server) phoneSession(r *http.Request) (phoneSession, bool) {
-	c, err := r.Cookie(phoneCookie)
+func (s *Service) phoneSession(r *http.Request) (phoneSession, bool) {
+	c, err := r.Cookie(PhoneCookie)
 	if err != nil {
 		return phoneSession{}, false
 	}
@@ -740,16 +737,16 @@ func secureRequest(r *http.Request) bool {
 	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }
 
-func (s *server) setPhoneCookie(w http.ResponseWriter, r *http.Request, token string) {
+func (s *Service) setPhoneCookie(w http.ResponseWriter, r *http.Request, token string) {
 	http.SetCookie(w, &http.Cookie{
-		Name: phoneCookie, Value: token, Path: "/link", HttpOnly: true,
+		Name: PhoneCookie, Value: token, Path: "/link", HttpOnly: true,
 		Secure: secureRequest(r), SameSite: http.SameSiteLaxMode, MaxAge: int(phoneSessionTTL.Seconds()),
 	})
 }
 
-func (s *server) clearPhoneCookie(w http.ResponseWriter, r *http.Request) {
+func (s *Service) clearPhoneCookie(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
-		Name: phoneCookie, Value: "", Path: "/link", HttpOnly: true,
+		Name: PhoneCookie, Value: "", Path: "/link", HttpOnly: true,
 		Secure: secureRequest(r), SameSite: http.SameSiteLaxMode, MaxAge: -1,
 	})
 }
@@ -765,7 +762,7 @@ func errBlock(msg string) string {
 
 // phoneLoginPage: credentials only. The code is asked for afterwards, so scanning the QR by
 // itself approves nothing.
-func (s *server) phoneLoginPage(w http.ResponseWriter, pair, errMsg string) {
+func (s *Service) phoneLoginPage(w http.ResponseWriter, pair, errMsg string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, pageHead("Link a console")+`
 <h1>Sign in</h1>
@@ -781,7 +778,7 @@ func (s *server) phoneLoginPage(w http.ResponseWriter, pair, errMsg string) {
 
 // phoneConfirmPage: signed in already — check it is the right account before taking a code,
 // since a phone stays signed in and the console in front of you may not be yours.
-func (s *server) phoneConfirmPage(w http.ResponseWriter, username, pair, errMsg string) {
+func (s *Service) phoneConfirmPage(w http.ResponseWriter, username, pair, errMsg string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, pageHead("Link a console")+`
 <h1>Link a console</h1>
@@ -806,7 +803,7 @@ func pairField(pair string) string {
 
 // finishPhoneSignIn runs the post-login continuation both the password step
 // and the second-factor step share: cookie session, console reveal, confirm.
-func (s *server) finishPhoneSignIn(w http.ResponseWriter, r *http.Request, pair string, pid uint64, username string) {
+func (s *Service) finishPhoneSignIn(w http.ResponseWriter, r *http.Request, pair string, pid uint64, username string) {
 	sess := phoneSession{PID: pid, Username: username}
 	s.setPhoneCookie(w, r, s.phones.new(pid, username))
 	// Only now does the console reveal its code.
@@ -816,7 +813,7 @@ func (s *server) finishPhoneSignIn(w http.ResponseWriter, r *http.Request, pair 
 
 // phone2FAPage: password proved, second factor owed. Six digits from the
 // authenticator, or one of the recovery codes shown once at enrolment.
-func (s *server) phone2FAPage(w http.ResponseWriter, pair, token, errMsg string) {
+func (s *Service) phone2FAPage(w http.ResponseWriter, pair, token, errMsg string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, pageHead("Two-factor check")+`
 <h1>Check your authenticator</h1>
@@ -834,7 +831,7 @@ func (s *server) phone2FAPage(w http.ResponseWriter, pair, token, errMsg string)
 
 // markSignedIn tells the console session that a phone has signed in, which is what makes the
 // code appear on the television. Nothing is claimed yet: the code still has to be typed back.
-func (s *server) markSignedIn(pair string, sess phoneSession) {
+func (s *Service) markSignedIn(pair string, sess phoneSession) {
 	if pair == "" {
 		return
 	}

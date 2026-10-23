@@ -25,6 +25,7 @@ import (
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
 	"nx-baas/internal/invitations"
+	"nx-baas/internal/nxaccount"
 	"nx-baas/internal/penne"
 	"nx-baas/internal/presence"
 	"nx-baas/internal/store"
@@ -38,13 +39,8 @@ import (
 
 type server struct {
 	*core.Core
-	mu         sync.Mutex
-	codes      map[string]naCode // NA authorization codes / session tokens -> who logged in
-	device     map[string]string // device id -> serial, from the dauth assertion
-	links      *linkStore        // pending QR console links, by code
-	guesses    *guesses          // wrong-code/password attempts, per account
-	phones     *phoneStore       // signed-in phones entering a code
-	pending2FA *pending2FAStore  // password-proved logins awaiting a second factor
+	mu     sync.Mutex
+	device map[string]string // device id -> serial, from the dauth assertion
 	// saves forwards the scsi hosts (save-data cloud) to the saves service, with the
 	// console's proven account attached. nil answers the empty-cloud fallback instead.
 	saves    *httputil.ReverseProxy
@@ -95,6 +91,9 @@ type server struct {
 	// invitationsService is online-play invitations, five and the mailbox (internal/invitations).
 	invitationsService *invitations.Service
 	invitationsOnce    sync.Once
+	// naService is the Nintendo Account surface and the console link pages (internal/nxaccount).
+	naService *nxaccount.Service
+	naOnce    sync.Once
 	// dauthService is device and application authentication (internal/dauth).
 	dauthService *dauth.Service
 	dauthOnce    sync.Once
@@ -136,12 +135,7 @@ func main() {
 			NAKid:  httpx.Getenv("BAAS_NA_KID", "00000000-0000-0000-0000-000000000001"),
 			Acct:   newBackend(),
 		},
-		codes:      map[string]naCode{},
-		device:     map[string]string{},
-		links:      newLinkStore(),
-		guesses:    newGuesses(),
-		phones:     newPhoneStore(),
-		pending2FA: newPending2FAStore(),
+		device: map[string]string{},
 	}
 	s.forwardersFromEnv()
 	s.Harbor = devices.FromEnv()
@@ -347,4 +341,10 @@ func (s *server) presenceSvc() *presence.Service {
 func (s *server) invitationsSvc() *invitations.Service {
 	s.invitationsOnce.Do(func() { s.invitationsService = &invitations.Service{Core: s.Core, Locks: s.locks()} })
 	return s.invitationsService
+}
+
+// naSvc is the Nintendo Account surface, created on first use like locks.
+func (s *server) naSvc() *nxaccount.Service {
+	s.naOnce.Do(func() { s.naService = nxaccount.New(s.Core, s.locks()) })
+	return s.naService
 }

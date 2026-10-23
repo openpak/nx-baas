@@ -1,4 +1,7 @@
-package main
+// Package nxaccount is the Nintendo Account surface the console links an account through
+// (accounts.nintendo.com: authorize, session_token, token, users/me) and the link pages a
+// phone or the console itself signs in on.
+package nxaccount
 
 import (
 	"crypto/sha256"
@@ -16,10 +19,11 @@ import (
 	"nx-baas/redact"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
-type naCode struct {
+type Code struct {
 	PID      uint64
 	Username string
 	ClientID string
@@ -39,10 +43,19 @@ type naCode struct {
 // seconds, and anything unspent after this is abandoned, not pending.
 const naCodeTTL = 10 * time.Minute
 
+// issueCode stores an authorization code for c and returns it.
+func (s *Service) IssueCode(c Code) string {
+	code := token.RandHex(16)
+	s.mu.Lock()
+	s.codes[code] = c
+	s.mu.Unlock()
+	return code
+}
+
 // takeCode spends an authorization code: unknown, expired or already-spent
 // codes are refused, and expired rows are purged so the map cannot grow
 // without end.
-func (s *server) takeCode(code string, spend bool) (naCode, bool) {
+func (s *Service) takeCode(code string, spend bool) (Code, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now()
@@ -54,7 +67,7 @@ func (s *server) takeCode(code string, spend bool) (naCode, bool) {
 	c, ok := s.codes[code]
 	if !ok || now.Sub(c.Created) > naCodeTTL || c.Spent {
 		delete(s.codes, code)
-		return naCode{}, false
+		return Code{}, false
 	}
 	if spend {
 		c.Spent = true
@@ -63,16 +76,16 @@ func (s *server) takeCode(code string, spend bool) (naCode, bool) {
 	return c, true
 }
 
-func (s *server) naHeader() map[string]any {
+func (s *Service) naHeader() map[string]any {
 	return map[string]any{"alg": "RS256", "jku": core.NaIssuer + "/1.0.0/certificates", "kid": s.NAKid, "typ": "JWT"}
 }
 
-func (s *server) naRefreshToken(c naCode) string {
+func (s *Service) naRefreshToken(c Code) string {
 	now := time.Now().Unix()
 	return token.SignJWT(s.naHeader(), map[string]any{"aud": c.ClientID, "exp": now + 365*86400, "iat": now, "iss": core.NaIssuer, "jti": token.UUID4(), "sub": c.NaID, "typ": "refresh"}, s.Key)
 }
 
-func (s *server) naAccessToken(c naCode) string {
+func (s *Service) NAAccessToken(c Code) string {
 	now := time.Now().Unix()
 	return token.SignJWT(s.naHeader(), map[string]any{
 		"ac:grt": 4, "ac:scp": []int{0, 1, 4, 5, 8, 9, 10, 11, 12, 13, 23, 28},
@@ -137,7 +150,7 @@ func naLinks(id *identity.Identity) map[string]any {
 //     (47DEQpj8HBSa-_TImW-5JA) and claimed an access token that did not exist.
 //
 // Both hashes are the left half of the SHA-256 of the value, per OIDC for an RS256 token.
-func (s *server) naIDToken(c naCode, accessToken, code string) string {
+func (s *Service) NAIDToken(c Code, accessToken, code string) string {
 	now := time.Now().Unix()
 	claims := map[string]any{
 		"aud": c.ClientID, "exp": now + 900, "iat": now, "iss": core.NaIssuer, "jti": token.UUID4(), "sub": c.NaID,
@@ -156,7 +169,7 @@ func (s *server) naIDToken(c naCode, accessToken, code string) string {
 	return token.SignJWT(s.naHeader(), claims, s.Key)
 }
 
-func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
+func (s *Service) Handle(w http.ResponseWriter, r *http.Request, body []byte) {
 	p := r.URL.Path
 	form, _ := url.ParseQuery(string(body))
 	switch {
@@ -215,7 +228,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			httpx.WriteJSON(w, 401, map[string]any{"error": "login_required"})
 			return
 		}
-		if s.locks().PIDLock(pid) != "" {
+		if s.Locks.PIDLock(pid) != "" {
 			log.Printf("[nx-baas] NA silent authorize refused: pid=%s is locked", redact.Tag(pid))
 			bans.NAAuthorizeLocked(w, r, form.Get("redirect_uri"), form.Get("state"))
 			return
@@ -225,14 +238,11 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			httpx.WriteJSON(w, 401, map[string]any{"error": "login_required"})
 			return
 		}
-		c := naCode{PID: pid, Username: id.Nickname, ClientID: form.Get("client_id"), NaID: id.NaID, Nonce: form.Get("nonce"), Created: time.Now()}
-		code := token.RandHex(16)
-		s.mu.Lock()
-		s.codes[code] = c
-		s.mu.Unlock()
+		c := Code{PID: pid, Username: id.Nickname, ClientID: form.Get("client_id"), NaID: id.NaID, Nonce: form.Get("nonce"), Created: time.Now()}
+		code := s.IssueCode(c)
 		frag := url.Values{"state": {form.Get("state")}, "session_state": {token.RandHex(11)}, "code": {code}}
 		if strings.Contains(form.Get("response_type"), "id_token") {
-			frag.Set("id_token", s.naIDToken(c, "", code))
+			frag.Set("id_token", s.NAIDToken(c, "", code))
 		}
 		dest := form.Get("redirect_uri") + "#" + frag.Encode()
 		// The whole fragment, not just the redirect_uri: the friends module's
@@ -271,7 +281,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 				return
 			}
 			res, err := s.Acct.LoginPID(form.Get("email"), form.Get("password"))
-			lock := s.locks().PIDLock(res.PID)
+			lock := s.Locks.PIDLock(res.PID)
 			if errors.Is(err, identity.ErrAccountLocked) && lock == "" {
 				lock = bans.Banned
 			}
@@ -303,10 +313,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 				s.authorizePage(w, r, q, `<p class="err">Account lookup failed.</p>`)
 				return
 			}
-			code := token.RandHex(16)
-			s.mu.Lock()
-			s.codes[code] = naCode{PID: res.PID, Username: res.Username, ClientID: q.Get("client_id"), NaID: id.NaID, Created: time.Now()}
-			s.mu.Unlock()
+			code := s.IssueCode(Code{PID: res.PID, Username: res.Username, ClientID: q.Get("client_id"), NaID: id.NaID, Created: time.Now()})
 			s.Store.RememberNA(id.NaID, res.PID)
 			// ponytail: the redirect shape is inferred from the response_type the console sends;
 			// both the query (code) and fragment (session_token_code / id_token) forms are covered.
@@ -346,10 +353,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			s.authorizePage(w, r, q, `<p class="err">Account lookup failed.</p>`)
 			return
 		}
-		code := token.RandHex(16)
-		s.mu.Lock()
-		s.codes[code] = naCode{PID: p.PID, Username: p.Username, ClientID: q.Get("client_id"), NaID: id.NaID, Created: time.Now()}
-		s.mu.Unlock()
+		code := s.IssueCode(Code{PID: p.PID, Username: p.Username, ClientID: q.Get("client_id"), NaID: id.NaID, Created: time.Now()})
 		s.Store.RememberNA(id.NaID, p.PID)
 		dest := s.authorizeRedirect(q, code)
 		log.Printf("[nx-baas] NA authorize ok pid=%s (second factor) response_type=%q -> %s", redact.Tag(p.PID), q.Get("response_type"), redact.Link(dest))
@@ -375,7 +379,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			if cl, err := token.ParseJWT(form.Get("refresh_token"), &s.Key.PublicKey); err == nil && httpx.Str(cl, "typ") == "refresh" {
 				if pid := s.Store.PIDForNA(httpx.Str(cl, "sub")); pid != 0 {
 					if id, err := s.Acct.Identity(pid); err == nil {
-						c, ok = naCode{PID: pid, Username: id.Nickname, ClientID: form.Get("client_id"), NaID: id.NaID}, true
+						c, ok = Code{PID: pid, Username: id.Nickname, ClientID: form.Get("client_id"), NaID: id.NaID}, true
 						s.BindNotificationChannel(form.Get("device_authentication_token"), id.BaasUserID)
 					}
 				}
@@ -387,7 +391,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		// Codes and refresh tokens minted before a ban stop here: no token for a banned
 		// account, whichever grant it arrives on.
-		if lock := s.locks().PIDLock(c.PID); lock != "" {
+		if lock := s.Locks.PIDLock(c.PID); lock != "" {
 			log.Printf("[nx-baas] NA token refused: pid=%s is %s", redact.Tag(c.PID), lock)
 			bans.NATokenLocked(w, lock)
 			return
@@ -399,9 +403,9 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		if id, err := s.Acct.Identity(c.PID); err == nil {
 			s.BindNotificationChannel(form.Get("device_authentication_token"), id.BaasUserID)
 		}
-		at := s.naAccessToken(c)
+		at := s.NAAccessToken(c)
 		httpx.WriteJSON(w, 200, map[string]any{
-			"access_token": at, "expires_in": 900, "id_token": s.naIDToken(c, at, ""), "refresh_token": s.naRefreshToken(c),
+			"access_token": at, "expires_in": 900, "id_token": s.NAIDToken(c, at, ""), "refresh_token": s.naRefreshToken(c),
 			"scope":         strings.Fields(strings.ReplaceAll(form.Get("scope"), "+", " ")),
 			"session_token": token.RandHex(24), "token_type": "Bearer",
 		})
@@ -422,7 +426,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			return
 		}
 		pid := s.Store.PIDForNA(httpx.Str(c, "sub"))
-		if lock := s.locks().PIDLock(pid); lock != "" {
+		if lock := s.Locks.PIDLock(pid); lock != "" {
 			bans.NATokenLocked(w, lock)
 			return
 		}
@@ -447,7 +451,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		// hardcoded told it the person lives in GB and was born in 2000 while the other half said
 		// the account holds neither. Where the account has nothing, the sample's values remain —
 		// a Nintendo Account always carries both, so there is no "absent" to serve here.
-		country, birthday := naProfile(id)
+		country, birthday := NAProfile(id)
 		email, screenName := naAddress(id.Email)
 		me := map[string]any{
 			"agreedTerms": map[string]any{
@@ -482,7 +486,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 // for. Shared by the password form and the QR flow so both finish identically.
 // ponytail: the redirect shape is inferred from the response_type the console sends; both the
 // query (code) and fragment (session_token_code / id_token) forms are covered.
-func (s *server) authorizeRedirect(q url.Values, code string) string {
+func (s *Service) authorizeRedirect(q url.Values, code string) string {
 	rt := q.Get("response_type")
 	dest := q.Get("redirect_uri")
 	params := url.Values{"state": {q.Get("state")}}
@@ -505,7 +509,7 @@ func (s *server) authorizeRedirect(q url.Values, code string) string {
 		if strings.Contains(rt, "code") {
 			idCode = code
 		}
-		params.Set("id_token", s.naIDToken(c, "", idCode))
+		params.Set("id_token", s.NAIDToken(c, "", idCode))
 		if strings.Contains(rt, "code") {
 			params.Set("code", code)
 		}
@@ -556,7 +560,7 @@ func phoneAddress(ok bool, base string) string {
 // authorize2FAPage: the password proved on the television and the account
 // wants its second factor. Same six digits (or a recovery code) as the phone
 // flow, styled for the sofa.
-func (s *server) authorize2FAPage(w http.ResponseWriter, r *http.Request, token, msg string) {
+func (s *Service) authorize2FAPage(w http.ResponseWriter, r *http.Request, token, msg string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, pageHeadFor("Two-factor check", "console")+`
 <h1>Check your authenticator</h1>
@@ -572,7 +576,7 @@ func (s *server) authorize2FAPage(w http.ResponseWriter, r *http.Request, token,
 </form></div></main></body></html>`)
 }
 
-func (s *server) authorizePage(w http.ResponseWriter, r *http.Request, q url.Values, msg string) {
+func (s *Service) authorizePage(w http.ResponseWriter, r *http.Request, q url.Values, msg string) {
 	var hidden strings.Builder
 	for k, v := range q {
 		fmt.Fprintf(&hidden, `<input type="hidden" name="%s" value="%s">`, html.EscapeString(k), html.EscapeString(v[0]))
@@ -684,7 +688,7 @@ func naAddress(address string) (email, screenName string) {
 	return address, string(nameRunes[:min(2, len(nameRunes))]) + "•••@" + string(domainRunes[:1]) + "••••"
 }
 
-func naProfile(id *identity.Identity) (country, birthday string) {
+func NAProfile(id *identity.Identity) (country, birthday string) {
 	country, birthday = id.Country, id.Birthday
 	if country == "" {
 		country = httpx.Getenv("NA_FALLBACK_COUNTRY", "GB")
@@ -694,4 +698,24 @@ func naProfile(id *identity.Identity) (country, birthday string) {
 		birthday = httpx.Getenv("NA_FALLBACK_BIRTHDAY", "2000-01-01")
 	}
 	return country, birthday
+}
+
+// Service is the Nintendo Account surface (accounts.nintendo.com) and the console link pages
+// over the shared state. Locks refuses banned accounts.
+type Service struct {
+	*core.Core
+	Locks interface{ PIDLock(pid uint64) string }
+
+	mu         sync.Mutex
+	codes      map[string]Code  // NA authorization codes / session tokens -> who logged in
+	links      *linkStore       // pending QR console links, by code
+	guesses    *guesses         // wrong-code/password attempts, per account
+	phones     *phoneStore      // signed-in phones entering a code
+	pending2FA *pending2FAStore // password-proved logins awaiting a second factor
+}
+
+// New is the Nintendo Account surface with empty link and code state.
+func New(c *core.Core, locks interface{ PIDLock(pid uint64) string }) *Service {
+	return &Service{Core: c, Locks: locks, codes: map[string]Code{}, links: newLinkStore(),
+		guesses: newGuesses(), phones: newPhoneStore(), pending2FA: newPending2FAStore()}
 }

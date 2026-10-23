@@ -17,6 +17,7 @@ import (
 	accountv1 "nx-baas/accountpb"
 	"nx-baas/internal/bans"
 	"nx-baas/internal/core"
+	"nx-baas/internal/nxaccount"
 	"nx-baas/internal/store"
 )
 
@@ -64,7 +65,6 @@ func banServer(t *testing.T) (*server, *fakeBans) {
 		t.Fatal(err)
 	}
 	s.Key, s.IDKid, s.AccKid, s.NAKid = key, "id", "acc", "na"
-	s.codes = map[string]naCode{}
 	s.device = map[string]string{}
 	f := &fakeBans{status: map[string]accountv1.AccountStatus{}}
 	f.set(hostPID, accountv1.AccountStatus_ACCOUNT_STATUS_BANNED)
@@ -149,8 +149,8 @@ func TestBannedAccountsLiveTokenStopsWorking(t *testing.T) {
 // pair the account module maps.
 func TestBannedAccountGetsNoNintendoAccountToken(t *testing.T) {
 	s, _ := banServer(t)
-	s.codes["c0de"] = naCode{PID: hostPID, NaID: "00aa00aa00aa00aa", Created: time.Now()}
-	r := httptest.NewRequest("POST", "https://accounts.nintendo.com/connect/1.0.0/api/token", strings.NewReader("code=c0de"))
+	code := s.naSvc().IssueCode(nxaccount.Code{PID: hostPID, NaID: "00aa00aa00aa00aa", Created: time.Now()})
+	r := httptest.NewRequest("POST", "https://accounts.nintendo.com/connect/1.0.0/api/token", strings.NewReader("code="+code))
 	r.Host = "accounts.nintendo.com"
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
@@ -159,7 +159,7 @@ func TestBannedAccountGetsNoNintendoAccountToken(t *testing.T) {
 	}
 
 	s.Store.RememberNA("00aa00aa00aa00aa", hostPID)
-	at := s.naAccessToken(naCode{PID: hostPID, NaID: "00aa00aa00aa00aa"})
+	at := s.naSvc().NAAccessToken(nxaccount.Code{PID: hostPID, NaID: "00aa00aa00aa00aa"})
 	form := url.Values{"prompt": {"none"}, "redirect_uri": {"nintendo://app"}, "state": {"st"}}.Encode()
 	r = httptest.NewRequest("POST", "https://accounts.nintendo.com/connect/1.0.0/authorize", strings.NewReader(form))
 	r.Host = "accounts.nintendo.com"

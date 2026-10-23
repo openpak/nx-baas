@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"nx-baas/internal/identity"
+	"nx-baas/internal/nxaccount"
 	"nx-baas/internal/penne"
 	"nx-baas/internal/store"
 	"strings"
@@ -33,7 +34,7 @@ func linkedServer(t *testing.T) *server {
 
 // naIDTokenFor mints the NA id token a console page's identify() step would deliver.
 func naIDTokenFor(s *server) string {
-	return s.naIDToken(naCode{NaID: testNAID, ClientID: "test-client"}, "access", "")
+	return s.naSvc().NAIDToken(nxaccount.Code{NaID: testNAID, ClientID: "test-client"}, "access", "")
 }
 
 func hostReq(s *server, host, method, path, token, body string) *httptest.ResponseRecorder {

@@ -137,11 +137,11 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/healthz":
 		httpx.WriteJSON(w, 200, map[string]any{"status": "ok", "service": "nx-baas"})
 	case strings.HasPrefix(r.URL.Path, "/connect/1.0.0/qr/") || strings.HasPrefix(r.URL.Path, "/link"):
-		if !s.qrRoutes(w, r, body) {
+		if !s.naSvc().QRRoutes(w, r, body) {
 			http.NotFound(w, r)
 		}
 	case strings.Contains(host, "accounts.nintendo.com"):
-		s.na(w, r, body)
+		s.naSvc().Handle(w, r, body)
 	case strings.HasSuffix(host, ".znc.srv.nintendo.net"):
 		// The voice-chat lobby page systemWeb opens (nso.go).
 		s.zncLobby(w, r, body)
