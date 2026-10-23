@@ -122,12 +122,12 @@ func newSavesProxy(base string) *httputil.ReverseProxy {
 // own token: token -> profile (recorded at mint) -> user (proven here)
 // [firmware, olsc; docs/switch/friends-notifications-firmware-2026-09-19.md §1].
 func (s *server) bindTokenProfile(r *http.Request, tok string) {
-	claims := s.bearer(r)
+	claims := s.Bearer(r)
 	if tok == "" || claims == nil {
 		return
 	}
 	uid := httpx.Str(claims, "sub")
-	if s.store.User(uid) == nil {
+	if s.Store.User(uid) == nil {
 		return
 	}
 	s.penneBindToken(tok, uid)
@@ -145,10 +145,10 @@ func (s *server) savesProxy(w http.ResponseWriter, r *http.Request) {
 	r.Header.Del("X-OpenPak-NSA")
 	r.Header.Del("X-OpenPak-Device")
 	r.Header.Set("X-Internal-Key", s.savesKey)
-	if claims := s.bearer(r); claims != nil {
+	if claims := s.Bearer(r); claims != nil {
 		if uid := httpx.Str(claims, "sub"); uid != "" {
-			if u := s.store.User(uid); u != nil {
-				if b, ok := s.acct.(interface{ AccountFor(uint64) string }); ok {
+			if u := s.Store.User(uid); u != nil {
+				if b, ok := s.Acct.(interface{ AccountFor(uint64) string }); ok {
 					if acct := b.AccountFor(u.PID); acct != "" {
 						r.Header.Set("X-OpenPak-Account", acct)
 						r.Header.Set("X-OpenPak-NSA", uid)

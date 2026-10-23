@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
+	"nx-baas/internal/core"
 	"nx-baas/internal/msgpack"
 	"os"
 	"path/filepath"
@@ -91,7 +92,7 @@ func TestErrorReportIsDecodedKeptAndForwarded(t *testing.T) {
 	t.Setenv("WEBSITE_INTERNAL_URL", site.URL)
 	t.Setenv("WEBSITE_INTERNAL_KEY", "site-key")
 	dir := t.TempDir()
-	s := &server{reports: newReportSpool(dir)}
+	s := &server{Core: &core.Core{}, reports: newReportSpool(dir)}
 
 	body, ct := consoleReport(t)
 	if w := postReport(s, body, ct); w.Code != 200 {
@@ -140,7 +141,7 @@ func TestErrorReportSpoolRetriesAndParksRefusals(t *testing.T) {
 	t.Setenv("WEBSITE_INTERNAL_URL", site.URL)
 	t.Setenv("WEBSITE_INTERNAL_KEY", "k")
 	dir := t.TempDir()
-	s := &server{reports: newReportSpool(dir)}
+	s := &server{Core: &core.Core{}, reports: newReportSpool(dir)}
 	body, ct := consoleReport(t)
 	postReport(s, body, ct)
 
@@ -171,7 +172,7 @@ func TestErrorReportSpoolRetriesAndParksRefusals(t *testing.T) {
 func TestErrorReportUnknownShapeIsKept(t *testing.T) {
 	t.Setenv("WEBSITE_INTERNAL_URL", "")
 	dir := t.TempDir()
-	s := &server{reports: newReportSpool(dir)}
+	s := &server{Core: &core.Core{}, reports: newReportSpool(dir)}
 	if w := postReport(s, []byte("<xml>what</xml>"), "text/xml"); w.Code != 200 {
 		t.Fatalf("unknown shape = %d", w.Code)
 	}

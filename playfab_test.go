@@ -7,12 +7,13 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"nx-baas/internal/core"
 	"strings"
 	"testing"
 )
 
 func TestPlayFabAnswersServiceUnavailable(t *testing.T) {
-	s := &server{}
+	s := &server{Core: &core.Core{}}
 	for _, host := range []string{"3f284.playfabapi.com", "playfabapi.com", "3F284.PlayFabAPI.com:443"} {
 		r := httptest.NewRequest("POST", "https://"+host+"/Client/LoginWithNintendoSwitchDeviceId?sdk=UnitySDK-2.0",
 			strings.NewReader(`{"TitleId":"3F284","IdentityToken":"secret"}`))
@@ -51,7 +52,7 @@ func TestPlayFabCoreKeeperForwardBeforeDebugBodyLogger(t *testing.T) {
 	}))
 	defer upstream.Close()
 	t.Setenv("NX_PLAYFAB_URL", upstream.URL)
-	s := &server{}
+	s := &server{Core: &core.Core{}}
 	s.forwardersFromEnv()
 	r := httptest.NewRequest("POST", "https://94845.playfabapi.com:443/Client/LoginWithNintendoServiceAccount", strings.NewReader(body))
 	w := httptest.NewRecorder()

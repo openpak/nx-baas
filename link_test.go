@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"nx-baas/internal/core"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +14,7 @@ import (
 // The whole point of the code is that a stale one on a TV cannot be used, and that approval
 // happens on the console rather than on whoever scanned the square.
 func TestLinkCodeLifecycle(t *testing.T) {
-	s := &server{links: newLinkStore()}
+	s := &server{Core: &core.Core{}, links: newLinkStore()}
 	code, _ := s.links.new(url.Values{"client_id": {"abc"}})
 
 	if got := s.links.get(code); got == nil || got.State != linkWaiting {
@@ -32,7 +33,7 @@ func TestLinkCodeLifecycle(t *testing.T) {
 }
 
 func TestApproveRefusedUntilAPhoneClaims(t *testing.T) {
-	s := &server{links: newLinkStore(), codes: map[string]naCode{}}
+	s := &server{Core: &core.Core{}, links: newLinkStore(), codes: map[string]naCode{}}
 	code, _ := s.links.new(url.Values{})
 
 	r := httptest.NewRequest(http.MethodPost, "/connect/1.0.0/qr/approve?c="+code, nil)
@@ -46,7 +47,7 @@ func TestApproveRefusedUntilAPhoneClaims(t *testing.T) {
 }
 
 func TestStateReportsWhoClaimedIt(t *testing.T) {
-	s := &server{links: newLinkStore()}
+	s := &server{Core: &core.Core{}, links: newLinkStore()}
 	code, _ := s.links.new(url.Values{})
 	s.links.update(code, func(p *pendingLink) {
 		p.State, p.Username, p.PID = linkClaimed, "hansolo", 1800000003
@@ -122,7 +123,7 @@ func TestGuessesAreCapped(t *testing.T) {
 // A code may be claimed once. A second phone entering the same code must not take over a link
 // that is already waiting for approval on the console.
 func TestCodeIsSingleUse(t *testing.T) {
-	s := &server{links: newLinkStore(), phones: newPhoneStore()}
+	s := &server{Core: &core.Core{}, links: newLinkStore(), phones: newPhoneStore()}
 	code, _ := s.links.new(url.Values{})
 	s.links.update(code, func(p *pendingLink) {
 		p.State, p.Username, p.PID = linkClaimed, "first", 1
@@ -172,7 +173,7 @@ func TestSignOutDropsTheSession(t *testing.T) {
 // The QR must reveal nothing: it carries a pairing id, and the code appears on the console
 // only once a phone has signed in against that pairing.
 func TestCodeAppearsOnlyAfterSignIn(t *testing.T) {
-	s := &server{links: newLinkStore(), phones: newPhoneStore()}
+	s := &server{Core: &core.Core{}, links: newLinkStore(), phones: newPhoneStore()}
 	code, pair := s.links.new(url.Values{})
 
 	if code == pair {

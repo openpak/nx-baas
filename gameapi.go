@@ -90,7 +90,7 @@ func verifyNexToken(key []byte, tok string) (uint64, string, bool) {
 // returned only for a token that is actually bad.
 func (s *server) callerPID(r *http.Request) (uint64, string, bool) {
 	tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer"))
-	return verifyNexToken(s.acct.NexSigningKey(), tok)
+	return verifyNexToken(s.Acct.NexSigningKey(), tok)
 }
 
 // ---------- room presence ----------
@@ -100,14 +100,14 @@ func (s *server) callerPID(r *http.Request) (uint64, string, bool) {
 // "bsdid:<bs:did>" (consoles) -- see AccountIdentityRegistry.ExtractToken.
 func (s *server) pidForIdentity(identity string) uint64 {
 	if tok, ok := strings.CutPrefix(identity, "nex:"); ok {
-		pid, _, valid := verifyNexToken(s.acct.NexSigningKey(), tok)
+		pid, _, valid := verifyNexToken(s.Acct.NexSigningKey(), tok)
 		if !valid {
 			return 0
 		}
 		return pid
 	}
 	bsDid := strings.TrimPrefix(identity, "bsdid:")
-	if u := s.store.UserByBsDid(bsDid); u != nil {
+	if u := s.Store.UserByBsDid(bsDid); u != nil {
 		return u.PID
 	}
 	return 0
@@ -136,7 +136,7 @@ func (s *server) photonRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pid := s.pidForIdentity(in.Identity)
-	u := s.store.UserByPID(pid)
+	u := s.Store.UserByPID(pid)
 	if pid == 0 || u == nil {
 		httpx.APIErr(w, http.StatusBadRequest, "unknown identity")
 		return
@@ -173,7 +173,7 @@ func (s *server) photonRoomLeave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pid := s.pidForIdentity(in.Identity)
-	u := s.store.UserByPID(pid)
+	u := s.Store.UserByPID(pid)
 	if pid == 0 || u == nil {
 		httpx.APIErr(w, http.StatusBadRequest, "unknown identity")
 		return
@@ -207,7 +207,7 @@ func (s *server) photonIdentity(w http.ResponseWriter, r *http.Request) {
 		internalLocked(w, lock)
 		return
 	}
-	id, err := s.acct.Identity(pid)
+	id, err := s.Acct.Identity(pid)
 	if err != nil {
 		httpx.APIErr(w, http.StatusNotFound, "unknown pid")
 		return
@@ -279,7 +279,7 @@ func (s *server) sendInvitation(w http.ResponseWriter, r *http.Request, from uin
 		httpx.APIErr(w, http.StatusBadRequest, "invalid app_param_base64")
 		return
 	}
-	id, err := s.acct.Identity(from)
+	id, err := s.Acct.Identity(from)
 	if err != nil {
 		identity.LogErr("identity", err)
 		httpx.APIErr(w, http.StatusBadGateway, "account lookup failed")
@@ -288,7 +288,7 @@ func (s *server) sendInvitation(w http.ResponseWriter, r *http.Request, from uin
 	if id.Nickname != "" {
 		name = id.Nickname
 	}
-	sender := s.store.UserByPID(from)
+	sender := s.Store.UserByPID(from)
 	if sender == nil {
 		httpx.APIErr(w, http.StatusBadRequest, "unknown identity")
 		return
@@ -301,7 +301,7 @@ func (s *server) sendInvitation(w http.ResponseWriter, r *http.Request, from uin
 	defer cancel()
 	sent := 0
 	for _, pid := range in.TargetPIDs {
-		target := s.store.UserByPID(pid)
+		target := s.Store.UserByPID(pid)
 		if target == nil || !isFriend(id, pid) || s.pidLock(pid) != "" {
 			continue
 		}
@@ -337,7 +337,7 @@ func isFriend(id *identity.Identity, pid uint64) bool {
 // GET /api/invitations -- pops every invitation queued for the caller, matching the console's
 // own TryPopFromFriendInvitationStorageChannel (a poll-until-something's-there call).
 func (s *server) pollInvitations(w http.ResponseWriter, pid uint64) {
-	receiver := s.store.UserByPID(pid)
+	receiver := s.Store.UserByPID(pid)
 	if receiver == nil {
 		httpx.WriteJSON(w, 200, map[string]any{"invitations": []any{}})
 		return
@@ -368,13 +368,13 @@ func (s *server) mintToken(w http.ResponseWriter, r *http.Request) {
 		internalLocked(w, lock)
 		return
 	}
-	id, err := s.acct.Identity(in.PID)
+	id, err := s.Acct.Identity(in.PID)
 	if err != nil {
 		identity.LogErr("identity", err)
 		httpx.APIErr(w, http.StatusNotFound, "unknown pid")
 		return
 	}
-	tok := s.acct.NexToken(in.PID, id.Nickname)
+	tok := s.Acct.NexToken(in.PID, id.Nickname)
 	if tok == "" {
 		httpx.APIErr(w, http.StatusServiceUnavailable, "no signing key")
 		return

@@ -29,8 +29,8 @@ func (m *markingBackend) MarkOnline(pid uint64) {
 
 func TestIdentityLookupsMarkPlayersOnline(t *testing.T) {
 	s := testServer(t)
-	m := &markingBackend{stubBackend: s.acct.(*stubBackend)}
-	s.acct = m
+	m := &markingBackend{stubBackend: s.Acct.(*stubBackend)}
+	s.Acct = m
 
 	if w := do(t, s, "POST", "/internal/switch/identity", "", fmt.Sprintf(`{"pid":%d}`, hostPID)); w.Code != 200 {
 		t.Fatalf("switch identity %d: %s", w.Code, w.Body)

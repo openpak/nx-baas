@@ -129,15 +129,15 @@ func (s *server) errorReport(w http.ResponseWriter, r *http.Request) {
 // core account. The bearer eupld sends is not recovered: a device token names the device,
 // a BAAS user token names the account; anything else leaves the User-Agent's did.
 func (s *server) reportIdentity(r *http.Request) (device, account string) {
-	if s.key != nil {
-		if c := s.bearer(r); c != nil {
+	if s.Key != nil {
+		if c := s.Bearer(r); c != nil {
 			sub := httpx.Str(c, "sub")
 			if n, ok := c["nintendo"].(map[string]any); ok {
 				device = httpx.Str(n, "di")
 			}
 			var u *store.User
-			if s.store != nil {
-				u = s.store.User(sub)
+			if s.Store != nil {
+				u = s.Store.User(sub)
 			}
 			if u != nil {
 				if src := s.banSrc(); src != nil {

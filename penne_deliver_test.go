@@ -4,6 +4,7 @@ package main
 // is not a native event or has no recipient here, and hands everything else on.
 
 import (
+	"nx-baas/internal/core"
 	"nx-baas/internal/store"
 	"os"
 	"path/filepath"
@@ -17,9 +18,9 @@ func mustStore(t *testing.T) *store.Store {
 
 func deliverServer(t *testing.T) (*server, string) {
 	t.Helper()
-	s := &server{store: mustStore(t)}
+	s := &server{Core: &core.Core{Store: mustStore(t)}}
 	recordNotifications(s)
-	u, _ := s.store.NewUser()
+	u, _ := s.Store.NewUser()
 	return s, u.ID
 }
 
@@ -51,8 +52,8 @@ func TestSubmitNotificationValidatesKindAndRecipient(t *testing.T) {
 // A server without nx-penne (only a test can build one: main requires NX_PENNE_URL) says
 // so rather than pretending the event went anywhere.
 func TestSubmitWithoutNxPenneIsNotAccepted(t *testing.T) {
-	s := &server{store: mustStore(t)}
-	u, _ := s.store.NewUser()
+	s := &server{Core: &core.Core{Store: mustStore(t)}}
+	u, _ := s.Store.NewUser()
 	if r := s.SubmitNotification(PenneDelivery{UserID: u.ID, Kind: EventFriendDeleted}); r.Accepted || r.Outcome != penneNoService {
 		t.Fatalf("no nx-penne: %+v", r)
 	}

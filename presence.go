@@ -251,7 +251,7 @@ func (s *server) noteClientPresence(u *store.User, deviceID, client, clientOS, s
 	lease := int64(presenceLease().Seconds())
 	before := s.presenceSnapshot(u.ID)
 	defer func() { s.notifyPresenceIfChanged(u.ID, before) }()
-	s.store.Update(u, func(u *store.User) {
+	s.Store.Update(u, func(u *store.User) {
 		if u.DevicePresence == nil {
 			u.DevicePresence = map[string]*store.DevicePresence{}
 		}
@@ -298,7 +298,7 @@ func (s *server) noteClientPresence(u *store.User, deviceID, client, clientOS, s
 // (2026-09-20: an invitation naming its sender as "offline for 0 minutes").
 // Only presence we are still hearing a live connection for is renewed.
 func (s *server) renewDevicePresence(userID, deviceID string) {
-	u := s.store.User(userID)
+	u := s.Store.User(userID)
 	if u == nil {
 		return
 	}
@@ -312,7 +312,7 @@ func (s *server) renewDevicePresence(userID, deviceID string) {
 			e.ExpiresAt = now + lease
 		}
 	}
-	s.store.Update(u, func(u *store.User) {
+	s.Store.Update(u, func(u *store.User) {
 		if deviceID != "" {
 			extend(u.DevicePresence[deviceID])
 			return
@@ -346,7 +346,7 @@ func (s *server) expireDevicePresence(u *store.User, deviceID string) {
 	now := time.Now().Unix()
 	before := s.presenceSnapshot(u.ID)
 	defer func() { s.notifyPresenceIfChanged(u.ID, before) }()
-	s.store.Update(u, func(u *store.User) {
+	s.Store.Update(u, func(u *store.User) {
 		e := u.DevicePresence[deviceID]
 		if e == nil || e.ExpiresAt <= now {
 			return // not live; nothing to end
@@ -380,8 +380,8 @@ func hasLiveDeviceClaim(u *store.User, now int64, lease time.Duration) bool {
 
 // deviceClaimLive answers whether one device holds a live claim right now.
 func (s *server) deviceClaimLive(u *store.User, deviceID string) bool {
-	s.store.Mu.Lock()
-	defer s.store.Mu.Unlock()
+	s.Store.Mu.Lock()
+	defer s.Store.Mu.Unlock()
 	e := u.DevicePresence[deviceID]
 	return e != nil && stateRank(e.State) > 0 && e.ExpiresAt > time.Now().Unix()
 }
@@ -395,12 +395,12 @@ func (s *server) expireDeviceEverywhere(deviceID, exceptUserID string) {
 	if deviceID == "" {
 		return
 	}
-	for _, u := range s.store.LiveUsers() {
+	for _, u := range s.Store.LiveUsers() {
 		if u.ID == exceptUserID {
 			continue
 		}
 		if _, ok := u.DevicePresence[deviceID]; ok {
-			s.expireDevicePresence(s.store.User(u.ID), deviceID)
+			s.expireDevicePresence(s.Store.User(u.ID), deviceID)
 		}
 	}
 }
@@ -466,12 +466,12 @@ func (s *server) reconcilePresenceLoop() {
 }
 
 func (s *server) reconcilePresenceOnce(now time.Time, lease time.Duration) {
-	b, ok := s.acct.(*identity.OpenpakBackend)
+	b, ok := s.Acct.(*identity.OpenpakBackend)
 	if !ok {
 		return // the earlier account backend keeps presence to itself
 	}
 	unix := now.Unix()
-	for _, u := range s.store.LiveUsers() {
+	for _, u := range s.Store.LiveUsers() {
 		agg := aggregatePresence(u, unix, lease)
 		switch {
 		case agg.State != "OFFLINE":
@@ -508,7 +508,7 @@ func (s *server) reconcilePresenceOnce(now time.Time, lease time.Duration) {
 func (s *server) expireLocalPresence(u *store.User, now int64, lease time.Duration) {
 	before := s.presenceSnapshot(u.ID)
 	defer func() { s.notifyPresenceIfChanged(u.ID, before) }()
-	s.store.Update(u, func(u *store.User) {
+	s.Store.Update(u, func(u *store.User) {
 		for id, e := range u.DevicePresence {
 			if e.ExpiresAt != 0 && e.ExpiresAt <= now {
 				// Ended, not forgotten: the entry becomes the departure, so

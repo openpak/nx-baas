@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"nx-baas/internal/core"
 	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 	"os"
@@ -75,7 +76,7 @@ func renderGaps(entry map[string]any, required map[string]string) []string {
 // required paths — the gate the 22.5.0 parser applies before an item counts.
 func TestRelationshipEntrySatisfiesTheNativeFixture(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	entry := s.relationshipObj(nil, identity.Friend{
 		PID: 2, BaasUserID: "0123456789abcdef", Nickname: "OpenPak Test",
 		FriendCode: "SW-0000-0000-0001", Country: "IE", CreatedAt: 1788818380,
@@ -94,7 +95,7 @@ func TestRelationshipEntrySatisfiesTheNativeFixture(t *testing.T) {
 // must fail the gate. This is the regression that kept the native list empty.
 func TestOldFlatEntryFailsTheNativeGate(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	flat := s.friendObj(identity.Friend{
 		PID: 2, BaasUserID: "0123456789abcdef", Nickname: "OpenPak Test",
 		Country: "IE", CreatedAt: 1788818380,
@@ -108,7 +109,7 @@ func TestOldFlatEntryFailsTheNativeGate(t *testing.T) {
 // three-field mask, not a vibe.
 func TestEachRequiredFieldOmissionIsDetected(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	entry := s.relationshipObj(nil, identity.Friend{BaasUserID: "0123456789abcdef", CreatedAt: 1}, 1788899654)
 
 	for _, drop := range []struct {
@@ -139,7 +140,7 @@ func dropPathKey(path string) string {
 // with, so the bound is the contract.
 func TestFriendListBoundsAndEmptyCase(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	friends := []identity.Friend{}
 	for i := 0; i < 310; i++ {
 		friends = append(friends, identity.Friend{PID: uint64(i + 2), BaasUserID: strings.Repeat("a", 15) + string(rune('a'+i%26)) + itoa(i),
@@ -174,11 +175,11 @@ func TestFriendListBoundsAndEmptyCase(t *testing.T) {
 func TestFriendAvatarIsReachable(t *testing.T) {
 	t.Setenv("NX_DATA", t.TempDir())
 	s := dauthServer(t)
-	s.acct = fakeBackend{id: &identity.Identity{PID: 0, Nickname: "x", FriendCode: "SW-0000-0000-0000"}} // identity lookups, no picture
-	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+	s.Acct = fakeBackend{id: &identity.Identity{PID: 0, Nickname: "x", FriendCode: "SW-0000-0000-0000"}} // identity lookups, no picture
+	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	fid := "0123456789abcdef"
 	now := time.Now().Unix()
-	s.store.Users[fid] = &store.User{ID: fid, Avatar: "/9j/4AAQSkZJRg==", CreatedAt: now, UpdatedAt: now,
+	s.Store.Users[fid] = &store.User{ID: fid, Avatar: "/9j/4AAQSkZJRg==", CreatedAt: now, UpdatedAt: now,
 		Presence: store.Presence{State: "OFFLINE", UpdatedAt: now}}
 
 	fetch := func(id string) *httptest.ResponseRecorder {
@@ -207,8 +208,8 @@ func TestRelationshipPreferencesPersistAndProject(t *testing.T) {
 	fid := other.ID
 
 	patch := func(body string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest("PATCH", "https://"+baasHost+"/2.0.0/users/"+u.ID+"/friends/"+fid, strings.NewReader(body))
-		r.Host = baasHost
+		r := httptest.NewRequest("PATCH", "https://"+core.BaasHost+"/2.0.0/users/"+u.ID+"/friends/"+fid, strings.NewReader(body))
+		r.Host = core.BaasHost
 		r.Header.Set("Content-Type", "application/json-patch+json")
 		r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
 		w := httptest.NewRecorder()
@@ -216,8 +217,8 @@ func TestRelationshipPreferencesPersistAndProject(t *testing.T) {
 		return w
 	}
 	getList := func() map[string]any {
-		r := httptest.NewRequest("GET", "https://"+baasHost+"/2.0.0/users/"+u.ID+"/friends", nil)
-		r.Host = baasHost
+		r := httptest.NewRequest("GET", "https://"+core.BaasHost+"/2.0.0/users/"+u.ID+"/friends", nil)
+		r.Host = core.BaasHost
 		r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, r)
@@ -256,7 +257,7 @@ func TestRelationshipPreferencesPersistAndProject(t *testing.T) {
 	if w := patch(`[{"op":"replace","path":"/isFavorite","value":false}]`); w.Code != http.StatusOK {
 		t.Fatal("unfavourite failed")
 	}
-	s.store = store.Load(s.store.FilePath) // the restart
+	s.Store = store.Load(s.Store.FilePath) // the restart
 	if entry := entryOf(getList()); entry["isFavorite"] != false {
 		t.Errorf("isFavorite after restart = %v, want false to stay false", entry["isFavorite"])
 	}
@@ -287,8 +288,8 @@ func TestRelationshipPreferencesPersistAndProject(t *testing.T) {
 	s2, _, users2 := socialServer(t)
 	u2 := users2[0]
 	_ = users2[1]
-	r := httptest.NewRequest("GET", "https://"+baasHost+"/2.0.0/users/"+u2.ID+"/friends", nil)
-	r.Host = baasHost
+	r := httptest.NewRequest("GET", "https://"+core.BaasHost+"/2.0.0/users/"+u2.ID+"/friends", nil)
+	r.Host = core.BaasHost
 	r.Header.Set("Authorization", "Bearer "+s2.accessToken(u2.ID, 2, "did", "device", "serial"))
 	w2 := httptest.NewRecorder()
 	s2.ServeHTTP(w2, r)
@@ -313,8 +314,8 @@ func TestListEtagStableWhenNothingChanged(t *testing.T) {
 	s, _, users := socialServer(t)
 	u := users[0]
 	get := func() string {
-		r := httptest.NewRequest("GET", "https://"+baasHost+"/2.0.0/users/"+u.ID+"/friends", nil)
-		r.Host = baasHost
+		r := httptest.NewRequest("GET", "https://"+core.BaasHost+"/2.0.0/users/"+u.ID+"/friends", nil)
+		r.Host = core.BaasHost
 		r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, r)
@@ -329,9 +330,9 @@ func TestListEtagStableWhenNothingChanged(t *testing.T) {
 		t.Errorf("etag not stable across unchanged fetches: %q then %q", first, second)
 	}
 	// A favourite flip is a relationship change: the version moves.
-	r := httptest.NewRequest("PATCH", "https://"+baasHost+"/2.0.0/users/"+u.ID+"/friends/"+users[1].ID,
+	r := httptest.NewRequest("PATCH", "https://"+core.BaasHost+"/2.0.0/users/"+u.ID+"/friends/"+users[1].ID,
 		strings.NewReader(`[{"op":"replace","path":"/isFavorite","value":true}]`))
-	r.Host = baasHost
+	r.Host = core.BaasHost
 	r.Header.Set("Content-Type", "application/json-patch+json")
 	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
 	w := httptest.NewRecorder()
@@ -395,7 +396,7 @@ func TestFieldsTheModulesParseArePresent(t *testing.T) {
 // defensible shape rather than a 404 the console has to interpret.
 func TestUnservedModuleRoutesAnswer(t *testing.T) {
 	t.Setenv("NX_DATA", t.TempDir())
-	s := &server{store: store.Load(t.TempDir() + "/baas.json")}
+	s := &server{Core: &core.Core{Store: store.Load(t.TempDir() + "/baas.json")}}
 	for _, tc := range []struct {
 		host, path string
 		want       int
@@ -420,7 +421,7 @@ func TestUnservedModuleRoutesAnswer(t *testing.T) {
 // confirmation is answered (there are no terms here), while a term-agreement
 // token and an account transfer are refused plainly rather than faked.
 func TestAccountSetupRoutesAnswer(t *testing.T) {
-	s := &server{store: store.Load(t.TempDir() + "/baas.json")}
+	s := &server{Core: &core.Core{Store: store.Load(t.TempDir() + "/baas.json")}}
 	post := func(path, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest("POST", "https://accounts.nintendo.com"+path, strings.NewReader(body))
 		r.Host = "accounts.nintendo.com"

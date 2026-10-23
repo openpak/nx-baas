@@ -37,6 +37,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"nx-baas/internal/core"
 	"nx-baas/internal/httpx"
 	"nx-baas/redact"
 	"path"
@@ -120,9 +121,9 @@ func (s *server) lobbyVoice(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	_, baasUser := s.shopPrincipal(r)
 	account := ""
-	if s.store == nil || baasUser == "" {
+	if s.Store == nil || baasUser == "" {
 		// fall through to 401
-	} else if u := s.store.User(baasUser); u != nil && s.banSrc() != nil {
+	} else if u := s.Store.User(baasUser); u != nil && s.banSrc() != nil {
 		account = s.banSrc().AccountFor(u.PID)
 	}
 	if account == "" {
@@ -159,8 +160,8 @@ func (s *server) nsoMembership(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{"membership": "active", "plans": []string{"default", "ex"}}
 	if account, baasUser := s.shopPrincipal(r); account != "" {
 		out["signed_in"] = true
-		if s.store != nil && baasUser != "" {
-			if u := s.store.User(baasUser); u != nil {
+		if s.Store != nil && baasUser != "" {
+			if u := s.Store.User(baasUser); u != nil {
 				out["nickname"] = u.Nickname
 			}
 		}
@@ -424,7 +425,7 @@ func (s *server) shopPrincipal(r *http.Request) (accountID, baasUserID string) {
 func (s *server) shopPrincipalUnchecked(r *http.Request) (accountID, baasUserID string) {
 	headerID := r.Header.Get("Nintendo-Account-Id")
 	for _, h := range []string{"Authorization", "Nintendo-Nsa-Id-Token"} {
-		claims := s.bearerHeader(r, h)
+		claims := s.BearerHeader(r, h)
 		if claims == nil {
 			continue
 		}
@@ -433,8 +434,8 @@ func (s *server) shopPrincipalUnchecked(r *http.Request) (accountID, baasUserID 
 		// The shop page may hold the network service account's id token instead
 		// (systemWeb's setNsaIdTokenAvailableCallback): our BAAS signs it, its subject
 		// is the BAAS user, and that user carries the Nintendo Account id.
-		if iss == baasIssuer && httpx.Str(claims, "typ") == "id_token" && s.store != nil {
-			if u := s.store.User(sub); u != nil && u.NaID != "" {
+		if iss == core.BaasIssuer && httpx.Str(claims, "typ") == "id_token" && s.Store != nil {
+			if u := s.Store.User(sub); u != nil && u.NaID != "" {
 				if headerID != "" && headerID != u.NaID {
 					log.Printf("[shop] principal: header %s disagrees with nsa token's account %s; refusing", redact.Tag(headerID), redact.Tag(u.NaID))
 					return "", ""
@@ -445,7 +446,7 @@ func (s *server) shopPrincipalUnchecked(r *http.Request) (accountID, baasUserID 
 		}
 		// NA id tokens come from our accounts.nintendo.com surface; a token from anywhere
 		// else does not name an account here.
-		if sub == "" || iss != naIssuer {
+		if sub == "" || iss != core.NaIssuer {
 			continue
 		}
 		if headerID != "" && headerID != sub {
@@ -453,8 +454,8 @@ func (s *server) shopPrincipalUnchecked(r *http.Request) (accountID, baasUserID 
 			return "", ""
 		}
 		// Map the NA id to this adapter's BAAS user so entitlement rows carry both.
-		if pid := s.store.PIDForNA(sub); pid != 0 {
-			if u := s.store.UserByPID(pid); u != nil {
+		if pid := s.Store.PIDForNA(sub); pid != 0 {
+			if u := s.Store.UserByPID(pid); u != nil {
 				return sub, u.ID
 			}
 		}

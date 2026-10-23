@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"nx-baas/internal/core"
 	"strings"
 	"testing"
 )
@@ -38,7 +39,7 @@ func TestSpelunkyForwardsWhenConfigured(t *testing.T) {
 	}))
 	defer upstream.Close()
 	t.Setenv("NX_SPELUNKY2_URL", upstream.URL)
-	s := &server{}
+	s := &server{Core: &core.Core{}}
 	r := httptest.NewRequest("POST", "https://x.spelunky2.net/nso", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
@@ -52,7 +53,7 @@ func TestSpelunkyForwardsWhenConfigured(t *testing.T) {
 
 func TestSpelunkyFallsThroughWhenUnset(t *testing.T) {
 	t.Setenv("NX_SPELUNKY2_URL", "")
-	s := &server{}
+	s := &server{Core: &core.Core{}}
 	r := httptest.NewRequest("POST", "https://x.spelunky2.net/nso", strings.NewReader("token"))
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)

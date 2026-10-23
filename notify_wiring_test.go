@@ -18,7 +18,7 @@ import (
 // backwards would alert the wrong console, which no later test would catch.
 func TestCoreFriendEventsNotifyTheAccountTheCoreAddressed(t *testing.T) {
 	s, _, users := socialServer(t)
-	b := s.acct.(*identity.OpenpakBackend)
+	b := s.Acct.(*identity.OpenpakBackend)
 	a, other := users[0], users[1]
 
 	for _, tc := range []struct {
@@ -53,10 +53,10 @@ func TestCoreFriendEventsNotifyTheAccountTheCoreAddressed(t *testing.T) {
 // [friends-notifications-firmware-2026-09-19.md §2.2].
 func TestRequestReceivedPushCarriesTheChannel(t *testing.T) {
 	s, _, users := socialServer(t)
-	b := s.acct.(*identity.OpenpakBackend)
+	b := s.Acct.(*identity.OpenpakBackend)
 	a, other := users[0], users[1]
 
-	id, _ := s.store.EnsureRequest(other.PID, a.PID)
+	id, _ := s.Store.EnsureRequest(other.PID, a.PID)
 	s.noteRequestRoute(id, []byte(`{"channels":["IN_APP"]}`))
 	s.notifyCoreFriendEvent(b, "friend_requested", "acc-a@example.com", "acc-b@example.com", 21)
 	queue := outboxOf(s, a.ID)
@@ -71,7 +71,7 @@ func TestRequestReceivedPushCarriesTheChannel(t *testing.T) {
 
 	// A request this server never saw still parses: FRIEND_CODE.
 	s2, _, users2 := socialServer(t)
-	b2 := s2.acct.(*identity.OpenpakBackend)
+	b2 := s2.Acct.(*identity.OpenpakBackend)
 	s2.notifyCoreFriendEvent(b2, "friend_requested", "acc-a@example.com", "acc-b@example.com", 22)
 	queue2 := outboxOf(s2, users2[0].ID)
 	if len(queue2) != 1 {
@@ -88,7 +88,7 @@ func TestRequestReceivedPushCarriesTheChannel(t *testing.T) {
 // the version, so nx-penne (which dedups on it) alerts the recipient once.
 func TestReplayedCoreEventsKeepTheirEventID(t *testing.T) {
 	s, _, users := socialServer(t)
-	b := s.acct.(*identity.OpenpakBackend)
+	b := s.Acct.(*identity.OpenpakBackend)
 
 	s.notifyCoreFriendEvent(b, "friend_requested", "acc-a@example.com", "acc-b@example.com", 77)
 	s.notifyCoreFriendEvent(b, "friend_requested", "acc-a@example.com", "acc-b@example.com", 77)
@@ -103,7 +103,7 @@ func TestReplayedCoreEventsKeepTheirEventID(t *testing.T) {
 // to be told; the wiring must not invent a recipient.
 func TestCoreEventForAnUnprojectedAccountIsDropped(t *testing.T) {
 	s, _, users := socialServer(t)
-	b := s.acct.(*identity.OpenpakBackend)
+	b := s.Acct.(*identity.OpenpakBackend)
 
 	s.notifyCoreFriendEvent(b, "friend_requested", "acc-nobody@example.com", "acc-b@example.com", 5)
 
@@ -142,14 +142,14 @@ func TestPresenceChangeNotifiesFriendsOnceAndOnlyOnChange(t *testing.T) {
 	}
 
 	// A renewal at the same state changes nothing the friend needs told.
-	s.noteDevicePresence(s.store.User(subject.ID), "dev-1", "ONLINE", "", "", "", -1)
+	s.noteDevicePresence(s.Store.User(subject.ID), "dev-1", "ONLINE", "", "", "", -1)
 	if got := len(outboxOf(s, viewer.ID)); got != 1 {
 		t.Fatalf("a heartbeat queued another delivery (%d total)", got)
 	}
 
 	// Starting a title is a change: one more event, carrying the new state (nx-penne
 	// coalesces per subject, so a sleeping console still converges to the latest).
-	s.noteDevicePresence(s.store.User(subject.ID), "dev-1", "PLAYING", "0100000000010000", "", "", -1)
+	s.noteDevicePresence(s.Store.User(subject.ID), "dev-1", "PLAYING", "0100000000010000", "", "", -1)
 	queue = outboxOf(s, viewer.ID)
 	if len(queue) != 2 {
 		t.Fatalf("starting a title produced %d deliveries in all, want 2", len(queue))
@@ -170,9 +170,9 @@ func TestPresenceChangeNotifiesFriendsOnceAndOnlyOnChange(t *testing.T) {
 func TestBlockedViewerIsNotToldAboutPresence(t *testing.T) {
 	s, _, users := socialServer(t)
 	viewer, subject := users[0], users[1]
-	s.store.Update(viewer, func(u *store.User) { u.Blocks = append(u.Blocks, subject.ID) })
+	s.Store.Update(viewer, func(u *store.User) { u.Blocks = append(u.Blocks, subject.ID) })
 
-	s.noteDevicePresence(s.store.User(subject.ID), "dev-1", "ONLINE", "", "", "", -1)
+	s.noteDevicePresence(s.Store.User(subject.ID), "dev-1", "ONLINE", "", "", "", -1)
 
 	if got := len(outboxOf(s, viewer.ID)); got != 0 {
 		t.Fatalf("a blocked viewer was queued %d presence deliveries", got)

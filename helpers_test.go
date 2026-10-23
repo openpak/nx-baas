@@ -22,11 +22,11 @@ func consoleUA() string {
 func linkedServer(t *testing.T) *server {
 	t.Helper()
 	s := dauthServer(t)
-	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
-	u, _ := s.store.NewUser()
-	s.store.Update(u, func(u *store.User) { u.PID = 7; u.Nickname = "tester" })
-	s.store.RememberNA(testNAID, 7)
-	s.acct = fakeBackend{id: &identity.Identity{PID: 7, NaID: testNAID, Nickname: "tester"}}
+	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+	u, _ := s.Store.NewUser()
+	s.Store.Update(u, func(u *store.User) { u.PID = 7; u.Nickname = "tester" })
+	s.Store.RememberNA(testNAID, 7)
+	s.Acct = fakeBackend{id: &identity.Identity{PID: 7, NaID: testNAID, Nickname: "tester"}}
 	return s
 }
 

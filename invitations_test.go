@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"nx-baas/internal/core"
 	"nx-baas/internal/store"
 	"nx-baas/internal/token"
 	"os"
@@ -68,11 +69,11 @@ func fiveServer(t *testing.T) *server {
 	st := loadInvitationStore(filepath.Join(dir, "invitations.json"))
 	invStoreOverride = st
 	t.Cleanup(func() { invStoreOverride = nil })
-	s := &server{key: key, store: store.Load(filepath.Join(dir, "baas.json"))}
+	s := &server{Core: &core.Core{Key: key, Store: store.Load(filepath.Join(dir, "baas.json"))}}
 	for uid, pid := range map[string]uint64{invSenderUID: 1800000010, invReceiverUID: 1800000011, invStrangerUID: 1800000012} {
-		s.store.Users[uid] = &store.User{ID: uid, PID: pid, Nickname: "user-" + uid}
+		s.Store.Users[uid] = &store.User{ID: uid, PID: pid, Nickname: "user-" + uid}
 	}
-	s.acct = &stubBackend{
+	s.Acct = &stubBackend{
 		key: []byte("0123456789abcdef0123456789abcdef"),
 		// Mutual friendships among all three, so the non-core fallback (no
 		// core attached) allows invites unless a test removes the edge.
@@ -124,17 +125,17 @@ func TestFiveAuthRejectsForeignTokens(t *testing.T) {
 		{"no token", ""},
 		{"garbage", "not.a.jwt"},
 		{"wrong issuer", token.SignJWT(map[string]any{"alg": "RS256", "kid": "x"}, map[string]any{
-			"aud": baasAudience, "exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(),
-			"iss": "https://elsewhere.example", "sub": invSenderUID, "typ": "token", "bs:grt": 2}, s.key)},
+			"aud": core.BaasAudience, "exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(),
+			"iss": "https://elsewhere.example", "sub": invSenderUID, "typ": "token", "bs:grt": 2}, s.Key)},
 		{"expired", token.SignJWT(map[string]any{"alg": "RS256", "kid": "x"}, map[string]any{
-			"aud": baasAudience, "exp": time.Now().Add(-time.Hour).Unix(), "iat": time.Now().Add(-2 * time.Hour).Unix(),
-			"iss": baasIssuer, "sub": invSenderUID, "typ": "token", "bs:grt": 2}, s.key)},
+			"aud": core.BaasAudience, "exp": time.Now().Add(-time.Hour).Unix(), "iat": time.Now().Add(-2 * time.Hour).Unix(),
+			"iss": core.BaasIssuer, "sub": invSenderUID, "typ": "token", "bs:grt": 2}, s.Key)},
 		{"wrong type", token.SignJWT(map[string]any{"alg": "RS256", "kid": "x"}, map[string]any{
-			"aud": baasAudience, "exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(),
-			"iss": baasIssuer, "sub": invSenderUID, "typ": "id_token", "bs:grt": 2}, s.key)},
+			"aud": core.BaasAudience, "exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(),
+			"iss": core.BaasIssuer, "sub": invSenderUID, "typ": "id_token", "bs:grt": 2}, s.Key)},
 		{"anonymous device grant", token.SignJWT(map[string]any{"alg": "RS256", "kid": "x"}, map[string]any{
-			"aud": baasAudience, "exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(),
-			"iss": baasIssuer, "sub": "pz00000000000000", "typ": "token", "bs:grt": 1}, s.key)},
+			"aud": core.BaasAudience, "exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(),
+			"iss": core.BaasIssuer, "sub": "pz00000000000000", "typ": "token", "bs:grt": 1}, s.Key)},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -476,14 +477,14 @@ func TestFiveInboxExcludesExpired(t *testing.T) {
 
 func TestMailboxIsDurableAndNativelyVisible(t *testing.T) {
 	s := fiveServer(t)
-	host := s.store.Users[invSenderUID]
-	joiner := s.store.Users[invReceiverUID]
-	s.store.Update(host, func(u *store.User) { u.Presence = store.Presence{State: "PLAYING", AppID: "0100ed9024eb8000"} })
+	host := s.Store.Users[invSenderUID]
+	joiner := s.Store.Users[invReceiverUID]
+	s.Store.Update(host, func(u *store.User) { u.Presence = store.Presence{State: "PLAYING", AppID: "0100ed9024eb8000"} })
 
 	// The emulator sends exactly what it always sent.
 	r := httptest.NewRequest("POST", "/api/invitations", strings.NewReader(
 		fmt.Sprintf(`{"target_pids":[%d],"app_param_base64":%q}`, joiner.PID, validAppData)))
-	r.Header.Set("Authorization", "Bearer "+s.acct.NexToken(host.PID, "host"))
+	r.Header.Set("Authorization", "Bearer "+s.Acct.NexToken(host.PID, "host"))
 	w := httptest.NewRecorder()
 	s.gameAPI().ServeHTTP(w, r)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"sent":1`) {
@@ -500,7 +501,7 @@ func TestMailboxIsDurableAndNativelyVisible(t *testing.T) {
 	// instance on the same file) must not resurrect a joined room.
 	w = httptest.NewRecorder()
 	r2 := httptest.NewRequest("GET", "/api/invitations", nil)
-	r2.Header.Set("Authorization", "Bearer "+s.acct.NexToken(joiner.PID, "joiner"))
+	r2.Header.Set("Authorization", "Bearer "+s.Acct.NexToken(joiner.PID, "joiner"))
 	s.gameAPI().ServeHTTP(w, r2)
 	if !strings.Contains(w.Body.String(), `"from_pid":`) {
 		t.Fatalf("pop = %d %s", w.Code, w.Body)
@@ -513,15 +514,15 @@ func TestMailboxIsDurableAndNativelyVisible(t *testing.T) {
 
 func TestMailboxStaleRoomIsDroppedCleanly(t *testing.T) {
 	s := fiveServer(t)
-	host := s.store.Users[invSenderUID]
-	joiner := s.store.Users[invReceiverUID]
+	host := s.Store.Users[invSenderUID]
+	joiner := s.Store.Users[invReceiverUID]
 
 	// Hosted a room (presence carries the title), sent, then went away.
-	s.store.Update(host, func(u *store.User) { u.Presence = store.Presence{State: "PLAYING", AppID: "0100ed9024eb8000"} })
+	s.Store.Update(host, func(u *store.User) { u.Presence = store.Presence{State: "PLAYING", AppID: "0100ed9024eb8000"} })
 	if _, ok := createMailboxInvitation(host, "host", joiner, validAppData, "0100ed9024eb8000"); !ok {
 		t.Fatal("create failed")
 	}
-	s.store.Update(host, func(u *store.User) { u.Presence = store.Presence{State: "OFFLINE"} })
+	s.Store.Update(host, func(u *store.User) { u.Presence = store.Presence{State: "OFFLINE"} })
 	if got := popMailboxInvitations(s, joiner); len(got) != 0 {
 		t.Fatalf("a dead room was delivered: %d rows", len(got))
 	}
@@ -535,7 +536,7 @@ func TestMailboxStaleRoomIsDroppedCleanly(t *testing.T) {
 	}
 
 	// A live core session keeps the invitation deliverable.
-	s.store.Update(host, func(u *store.User) { u.Presence = store.Presence{State: "OFFLINE"} })
+	s.Store.Update(host, func(u *store.User) { u.Presence = store.Presence{State: "OFFLINE"} })
 	if _, ok := createMailboxInvitation(host, "host", joiner, validAppData, "0100ed9024eb8000"); !ok {
 		t.Fatal("create failed")
 	}
@@ -548,8 +549,8 @@ func TestMailboxStaleRoomIsDroppedCleanly(t *testing.T) {
 
 func TestMailboxQueueIsBounded(t *testing.T) {
 	s := fiveServer(t)
-	host := s.store.Users[invSenderUID]
-	joiner := s.store.Users[invReceiverUID]
+	host := s.Store.Users[invSenderUID]
+	joiner := s.Store.Users[invReceiverUID]
 	for i := 0; i < maxQueuedMailboxPerTarget+3; i++ {
 		if _, ok := createMailboxInvitation(host, "host", joiner, validAppData, ""); !ok {
 			t.Fatal("create failed")
@@ -597,23 +598,23 @@ func TestNotificationHookFiresAfterCommit(t *testing.T) {
 
 func TestOpenPakFallbackEnforcesBlocks(t *testing.T) {
 	s := fiveServer(t) // stubBackend: no core
-	sender := s.store.Users[invSenderUID]
-	receiver := s.store.Users[invReceiverUID]
+	sender := s.Store.Users[invSenderUID]
+	receiver := s.Store.Users[invReceiverUID]
 	// Not friends -> refused (the fallback consults the friend projection).
-	s.acct.(*stubBackend).friends[sender.PID] = nil
+	s.Acct.(*stubBackend).friends[sender.PID] = nil
 	w := fiveDo(t, s, "POST", "/v2/invitation_groups", fiveToken(s, invSenderUID), createBody(invReceiverUID))
 	if w.Code != 400 {
 		t.Fatalf("stranger invite = %d", w.Code)
 	}
 	// Friends, but the receiver blocked the sender -> refused.
-	s.acct.(*stubBackend).friends[sender.PID] = []uint64{receiver.PID}
-	s.store.Update(receiver, func(u *store.User) { u.Blocks = []string{sender.ID} })
+	s.Acct.(*stubBackend).friends[sender.PID] = []uint64{receiver.PID}
+	s.Store.Update(receiver, func(u *store.User) { u.Blocks = []string{sender.ID} })
 	w = fiveDo(t, s, "POST", "/v2/invitation_groups", fiveToken(s, invSenderUID), createBody(invReceiverUID))
 	if w.Code != 400 || !strings.Contains(w.Body.String(), "sender_blocks_receiver") {
 		t.Fatalf("blocked invite = %d %s", w.Code, w.Body)
 	}
 	// Unblock -> the invitation commits.
-	s.store.Update(receiver, func(u *store.User) { u.Blocks = nil })
+	s.Store.Update(receiver, func(u *store.User) { u.Blocks = nil })
 	w = fiveDo(t, s, "POST", "/v2/invitation_groups", fiveToken(s, invSenderUID), createBody(invReceiverUID))
 	if w.Code != 200 {
 		t.Fatalf("clean invite = %d %s", w.Code, w.Body)
@@ -704,7 +705,7 @@ func TestInvitationDropsOutWhenTheSenderLeftTheGame(t *testing.T) {
 		inv.CreatedAt -= int64(invitationSenderGrace.Seconds()) + 60
 	}
 	st.mu.Unlock()
-	sender := s.store.User(invSenderUID)
+	sender := s.Store.User(invSenderUID)
 	if sender == nil {
 		t.Skip("the five test server has no user store entry for the sender")
 	}
@@ -714,7 +715,7 @@ func TestInvitationDropsOutWhenTheSenderLeftTheGame(t *testing.T) {
 	}
 
 	// They quit to the Home menu: the room is gone with them.
-	s.noteDevicePresence(s.store.User(invSenderUID), "dev-1", "INACTIVE", "", "", "", -1)
+	s.noteDevicePresence(s.Store.User(invSenderUID), "dev-1", "INACTIVE", "", "", "", -1)
 	if got := inbox(); got != 0 {
 		t.Errorf("inbox = %v after the sender left the game, want 0", got)
 	}

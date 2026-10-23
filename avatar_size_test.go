@@ -8,6 +8,7 @@ import (
 	"image/jpeg"
 	"net/http"
 	"net/http/httptest"
+	"nx-baas/internal/core"
 	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 	"testing"
@@ -19,8 +20,8 @@ import (
 func TestThumbnailIsServedAtTheRequestedSize(t *testing.T) {
 	t.Setenv("NX_DATA", t.TempDir())
 	s := dauthServer(t)
-	s.store = store.Load(t.TempDir() + "/baas.json")
-	u, _ := s.store.NewUser()
+	s.Store = store.Load(t.TempDir() + "/baas.json")
+	u, _ := s.Store.NewUser()
 
 	src := image.NewRGBA(image.Rect(0, 0, 256, 256))
 	for y := 0; y < 256; y++ {
@@ -32,13 +33,13 @@ func TestThumbnailIsServedAtTheRequestedSize(t *testing.T) {
 	if err := jpeg.Encode(&stored, src, nil); err != nil {
 		t.Fatal(err)
 	}
-	s.store.Update(u, func(u *store.User) { u.PID = 1 })
-	s.acct = fakeBackend{id: &identity.Identity{PID: 1, Avatar: base64.StdEncoding.EncodeToString(stored.Bytes())}}
+	s.Store.Update(u, func(u *store.User) { u.PID = 1 })
+	s.Acct = fakeBackend{id: &identity.Identity{PID: 1, Avatar: base64.StdEncoding.EncodeToString(stored.Bytes())}}
 
 	get := func(path string) []byte {
 		t.Helper()
-		r := httptest.NewRequest("GET", "https://cdn-image-"+baasHost+path, nil)
-		r.Host = "cdn-image-" + baasHost
+		r := httptest.NewRequest("GET", "https://cdn-image-"+core.BaasHost+path, nil)
+		r.Host = "cdn-image-" + core.BaasHost
 		w := httptest.NewRecorder()
 		s.baas(w, r, nil)
 		if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "image/jpeg" {

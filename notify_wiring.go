@@ -70,7 +70,7 @@ func (s *server) notifyCoreFriendEvent(b *identity.OpenpakBackend, evType, accou
 		// [friends-notifications-firmware-2026-09-19.md §2.2]. The channel
 		// is the one the request was sent with when this server saw the
 		// send, FRIEND_CODE otherwise (the add-by-code common case).
-		ch := s.store.RequestChannel(other.PID, me.PID)
+		ch := s.Store.RequestChannel(other.PID, me.PID)
 		if ch == "" {
 			ch = "FRIEND_CODE"
 		}
@@ -91,7 +91,7 @@ func (s *server) notifyCoreFriendEvent(b *identity.OpenpakBackend, evType, accou
 // an event: comparing this before and after a mutation is what keeps a renewal
 // from becoming a notification storm.
 func (s *server) presenceSnapshot(userID string) string {
-	u := s.store.User(userID)
+	u := s.Store.User(userID)
 	if u == nil {
 		return ""
 	}
@@ -114,25 +114,25 @@ func (s *server) notifyPresenceIfChanged(userID, before string) {
 	// notifStore() creates the outbox lazily, so this must not gate on
 	// s.penneState: an adapter that has not taken a connection yet still
 	// records what a reconnecting console has to be told.
-	if s.acct == nil || s.store == nil || userID == "" {
+	if s.Acct == nil || s.Store == nil || userID == "" {
 		return
 	}
 	after := s.presenceSnapshot(userID)
 	if after == "" || after == before {
 		return
 	}
-	u := s.store.User(userID)
+	u := s.Store.User(userID)
 	if u == nil || u.PID == 0 {
 		return
 	}
-	id, err := s.acct.Identity(u.PID)
+	id, err := s.Acct.Identity(u.PID)
 	if err != nil || id == nil {
 		return
 	}
 	now := time.Now().Unix()
 	agg := homeAsOnline(aggregatePresence(u, now, presenceLease()))
 	for _, f := range id.Friends {
-		viewer := s.store.User(f.BaasUserID)
+		viewer := s.Store.User(f.BaasUserID)
 		if viewer == nil || !presenceVisible(viewer, u, true) {
 			continue
 		}

@@ -39,7 +39,7 @@ func (s *server) identityUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/internal/identity/users/"), "/")
-	u := s.store.User(parts[0])
+	u := s.Store.User(parts[0])
 	if u == nil || r.Method != http.MethodGet {
 		httpx.APIErr(w, http.StatusNotFound, "no such user")
 		return
@@ -75,9 +75,9 @@ func (s *server) identityNA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := map[string]any{"na_id": naID, "baas_user_id": "", "pid": uint64(0), "lock": s.naLock(naID)}
-	if pid := s.store.PIDForNA(naID); pid != 0 {
+	if pid := s.Store.PIDForNA(naID); pid != 0 {
 		out["pid"] = pid
-		if u := s.store.UserByPID(pid); u != nil {
+		if u := s.Store.UserByPID(pid); u != nil {
 			out["baas_user_id"] = u.ID
 		}
 	}
@@ -91,7 +91,7 @@ func (s *server) identityAccounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := strings.TrimPrefix(r.URL.Path, "/internal/identity/accounts/")
-	b, ok := s.acct.(*identity.OpenpakBackend)
+	b, ok := s.Acct.(*identity.OpenpakBackend)
 	if !ok || id == "" || r.Method != http.MethodGet {
 		httpx.APIErr(w, http.StatusNotFound, "account lookup needs the openpak backend")
 		return
@@ -132,7 +132,7 @@ func (s *server) identityPresence(w http.ResponseWriter, r *http.Request) {
 		httpx.APIErr(w, http.StatusBadRequest, "user_id required")
 		return
 	}
-	u := s.store.User(in.UserID)
+	u := s.Store.User(in.UserID)
 	if u == nil {
 		httpx.APIErr(w, http.StatusNotFound, "no such user")
 		return

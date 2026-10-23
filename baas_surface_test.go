@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"nx-baas/internal/core"
 	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 	"strings"
@@ -18,10 +19,10 @@ import (
 // as an error code on a television.
 func TestEveryDocumentedBaasMethodIsAnswered(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
-	u, _ := s.store.NewUser()
-	s.store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "tester" })
-	s.acct = fakeBackend{id: &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
+	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+	u, _ := s.Store.NewUser()
+	s.Store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "tester" })
+	s.Acct = fakeBackend{id: &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
 		FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did"}}
 	other := "1111222233334444"
 
@@ -47,8 +48,8 @@ func TestEveryDocumentedBaasMethodIsAnswered(t *testing.T) {
 		{"GET", "/2.0.0/users/" + u.ID + "/relationships/" + other, "", ""},
 	} {
 		t.Run(c.method+" "+strings.SplitN(c.path, "?", 2)[0], func(t *testing.T) {
-			r := httptest.NewRequest(c.method, "https://"+baasHost+c.path, strings.NewReader(c.body))
-			r.Host = baasHost
+			r := httptest.NewRequest(c.method, "https://"+core.BaasHost+c.path, strings.NewReader(c.body))
+			r.Host = core.BaasHost
 			r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
 			if c.ctype != "" {
 				r.Header.Set("Content-Type", c.ctype)
@@ -77,16 +78,16 @@ func TestEveryDocumentedBaasMethodIsAnswered(t *testing.T) {
 // and the code that comes back is a different one.
 func TestFriendCodeRegeneratesOncePerDay(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
-	u, _ := s.store.NewUser()
-	s.store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "tester" })
-	s.acct = fakeBackend{id: &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
+	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+	u, _ := s.Store.NewUser()
+	s.Store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "tester" })
+	s.Acct = fakeBackend{id: &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
 		FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did"}}
 
 	call := func() *httptest.ResponseRecorder {
-		r := httptest.NewRequest("POST", "https://"+baasHost+"/1.0.0/users/"+u.ID+"/generate_code",
+		r := httptest.NewRequest("POST", "https://"+core.BaasHost+"/1.0.0/users/"+u.ID+"/generate_code",
 			strings.NewReader("type=NX"))
-		r.Host = baasHost
+		r.Host = core.BaasHost
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
 		w := httptest.NewRecorder()
@@ -111,15 +112,15 @@ func TestFriendCodeRegeneratesOncePerDay(t *testing.T) {
 // and true [friends-contract-22.5.0 §A.6, C11].
 func TestFriendCodeAdvertisesTheEnforcedCooldown(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
-	u, _ := s.store.NewUser()
-	s.store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "tester" })
-	s.acct = fakeBackend{id: &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
+	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+	u, _ := s.Store.NewUser()
+	s.Store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "tester" })
+	s.Acct = fakeBackend{id: &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
 		FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did"}}
 
-	r := httptest.NewRequest("POST", "https://"+baasHost+"/1.0.0/users/"+u.ID+"/generate_code",
+	r := httptest.NewRequest("POST", "https://"+core.BaasHost+"/1.0.0/users/"+u.ID+"/generate_code",
 		strings.NewReader("type=NX"))
-	r.Host = baasHost
+	r.Host = core.BaasHost
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
 	w := httptest.NewRecorder()
@@ -132,7 +133,7 @@ func TestFriendCodeAdvertisesTheEnforcedCooldown(t *testing.T) {
 		t.Fatalf("reply is not JSON: %s", w.Body.String())
 	}
 	fc, _ := reply["links"].(map[string]any)["friendCode"].(map[string]any)
-	wantAt := float64(s.store.User(u.ID).CodeGeneratedAt + 24*3600)
+	wantAt := float64(s.Store.User(u.ID).CodeGeneratedAt + 24*3600)
 	if fc["regenerableAt"] != wantAt {
 		t.Errorf("regenerableAt = %v, want %v (issue + 24h)", fc["regenerableAt"], wantAt)
 	}
@@ -146,7 +147,7 @@ func TestFriendCodeAdvertisesTheEnforcedCooldown(t *testing.T) {
 // to show" — the exact requests are from the log, hosts included.
 func TestTheOtherConsoleServicesAnswer(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 
 	for _, c := range []struct {
 		host, method, path, body string
@@ -185,10 +186,10 @@ func TestTheOtherConsoleServicesAnswer(t *testing.T) {
 // hardware sends, captured 2026-09-08.
 func TestSendingAFriendRequestReachesTheHandler(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
-	u, _ := s.store.NewUser()
-	s.store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "tester" })
-	s.acct = codeBackend{
+	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+	u, _ := s.Store.NewUser()
+	s.Store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "tester" })
+	s.Acct = codeBackend{
 		fakeBackend: fakeBackend{id: &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
 			FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did"}},
 		code: "SW-1000-0000-0002",
@@ -197,8 +198,8 @@ func TestSendingAFriendRequestReachesTheHandler(t *testing.T) {
 
 	body := `{"channels":["FRIEND_CODE"],"senderId":"` + u.ID +
 		`","receiverId":"aaaaaaaaaaaa0002","extras":{"sender":{"route:sender":"me"}}}`
-	r := httptest.NewRequest("POST", "https://"+baasHost+"/2.0.0/friend_requests", strings.NewReader(body))
-	r.Host = baasHost
+	r := httptest.NewRequest("POST", "https://"+core.BaasHost+"/2.0.0/friend_requests", strings.NewReader(body))
+	r.Host = core.BaasHost
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
 	w := httptest.NewRecorder()
@@ -225,8 +226,8 @@ func TestSendingAFriendRequestReachesTheHandler(t *testing.T) {
 	}
 
 	// And that id resolves when the console cancels.
-	cancel := httptest.NewRequest("DELETE", "https://"+baasHost+"/2.0.0/friend_requests/"+got["id"].(string), nil)
-	cancel.Host = baasHost
+	cancel := httptest.NewRequest("DELETE", "https://"+core.BaasHost+"/2.0.0/friend_requests/"+got["id"].(string), nil)
+	cancel.Host = core.BaasHost
 	cancel.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
 	cw := httptest.NewRecorder()
 	s.ServeHTTP(cw, cancel)
@@ -246,10 +247,10 @@ func TestSendingAFriendRequestReachesTheHandler(t *testing.T) {
 // sitting in the reply the whole time.
 func TestListsUseTheEnvelopeAConsoleReads(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
-	u, _ := s.store.NewUser()
-	s.store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "tester" })
-	s.acct = fakeBackend{id: &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
+	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+	u, _ := s.Store.NewUser()
+	s.Store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "tester" })
+	s.Acct = fakeBackend{id: &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
 		FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did",
 		Friends:        []identity.Friend{{PID: 2, BaasUserID: "aaaaaaaaaaaa0002", Nickname: "Leia", FriendCode: "SW-1000-0000-0002"}},
 		FriendRequests: []identity.Friend{{PID: 3, BaasUserID: "2222333344445555", Nickname: "Asks", FriendCode: "SW-1111-2222-3333"}},
@@ -260,8 +261,8 @@ func TestListsUseTheEnvelopeAConsoleReads(t *testing.T) {
 		"/2.0.0/users/" + u.ID + "/friend_requests/inbox",
 		"/2.0.0/users/" + u.ID + "/friend_requests/outbox",
 	} {
-		r := httptest.NewRequest("GET", "https://"+baasHost+path, nil)
-		r.Host = baasHost
+		r := httptest.NewRequest("GET", "https://"+core.BaasHost+path, nil)
+		r.Host = core.BaasHost
 		r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, r)
@@ -295,8 +296,8 @@ func TestListsUseTheEnvelopeAConsoleReads(t *testing.T) {
 	}
 
 	// An incoming request has to say who sent it.
-	r := httptest.NewRequest("GET", "https://"+baasHost+"/2.0.0/users/"+u.ID+"/friend_requests/inbox", nil)
-	r.Host = baasHost
+	r := httptest.NewRequest("GET", "https://"+core.BaasHost+"/2.0.0/users/"+u.ID+"/friend_requests/inbox", nil)
+	r.Host = core.BaasHost
 	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
@@ -316,13 +317,13 @@ func TestListsUseTheEnvelopeAConsoleReads(t *testing.T) {
 // The relationship check the console runs before it offers to add somebody.
 func TestRelationshipShape(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
-	u, _ := s.store.NewUser()
-	s.store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "tester" })
-	s.acct = fakeBackend{id: &identity.Identity{PID: 1, Nickname: "tester", FriendCode: "SW-0000-0000-0000", BsDid: "did"}}
+	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+	u, _ := s.Store.NewUser()
+	s.Store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "tester" })
+	s.Acct = fakeBackend{id: &identity.Identity{PID: 1, Nickname: "tester", FriendCode: "SW-0000-0000-0000", BsDid: "did"}}
 
-	r := httptest.NewRequest("GET", "https://"+baasHost+"/2.0.0/users/"+u.ID+"/relationships/aaaaaaaaaaaa0002", nil)
-	r.Host = baasHost
+	r := httptest.NewRequest("GET", "https://"+core.BaasHost+"/2.0.0/users/"+u.ID+"/relationships/aaaaaaaaaaaa0002", nil)
+	r.Host = core.BaasHost
 	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
@@ -348,19 +349,19 @@ func TestRelationshipShape(t *testing.T) {
 // gone through report itself as a communication error.
 func TestAcceptingAFriendRequestAnswersInTheConsolesWords(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
-	u, _ := s.store.NewUser()
-	s.store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "Leia" })
-	s.acct = codeBackend{
+	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+	u, _ := s.Store.NewUser()
+	s.Store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "Leia" })
+	s.Acct = codeBackend{
 		fakeBackend: fakeBackend{id: &identity.Identity{PID: 1, NaID: "bbbbbbbbbbbb0002", Nickname: "Leia",
 			FriendCode: "SW-1000-0000-0002", Country: "IE", BsDid: "did"}},
 		code: "SW-1000-0000-0001",
 		friend: &identity.Friend{PID: 2, BaasUserID: "aaaaaaaaaaaa0001", NaID: "bbbbbbbbbbbb0001",
 			FriendCode: "SW-1000-0000-0001", Nickname: "hansolo", Country: "IE", CreatedAt: 1788818380}}
 
-	r := httptest.NewRequest("PATCH", "https://"+baasHost+"/2.0.0/friend_requests/aaaaaaaaaaaa0001",
+	r := httptest.NewRequest("PATCH", "https://"+core.BaasHost+"/2.0.0/friend_requests/aaaaaaaaaaaa0001",
 		strings.NewReader(`[{"op":"replace","path":"/state","value":"AUTHORIZED"}]`))
-	r.Host = baasHost
+	r.Host = core.BaasHost
 	r.Header.Set("Content-Type", "application/json-patch+json")
 	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
 	w := httptest.NewRecorder()
@@ -387,9 +388,9 @@ func TestAcceptingAFriendRequestAnswersInTheConsolesWords(t *testing.T) {
 	}
 
 	// Refusing keeps the console's word for that too.
-	r = httptest.NewRequest("PATCH", "https://"+baasHost+"/2.0.0/friend_requests/aaaaaaaaaaaa0001",
+	r = httptest.NewRequest("PATCH", "https://"+core.BaasHost+"/2.0.0/friend_requests/aaaaaaaaaaaa0001",
 		strings.NewReader(`[{"op":"replace","path":"/state","value":"REJECTED"}]`))
-	r.Host = baasHost
+	r.Host = core.BaasHost
 	r.Header.Set("Content-Type", "application/json-patch+json")
 	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
 	w = httptest.NewRecorder()
@@ -406,14 +407,14 @@ func TestAcceptingAFriendRequestAnswersInTheConsolesWords(t *testing.T) {
 // never asked for the list again and showed nothing.
 func TestBecomingFriendsMovesFriendsUpdatedAt(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	old := time.Now().Unix() - 3600 // yesterday's friend list, as far as a console knows
-	me, _ := s.store.NewUser()
-	s.store.Update(me, func(u *store.User) { u.PID, u.Nickname, u.FriendsUpdatedAt = 1, "Leia", old })
-	other, _ := s.store.NewUser()
-	s.store.Update(other, func(u *store.User) { u.PID, u.Nickname, u.FriendsUpdatedAt = 2, "hansolo", old })
+	me, _ := s.Store.NewUser()
+	s.Store.Update(me, func(u *store.User) { u.PID, u.Nickname, u.FriendsUpdatedAt = 1, "Leia", old })
+	other, _ := s.Store.NewUser()
+	s.Store.Update(other, func(u *store.User) { u.PID, u.Nickname, u.FriendsUpdatedAt = 2, "hansolo", old })
 
-	s.acct = codeBackend{
+	s.Acct = codeBackend{
 		fakeBackend: fakeBackend{id: &identity.Identity{PID: 1, Nickname: "Leia", FriendCode: "SW-1000-0000-0002", BsDid: "did"}},
 		code:        "SW-1000-0000-0001",
 		friend: &identity.Friend{PID: 2, BaasUserID: other.ID, FriendCode: "SW-1000-0000-0001",
@@ -422,9 +423,9 @@ func TestBecomingFriendsMovesFriendsUpdatedAt(t *testing.T) {
 	before := s.userObj(me, s.identity(me), "")["friendsUpdatedAt"].(int64)
 	otherBefore := s.userObj(other, nil, "")["friendsUpdatedAt"].(int64)
 
-	r := httptest.NewRequest("PATCH", "https://"+baasHost+"/2.0.0/friend_requests/"+other.ID,
+	r := httptest.NewRequest("PATCH", "https://"+core.BaasHost+"/2.0.0/friend_requests/"+other.ID,
 		strings.NewReader(`[{"op":"replace","path":"/state","value":"AUTHORIZED"}]`))
-	r.Host = baasHost
+	r.Host = core.BaasHost
 	r.Header.Set("Content-Type", "application/json-patch+json")
 	r.Header.Set("Authorization", "Bearer "+s.accessToken(me.ID, 2, "did", "device", "serial"))
 	w := httptest.NewRecorder()
@@ -447,7 +448,7 @@ func TestBecomingFriendsMovesFriendsUpdatedAt(t *testing.T) {
 // The honest empty answer is {"items":[]} [friends-contract-22.5.0 §A.9, C18].
 func TestFriendRecommendationsAnswerLikeTheReferenceDoes(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 
 	const host = "api-lp1.frs.srv.nintendo.net"
 	r := httptest.NewRequest("GET", "https://"+host+"/v1/friend_recommendations?id_token=x&type=nintendo_account", nil)
@@ -476,14 +477,14 @@ func TestFriendRecommendationsAnswerLikeTheReferenceDoes(t *testing.T) {
 // The format epoch is that one-time nudge: every account reports at least it.
 func TestOldFriendListCacheIsInvalidatedOnce(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
-	me, _ := s.store.NewUser()
-	s.store.Update(me, func(u *store.User) { u.PID, u.FriendsUpdatedAt = 1, friendListFormatEpoch-1 })
+	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+	me, _ := s.Store.NewUser()
+	s.Store.Update(me, func(u *store.User) { u.PID, u.FriendsUpdatedAt = 1, friendListFormatEpoch-1 })
 	if got := s.userObj(me, nil, "")["friendsUpdatedAt"].(int64); got != friendListFormatEpoch {
 		t.Errorf("stale cache not invalidated: friendsUpdatedAt = %d, want %d", got, friendListFormatEpoch)
 	}
 	// A later friendship still wins; the floor is a floor, not the answer.
-	s.store.Update(me, func(u *store.User) { u.FriendsUpdatedAt = friendListFormatEpoch + 5 })
+	s.Store.Update(me, func(u *store.User) { u.FriendsUpdatedAt = friendListFormatEpoch + 5 })
 	if got := s.userObj(me, nil, "")["friendsUpdatedAt"].(int64); got != friendListFormatEpoch+5 {
 		t.Errorf("friendsUpdatedAt = %d, want %d", got, friendListFormatEpoch+5)
 	}
@@ -496,7 +497,7 @@ func TestOldFriendListCacheIsInvalidatedOnce(t *testing.T) {
 // `/v1/users/%016llx/membership?application_id=%016llx` -> `$.membership.active`].
 func TestPerTitleMembershipCheckIsAnswered(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 
 	const host = "capi.lp1.op2.nintendo.net"
 	r := httptest.NewRequest("GET", "https://"+host+
@@ -523,7 +524,7 @@ func TestPerTitleMembershipCheckIsAnswered(t *testing.T) {
 // else's 404.
 func TestUserTransferIsNotForwardedIntoTheSavesService(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	s.saves = newSavesProxy("http://saves.invalid")
 
 	const host = "migration.lp1.scsi.srv.nintendo.net"

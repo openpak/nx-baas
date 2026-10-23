@@ -79,7 +79,7 @@ func (s *server) relationshipObj(viewer *store.User, f identity.Friend, now int6
 	// The friend's play log, under the group that carries it when this
 	// viewer may see it: what "recently played" and the same-app filters
 	// read, from $.items[*].friend.extras.*.playLog [§A.1].
-	group, pl := s.visiblePlayLog(viewer, s.store.User(f.BaasUserID), true)
+	group, pl := s.visiblePlayLog(viewer, s.Store.User(f.BaasUserID), true)
 	setPlayLog(user, group, pl)
 	created := f.CreatedAt
 	if created == 0 {
@@ -138,8 +138,8 @@ func (s *server) visiblePlayLog(viewer, subject *store.User, areFriends bool) (g
 	if subject == nil {
 		return "", ""
 	}
-	s.store.Mu.Lock()
-	defer s.store.Mu.Unlock()
+	s.Store.Mu.Lock()
+	defer s.Store.Mu.Unlock()
 	group, pl = playLogGroup(subject)
 	if viewer != nil && viewer.ID == subject.ID {
 		return group, pl
@@ -213,8 +213,8 @@ func (s *server) prefOf(viewer *store.User, friendBaasID string) *store.FriendPr
 	if viewer == nil {
 		return nil
 	}
-	s.store.Mu.Lock()
-	defer s.store.Mu.Unlock()
+	s.Store.Mu.Lock()
+	defer s.Store.Mu.Unlock()
 	if viewer.FriendPrefs == nil {
 		return nil
 	}
@@ -239,7 +239,7 @@ func (s *server) visiblePresence(viewer *store.User, f identity.Friend, now int6
 // ("Harbor", "Switch", "Pier"), or "" when they are not live or the viewer may not see them.
 func (s *server) visiblePresenceOn(viewer *store.User, f identity.Friend, now int64) (map[string]any, string) {
 	lease := presenceLease()
-	subject := s.store.User(f.BaasUserID)
+	subject := s.Store.User(f.BaasUserID)
 	if subject == nil {
 		// No local record: fall back to what the lookup carried, timestamped
 		// by what we know about the relationship rather than by this render.
@@ -263,7 +263,7 @@ func (s *server) visiblePresenceOn(viewer *store.User, f identity.Friend, now in
 		// Nothing of theirs is live on a Switch. The core knows where else
 		// they are, and a friend playing on another console is still somebody
 		// to say hello to.
-		if b, ok := s.acct.(*identity.OpenpakBackend); ok {
+		if b, ok := s.Acct.(*identity.OpenpakBackend); ok {
 			if elsewhere, live := s.presenceFromCore(b.AccountFor(f.PID), b.Namespace, now); live {
 				elsewhere.LogoutAt = agg.LogoutAt
 				on := ""
@@ -336,18 +336,18 @@ func baasFailure(err error) (int, string, string, string) {
 // AUTHORIZED is the case "the receiver had already asked the sender", and it
 // syncs its friend list at once [friends-contract-22.5.0 §A.4.1, C4].
 func (s *server) commitFriendRequest(me *store.User, target *identity.Friend) (created, authorized bool, reqID string, err error) {
-	if err := s.acct.FriendRequest(me.PID, target.PID); err != nil {
+	if err := s.Acct.FriendRequest(me.PID, target.PID); err != nil {
 		if errors.Is(err, identity.ErrReversePending) {
-			id, _ := s.store.EnsureRequest(target.PID, me.PID)
-			if err := s.acct.FriendAccept(me.PID, target.PID, true); err != nil {
+			id, _ := s.Store.EnsureRequest(target.PID, me.PID)
+			if err := s.Acct.FriendAccept(me.PID, target.PID, true); err != nil {
 				return false, false, "", err
 			}
-			s.store.SettleRequest(id, "AUTHORIZED")
+			s.Store.SettleRequest(id, "AUTHORIZED")
 			return false, true, id, nil
 		}
 		return false, false, "", err
 	}
-	id, created := s.store.EnsureRequest(me.PID, target.PID)
+	id, created := s.Store.EnsureRequest(me.PID, target.PID)
 	return created, false, id, nil
 }
 
@@ -355,7 +355,7 @@ func (s *server) commitFriendRequest(me *store.User, target *identity.Friend) (c
 // the core call has committed or matched it. When incoming, sender/receiver
 // are the truth of the existing request, not what the caller asked for.
 func (s *server) friendRequestReply(me *store.User, id *identity.Identity, target *identity.Friend, reqID string, incoming bool, body []byte, now int64) map[string]any {
-	record := s.store.RequestByID(reqID)
+	record := s.Store.RequestByID(reqID)
 	createdAt, updatedAt := now, now
 	if record != nil {
 		createdAt, updatedAt = record.CreatedAt, record.UpdatedAt
@@ -410,7 +410,7 @@ func (s *server) noteRequestRoute(reqID string, body []byte) {
 	if channel == "" && in.Extras.Sender == nil && in.Extras.SenderAndReceiver == nil {
 		return
 	}
-	s.store.SetRequestRoute(reqID, channel, in.Extras.Sender, in.Extras.SenderAndReceiver)
+	s.Store.SetRequestRoute(reqID, channel, in.Extras.Sender, in.Extras.SenderAndReceiver)
 }
 
 // settleRequest accepts or rejects the request addressed to me. The durable
@@ -421,7 +421,7 @@ func (s *server) settleRequest(me *store.User, record *store.FriendRequestRecord
 	if me.PID != record.ToPID {
 		return errForbiddenMutation
 	}
-	return s.acct.FriendAccept(me.PID, record.FromPID, accept)
+	return s.Acct.FriendAccept(me.PID, record.FromPID, accept)
 }
 
 // cancelRequest withdraws a request I sent.
@@ -429,14 +429,14 @@ func (s *server) cancelRequest(me *store.User, record *store.FriendRequestRecord
 	if me.PID != record.FromPID {
 		return errForbiddenMutation
 	}
-	return s.acct.RemoveFriend(me.PID, record.ToPID)
+	return s.Acct.RemoveFriend(me.PID, record.ToPID)
 }
 
 // removeFriend commits a removal through the core and marks both lists.
 // Never a silent no-op: the console's remove button must either commit or
 // say so.
 func (s *server) removeFriend(me *store.User, other *identity.Friend) error {
-	if err := s.acct.RemoveFriend(me.PID, other.PID); err != nil {
+	if err := s.Acct.RemoveFriend(me.PID, other.PID); err != nil {
 		return err
 	}
 	s.friendGraphChanged(me, other.BaasUserID)
@@ -449,14 +449,14 @@ func (s *server) removeFriend(me *store.User, other *identity.Friend) error {
 func (s *server) setBlock(me *store.User, other *identity.Friend, block bool) error {
 	var err error
 	if block {
-		err = s.acct.Block(me.PID, other.PID)
+		err = s.Acct.Block(me.PID, other.PID)
 	} else {
-		err = s.acct.Unblock(me.PID, other.PID)
+		err = s.Acct.Unblock(me.PID, other.PID)
 	}
 	if err != nil {
 		return err
 	}
-	s.store.Update(me, func(u *store.User) {
+	s.Store.Update(me, func(u *store.User) {
 		kept := u.Blocks[:0]
 		for _, b := range u.Blocks {
 			if b != other.BaasUserID {
@@ -489,9 +489,9 @@ func (s *server) blockObj(u *store.User, target string, now int64) map[string]an
 		user = s.friendObj(*f, now)
 	}
 	item := map[string]any{"targetUserId": target, "targetUser": user}
-	s.store.Mu.Lock()
+	s.Store.Mu.Lock()
 	d := u.BlockDetails[target]
-	s.store.Mu.Unlock()
+	s.Store.Mu.Unlock()
 	if d != nil {
 		item["createdAt"] = d.CreatedAt
 		if d.Self != nil {
@@ -504,7 +504,7 @@ func (s *server) blockObj(u *store.User, target string, now int64) map[string]an
 // resolveFriend looks a target up by BAAS user id, for the mutation handlers
 // that receive one.
 func (s *server) resolveFriend(baasID string) *identity.Friend {
-	f, err := s.acct.Resolve(url.Values{"baas": {baasID}})
+	f, err := s.Acct.Resolve(url.Values{"baas": {baasID}})
 	if err != nil || f == nil {
 		return nil
 	}
@@ -515,7 +515,7 @@ func (s *server) resolveFriend(baasID string) *identity.Friend {
 // that name the other side of a mutation by id (an accepted request naming
 // its sender, for example). nil when the account has no readable identity.
 func (s *server) friendByPID(pid uint64) *identity.Friend {
-	id, err := s.acct.Identity(pid)
+	id, err := s.Acct.Identity(pid)
 	if err != nil || id == nil {
 		return nil
 	}
@@ -528,7 +528,7 @@ func (s *server) friendByPID(pid uint64) *identity.Friend {
 // build — onto its record and the friend it is about. Exactly one of the two
 // results is non-nil.
 func (s *server) friendRequestByRef(ref string) (*store.FriendRequestRecord, *identity.Friend) {
-	if record := s.store.RequestByID(ref); record != nil {
+	if record := s.Store.RequestByID(ref); record != nil {
 		return record, nil
 	}
 	return nil, s.resolveFriend(ref)

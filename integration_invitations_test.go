@@ -32,6 +32,7 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	accountv1 "nx-baas/accountpb"
+	"nx-baas/internal/core"
 )
 
 const (
@@ -149,7 +150,7 @@ func TestCoreInvitationPolicyAndSessions(t *testing.T) {
 	// The adapter server under test: real core behind it, isolated stores.
 	invStoreOverride = loadInvitationStore(filepath.Join(dataDir, "invitations.json"))
 	t.Cleanup(func() { invStoreOverride = nil })
-	s := &server{key: mustTestKey(t), store: loadStore(filepath.Join(dataDir, "baas.json")), acct: b}
+	s := &server{Core: &core.Core{}, key: mustTestKey(t), store: loadStore(filepath.Join(dataDir, "baas.json")), acct: b}
 	for _, p := range []*projection{aliceProj, bobProj} {
 		s.store.Users[p.BaasUserID] = &User{ID: p.BaasUserID, PID: p.PID}
 	}

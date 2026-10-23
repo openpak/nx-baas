@@ -259,7 +259,7 @@ func (s *server) acbaaRegisterUser(w http.ResponseWriter, r *http.Request, body 
 func acbaaUserID(s *server, auth, name string) uint64 {
 	nsa := acbaaSubID(auth, name)
 	tok := strings.TrimPrefix(auth, "Bearer ")
-	if s != nil && s.key != nil && s.store != nil {
+	if s != nil && s.Key != nil && s.Store != nil {
 		if pid, genuine := s.pidForIDToken(tok); genuine && pid != 0 && pid != nsa {
 			s.acbaaMigrateUID(pid, nsa)
 		}
@@ -740,14 +740,14 @@ func (s *server) acbaaLoad() {
 	// from its NEX PID gets its records moved now, not when the game
 	// happens to re-register (warm boots reuse the cached token and never
 	// POST /users, so lazy migration can wait forever while lookups miss).
-	if s.store != nil {
-		s.store.Mu.Lock()
-		for sub, u := range s.store.Users {
+	if s.Store != nil {
+		s.Store.Mu.Lock()
+		for sub, u := range s.Store.Users {
 			if earlier, err := strconv.ParseUint(sub, 16, 64); err == nil && earlier != 0 && u != nil && u.PID != 0 && earlier != u.PID {
 				s.migrateUIDLocked(earlier, u.PID)
 			}
 		}
-		s.store.Mu.Unlock()
+		s.Store.Mu.Unlock()
 	}
 	s.mu.Unlock()
 	log.Printf("[acbaa] store %s: %d profile(s) restored", s.acbaaPath, n)

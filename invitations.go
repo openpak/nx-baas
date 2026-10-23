@@ -41,6 +41,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"nx-baas/internal/core"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
@@ -107,10 +108,10 @@ const invitationSenderGrace = 2 * time.Minute
 // Unknown presence is never taken as evidence — a console publishes presence
 // for only some of its profiles — so the 24h expiry remains the backstop.
 func (s *server) invitationSenderGone(inv *invitationRecord, now int64) bool {
-	if s == nil || s.store == nil || now-inv.CreatedAt < int64(invitationSenderGrace.Seconds()) {
+	if s == nil || s.Store == nil || now-inv.CreatedAt < int64(invitationSenderGrace.Seconds()) {
 		return false
 	}
-	u := s.store.User(inv.SenderID)
+	u := s.Store.User(inv.SenderID)
 	if u == nil {
 		return false
 	}
@@ -388,7 +389,7 @@ func (s *server) fiveAuth(r *http.Request) *store.User {
 	// validBearer, so the two surfaces cannot drift apart -- the shared
 	// contract names one token validator. The checks below are the extra
 	// binding this host needs on top, not a second copy of the base rules.
-	c := s.validBearer(r)
+	c := s.ValidBearer(r)
 	if c == nil {
 		return nil
 	}
@@ -396,7 +397,7 @@ func (s *server) fiveAuth(r *http.Request) *store.User {
 	if iat, ok := c["iat"].(float64); ok && now+60 < int64(iat) {
 		return nil
 	}
-	if httpx.Str(c, "aud") != baasAudience {
+	if httpx.Str(c, "aud") != core.BaasAudience {
 		return nil
 	}
 	// Grant 2 is a user token. Grant 1 (anonymous device) tokens carry a
@@ -404,7 +405,7 @@ func (s *server) fiveAuth(r *http.Request) *store.User {
 	if g, ok := c["bs:grt"].(float64); !ok || int(g) != 2 {
 		return nil
 	}
-	u := s.store.User(httpx.Str(c, "sub"))
+	u := s.Store.User(httpx.Str(c, "sub"))
 	if u == nil || u.PID == 0 {
 		return nil
 	}
@@ -574,7 +575,7 @@ func (s *server) invitationGroupCreate(w http.ResponseWriter, r *http.Request, b
 	defer cancel()
 	var accepted, unknown, denied []string
 	for _, uid := range receivers {
-		if s.store.User(uid) == nil {
+		if s.Store.User(uid) == nil {
 			unknown = append(unknown, uid)
 			continue
 		}
@@ -685,7 +686,7 @@ func (s *server) invitationCoreFor() invitationCore {
 	if invCoreOverride != nil {
 		return invCoreOverride
 	}
-	if b, ok := s.acct.(*identity.OpenpakBackend); ok && b.Social != nil {
+	if b, ok := s.Acct.(*identity.OpenpakBackend); ok && b.Social != nil {
 		return b
 	}
 	return nil
@@ -696,11 +697,11 @@ func (s *server) invitationCoreFor() invitationCore {
 // authoritative one; this exists so the proven earlier deployment keeps
 // working unchanged.
 func (s *server) fallbackMayInvite(me *store.User, targetUID string) bool {
-	target := s.store.User(targetUID)
+	target := s.Store.User(targetUID)
 	if target == nil || target.PID == 0 {
 		return false
 	}
-	id, err := s.acct.Identity(me.PID)
+	id, err := s.Acct.Identity(me.PID)
 	if err != nil || id == nil {
 		return false
 	}
@@ -724,7 +725,7 @@ func meBlocks(u *store.User, other string) bool {
 // targetBlocksUser reads the target's own block list; a directional block by
 // the receiver refuses the invitation exactly like the core's enforcement.
 func targetBlocksUser(s *server, uid, other string) bool {
-	t := s.store.User(uid)
+	t := s.Store.User(uid)
 	return t != nil && meBlocks(t, other)
 }
 
@@ -1107,7 +1108,7 @@ func (s *server) mailboxSessionLive(senderUID, appID string) bool {
 	if appID == "" {
 		return true // no title recorded: nothing to judge, TTL decides
 	}
-	u := s.store.User(senderUID)
+	u := s.Store.User(senderUID)
 	if u == nil {
 		return false
 	}

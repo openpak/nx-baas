@@ -21,7 +21,7 @@ func twoFAServer(t *testing.T) (*server, *fakeCore) {
 	f.addAccount("plain@example.com", "Plain", "correct horse battery")
 	f.add2FAAccount("2fa@example.com", "TwoFA", "correct horse battery", "123456")
 	b := identity.NewOpenpakBackendWithClients(t.TempDir(), fakeIdentity{f: f}, fakeLinks{f: f}, fakeSocial{f: f}, []byte(strings.Repeat("k", 32)))
-	s.acct = b
+	s.Acct = b
 	s.links = newLinkStore()
 	s.guesses = newGuesses()
 	s.phones = newPhoneStore()
@@ -32,7 +32,7 @@ func twoFAServer(t *testing.T) (*server, *fakeCore) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.key, s.idKid, s.accKid, s.naKid = key, "id", "acc", "na"
+	s.Key, s.IDKid, s.AccKid, s.NAKid = key, "id", "acc", "na"
 	return s, f
 }
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http/httptest"
+	"nx-baas/internal/core"
 	"os"
 	"testing"
 )
@@ -18,7 +19,7 @@ func TestDumpLinkPages(t *testing.T) {
 		t.Skip("set PREVIEW_DIR")
 	}
 	_ = os.MkdirAll(dir, 0o755)
-	s := &server{links: newLinkStore(), guesses: newGuesses()}
+	s := &server{Core: &core.Core{}, links: newLinkStore(), guesses: newGuesses()}
 	for name, render := range map[string]func(*httptest.ResponseRecorder){
 		"confirm": func(w *httptest.ResponseRecorder) { s.phoneConfirmPage(w, "hansolo", "pair-1", "") },
 		"done":    func(w *httptest.ResponseRecorder) { s.phoneDonePage(w, "hansolo") },

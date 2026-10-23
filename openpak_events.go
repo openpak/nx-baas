@@ -110,8 +110,8 @@ func (s *server) revokeAccountPresence(b *identity.OpenpakBackend, accountID str
 	if pr == nil {
 		return
 	}
-	if u := s.store.User(pr.BaasUserID); u != nil {
-		s.store.Update(u, func(u *store.User) {
+	if u := s.Store.User(pr.BaasUserID); u != nil {
+		s.Store.Update(u, func(u *store.User) {
 			u.DevicePresence = nil
 			u.Presence = store.Presence{State: "OFFLINE", UpdatedAt: time.Now().Unix(), LogoutAt: time.Now().Unix()}
 		})
@@ -125,7 +125,7 @@ func (s *server) projectionFriendsChanged(b *identity.OpenpakBackend, accountID,
 	if p == nil {
 		return // no Switch identity on this side; nothing to refresh
 	}
-	if u := s.store.User(p.BaasUserID); u != nil {
+	if u := s.Store.User(p.BaasUserID); u != nil {
 		otherBaas := ""
 		if other != nil {
 			otherBaas = other.BaasUserID

@@ -13,7 +13,7 @@ type onlineMarker interface {
 
 // markLoginOnline is called after a game server's identity lookup succeeded.
 func (s *server) markLoginOnline(pid uint64) {
-	if m, ok := s.acct.(onlineMarker); ok && pid != 0 {
+	if m, ok := s.Acct.(onlineMarker); ok && pid != 0 {
 		m.MarkOnline(pid)
 	}
 }

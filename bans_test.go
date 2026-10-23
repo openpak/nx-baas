@@ -15,6 +15,7 @@ import (
 	"time"
 
 	accountv1 "nx-baas/accountpb"
+	"nx-baas/internal/core"
 	"nx-baas/internal/store"
 )
 
@@ -61,7 +62,7 @@ func banServer(t *testing.T) (*server, *fakeBans) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.key, s.idKid, s.accKid, s.naKid = key, "id", "acc", "na"
+	s.Key, s.IDKid, s.AccKid, s.NAKid = key, "id", "acc", "na"
 	s.codes = map[string]naCode{}
 	s.device = map[string]string{}
 	f := &fakeBans{status: map[string]accountv1.AccountStatus{}}
@@ -71,8 +72,8 @@ func banServer(t *testing.T) (*server, *fakeBans) {
 }
 
 func baasReq(s *server, method, path, token, form string) *httptest.ResponseRecorder {
-	r := httptest.NewRequest(method, "https://"+baasHost+path, strings.NewReader(form))
-	r.Host = baasHost
+	r := httptest.NewRequest(method, "https://"+core.BaasHost+path, strings.NewReader(form))
+	r.Host = core.BaasHost
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	if token != "" {
 		r.Header.Set("Authorization", "Bearer "+token)
@@ -102,8 +103,8 @@ func errorCodeOf(t *testing.T, w *httptest.ResponseRecorder) string {
 // (2124-5110 on screen) and no token; unbanned, the same login goes through.
 func TestBannedAccountCannotSignInOnTheConsole(t *testing.T) {
 	s, f := banServer(t)
-	u, d := s.store.NewUser()
-	s.store.Update(u, func(u *store.User) { u.PID = hostPID })
+	u, d := s.Store.NewUser()
+	s.Store.Update(u, func(u *store.User) { u.PID = hostPID })
 	form := url.Values{"id": {d.ID}, "password": {d.Password}}.Encode()
 
 	w := baasReq(s, "POST", "/1.0.0/login", "", form)
@@ -156,7 +157,7 @@ func TestBannedAccountGetsNoNintendoAccountToken(t *testing.T) {
 		t.Fatalf("token = %d %s, want 400 invalid_grant/user_banned", w.Code, w.Body)
 	}
 
-	s.store.RememberNA("00aa00aa00aa00aa", hostPID)
+	s.Store.RememberNA("00aa00aa00aa00aa", hostPID)
 	at := s.naAccessToken(naCode{PID: hostPID, NaID: "00aa00aa00aa00aa"})
 	form := url.Values{"prompt": {"none"}, "redirect_uri": {"nintendo://app"}, "state": {"st"}}.Encode()
 	r = httptest.NewRequest("POST", "https://accounts.nintendo.com/connect/1.0.0/authorize", strings.NewReader(form))
@@ -181,12 +182,12 @@ func TestBannedAccountIsRefusedByTheGameAPI(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"account_id":"acc-4"`) {
 		t.Fatalf("unbanned identity = %d %s (want account_id)", w.Code, w.Body)
 	}
-	host := s.acct.NexToken(hostPID, "OutboundHost")
+	host := s.Acct.NexToken(hostPID, "OutboundHost")
 	if w := do(t, s, "GET", "/api/invitations", host, ""); w.Code != 403 {
 		t.Fatalf("invitations for a banned caller = %d", w.Code)
 	}
 	// Nobody can invite a banned player either.
-	joiner := s.acct.NexToken(joinerPID, "OutboundJoiner")
+	joiner := s.Acct.NexToken(joinerPID, "OutboundJoiner")
 	w = do(t, s, "POST", "/api/invitations", joiner, `{"target_pids":[1800000003],"app_param_base64":"AQ=="}`)
 	if !strings.Contains(w.Body.String(), `"sent":0`) {
 		t.Fatalf("invitation to a banned player: %s", w.Body)

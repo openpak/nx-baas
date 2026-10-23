@@ -5,12 +5,13 @@ package main
 // dead after ten minutes, and purged so the map cannot grow.
 
 import (
+	"nx-baas/internal/core"
 	"testing"
 	"time"
 )
 
 func TestTakeCodeSingleUse(t *testing.T) {
-	s := &server{codes: map[string]naCode{}}
+	s := &server{Core: &core.Core{}, codes: map[string]naCode{}}
 	s.codes["c1"] = naCode{PID: 7, Created: time.Now()}
 	// session_token step: checks, does not spend.
 	if _, ok := s.takeCode("c1", false); !ok {
@@ -30,7 +31,7 @@ func TestTakeCodeSingleUse(t *testing.T) {
 }
 
 func TestTakeCodeExpiresAndPurges(t *testing.T) {
-	s := &server{codes: map[string]naCode{}}
+	s := &server{Core: &core.Core{}, codes: map[string]naCode{}}
 	s.codes["old"] = naCode{PID: 7, Created: time.Now().Add(-11 * time.Minute)}
 	s.codes["fresh"] = naCode{PID: 8, Created: time.Now()}
 	if _, ok := s.takeCode("old", true); ok {

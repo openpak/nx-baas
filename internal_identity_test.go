@@ -42,8 +42,8 @@ func TestIdentityAPIRequiresTheKey(t *testing.T) {
 func TestIdentityAPIAnswersWhatShopPrincipalComputed(t *testing.T) {
 	t.Setenv("NX_INTERNAL_KEY", "test-internal-key")
 	s := linkedServer(t)
-	u := s.store.UserByPID(7)
-	s.store.Update(u, func(u *store.User) { u.NaID = testNAID })
+	u := s.Store.UserByPID(7)
+	s.Store.Update(u, func(u *store.User) { u.NaID = testNAID })
 
 	rec := identityDo(t, s, "GET", "/internal/identity/users/"+u.ID, "")
 	got := decodeBody(t, rec)
@@ -83,13 +83,13 @@ func TestIdentityAPIAnswersWhatShopPrincipalComputed(t *testing.T) {
 func TestIdentityPresenceIsTheFrontlinesPublish(t *testing.T) {
 	t.Setenv("NX_INTERNAL_KEY", "test-internal-key")
 	s := linkedServer(t)
-	u := s.store.UserByPID(7)
+	u := s.Store.UserByPID(7)
 	rec := identityDo(t, s, "POST", "/internal/identity/presence",
 		`{"user_id":"`+u.ID+`","device":"dev1","state":"PLAYING","app_id":"0100000000010000","app_field":"","group_id":"","acd_index":-1}`)
 	if rec.Code != 204 {
 		t.Fatalf("presence = %d %s", rec.Code, rec.Body)
 	}
-	agg := aggregatePresence(s.store.User(u.ID), time.Now().Unix(), presenceLease())
+	agg := aggregatePresence(s.Store.User(u.ID), time.Now().Unix(), presenceLease())
 	if agg.State != "PLAYING" || agg.AppID != "0100000000010000" || agg.Client != "switch" {
 		t.Fatalf("presence not recorded as the console's: %+v", agg)
 	}

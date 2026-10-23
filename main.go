@@ -33,6 +33,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"nx-baas/internal/core"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
@@ -47,28 +48,11 @@ import (
 	"time"
 )
 
-const (
-	baasHost   = "e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com"
-	baasIssuer = "https://" + baasHost
-	// jku host for BAAS tokens: the console caches key sets per URL and had the VPS's set cached
-	// for the e0d67c... URLs (different RSA key) -> 2124-3121. m-lp1 is the host firmware 21+
-	// talks to anyway, and a URL it has not cached, so it fetches ours.
-	baasJku      = "https://m-lp1.baas.nintendo.com"
-	baasAudience = "ed9e2f05d286f7b8" // what citron's id_token carries; the game servers accept it
-	naIssuer     = "https://accounts.nintendo.com"
-)
-
 //go:embed assets/default.jpg
 var defaultAvatar []byte
 
 type server struct {
-	store      *store.Store
-	acct       identity.Backend
-	key        *rsa.PrivateKey
-	idKid      string // kid of id_tokens (openpak-baas-key-1: what Photon/NPLN/S2 already trust)
-	accKid     string // kid of BAAS access tokens (/1.0.0/internal_certificates)
-	naKid      string // kid of Nintendo-Account tokens: the console binds kid<->issuer and rejects a kid shared with BAAS (2124-3121)
-	jwks       []byte
+	*core.Core
 	mu         sync.Mutex
 	codes      map[string]naCode // NA authorization codes / session tokens -> who logged in
 	device     map[string]string // device id -> serial, from the dauth assertion
@@ -193,91 +177,6 @@ func (s *server) takeCode(code string, spend bool) (naCode, bool) {
 
 // ---------- errors / helpers ----------
 
-// bearer returns the claims of our own access token on the request, or nil.
-func (s *server) bearer(r *http.Request) map[string]any {
-	a := r.Header.Get("Authorization")
-	if !strings.HasPrefix(a, "Bearer ") {
-		return nil
-	}
-	c, err := token.ParseJWT(strings.TrimPrefix(a, "Bearer "), &s.key.PublicKey)
-	if err != nil {
-		return nil
-	}
-	return c
-}
-
-// validBearer returns the claims of our own *live* access token: signature,
-// issuer, type and expiry all checked. bearer() above only checked the
-// signature, which let an expired token — or a refresh or Nintendo-Account
-// token, which we also sign with this key — spend itself as a credential.
-func (s *server) validBearer(r *http.Request) map[string]any {
-	c := s.bearer(r)
-	if c == nil {
-		return nil
-	}
-	if httpx.Str(c, "typ") != "token" || httpx.Str(c, "iss") != baasIssuer {
-		return nil
-	}
-	exp, ok := c["exp"].(float64)
-	if !ok || int64(exp) <= time.Now().Unix() {
-		return nil
-	}
-	return c
-}
-
-// bearerUser resolves the user an authenticated request acts as, or nil.
-//
-// Says WHY when it refuses. Every rejection here used to be the same opaque
-// 401, and telling "no header" from "the wrong one of two tokens this server
-// itself minted" cost a debugging round trip with a client author on
-// 2026-09-12: the application token from /1.0.0/application/token and the
-// access token from /1.0.0/login both carry typ "token" and the same issuer,
-// but the first has the DEVICE id as its subject and the second the BAAS user
-// id. Only the second can act as a user.
-func (s *server) bearerUser(r *http.Request) *store.User {
-	c := s.validBearer(r)
-	if c == nil {
-		if a := r.Header.Get("Authorization"); !strings.HasPrefix(a, "Bearer ") {
-			log.Printf("[nx-baas] auth: %s %s carries no bearer", r.Method, redact.Path(r.URL.Path))
-		} else if raw := s.bearer(r); raw == nil {
-			log.Printf("[nx-baas] auth: %s %s bearer does not verify against this server's key", r.Method, redact.Path(r.URL.Path))
-		} else if httpx.Str(raw, "typ") != "token" || httpx.Str(raw, "iss") != baasIssuer {
-			log.Printf("[nx-baas] auth: %s %s bearer is typ=%q iss=%q, want typ=token from this issuer",
-				r.Method, redact.Path(r.URL.Path), httpx.Str(raw, "typ"), httpx.Str(raw, "iss"))
-		} else {
-			log.Printf("[nx-baas] auth: %s %s bearer has expired", r.Method, redact.Path(r.URL.Path))
-		}
-		return nil
-	}
-	sub := httpx.Str(c, "sub")
-	u := s.store.User(sub)
-	if u == nil {
-		// The give-away: an application token's subject is the device id.
-		log.Printf("[nx-baas] auth: %s %s bearer names sub=%s, which is not a user "+
-			"(an application token from /1.0.0/application/token has the DEVICE id as its subject; "+
-			"a user-scoped call needs the accessToken from /1.0.0/login)", r.Method, redact.Path(r.URL.Path), redact.Tag(sub))
-	}
-	return u
-}
-
-// requireCaller enforces the principal binding on a user-scoped path: the
-// path may only name the authenticated user. Returns false having written
-// the error when it does not.
-func (s *server) requireCaller(w http.ResponseWriter, r *http.Request, pathUserID string) *store.User {
-	me := s.bearerUser(r)
-	if me == nil {
-		httpx.BaasErr(w, r, 401, "invalid_token", "Invalid token", "a current access token is required")
-		return nil
-	}
-	if pathUserID != "" && pathUserID != me.ID {
-		// Cross-account denial: a valid token for someone else must not read
-		// or write this user's social state, ever.
-		httpx.BaasErr(w, r, 403, "insufficient_scope", "Token is insufficient", "the token does not belong to this user")
-		return nil
-	}
-	return me
-}
-
 // ---------- tokens ----------
 
 // accessToken/idToken: claim for claim what a real console accepted from the VPS
@@ -286,8 +185,8 @@ func (s *server) requireCaller(w http.ResponseWriter, r *http.Request, pathUserI
 func (s *server) accessToken(sub string, grant int, bsDid, di, sn string) string {
 	now := time.Now().Unix()
 	claims := map[string]any{
-		"aud": baasAudience, "bs:did": bsDid, "bs:grt": grant, "exp": now + 10800, "iat": now,
-		"iss": baasIssuer, "jti": token.UUID4(), "sub": sub, "typ": "token",
+		"aud": core.BaasAudience, "bs:did": bsDid, "bs:grt": grant, "exp": now + 10800, "iat": now,
+		"iss": core.BaasIssuer, "jti": token.UUID4(), "sub": sub, "typ": "token",
 	}
 	if grant == 1 {
 		claims["bs:pid"] = "pz" + token.RandHex(15)
@@ -296,7 +195,7 @@ func (s *server) accessToken(sub string, grant int, bsDid, di, sn string) string
 	} else {
 		claims["bs:sts"] = []int64{10415858080830506, 272640, 9, 0, 0, 19316357715722240, 16}
 	}
-	return token.SignJWT(map[string]any{"alg": "RS256", "jku": baasJku + "/1.0.0/internal_certificates", "kid": s.accKid, "typ": "JWT"}, claims, s.key)
+	return token.SignJWT(map[string]any{"alg": "RS256", "jku": core.BaasJku + "/1.0.0/internal_certificates", "kid": s.AccKid, "typ": "JWT"}, claims, s.Key)
 }
 
 func (s *server) idToken(u *store.User, id *identity.Identity, username string, app map[string]any) string {
@@ -313,34 +212,34 @@ func (s *server) idToken(u *store.User, id *identity.Identity, username string, 
 		}
 	}
 	claims := map[string]any{
-		"aud": baasAudience, "bs:did": u.ID, "exp": now + 10800, "iat": now, "iss": baasIssuer, "jti": token.UUID4(),
+		"aud": core.BaasAudience, "bs:did": u.ID, "exp": now + 10800, "iat": now, "iss": core.BaasIssuer, "jti": token.UUID4(),
 		"nintendo": map[string]any{"ai": ai, "at": now, "av": av, "edi": token.RandB64(60), "tbh": token.RandB64(32), "tbn": token.RandB64(16)},
 		"sub":      u.ID, "typ": "id_token",
 	}
 	if id != nil {
 		claims["bs:did"] = id.BsDid
-		if t := s.acct.NexToken(id.PID, username); t != "" {
+		if t := s.Acct.NexToken(id.PID, username); t != "" {
 			claims["openpak"] = t
 		}
 	}
-	return token.SignJWT(map[string]any{"alg": "RS256", "jku": baasJku + "/1.0.0/certificates", "kid": s.idKid, "typ": "JWT"}, claims, s.key)
+	return token.SignJWT(map[string]any{"alg": "RS256", "jku": core.BaasJku + "/1.0.0/certificates", "kid": s.IDKid, "typ": "JWT"}, claims, s.Key)
 }
 
 func (s *server) naHeader() map[string]any {
-	return map[string]any{"alg": "RS256", "jku": naIssuer + "/1.0.0/certificates", "kid": s.naKid, "typ": "JWT"}
+	return map[string]any{"alg": "RS256", "jku": core.NaIssuer + "/1.0.0/certificates", "kid": s.NAKid, "typ": "JWT"}
 }
 
 func (s *server) naRefreshToken(c naCode) string {
 	now := time.Now().Unix()
-	return token.SignJWT(s.naHeader(), map[string]any{"aud": c.ClientID, "exp": now + 365*86400, "iat": now, "iss": naIssuer, "jti": token.UUID4(), "sub": c.NaID, "typ": "refresh"}, s.key)
+	return token.SignJWT(s.naHeader(), map[string]any{"aud": c.ClientID, "exp": now + 365*86400, "iat": now, "iss": core.NaIssuer, "jti": token.UUID4(), "sub": c.NaID, "typ": "refresh"}, s.Key)
 }
 
 func (s *server) naAccessToken(c naCode) string {
 	now := time.Now().Unix()
 	return token.SignJWT(s.naHeader(), map[string]any{
 		"ac:grt": 4, "ac:scp": []int{0, 1, 4, 5, 8, 9, 10, 11, 12, 13, 23, 28},
-		"aud": c.ClientID, "exp": now + 900, "iat": now, "iss": naIssuer, "jti": token.UUID4(), "sub": c.NaID, "typ": "token",
-	}, s.key)
+		"aud": c.ClientID, "exp": now + 900, "iat": now, "iss": core.NaIssuer, "jti": token.UUID4(), "sub": c.NaID, "typ": "token",
+	}, s.Key)
 }
 
 // bindNotificationChannel records which BAAS account is signed in on the console a
@@ -353,7 +252,7 @@ func (s *server) bindNotificationChannel(deviceAuthenticationToken, baasUserID s
 	if baasUserID == "" {
 		return
 	}
-	if dt, err := token.ParseJWT(deviceAuthenticationToken, &s.key.PublicKey); err == nil {
+	if dt, err := token.ParseJWT(deviceAuthenticationToken, &s.Key.PublicKey); err == nil {
 		s.penneBindConsole(httpx.Str(dt, "sub"), baasUserID)
 	}
 }
@@ -418,7 +317,7 @@ func naLinks(id *identity.Identity) map[string]any {
 func (s *server) naIDToken(c naCode, accessToken, code string) string {
 	now := time.Now().Unix()
 	claims := map[string]any{
-		"aud": c.ClientID, "exp": now + 900, "iat": now, "iss": naIssuer, "jti": token.UUID4(), "sub": c.NaID,
+		"aud": c.ClientID, "exp": now + 900, "iat": now, "iss": core.NaIssuer, "jti": token.UUID4(), "sub": c.NaID,
 	}
 	if c.Nonce != "" {
 		claims["nonce"] = c.Nonce
@@ -431,7 +330,7 @@ func (s *server) naIDToken(c naCode, accessToken, code string) string {
 		sum := sha256.Sum256([]byte(code))
 		claims["c_hash"] = token.B64URL(sum[:16])
 	}
-	return token.SignJWT(s.naHeader(), claims, s.key)
+	return token.SignJWT(s.naHeader(), claims, s.Key)
 }
 
 // ---------- user objects ----------
@@ -440,12 +339,12 @@ func (s *server) identity(u *store.User) *identity.Identity {
 	if u == nil || u.PID == 0 {
 		return nil
 	}
-	id, err := s.acct.Identity(u.PID)
+	id, err := s.Acct.Identity(u.PID)
 	identity.LogErr("identity", err)
 	// Remember the account's bs:did: it is what a console's id_token carries and what the
 	// Photon server reports back on /internal/photon-room, which has no PID of its own.
 	if id != nil && id.BsDid != "" && u.BsDid != id.BsDid {
-		s.store.Update(u, func(u *store.User) { u.BsDid = id.BsDid })
+		s.Store.Update(u, func(u *store.User) { u.BsDid = id.BsDid })
 	}
 	return id
 }
@@ -669,7 +568,7 @@ func (s *server) friendObj(f identity.Friend, now int64) map[string]any {
 	// one — a lookup-time constant is not a state change.
 	updatedAt := created
 	country, devices := f.Country, []map[string]any{}
-	local := s.store.User(f.BaasUserID)
+	local := s.Store.User(f.BaasUserID)
 	if local != nil {
 		if local.Country != "" {
 			country = local.Country
@@ -756,7 +655,7 @@ func (s *server) friendObj(f identity.Friend, now int64) map[string]any {
 	}
 	// A play log in the everyone group is anyone's to see; the viewer-bound
 	// groups are the relationship renderer's and the search's job.
-	group, pl := s.visiblePlayLog(nil, s.store.User(f.BaasUserID), false)
+	group, pl := s.visiblePlayLog(nil, s.Store.User(f.BaasUserID), false)
 	setPlayLog(obj, group, pl)
 	return obj
 }
@@ -791,7 +690,7 @@ func (s *server) reportOnline(ctx context.Context, u *store.User, client, client
 		agg := aggregatePresence(u, time.Now().Unix(), presenceLease())
 		client, clientOS = agg.Client, agg.OS
 	}
-	if b, ok := s.acct.(*identity.OpenpakBackend); ok {
+	if b, ok := s.Acct.(*identity.OpenpakBackend); ok {
 		b.Online(ctx, u.PID, client, clientOS)
 	}
 }
@@ -802,7 +701,7 @@ func (s *server) reportOffline(ctx context.Context, u *store.User) {
 	if u == nil || u.PID == 0 {
 		return
 	}
-	if b, ok := s.acct.(*identity.OpenpakBackend); ok {
+	if b, ok := s.Acct.(*identity.OpenpakBackend); ok {
 		b.Offline(ctx, u.PID)
 	}
 }
@@ -816,8 +715,8 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 	// (profile, presence, friends) answers banned_user, which the console shows as
 	// 2124-5110 (bans.go). Pictures and key sets stay public.
 	if strings.HasPrefix(p, "/1.0.0/users/") || strings.HasPrefix(p, "/2.0.0/") {
-		if c := s.validBearer(r); c != nil {
-			if lock := s.userLock(s.store.User(httpx.Str(c, "sub"))); lock != "" {
+		if c := s.ValidBearer(r); c != nil {
+			if lock := s.userLock(s.Store.User(httpx.Str(c, "sub"))); lock != "" {
 				baasLocked(w, r, lock)
 				return
 			}
@@ -843,12 +742,12 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		if strings.HasPrefix(p, "/avatar/") {
 			pid, _ = strconv.ParseUint(strings.TrimSuffix(strings.TrimPrefix(p, "/avatar/"), ".jpg"), 10, 64)
-		} else if u := s.store.User(p[3:]); u != nil {
+		} else if u := s.Store.User(p[3:]); u != nil {
 			pid = u.PID
 		} else if f := s.resolveFriend(p[3:]); f != nil {
 			pid = f.PID // an account that has never been on a console
 		}
-		id, err := s.acct.Identity(pid)
+		id, err := s.Acct.Identity(pid)
 		avatar := ""
 		if err == nil {
 			avatar = id.Avatar
@@ -858,7 +757,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			// the two. Serving it unconditionally meant a picture changed on
 			// the website could never reach a console that had ever set one
 			// of its own.
-			if u := s.store.User(p[3:]); u != nil {
+			if u := s.Store.User(p[3:]); u != nil {
 				if err != nil || id.ImageUpdatedAt <= newerPicture(u, nil) {
 					avatar = u.Avatar
 				}
@@ -900,7 +799,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 
 	case p == "/1.0.0/certificates" || p == "/1.0.0/internal_certificates":
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(s.jwks)
+		w.Write(s.JWKS)
 		return
 
 	case p == "/1.0.0/application/token" && r.Method == "POST":
@@ -930,12 +829,12 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			RawContent string `json:"rawContent"`
 		}
 		_ = json.Unmarshal(body, &img)
-		tok := s.validBearer(r)
+		tok := s.ValidBearer(r)
 		if uid := httpx.Str(tok, "sub"); uid != "" && img.RawContent != "" {
 			if raw, err := base64.StdEncoding.DecodeString(img.RawContent); err != nil {
 				log.Printf("[nx-baas] image_upload: not base64 (%d bytes): %v", len(img.RawContent), redact.Err(err))
-			} else if u := s.store.User(uid); u != nil {
-				s.store.Update(u, func(u *store.User) { u.Avatar, u.AvatarAt = img.RawContent, time.Now().Unix() })
+			} else if u := s.Store.User(uid); u != nil {
+				s.Store.Update(u, func(u *store.User) { u.Avatar, u.AvatarAt = img.RawContent, time.Now().Unix() })
 				log.Printf("[nx-baas] image_upload: stored %d bytes for %s", len(raw), redact.Tag(uid))
 				// And on to the account, so the picture a person set on their
 				// console is the one the website and the app show.
@@ -952,8 +851,8 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		// The console keeps the url and later compares its last path segment
 		// with thumbnailUrl's, so it is the same address the user object
 		// serves from now on.
-		if uid := httpx.Str(s.bearer(r), "sub"); uid != "" {
-			if u := s.store.User(uid); u != nil {
+		if uid := httpx.Str(s.Bearer(r), "sub"); uid != "" {
+			if u := s.Store.User(uid); u != nil {
 				url := s.userObj(u, s.identity(u), "")["thumbnailUrl"]
 				httpx.WriteJSON(w, 200, map[string]any{"content": map[string]any{"url": url, "format": "jpg"}})
 				return
@@ -963,19 +862,19 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		return
 
 	case p == "/1.0.0/users" && r.Method == "POST":
-		u, d := s.store.NewUser()
+		u, d := s.Store.NewUser()
 		log.Printf("[nx-baas] new device account %s for user %s", redact.Tag(d.ID), redact.Tag(u.ID))
 		w.Header().Set("Location", "/1.0.0/users/"+u.ID)
 		httpx.WriteJSON(w, 201, s.userObj(u, nil, d.Password))
 		return
 
 	case (p == "/1.0.0/login" || p == "/1.0.0/federation") && r.Method == "POST":
-		u := s.store.Login(form.Get("id"), form.Get("password"))
+		u := s.Store.Login(form.Get("id"), form.Get("password"))
 		if u == nil {
 			httpx.BaasErr(w, r, 400, "invalid_device_account", "Invalid Device Account", "Device Account's id or password is invalid")
 			return
 		}
-		tok := s.bearer(r)
+		tok := s.Bearer(r)
 		di, sn := httpx.Str(tok, "sub"), ""
 		if n, ok := tok["nintendo"].(map[string]any); ok {
 			sn = httpx.Str(n, "sn")
@@ -1056,7 +955,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		return
 
 	case len(seg) == 3 && seg[0] == "1.0.0" && seg[1] == "users":
-		u := s.store.User(seg[2])
+		u := s.Store.User(seg[2])
 		if u == nil {
 			httpx.BaasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 			return
@@ -1064,7 +963,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		// Reading or writing a user object binds to the authenticated user:
 		// a profile is not a public page (the friend list carries what
 		// friends may see about a person).
-		if s.requireCaller(w, r, seg[2]) == nil {
+		if s.RequireCaller(w, r, seg[2]) == nil {
 			return
 		}
 		switch r.Method {
@@ -1077,7 +976,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			}
 			json.Unmarshal(body, &ops)
 			renamed := ""
-			s.store.Update(u, func(u *store.User) {
+			s.Store.Update(u, func(u *store.User) {
 				for _, o := range ops {
 					v, _ := o.Value.(string)
 					switch o.Path {
@@ -1141,7 +1040,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			// A refusal (a name the core's 1-32 rule rejects) leaves the console's own copy alone.
 			// ponytail: Mii changes are not pushed back (/internal/profile-sync) yet.
 			if renamed != "" && u.PID != 0 {
-				if n, ok := s.acct.(interface{ SetNickname(uint64, string) error }); ok {
+				if n, ok := s.Acct.(interface{ SetNickname(uint64, string) error }); ok {
 					if err := n.SetNickname(u.PID, renamed); err != nil {
 						log.Printf("[nx-baas] nickname: not shared with the account: %v", redact.Err(err))
 					} else {
@@ -1156,7 +1055,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		return
 
 	case len(seg) == 4 && seg[0] == "1.0.0" && seg[1] == "users":
-		u := s.store.User(seg[2])
+		u := s.Store.User(seg[2])
 		if u == nil {
 			httpx.BaasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 			return
@@ -1171,10 +1070,10 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			}
 			httpx.WriteJSON(w, 200, s.userObj(nu, s.identity(nu), ""))
 		case "unlink":
-			s.store.Update(u, func(u *store.User) { u.PID, u.NaID = 0, "" })
+			s.Store.Update(u, func(u *store.User) { u.PID, u.NaID = 0, "" })
 			httpx.WriteJSON(w, 200, s.userObj(u, nil, ""))
 		case "generate_code":
-			if s.requireCaller(w, r, seg[2]) == nil {
+			if s.RequireCaller(w, r, seg[2]) == nil {
 				return
 			}
 			// The wiki is explicit: a new code, and no new one for 24 hours.
@@ -1184,15 +1083,15 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				httpx.BaasErr(w, r, 422, "friend_code_unregenerable_state", "Friend Code Unregenerable State", "")
 				return
 			}
-			if err := s.acct.RegenerateFriendCode(u.PID); err != nil {
+			if err := s.Acct.RegenerateFriendCode(u.PID); err != nil {
 				log.Printf("[nx-baas] generate_code: %v", redact.Err(err))
 				httpx.BaasErr(w, r, 500, "internal_server_error", "Internal Server Error", "Internal Server Error")
 				return
 			}
-			s.store.Update(u, func(u *store.User) { u.CodeGeneratedAt = time.Now().Unix() })
+			s.Store.Update(u, func(u *store.User) { u.CodeGeneratedAt = time.Now().Unix() })
 			httpx.WriteJSON(w, 200, s.userObj(u, s.identity(u), ""))
 		case "device_histories":
-			if s.requireCaller(w, r, seg[2]) == nil {
+			if s.RequireCaller(w, r, seg[2]) == nil {
 				return
 			}
 			// Every console this user has signed in on. We keep no history, and
@@ -1209,7 +1108,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 					httpx.BaasErr(w, r, 400, "invalid_params", "Invalid Params", "invalid params")
 					return
 				}
-				if s.requireCaller(w, r, seg[2]) == nil {
+				if s.RequireCaller(w, r, seg[2]) == nil {
 					return
 				}
 				other := s.resolveFriend(target)
@@ -1233,7 +1132,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				}
 				_ = json.Unmarshal(body, &in)
 				now := time.Now().Unix()
-				s.store.Update(u, func(u *store.User) {
+				s.Store.Update(u, func(u *store.User) {
 					if u.BlockDetails == nil {
 						u.BlockDetails = map[string]*store.BlockDetail{}
 					}
@@ -1242,7 +1141,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				// The console ignores this body; it re-syncs the list.
 				httpx.WriteJSON(w, 200, s.blockObj(u, other.BaasUserID, now))
 			default:
-				if s.requireCaller(w, r, seg[2]) == nil {
+				if s.RequireCaller(w, r, seg[2]) == nil {
 					return
 				}
 				// $.items[*].targetUserId + targetUser, not {"blocks":[{"id"}]}:
@@ -1269,12 +1168,12 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		return
 
 	case len(seg) == 5 && seg[0] == "1.0.0" && seg[1] == "users" && seg[3] == "blocks" && r.Method == "DELETE":
-		u := s.store.User(seg[2])
+		u := s.Store.User(seg[2])
 		if u == nil {
 			httpx.BaasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 			return
 		}
-		if s.requireCaller(w, r, seg[2]) == nil {
+		if s.RequireCaller(w, r, seg[2]) == nil {
 			return
 		}
 		other := s.resolveFriend(seg[4])
@@ -1292,12 +1191,12 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		return
 
 	case len(seg) == 5 && seg[0] == "1.0.0" && seg[1] == "users" && seg[3] == "device_accounts":
-		u := s.store.User(seg[2])
+		u := s.Store.User(seg[2])
 		if u == nil {
 			httpx.BaasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 			return
 		}
-		if s.requireCaller(w, r, seg[2]) == nil {
+		if s.RequireCaller(w, r, seg[2]) == nil {
 			return
 		}
 		// seg[4] names the device account whose presence this is (PRE-01):
@@ -1381,7 +1280,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		// The keys here used to be guesses ("friendCode", "id"), so every
 		// lookup missed and the console said it could not find the user. The
 		// value carries no SW- prefix and $in may list several.
-		if s.validBearer(r) == nil {
+		if s.ValidBearer(r) == nil {
 			httpx.BaasErr(w, r, 401, "invalid_token", "Invalid token", "a current access token is required")
 			return
 		}
@@ -1390,7 +1289,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		// $.items[*].extras.*.playLog is whichever group the caller may see
 		// [friends-contract-22.5.0 §A.7]; friendship decides the friends
 		// groups.
-		viewer := s.bearerUser(r)
+		viewer := s.BearerUser(r)
 		friendOf := map[string]bool{}
 		if id := s.identity(viewer); viewer != nil && id != nil {
 			for _, f := range id.Friends {
@@ -1399,18 +1298,18 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		found := func(f identity.Friend) any {
 			obj := s.searchUserObj(f, now)
-			group, pl := s.visiblePlayLog(viewer, s.store.User(f.BaasUserID), friendOf[f.BaasUserID])
+			group, pl := s.visiblePlayLog(viewer, s.Store.User(f.BaasUserID), friendOf[f.BaasUserID])
 			setPlayLog(obj, group, pl)
 			return obj
 		}
 		users := []any{}
 		for _, code := range queryList(q, "filter.links.friendCode.id.$in", "friendCode") {
-			if f, err := s.acct.Resolve(url.Values{"code": {identity.NormaliseFriendCode(code)}}); err == nil && f != nil {
+			if f, err := s.Acct.Resolve(url.Values{"code": {identity.NormaliseFriendCode(code)}}); err == nil && f != nil {
 				users = append(users, found(*f))
 			}
 		}
 		for _, id := range queryList(q, "filter.id.$in", "id") {
-			if f, err := s.acct.Resolve(url.Values{"baas": {id}}); err == nil && f != nil {
+			if f, err := s.Acct.Resolve(url.Values{"baas": {id}}); err == nil && f != nil {
 				users = append(users, found(*f))
 			}
 		}
@@ -1429,7 +1328,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		json.Unmarshal(body, &in)
 		persistent, deleted := []string{}, []string{}
 		for _, uid := range in.UserIDs {
-			if s.store.User(uid) != nil {
+			if s.Store.User(uid) != nil {
 				persistent = append(persistent, uid)
 			} else {
 				deleted = append(deleted, uid)
@@ -1461,7 +1360,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		// device; where it names a user too, end it on that user's record.
 		if dev := bodyField(body, form, "deviceId", "deviceAccountId", "device"); dev != "" {
 			if uid := bodyField(body, form, "userId", "user"); uid != "" {
-				if u := s.store.User(uid); u != nil {
+				if u := s.Store.User(uid); u != nil {
 					s.expireDevicePresence(u, dev)
 				}
 			}
@@ -1479,23 +1378,23 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 
 // link binds a BAAS user to the OpenPak account behind a Nintendo-Account id_token we issued.
 func (s *server) link(u *store.User, idTok string) (*store.User, error) {
-	claims, err := token.ParseJWT(idTok, &s.key.PublicKey)
+	claims, err := token.ParseJWT(idTok, &s.Key.PublicKey)
 	if err != nil {
 		return nil, err
 	}
 	naID := httpx.Str(claims, "sub")
-	pid := s.store.PIDForNA(naID)
+	pid := s.Store.PIDForNA(naID)
 	if pid == 0 {
 		return nil, fmt.Errorf("unknown Nintendo-Account sub %q", naID)
 	}
 	if lock := s.pidLock(pid); lock != "" {
 		return nil, fmt.Errorf("link pid %d: %w (%s)", pid, identity.ErrAccountLocked, lock)
 	}
-	id, err := s.acct.Identity(pid)
+	id, err := s.Acct.Identity(pid)
 	if err != nil {
 		return nil, err
 	}
-	nu := s.store.Link(u, pid, id.BaasUserID, id.NaID)
+	nu := s.Store.Link(u, pid, id.BaasUserID, id.NaID)
 	log.Printf("[nx-baas] linked user %s -> pid %s", redact.Tag(nu.ID), redact.Tag(pid))
 	return nu, nil
 }
@@ -1520,7 +1419,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 	// me: the authenticated caller. The path-based identity is gone:
 	// trusting /users/<id> to choose whose social state is accessed is what
 	// let one account read another's list.
-	me := s.bearerUser(r)
+	me := s.BearerUser(r)
 	if me == nil {
 		httpx.BaasErr(w, r, 401, "invalid_token", "Invalid token", "a current access token is required")
 		return
@@ -1530,7 +1429,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 
 	switch {
 	case len(seg) == 3 && seg[0] == "users" && seg[2] == "friends" && r.Method == "GET":
-		if s.requireCaller(w, r, seg[1]) == nil {
+		if s.RequireCaller(w, r, seg[1]) == nil {
 			return
 		}
 		list := []any{}
@@ -1557,7 +1456,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		// /extras/self/isOnlineNotification (the online-alert preference).
 		// The older isFavoriteFriend spelling maps to the same persisted
 		// state: one relationship, one favourite flag.
-		if s.requireCaller(w, r, seg[1]) == nil {
+		if s.RequireCaller(w, r, seg[1]) == nil {
 			return
 		}
 		var ops []struct {
@@ -1566,7 +1465,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		}
 		_ = json.Unmarshal(body, &ops)
 		changed := false
-		s.store.Update(me, func(u *store.User) {
+		s.Store.Update(me, func(u *store.User) {
 			for _, o := range ops {
 				p := u.Pref(seg[3])
 				switch {
@@ -1635,7 +1534,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		// Removing a friend commits through the core (SOC-03). The old reply
 		// logged "not applied" and answered 204, which was a success statement
 		// about an operation that never happened.
-		if s.requireCaller(w, r, seg[1]) == nil {
+		if s.RequireCaller(w, r, seg[1]) == nil {
 			return
 		}
 		target := s.resolveFriend(seg[3])
@@ -1657,7 +1556,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		// console's PATCH/DELETE later means the same request whoever answers
 		// (SOC-03). The core's lists are the state of record; the ids are the
 		// adapter's mapping, persisted across restarts.
-		if s.requireCaller(w, r, seg[1]) == nil {
+		if s.RequireCaller(w, r, seg[1]) == nil {
 			return
 		}
 		if myID == nil {
@@ -1681,11 +1580,11 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		for _, f := range requests {
 			var reqID string
 			if incoming {
-				reqID, _ = s.store.EnsureRequest(f.PID, me.PID)
+				reqID, _ = s.Store.EnsureRequest(f.PID, me.PID)
 			} else {
-				reqID, _ = s.store.EnsureRequest(me.PID, f.PID)
+				reqID, _ = s.Store.EnsureRequest(me.PID, f.PID)
 			}
-			record := s.store.RequestByID(reqID)
+			record := s.Store.RequestByID(reqID)
 			createdAt, updatedAt := now, now
 			if record != nil {
 				createdAt, updatedAt = record.CreatedAt, record.UpdatedAt
@@ -1754,11 +1653,11 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		var target *identity.Friend
 		var err error
 		if c := field("friendCode"); c != "" {
-			target, err = s.acct.Resolve(url.Values{"code": {identity.NormaliseFriendCode(c)}})
+			target, err = s.Acct.Resolve(url.Values{"code": {identity.NormaliseFriendCode(c)}})
 		} else if t := field("receiverId"); t != "" {
-			target, err = s.acct.Resolve(url.Values{"baas": {t}})
+			target, err = s.Acct.Resolve(url.Values{"baas": {t}})
 		} else if t := field("userId"); t != "" {
-			target, err = s.acct.Resolve(url.Values{"baas": {t}})
+			target, err = s.Acct.Resolve(url.Values{"baas": {t}})
 		} else {
 			httpx.Dump(r, body, "friend_requests: unknown body")
 		}
@@ -1770,8 +1669,8 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		// off refuses new ones [friends-contract-22.5.0 §A.6, C10]. A crossed
 		// send is not new: the receiver already asked, and answering completes
 		// the friendship they initiated.
-		if receiver := s.store.User(target.BaasUserID); !acceptsFriendRequests(receiver) &&
-			!s.store.OpenRequest(target.PID, me.PID) {
+		if receiver := s.Store.User(target.BaasUserID); !acceptsFriendRequests(receiver) &&
+			!s.Store.OpenRequest(target.PID, me.PID) {
 			httpx.BaasErr(w, r, 400, "could_not_send_request", "Could Not Send Request", "not accepting friend requests")
 			return
 		}
@@ -1850,7 +1749,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			_ = json.Unmarshal(body, &ops)
 			for _, o := range ops {
 				if v, ok := o.Value.(bool); ok && o.Path == "/extras/receiver/read" && record != nil && record.ToPID == me.PID {
-					s.store.MarkRequestRead(record.ID, v)
+					s.Store.MarkRequestRead(record.ID, v)
 					read = v
 				}
 			}
@@ -1889,16 +1788,16 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 				return
 			}
 			if err == nil {
-				s.store.SettleRequest(record.ID, state) // a stale id must not commit twice
+				s.Store.SettleRequest(record.ID, state) // a stale id must not commit twice
 			}
 		case other != nil:
 			// A bare user id: a request box cached by an older build of this
 			// server. The core enforces the direction — accepting a request
 			// that does not address this caller fails there.
 			if state == "CANCELED" {
-				err = s.acct.RemoveFriend(me.PID, other.PID)
+				err = s.Acct.RemoveFriend(me.PID, other.PID)
 			} else {
-				err = s.acct.FriendAccept(me.PID, other.PID, state == "AUTHORIZED")
+				err = s.Acct.FriendAccept(me.PID, other.PID, state == "AUTHORIZED")
 			}
 		default:
 			httpx.BaasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
@@ -1931,7 +1830,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		// An acceptance completes the new-friend acknowledgement too: the
 		// friendship is not news to the person who just accepted it.
 		if state == "AUTHORIZED" {
-			s.store.Update(me, func(u *store.User) {
+			s.Store.Update(me, func(u *store.User) {
 				p := u.Pref(otherBaas)
 				p.Confirmed, p.UpdatedAt = true, now
 			})
@@ -1964,7 +1863,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		return
 
 	case len(seg) == 4 && seg[0] == "users" && seg[2] == "relationships":
-		if s.requireCaller(w, r, seg[1]) == nil {
+		if s.RequireCaller(w, r, seg[1]) == nil {
 			return
 		}
 		rel := map[string]any{
@@ -2013,7 +1912,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 	switch {
 	case p == "/1.0.0/certificates":
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(s.jwks)
+		w.Write(s.JWKS)
 		return
 
 	case strings.HasPrefix(p, "/api/1.0.0/users/") && strings.HasSuffix(p, "/qrcode_param"):
@@ -2057,10 +1956,10 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 
 	case p == "/connect/1.0.0/authorize" && r.Method == "POST" && form.Get("prompt") == "none":
 		// SSO for system applets (e-license etc.): identified by our NA access token, no UI.
-		cl, err := token.ParseJWT(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), &s.key.PublicKey)
+		cl, err := token.ParseJWT(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), &s.Key.PublicKey)
 		pid := uint64(0)
 		if err == nil {
-			pid = s.store.PIDForNA(httpx.Str(cl, "sub"))
+			pid = s.Store.PIDForNA(httpx.Str(cl, "sub"))
 		}
 		if pid == 0 {
 			httpx.WriteJSON(w, 401, map[string]any{"error": "login_required"})
@@ -2071,7 +1970,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			naAuthorizeLocked(w, r, form.Get("redirect_uri"), form.Get("state"))
 			return
 		}
-		id, err := s.acct.Identity(pid)
+		id, err := s.Acct.Identity(pid)
 		if err != nil {
 			httpx.WriteJSON(w, 401, map[string]any{"error": "login_required"})
 			return
@@ -2121,7 +2020,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 				s.authorizePage(w, r, q, `<p class="err">Too many attempts. Wait a few minutes and try again.</p>`)
 				return
 			}
-			res, err := s.acct.LoginPID(form.Get("email"), form.Get("password"))
+			res, err := s.Acct.LoginPID(form.Get("email"), form.Get("password"))
 			lock := s.pidLock(res.PID)
 			if errors.Is(err, identity.ErrAccountLocked) && lock == "" {
 				lock = lockBanned
@@ -2149,7 +2048,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 				s.authorize2FAPage(w, r, tok, "")
 				return
 			}
-			id, err := s.acct.Identity(res.PID)
+			id, err := s.Acct.Identity(res.PID)
 			if err != nil {
 				s.authorizePage(w, r, q, `<p class="err">Account lookup failed.</p>`)
 				return
@@ -2158,7 +2057,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			s.mu.Lock()
 			s.codes[code] = naCode{PID: res.PID, Username: res.Username, ClientID: q.Get("client_id"), NaID: id.NaID, Created: time.Now()}
 			s.mu.Unlock()
-			s.store.RememberNA(id.NaID, res.PID)
+			s.Store.RememberNA(id.NaID, res.PID)
 			// ponytail: the redirect shape is inferred from the response_type the console sends;
 			// both the query (code) and fragment (session_token_code / id_token) forms are covered.
 			dest := s.authorizeRedirect(q, code)
@@ -2179,7 +2078,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			s.authorizePage(w, r, r.URL.Query(), `<p class="err">That took too long — sign in again.</p>`)
 			return
 		}
-		if err := s.acct.VerifySecondFactor(p.AccountID, strings.TrimSpace(form.Get("code")), strings.TrimSpace(form.Get("recovery_code"))); err != nil {
+		if err := s.Acct.VerifySecondFactor(p.AccountID, strings.TrimSpace(form.Get("code")), strings.TrimSpace(form.Get("recovery_code"))); err != nil {
 			if errors.Is(err, identity.ErrSecondFactorLocked) {
 				s.authorize2FAPage(w, r, form.Get("token"), `<p class="err">Too many wrong codes. Wait a few minutes and try again.</p>`)
 				return
@@ -2192,7 +2091,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			return
 		}
 		q := p.Query
-		id, err := s.acct.Identity(p.PID)
+		id, err := s.Acct.Identity(p.PID)
 		if err != nil {
 			s.authorizePage(w, r, q, `<p class="err">Account lookup failed.</p>`)
 			return
@@ -2201,7 +2100,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		s.mu.Lock()
 		s.codes[code] = naCode{PID: p.PID, Username: p.Username, ClientID: q.Get("client_id"), NaID: id.NaID, Created: time.Now()}
 		s.mu.Unlock()
-		s.store.RememberNA(id.NaID, p.PID)
+		s.Store.RememberNA(id.NaID, p.PID)
 		dest := s.authorizeRedirect(q, code)
 		log.Printf("[nx-baas] NA authorize ok pid=%s (second factor) response_type=%q -> %s", redact.Tag(p.PID), q.Get("response_type"), redact.Link(dest))
 		http.Redirect(w, r, dest, http.StatusFound)
@@ -2223,9 +2122,9 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		if !ok && form.Get("refresh_token") != "" {
 			// Later boots: the console refreshes with the token we issued (a signed JWT whose sub
 			// is the NA id); the NA id -> PID map is persisted, so this survives restarts.
-			if cl, err := token.ParseJWT(form.Get("refresh_token"), &s.key.PublicKey); err == nil && httpx.Str(cl, "typ") == "refresh" {
-				if pid := s.store.PIDForNA(httpx.Str(cl, "sub")); pid != 0 {
-					if id, err := s.acct.Identity(pid); err == nil {
+			if cl, err := token.ParseJWT(form.Get("refresh_token"), &s.Key.PublicKey); err == nil && httpx.Str(cl, "typ") == "refresh" {
+				if pid := s.Store.PIDForNA(httpx.Str(cl, "sub")); pid != 0 {
+					if id, err := s.Acct.Identity(pid); err == nil {
 						c, ok = naCode{PID: pid, Username: id.Nickname, ClientID: form.Get("client_id"), NaID: id.NaID}, true
 						s.bindNotificationChannel(form.Get("device_authentication_token"), id.BaasUserID)
 					}
@@ -2247,7 +2146,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			httpx.WriteJSON(w, 200, map[string]any{"session_token": code, "code": code})
 			return
 		}
-		if id, err := s.acct.Identity(c.PID); err == nil {
+		if id, err := s.Acct.Identity(c.PID); err == nil {
 			s.bindNotificationChannel(form.Get("device_authentication_token"), id.BaasUserID)
 		}
 		at := s.naAccessToken(c)
@@ -2267,17 +2166,17 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		return
 
 	case p == "/2.0.0/users/me":
-		c, err := token.ParseJWT(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), &s.key.PublicKey)
+		c, err := token.ParseJWT(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), &s.Key.PublicKey)
 		if err != nil {
 			httpx.WriteJSON(w, 401, map[string]any{"error": "invalid_token"})
 			return
 		}
-		pid := s.store.PIDForNA(httpx.Str(c, "sub"))
+		pid := s.Store.PIDForNA(httpx.Str(c, "sub"))
 		if lock := s.pidLock(pid); lock != "" {
 			naTokenLocked(w, lock)
 			return
 		}
-		id, err := s.acct.Identity(pid)
+		id, err := s.Acct.Identity(pid)
 		if err != nil {
 			httpx.WriteJSON(w, 404, map[string]any{"error": "not_found"})
 			return
@@ -2784,24 +2683,26 @@ func main() {
 	}
 	key := token.LoadRSAKey(httpx.Getenv("BAAS_SIGNING_KEY", "/keys/baas_signing_key.pem"))
 	s := &server{
-		store:      store.Load(httpx.Getenv("NX_DATA", "/data") + "/baas.json"),
-		key:        key,
-		idKid:      httpx.Getenv("BAAS_KID", "openpak-baas-key-1"),
-		accKid:     httpx.Getenv("BAAS_ACCESS_KID", "00000000-0000-0000-0000-000000000003"),
-		naKid:      httpx.Getenv("BAAS_NA_KID", "00000000-0000-0000-0000-000000000001"),
+		Core: &core.Core{
+			Store:  store.Load(httpx.Getenv("NX_DATA", "/data") + "/baas.json"),
+			Key:    key,
+			IDKid:  httpx.Getenv("BAAS_KID", "openpak-baas-key-1"),
+			AccKid: httpx.Getenv("BAAS_ACCESS_KID", "00000000-0000-0000-0000-000000000003"),
+			NAKid:  httpx.Getenv("BAAS_NA_KID", "00000000-0000-0000-0000-000000000001"),
+			Acct:   newBackend(),
+		},
 		codes:      map[string]naCode{},
 		device:     map[string]string{},
 		links:      newLinkStore(),
 		guesses:    newGuesses(),
 		phones:     newPhoneStore(),
 		pending2FA: newPending2FAStore(),
-		acct:       newBackend(),
 	}
 	s.forwardersFromEnv()
 	s.initHarborDevices()
 	s.acbaaPath = httpx.Getenv("NX_DATA", "/data") + "/acbaa.json"
 	s.acbaaLoad()
-	if b, ok := s.acct.(*identity.OpenpakBackend); ok {
+	if b, ok := s.Acct.(*identity.OpenpakBackend); ok {
 		go s.followCoreEvents(b)
 		// One presence reconciler beside the one core-event poller: leases,
 		// heartbeats and expiries on the adapter's clock (PRE-02).
@@ -2826,8 +2727,8 @@ func main() {
 		s.saves, s.savesKey = newSavesProxy(u), os.Getenv("SAVES_INTERNAL_KEY")
 		log.Printf("[nx-baas] save-data cloud: forwarding scsi hosts to %s", u)
 	}
-	s.jwks = token.JWKSFor(&key.PublicKey, s.idKid, httpx.Getenv("BAAS_ID_KID", "00000000-0000-0000-0000-000000000002"), s.accKid, s.naKid)
-	cert := selfSigned([]string{baasHost, "m-lp1.baas.nintendo.com", "cdn-image-e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com",
+	s.JWKS = token.JWKSFor(&key.PublicKey, s.IDKid, httpx.Getenv("BAAS_ID_KID", "00000000-0000-0000-0000-000000000002"), s.AccKid, s.NAKid)
+	cert := selfSigned([]string{core.BaasHost, "m-lp1.baas.nintendo.com", "cdn-image-e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com",
 		"accounts.nintendo.com", "api.accounts.nintendo.com", "cdn.accounts.nintendo.com",
 		"god.hac.lp1.penne.srv.nintendo.net", "val.hac.penne.srv.nintendo.net", "val.hac.lp1.penne.srv.nintendo.net",
 		"app.lp1.five.nintendo.net",
@@ -2956,7 +2857,7 @@ func main() {
 		log.Printf("[nx-baas] game API listening %s (photon-room, invitations, mint-token)", addr)
 		log.Fatal((&http.Server{Addr: addr, Handler: s.gameAPI(), ErrorLog: redact.ErrorLog()}).ListenAndServe())
 	}()
-	log.Printf("[nx-baas] listening %s (BAAS + Nintendo Account); account backend %s; users=%d devices=%d", srv.Addr, httpx.Getenv("ACCOUNT_BACKEND", "unset"), len(s.store.Users), len(s.store.Devices))
+	log.Printf("[nx-baas] listening %s (BAAS + Nintendo Account); account backend %s; users=%d devices=%d", srv.Addr, httpx.Getenv("ACCOUNT_BACKEND", "unset"), len(s.Store.Users), len(s.Store.Devices))
 	// The console's web applet enforces certificate checking unless Atmosphère patches it, so
 	// the link page is also served over plain HTTP. Nothing secret crosses it: the console
 	// shows a short-lived code, the password is typed on the phone against the public site,
@@ -3006,17 +2907,4 @@ func naProfile(id *identity.Identity) (country, birthday string) {
 		birthday = httpx.Getenv("NA_FALLBACK_BIRTHDAY", "2000-01-01")
 	}
 	return country, birthday
-}
-
-// bearerHeader verifies one of our own JWTs from "Bearer <token>" on the named header.
-func (s *server) bearerHeader(r *http.Request, header string) map[string]any {
-	v := r.Header.Get(header)
-	if !strings.HasPrefix(v, "Bearer ") {
-		return nil
-	}
-	c, err := token.ParseJWT(strings.TrimPrefix(v, "Bearer "), &s.key.PublicKey)
-	if err != nil {
-		return nil
-	}
-	return c
 }

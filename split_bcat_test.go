@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"nx-baas/internal/core"
 	"testing"
 )
 
@@ -46,7 +47,7 @@ func TestMovedBcatIsForwarded(t *testing.T) {
 // Without NX_BCAT_URL nx-baas has no BCAT of its own: Traefik routes the bcat hosts to
 // nx-bcat, so anything that still lands here gets a 404 rather than a local answer.
 func TestBcatHostsWithoutTheForwardAre404(t *testing.T) {
-	s := &server{}
+	s := &server{Core: &core.Core{}}
 	for _, c := range [][2]string{
 		{"bcat-list-lp1.cdn.nintendo.net", "/api/nx/v1/list/openpak_news"},
 		{"bcat-topics-lp1.cdn.nintendo.net", "/api/nx/v1/titles/0100000000001000/topics"},

@@ -82,7 +82,7 @@ func (s *server) banSrc() banSource {
 	if s.banSource != nil {
 		return s.banSource
 	}
-	if b, ok := s.acct.(banSource); ok {
+	if b, ok := s.Acct.(banSource); ok {
 		return b
 	}
 	return nil
@@ -148,10 +148,10 @@ func (s *server) userLock(u *store.User) string {
 }
 
 func (s *server) naLock(naID string) string {
-	if naID == "" || s.store == nil {
+	if naID == "" || s.Store == nil {
 		return ""
 	}
-	return s.pidLock(s.store.PIDForNA(naID))
+	return s.pidLock(s.Store.PIDForNA(naID))
 }
 
 // ---------- the refusals, one per surface ----------
@@ -203,7 +203,7 @@ func lockedPageMessage(lock string) string {
 
 // naLockOfToken reads the lock of the account a Nintendo Account id token names.
 func (s *server) naLockOfToken(idTok string) string {
-	c, err := token.ParseJWT(idTok, &s.key.PublicKey)
+	c, err := token.ParseJWT(idTok, &s.Key.PublicKey)
 	if err != nil {
 		return lockBanned
 	}

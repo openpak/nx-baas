@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"nx-baas/internal/core"
 	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 	"os"
@@ -74,11 +75,11 @@ func TestLoginReplyMatchesTheShapeAConsoleAccepts(t *testing.T) {
 	}
 
 	s := dauthServer(t)
-	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
-	u, d := s.store.NewUser()
+	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+	u, d := s.Store.NewUser()
 	// A linked user with a picture: the state a console is in right after it
 	// adds an account, which is exactly when 2124-3121 appears.
-	s.store.Update(u, func(u *store.User) {
+	s.Store.Update(u, func(u *store.User) {
 		u.PID = 1 // linked: an unlinked user has no friend code to serve
 		u.NxAccount = "AAAA"
 		u.Avatar = "/9j/4AAQ"
@@ -92,10 +93,10 @@ func TestLoginReplyMatchesTheShapeAConsoleAccepts(t *testing.T) {
 	// not see the extra "summary" key the handler was adding — which is the
 	// bug it existed to catch. Verified by putting that key back and watching
 	// this fail.
-	s.acct = fakeBackend{id: id}
+	s.Acct = fakeBackend{id: id}
 	form := "id=" + d.ID + "&password=" + d.Password + "&appAuthNToken=x"
-	r := httptest.NewRequest("POST", "https://"+baasHost+"/1.0.0/login", nil)
-	r.Host = baasHost
+	r := httptest.NewRequest("POST", "https://"+core.BaasHost+"/1.0.0/login", nil)
+	r.Host = core.BaasHost
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 	s.baas(w, r, []byte(form))
@@ -161,16 +162,16 @@ func compareShape(want map[string]any, got map[string]any, path string) (missing
 // (account 23.0.1 .text 0xed978) and started over on the next cycle.
 func TestProfileUploadCompletesTheWayTheSysmoduleChecksIt(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
-	u, _ := s.store.NewUser()
-	s.store.Update(u, func(u *store.User) { u.PID = 1; u.Nickname = "tester" })
-	s.acct = fakeBackend{id: &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "website name",
+	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+	u, _ := s.Store.NewUser()
+	s.Store.Update(u, func(u *store.User) { u.PID = 1; u.Nickname = "tester" })
+	s.Acct = fakeBackend{id: &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "website name",
 		FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did"}}
 	bearer := "Bearer " + s.accessToken(u.ID, 2, "did", "device", "serial")
 	call := func(method, path, body string) map[string]any {
 		t.Helper()
-		r := httptest.NewRequest(method, "https://"+baasHost+path, nil)
-		r.Host = baasHost
+		r := httptest.NewRequest(method, "https://"+core.BaasHost+path, nil)
+		r.Host = core.BaasHost
 		r.Header.Set("Content-Type", "application/json")
 		r.Header.Set("Authorization", bearer)
 		w := httptest.NewRecorder()
@@ -227,14 +228,14 @@ func TestExtrasSelfIsNeverBareForALinkedUser(t *testing.T) {
 	t.Setenv("NX_TEST_NXACCOUNT", "01606150mCH48QS0EACctpGPncaKYw")
 
 	s := dauthServer(t)
-	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
-	u, d := s.store.NewUser()
-	s.store.Update(u, func(u *store.User) { u.PID = 1; u.Nickname = "tester" }) // no blob: the console never uploaded one
-	s.acct = fakeBackend{id: &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
+	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+	u, d := s.Store.NewUser()
+	s.Store.Update(u, func(u *store.User) { u.PID = 1; u.Nickname = "tester" }) // no blob: the console never uploaded one
+	s.Acct = fakeBackend{id: &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
 		FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did"}}
 
-	r := httptest.NewRequest("POST", "https://"+baasHost+"/1.0.0/login", nil)
-	r.Host = baasHost
+	r := httptest.NewRequest("POST", "https://"+core.BaasHost+"/1.0.0/login", nil)
+	r.Host = core.BaasHost
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 	s.baas(w, r, []byte("id="+d.ID+"&password="+d.Password+"&appAuthNToken=x"))
@@ -256,11 +257,11 @@ func TestExtrasSelfIsNeverBareForALinkedUser(t *testing.T) {
 func TestDefaultThumbnailIsServedWithNoDataDirectory(t *testing.T) {
 	t.Setenv("NX_DATA", t.TempDir()) // empty: nothing hand-placed
 	s := dauthServer(t)
-	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 
 	for _, p := range []string{"/1/default", "/2/default"} {
-		r := httptest.NewRequest("GET", "https://cdn-image-"+baasHost+p, nil)
-		r.Host = "cdn-image-" + baasHost
+		r := httptest.NewRequest("GET", "https://cdn-image-"+core.BaasHost+p, nil)
+		r.Host = "cdn-image-" + core.BaasHost
 		w := httptest.NewRecorder()
 		s.baas(w, r, nil)
 		if w.Code != http.StatusOK {

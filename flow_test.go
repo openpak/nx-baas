@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"nx-baas/internal/core"
 	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 	"os"
@@ -37,19 +38,19 @@ func TestEveryURLTheConsoleIsHandedIsServed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("NX_DATA", t.TempDir()) // nothing hand-placed, as on a fresh deploy
 			s := dauthServer(t)
-			s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
-			u, d := s.store.NewUser()
+			s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+			u, d := s.Store.NewUser()
 			if tc.linked {
-				s.store.Update(u, func(u *store.User) { u.PID = 1; u.Nickname = "tester"; u.Avatar = tc.avatar })
-				s.acct = fakeBackend{id: &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
+				s.Store.Update(u, func(u *store.User) { u.PID = 1; u.Nickname = "tester"; u.Avatar = tc.avatar })
+				s.Acct = fakeBackend{id: &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
 					FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did"}}
 			} else {
-				s.acct = fakeBackend{}
+				s.Acct = fakeBackend{}
 			}
 
-			login := httptest.NewRequest("POST", "https://"+baasHost+"/1.0.0/login",
+			login := httptest.NewRequest("POST", "https://"+core.BaasHost+"/1.0.0/login",
 				strings.NewReader("id="+d.ID+"&password="+d.Password+"&appAuthNToken=x"))
-			login.Host = baasHost
+			login.Host = core.BaasHost
 			login.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			rec := httptest.NewRecorder()
 			s.ServeHTTP(rec, login)
@@ -114,15 +115,15 @@ func TestTheConsoleIsShownTheAccountsOwnPicture(t *testing.T) {
 
 	t.Setenv("NX_DATA", t.TempDir())
 	s := dauthServer(t)
-	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
-	u, _ := s.store.NewUser()
-	s.store.Update(u, func(u *store.User) { u.PID = 1; u.Nickname = "tester" }) // no console upload
-	s.acct = fakeBackend{id: &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
+	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+	u, _ := s.Store.NewUser()
+	s.Store.Update(u, func(u *store.User) { u.PID = 1; u.Nickname = "tester" }) // no console upload
+	s.Acct = fakeBackend{id: &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
 		FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did",
 		AvatarURL: site.URL + "/media/avatars/acct-1/console.jpg"}}
 
-	r := httptest.NewRequest("GET", "https://cdn-image-"+baasHost+"/1/"+u.ID, nil)
-	r.Host = "cdn-image-" + baasHost
+	r := httptest.NewRequest("GET", "https://cdn-image-"+core.BaasHost+"/1/"+u.ID, nil)
+	r.Host = "cdn-image-" + core.BaasHost
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
 
@@ -153,13 +154,13 @@ func TestTheNewerPictureWins(t *testing.T) {
 		t.Cleanup(site.Close)
 		t.Setenv("NX_DATA", t.TempDir())
 		s := dauthServer(t)
-		s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
-		u, _ := s.store.NewUser()
-		s.store.Update(u, func(u *store.User) {
+		s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+		u, _ := s.Store.NewUser()
+		s.Store.Update(u, func(u *store.User) {
 			u.PID, u.Nickname = 1, "tester"
 			u.Avatar, u.AvatarAt = "/9j/4AAQSkZJRg==", consoleUpload // the console's own
 		})
-		s.acct = fakeBackend{id: &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
+		s.Acct = fakeBackend{id: &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
 			FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did",
 			AvatarURL: site.URL + "/console.jpg", ImageUpdatedAt: siteAt}}
 		return s, u
@@ -169,8 +170,8 @@ func TestTheNewerPictureWins(t *testing.T) {
 
 	t.Run("the website's is newer", func(t *testing.T) {
 		s, u := newServer(t, fromSite, websiteEdit)
-		r := httptest.NewRequest("GET", "https://cdn-image-"+baasHost+"/1/"+u.ID, nil)
-		r.Host = "cdn-image-" + baasHost
+		r := httptest.NewRequest("GET", "https://cdn-image-"+core.BaasHost+"/1/"+u.ID, nil)
+		r.Host = "cdn-image-" + core.BaasHost
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, r)
 		if w.Body.Len() != len(fromSite) {
@@ -183,8 +184,8 @@ func TestTheNewerPictureWins(t *testing.T) {
 
 	t.Run("the console's is newer", func(t *testing.T) {
 		s, u := newServer(t, fromSite, consoleUpload-1)
-		r := httptest.NewRequest("GET", "https://cdn-image-"+baasHost+"/1/"+u.ID, nil)
-		r.Host = "cdn-image-" + baasHost
+		r := httptest.NewRequest("GET", "https://cdn-image-"+core.BaasHost+"/1/"+u.ID, nil)
+		r.Host = "cdn-image-" + core.BaasHost
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, r)
 		if w.Body.Len() == len(fromSite) {
@@ -202,9 +203,9 @@ func TestTheNewerPictureWins(t *testing.T) {
 // console said it could not find the user.
 func TestFriendCodeLookupUsesTheQueryTheConsoleSends(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
-	u, _ := s.store.NewUser() // the signed-in console doing the looking up
-	s.acct = codeBackend{code: "SW-1000-0000-0002", friend: &identity.Friend{
+	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+	u, _ := s.Store.NewUser() // the signed-in console doing the looking up
+	s.Acct = codeBackend{code: "SW-1000-0000-0002", friend: &identity.Friend{
 		PID: 1900000002, BaasUserID: "aaaaaaaaaaaa0002", NaID: "bbbbbbbbbbbb0002",
 		FriendCode: "SW-1000-0000-0002", Nickname: "Leia"}}
 
@@ -213,8 +214,8 @@ func TestFriendCodeLookupUsesTheQueryTheConsoleSends(t *testing.T) {
 		"/1.0.0/users?filter.links.friendCode.id.$in=SW-1000-0000-0002",
 		"/1.0.0/users?friendCode=SW-1000-0000-0002", // older spelling, still honoured
 	} {
-		r := httptest.NewRequest("GET", "https://"+baasHost+target, nil)
-		r.Host = baasHost
+		r := httptest.NewRequest("GET", "https://"+core.BaasHost+target, nil)
+		r.Host = core.BaasHost
 		r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, r)
@@ -243,8 +244,8 @@ func TestFriendCodeLookupUsesTheQueryTheConsoleSends(t *testing.T) {
 	}
 
 	// A code nobody holds is still an empty answer, not an error.
-	r := httptest.NewRequest("GET", "https://"+baasHost+"/1.0.0/users?filter.links.friendCode.id.$in=0000-0000-0000", nil)
-	r.Host = baasHost
+	r := httptest.NewRequest("GET", "https://"+core.BaasHost+"/1.0.0/users?filter.links.friendCode.id.$in=0000-0000-0000", nil)
+	r.Host = core.BaasHost
 	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
@@ -289,7 +290,7 @@ func TestFriendObjectCarriesWhatAUserObjectCarries(t *testing.T) {
 	}
 
 	s := dauthServer(t)
-	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	obj := s.friendObj(identity.Friend{
 		PID: 1900000002, BaasUserID: "aaaaaaaaaaaa0002", NaID: "bbbbbbbbbbbb0002",
 		FriendCode: "SW-1000-0000-0002", Nickname: "Leia", Country: "GB", CreatedAt: 1788896080,
@@ -327,14 +328,14 @@ func TestSearchReplyMatchesTheAcceptedShape(t *testing.T) {
 	}
 
 	s := dauthServer(t)
-	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
-	u, _ := s.store.NewUser() // the signed-in console doing the looking up
-	s.acct = codeBackend{code: "SW-1000-0000-0002", friend: &identity.Friend{
+	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+	u, _ := s.Store.NewUser() // the signed-in console doing the looking up
+	s.Acct = codeBackend{code: "SW-1000-0000-0002", friend: &identity.Friend{
 		PID: 1900000002, BaasUserID: "aaaaaaaaaaaa0002", NaID: "bbbbbbbbbbbb0002",
 		FriendCode: "SW-1000-0000-0002", Nickname: "Leia", Country: "IE", CreatedAt: 1788896080}}
 
-	r := httptest.NewRequest("GET", "https://"+baasHost+"/1.0.0/users?filter.links.friendCode.id.$in=1000-0000-0002", nil)
-	r.Host = baasHost
+	r := httptest.NewRequest("GET", "https://"+core.BaasHost+"/1.0.0/users?filter.links.friendCode.id.$in=1000-0000-0002", nil)
+	r.Host = core.BaasHost
 	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
@@ -397,15 +398,15 @@ func TestSearchReplyMatchesTheAcceptedShape(t *testing.T) {
 // list looked like from the sofa with the data sitting in the reply.
 func TestFriendListEntriesCarryACountry(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
-	u, _ := s.store.NewUser()
-	s.store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "Leia" })
-	s.acct = fakeBackend{id: &identity.Identity{PID: 1, Nickname: "Leia", FriendCode: "SW-1000-0000-0002", BsDid: "did",
+	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+	u, _ := s.Store.NewUser()
+	s.Store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "Leia" })
+	s.Acct = fakeBackend{id: &identity.Identity{PID: 1, Nickname: "Leia", FriendCode: "SW-1000-0000-0002", BsDid: "did",
 		Friends: []identity.Friend{{PID: 2, BaasUserID: "aaaaaaaaaaaa0001", Nickname: "hansolo",
 			FriendCode: "SW-1000-0000-0001", Country: "IE", CreatedAt: 1788818380}}}}
 
-	r := httptest.NewRequest("GET", "https://"+baasHost+"/2.0.0/users/"+u.ID+"/friends?count=300", nil)
-	r.Host = baasHost
+	r := httptest.NewRequest("GET", "https://"+core.BaasHost+"/2.0.0/users/"+u.ID+"/friends?count=300", nil)
+	r.Host = core.BaasHost
 	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)

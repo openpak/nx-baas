@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"nx-baas/internal/core"
 	"nx-baas/internal/httpx"
 	"strings"
 	"sync/atomic"
@@ -72,7 +73,7 @@ func TestMovedPenneReceivesTheCoresCalls(t *testing.T) {
 	t.Setenv("NX_PENNE_URL", srv.URL)
 	s := linkedServer(t)
 	s.forwardersFromEnv()
-	u := s.store.UserByPID(7)
+	u := s.Store.UserByPID(7)
 
 	// /1.0.0/push_channels: the association goes to nx-penne, the console gets its echo.
 	req := httptest.NewRequest("POST", "https://m-lp1.baas.nintendo.com/1.0.0/push_channels/"+u.ID+"/dev1",
@@ -165,7 +166,7 @@ func TestQueuedPushesSurviveAnNxPenneRestart(t *testing.T) {
 	}))
 	defer srv.Close()
 	p := newPenneRemote(srv.URL)
-	s := &server{penneRemote: p}
+	s := &server{Core: &core.Core{}, penneRemote: p}
 	s.penneBindConsole("first", "u")
 	s.penneBindConsole("second", "u")
 	time.Sleep(300 * time.Millisecond)

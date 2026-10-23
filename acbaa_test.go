@@ -12,6 +12,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"net/http/httptest"
+	"nx-baas/internal/core"
 	"nx-baas/internal/msgpack"
 	"nx-baas/internal/store"
 	"nx-baas/internal/token"
@@ -77,7 +78,7 @@ func TestAcbaaDecodeRefusesGarbage(t *testing.T) {
 // handler, because reaching the handler at all (past the catch-all) is half
 // of this fix.
 func TestAcbaaRegisterLandAnswersThePostedIsland(t *testing.T) {
-	s := &server{}
+	s := &server{Core: &core.Core{}}
 	r := httptest.NewRequest("POST", "https://api.hac.lp1.acbaa.srv.nintendo.net/api/v1/lands",
 		bytes.NewReader(acbaaObservedLand))
 	r.Header.Set("Content-Type", "application/x-msgpack")
@@ -123,7 +124,7 @@ var acbaaObservedUser = []byte("\x83\xa4name\xa7hansolo" +
 // moment /lands stopped 404ing, and surfaces our error code as its own
 // (2219-3004 on the loud 404).
 func TestAcbaaRegisterUserAnswersIdAndPassword(t *testing.T) {
-	s := &server{}
+	s := &server{Core: &core.Core{}}
 	r := httptest.NewRequest("POST", "https://api.hac.lp1.acbaa.srv.nintendo.net/api/v1/users",
 		bytes.NewReader(acbaaObservedUser))
 	w := httptest.NewRecorder()
@@ -153,7 +154,7 @@ func TestAcbaaRegisterUserAnswersIdAndPassword(t *testing.T) {
 // The user id is the BAAS account's own numeric id (Bearer sub, hex): same
 // account, same ACNH user, nothing stored.
 func TestAcbaaUserIdBindsToBearerSub(t *testing.T) {
-	s := &server{}
+	s := &server{Core: &core.Core{}}
 	post := func(tok string) map[string]any {
 		r := httptest.NewRequest("POST", "https://api.hac.lp1.acbaa.srv.nintendo.net/api/v1/users",
 			bytes.NewReader(acbaaObservedUser))
@@ -188,7 +189,7 @@ func TestAcbaaUserIdBindsToBearerSub(t *testing.T) {
 // POST /api/v1/auth_token swaps the {id, password} from /users for a call
 // token: the game asked for it the moment /users stopped 404ing.
 func TestAcbaaAuthTokenMintsVerifiableToken(t *testing.T) {
-	s := &server{}
+	s := &server{Core: &core.Core{}}
 	id := uint64(0xaaaaaaaaaaaa0001)
 	body := msgpack.Ordered("id", id, "password", acbaaUserPassword(id))
 	r := httptest.NewRequest("POST", "https://api.hac.lp1.acbaa.srv.nintendo.net/api/v1/auth_token",
@@ -222,7 +223,7 @@ func TestAcbaaAuthTokenMintsVerifiableToken(t *testing.T) {
 // which is also the 2219-4001 the game shows when its stored credentials go
 // stale. Tampered tokens verify false the same way.
 func TestAcbaaAuthTokenRefusesBadCredentials(t *testing.T) {
-	s := &server{}
+	s := &server{Core: &core.Core{}}
 	body := msgpack.Ordered("id", uint64(0xaaaaaaaaaaaa0001), "password", "wrong")
 	r := httptest.NewRequest("POST", "https://api.hac.lp1.acbaa.srv.nintendo.net/api/v1/auth_token",
 		bytes.NewReader(body))
@@ -244,7 +245,7 @@ func TestAcbaaAuthTokenRefusesBadCredentials(t *testing.T) {
 // body is documented for any PUT here); strangers and wrong passwords get
 // 401/4001.
 func TestAcbaaBindUserLand(t *testing.T) {
-	s := &server{}
+	s := &server{Core: &core.Core{}}
 	uid := uint64(0xaaaaaaaaaaaa0001)
 	land := uint64(2720403009)
 	path := "https://api.hac.lp1.acbaa.srv.nintendo.net/api/v1/users/12297829382472990721/land"
@@ -294,7 +295,7 @@ func jwtWithSub(sub string) string {
 // GET /api/v1/friends answers the (currently empty) friend list. The game
 // surfaces our error code as its own (2219-3004 on the loud 404).
 func TestAcbaaFriendsEmpty(t *testing.T) {
-	s := &server{}
+	s := &server{Core: &core.Core{}}
 	r := httptest.NewRequest("GET", "https://api.hac.lp1.acbaa.srv.nintendo.net/api/v1/friends", nil)
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
@@ -317,7 +318,7 @@ func TestAcbaaFriendsEmpty(t *testing.T) {
 // the stub backend — the game reads a C string out of the zeroed buffer).
 // Bare 200; the token is logged per user for a future push backend.
 func TestAcbaaNotificationTokenAccepted(t *testing.T) {
-	s := &server{}
+	s := &server{Core: &core.Core{}}
 	body := msgpack.Ordered("token", "")
 	r := httptest.NewRequest("POST", "https://api.hac.lp1.acbaa.srv.nintendo.net/api/v1/notification_tokens",
 		bytes.NewReader(body))
@@ -342,7 +343,7 @@ func TestAcbaaNotificationTokenAccepted(t *testing.T) {
 // first two and posts the third in one breath after binding. Empty shelves
 // and empty statuses are true statements for a fresh account.
 func TestAcbaaMessageCardsEmpty(t *testing.T) {
-	s := &server{}
+	s := &server{Core: &core.Core{}}
 	r := httptest.NewRequest("GET", "https://api.hac.lp1.acbaa.srv.nintendo.net/api/v1/message_cards?offset=0&limit=30", nil)
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
@@ -363,7 +364,7 @@ func TestAcbaaMessageCardsEmpty(t *testing.T) {
 }
 
 func TestAcbaaProfileStatusAndUpload(t *testing.T) {
-	s := &server{}
+	s := &server{Core: &core.Core{}}
 	host := "https://api.hac.lp1.acbaa.srv.nintendo.net"
 	uidPath := host + "/api/v1/users/12297829382472990721/profile_status"
 	get := func() map[string]any {
@@ -488,11 +489,7 @@ func TestAcbaaProfileStatusAndUpload(t *testing.T) {
 func TestAcbaaEarlierUIDResolvesForward(t *testing.T) {
 	const oldUID = uint64(12297829382472990721)
 	const newPID = uint64(1900000001)
-	s := &server{
-		acbaaProfiles: map[uint64]acbaaProfile{newPID: {SHA: "abc", Size: 124642}},
-		acbaaNames:    map[uint64]acbaaNames{newPID: {User: "hansolo", Land: "lovely "}},
-		acbaaUIDMap:   map[uint64]uint64{oldUID: newPID},
-	}
+	s := &server{Core: &core.Core{}, acbaaProfiles: map[uint64]acbaaProfile{newPID: {SHA: "abc", Size: 124642}}, acbaaNames: map[uint64]acbaaNames{newPID: {User: "hansolo", Land: "lovely "}}, acbaaUIDMap: map[uint64]uint64{oldUID: newPID}}
 	host := "https://api.hac.lp1.acbaa.srv.nintendo.net"
 	get := func(path string) map[string]any {
 		r := httptest.NewRequest("GET", host+path, nil)
@@ -556,7 +553,7 @@ func TestAcbaaEarlierUIDResolvesForward(t *testing.T) {
 // uploads a burst of the second (emoticon, catalog, unlocks, land_memory…)
 // on every online entry. Empty shelves and accepted uploads keep it moving.
 func TestAcbaaRewardsEmpty(t *testing.T) {
-	s := &server{}
+	s := &server{Core: &core.Core{}}
 	r := httptest.NewRequest("GET", "https://api.hac.lp1.acbaa.srv.nintendo.net/api/v1/rewards?limit=4", nil)
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
@@ -574,7 +571,7 @@ func TestAcbaaRewardsEmpty(t *testing.T) {
 }
 
 func TestAcbaaWebResourcesAcceptedAndRemembered(t *testing.T) {
-	s := &server{}
+	s := &server{Core: &core.Core{}}
 	tok := acbaaMintToken(12297829382472990721)
 	post := func(name string, body []byte) *httptest.ResponseRecorder {
 		r := httptest.NewRequest("PUT",
@@ -606,7 +603,7 @@ func TestAcbaaWebResourcesAcceptedAndRemembered(t *testing.T) {
 // The profile bytes survive a restart through the file store.
 func TestAcbaaProfilesSurviveRestart(t *testing.T) {
 	path := t.TempDir() + "/acbaa.json"
-	s := &server{acbaaPath: path}
+	s := &server{Core: &core.Core{}, acbaaPath: path}
 	upBody := []byte("\x81\xa4name\xa7hansolo")
 	up := httptest.NewRequest("PUT", "https://api.hac.lp1.acbaa.srv.nintendo.net/api/v1/users/12297829382472990721/profile",
 		bytes.NewReader(upBody))
@@ -619,7 +616,7 @@ func TestAcbaaProfilesSurviveRestart(t *testing.T) {
 		t.Fatalf("no digest remembered")
 	}
 	// A fresh server on the same file kept the bytes' digest.
-	s2 := &server{acbaaPath: path}
+	s2 := &server{Core: &core.Core{}, acbaaPath: path}
 	s2.acbaaLoad()
 	if got := s2.acbaaProfileSHA(12297829382472990721); got != s.acbaaProfileSHA(12297829382472990721) {
 		t.Errorf("restored digest = %#v, want the upload digest", got)
@@ -630,7 +627,7 @@ func TestAcbaaProfilesSurviveRestart(t *testing.T) {
 // answers ok/ng; the names remain for anything that reads who is who).
 func TestAcbaaNamesSurviveRestart(t *testing.T) {
 	path := t.TempDir() + "/acbaa.json"
-	s := &server{acbaaPath: path}
+	s := &server{Core: &core.Core{}, acbaaPath: path}
 	host := "https://api.hac.lp1.acbaa.srv.nintendo.net"
 	post := func(path string, body []byte) {
 		r := httptest.NewRequest("POST", host+path, bytes.NewReader(body))
@@ -643,7 +640,7 @@ func TestAcbaaNamesSurviveRestart(t *testing.T) {
 	}
 	post("/api/v1/lands", acbaaObservedLand)
 	post("/api/v1/users", acbaaObservedUser)
-	s2 := &server{acbaaPath: path}
+	s2 := &server{Core: &core.Core{}, acbaaPath: path}
 	s2.acbaaLoad()
 	if got := s2.acbaaNames[12297829382472990721]; got.User != "hansolo" || got.Land != "lovely " {
 		t.Errorf("restored names = %#v, want the registered pair", got)
@@ -654,7 +651,7 @@ func TestAcbaaNamesSurviveRestart(t *testing.T) {
 // calls this before validating profiles; an unanswered here aborts the
 // whole flow. Empty directory, current timestamp.
 func TestAcbaaUpdatedAddressesEmpty(t *testing.T) {
-	s := &server{}
+	s := &server{Core: &core.Core{}}
 	body := msgpack.Ordered("user_ids", []any{uint64(12297829382472990721)}, "since", int64(0))
 	r := httptest.NewRequest("POST", "https://api.hac.lp1.acbaa.srv.nintendo.net/api/v1/lands/updated_addresses",
 		bytes.NewReader(body))
@@ -690,7 +687,7 @@ func TestAcbaaUpdatedAddressesEmpty(t *testing.T) {
 // The game surfaces our error code as its own (2219-3004 on the loud 404),
 // so this is what unblocked friend visits.
 func TestAcbaaFriendRequestsEmpty(t *testing.T) {
-	s := &server{}
+	s := &server{Core: &core.Core{}}
 	r := httptest.NewRequest("GET", "https://api.hac.lp1.acbaa.srv.nintendo.net/api/v1/friend_requests?type=received", nil)
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
@@ -718,11 +715,11 @@ func TestAcbaaRegisterUserAnswersNEXPID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &server{key: key, store: store.Load(t.TempDir() + "/baas.json")}
-	s.store.Users["aaaaaaaaaaaa0001"] = &store.User{ID: "aaaaaaaaaaaa0001", PID: 1800000042}
+	s := &server{Core: &core.Core{Key: key, Store: store.Load(t.TempDir() + "/baas.json")}}
+	s.Store.Users["aaaaaaaaaaaa0001"] = &store.User{ID: "aaaaaaaaaaaa0001", PID: 1800000042}
 	now := time.Now().Unix()
 	tok := token.SignJWT(map[string]any{"alg": "RS256", "kid": "x", "typ": "JWT"}, map[string]any{
-		"typ": "id_token", "iss": baasIssuer, "sub": "aaaaaaaaaaaa0001",
+		"typ": "id_token", "iss": core.BaasIssuer, "sub": "aaaaaaaaaaaa0001",
 		"exp": now + 3600, "iat": now,
 	}, key)
 	r := httptest.NewRequest("POST", "https://api.hac.lp1.acbaa.srv.nintendo.net/api/v1/users",
@@ -756,11 +753,11 @@ func TestAcbaaMintedPIDRecordsMigrateToNSA(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &server{key: key, store: store.Load(t.TempDir() + "/baas.json"), acbaaPath: t.TempDir() + "/acbaa.json"}
-	s.store.Users["aaaaaaaaaaaa0002"] = &store.User{ID: "aaaaaaaaaaaa0002", PID: 1800000043}
+	s := &server{Core: &core.Core{Key: key, Store: store.Load(t.TempDir() + "/baas.json")}, acbaaPath: t.TempDir() + "/acbaa.json"}
+	s.Store.Users["aaaaaaaaaaaa0002"] = &store.User{ID: "aaaaaaaaaaaa0002", PID: 1800000043}
 	now := time.Now().Unix()
 	tok := token.SignJWT(map[string]any{"alg": "RS256", "kid": "x", "typ": "JWT"}, map[string]any{
-		"typ": "id_token", "iss": baasIssuer, "sub": "aaaaaaaaaaaa0002",
+		"typ": "id_token", "iss": core.BaasIssuer, "sub": "aaaaaaaaaaaa0002",
 		"exp": now + 3600, "iat": now,
 	}, key)
 	const minted, nsa = uint64(1800000043), uint64(0xaaaaaaaaaaaa0002)
@@ -797,7 +794,7 @@ func TestAcbaaMintedPIDRecordsMigrateToNSA(t *testing.T) {
 // posts on every online entry, not just the first. The password must be
 // stable — PUT users/<id>/land will present it back alongside the id.
 func TestAcbaaRegisterLandIsIdempotent(t *testing.T) {
-	s := &server{}
+	s := &server{Core: &core.Core{}}
 	passwords := map[string]bool{}
 	for i := range 2 {
 		r := httptest.NewRequest("POST", "https://api.hac.lp1.acbaa.srv.nintendo.net/api/v1/lands",
@@ -821,7 +818,7 @@ func TestAcbaaRegisterLandIsIdempotent(t *testing.T) {
 
 // Garbage in is a 400, not a 200 with a zeroed island and not a 500.
 func TestAcbaaRegisterLandRejectsBadMsgpack(t *testing.T) {
-	s := &server{}
+	s := &server{Core: &core.Core{}}
 	r := httptest.NewRequest("POST", "https://api.hac.lp1.acbaa.srv.nintendo.net/api/v1/lands",
 		strings.NewReader("not msgpack"))
 	w := httptest.NewRecorder()
@@ -835,7 +832,7 @@ func TestAcbaaRegisterLandRejectsBadMsgpack(t *testing.T) {
 // ({category, code}, not a bare {}), so the game can report it properly.
 // Each new endpoint the game asks for must surface here next.
 func TestUnknownAcbaaRouteIs404(t *testing.T) {
-	s := &server{}
+	s := &server{Core: &core.Core{}}
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, httptest.NewRequest("GET",
 		"https://api.hac.lp1.acbaa.srv.nintendo.net/api/v1/whatever", nil))
@@ -914,11 +911,7 @@ func TestAcbaaBestFriends(t *testing.T) {
 // mapping goes, and friends on both sides follow.
 func TestAcbaaMintedPIDMovesBackToNSA(t *testing.T) {
 	const nsa, minted, other = uint64(12297829382472990721), uint64(1900000001), uint64(1900000002)
-	s := &server{
-		acbaaProfiles:   map[uint64]acbaaProfile{minted: {SHA: "abc", Size: 1}},
-		acbaaUIDMap:     map[uint64]uint64{nsa: minted},
-		acbaaFriendList: map[uint64][]uint64{minted: {other}, other: {minted}},
-	}
+	s := &server{Core: &core.Core{}, acbaaProfiles: map[uint64]acbaaProfile{minted: {SHA: "abc", Size: 1}}, acbaaUIDMap: map[uint64]uint64{nsa: minted}, acbaaFriendList: map[uint64][]uint64{minted: {other}, other: {minted}}}
 	s.mu.Lock()
 	moved := s.migrateUIDLocked(minted, nsa)
 	s.mu.Unlock()

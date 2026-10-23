@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"nx-baas/internal/core"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
@@ -22,7 +23,7 @@ func dauthServer(t *testing.T) *server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &server{key: key, idKid: "test-kid", jwks: token.JWKSFor(&key.PublicKey, "test-kid")}
+	return &server{Core: &core.Core{Key: key, IDKid: "test-kid", JWKS: token.JWKSFor(&key.PublicKey, "test-kid")}}
 }
 
 // The device token is the contract between dauth and /1.0.0/application/token, which reads
@@ -143,7 +144,7 @@ func TestDeviceTokenCarriesAStableSerial(t *testing.T) {
 // was inventing a fix for a problem never observed.
 func TestUserObjectInventsNothing(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &store.Store{}
+	s.Store = &store.Store{}
 	t.Setenv("NX_DEFAULT_NXACCOUNT", "a-foreign-console-profile")
 	t.Setenv("NX_DEFAULT_COUNTRY", "GB")
 	t.Setenv("NX_DEFAULT_BIRTHDAY", "1990-01-01")
@@ -171,7 +172,7 @@ func TestUserObjectInventsNothing(t *testing.T) {
 // half says the account holds nothing is a contradiction we used to ship unconditionally.
 func TestNintendoAccountFollowsTheAccountsOwnProfile(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &store.Store{}
+	s.Store = &store.Store{}
 	id := &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "someone", Country: "IE", Birthday: "1984-03-02"}
 
 	country, birthday := naProfile(id)
@@ -197,15 +198,15 @@ func TestNintendoAccountFollowsTheAccountsOwnProfile(t *testing.T) {
 // accepting a reply here, so the test says so rather than the commit message.
 func TestProfileImageUploadIsAccepted(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
-	u, _ := s.store.NewUser()
+	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
+	u, _ := s.Store.NewUser()
 
 	// A one-pixel JPEG is enough: what matters is that base64 in, 200 out, and
 	// the bytes are kept rather than dropped.
 	jpeg := base64.StdEncoding.EncodeToString([]byte{0xFF, 0xD8, 0xFF, 0xD9})
 	body := []byte(`{"rawContent":"` + jpeg + `"}`)
-	r := httptest.NewRequest("POST", "https://"+baasHost+"/1.0.0/image_upload", nil)
-	r.Host = baasHost
+	r := httptest.NewRequest("POST", "https://"+core.BaasHost+"/1.0.0/image_upload", nil)
+	r.Host = core.BaasHost
 	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "", ""))
 	w := httptest.NewRecorder()
 	s.baas(w, r, body)
@@ -213,7 +214,7 @@ func TestProfileImageUploadIsAccepted(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("image_upload = %d, want 200", w.Code)
 	}
-	if got := s.store.User(u.ID); got == nil || got.Avatar != jpeg {
+	if got := s.Store.User(u.ID); got == nil || got.Avatar != jpeg {
 		t.Error("the uploaded picture was not kept")
 	}
 }

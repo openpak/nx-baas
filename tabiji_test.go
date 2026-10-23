@@ -15,8 +15,8 @@ func TestTabijiAcceptsPlayHistoriesAndHasNoStatistics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.key, s.idKid, s.accKid = key, "test-id-kid", "test-acc-kid"
-	tok := s.idToken(s.store.User("aaaa"), nil, "Leia", nil)
+	s.Key, s.IDKid, s.AccKid = key, "test-id-kid", "test-acc-kid"
+	tok := s.idToken(s.Store.User("aaaa"), nil, "Leia", nil)
 	const host = "api.hac.lp1.tabiji.srv.nintendo.net"
 
 	w := hostReq(s, host, "POST", "/console/v1/play_histories", tok, `{"play_histories":[]}`)

@@ -450,7 +450,7 @@ func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) b
 			s.phoneLoginPage(w, pair, "Too many attempts. Wait a few minutes and try again.")
 			return true
 		}
-		res, err := s.acct.LoginPID(form.Get("email"), form.Get("password"))
+		res, err := s.Acct.LoginPID(form.Get("email"), form.Get("password"))
 		lock := s.pidLock(res.PID)
 		if errors.Is(err, identity.ErrAccountLocked) && lock == "" {
 			lock = lockBanned
@@ -477,7 +477,7 @@ func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) b
 			s.phone2FAPage(w, pair, tok, "")
 			return true
 		}
-		if _, err := s.acct.Identity(res.PID); err != nil {
+		if _, err := s.Acct.Identity(res.PID); err != nil {
 			s.phoneLoginPage(w, pair, "Account lookup failed.")
 			return true
 		}
@@ -495,7 +495,7 @@ func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) b
 			s.phoneLoginPage(w, pair, "That took too long — sign in again.")
 			return true
 		}
-		if err := s.acct.VerifySecondFactor(p.AccountID, strings.TrimSpace(form.Get("code")), strings.TrimSpace(form.Get("recovery_code"))); err != nil {
+		if err := s.Acct.VerifySecondFactor(p.AccountID, strings.TrimSpace(form.Get("code")), strings.TrimSpace(form.Get("recovery_code"))); err != nil {
 			if errors.Is(err, identity.ErrSecondFactorLocked) {
 				s.phone2FAPage(w, pair, form.Get("token"), "Too many wrong codes. Wait a few minutes and try again.")
 				return true
@@ -507,7 +507,7 @@ func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) b
 			s.phoneLoginPage(w, pair, "That took too long — sign in again.")
 			return true
 		}
-		if _, err := s.acct.Identity(p.PID); err != nil {
+		if _, err := s.Acct.Identity(p.PID); err != nil {
 			s.phoneLoginPage(w, pair, "Account lookup failed.")
 			return true
 		}
@@ -556,7 +556,7 @@ func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) b
 			s.phoneConfirmPage(w, sess.Username, form.Get("pair"), "That code has already been used.")
 			return true
 		}
-		id, err := s.acct.Identity(sess.PID)
+		id, err := s.Acct.Identity(sess.PID)
 		if err != nil {
 			s.phoneConfirmPage(w, sess.Username, form.Get("pair"), "Account lookup failed.")
 			return true
@@ -579,7 +579,7 @@ func (s *server) finishLink(p *pendingLink) string {
 	s.mu.Lock()
 	s.codes[code] = naCode{PID: p.PID, Username: p.Username, ClientID: p.Query.Get("client_id"), NaID: p.NaID, Created: time.Now()}
 	s.mu.Unlock()
-	s.store.RememberNA(p.NaID, p.PID)
+	s.Store.RememberNA(p.NaID, p.PID)
 	return s.authorizeRedirect(p.Query, code)
 }
 

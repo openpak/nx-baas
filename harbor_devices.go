@@ -808,7 +808,7 @@ func (s *server) bindDeviceAccount(accountID, di string) bool {
 		return true
 	}
 	enrolled := di != "" && s.harbor.enrolledDauthID(di)
-	return s.store.BindDevice(accountID, di, enrolled)
+	return s.Store.BindDevice(accountID, di, enrolled)
 }
 
 // initHarborDevices turns the enrolment on when the CA files are configured.

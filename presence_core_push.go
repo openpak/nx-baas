@@ -36,13 +36,13 @@ func (s *server) notifyCorePresence(b *identity.OpenpakBackend, viewerAccount, s
 			return
 		}
 	}
-	viewer := s.store.User(vpr.BaasUserID)
+	viewer := s.Store.User(vpr.BaasUserID)
 	if viewer == nil || containsID(viewer.Blocks, spr.BaasUserID) {
 		return
 	}
 	now := time.Now().Unix()
 	// A friend with a live Switch presence is pushed by notifyPresenceIfChanged.
-	if u := s.store.User(spr.BaasUserID); u != nil && aggregatePresence(u, now, presenceLease()).State != "OFFLINE" {
+	if u := s.Store.User(spr.BaasUserID); u != nil && aggregatePresence(u, now, presenceLease()).State != "OFFLINE" {
 		return
 	}
 	s.coreSeen().forget(subjectAccount) // the event is the news; the 10 s cache would answer with the old state

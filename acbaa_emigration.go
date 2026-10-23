@@ -15,8 +15,8 @@ import (
 // This exchanges existing island/resident credentials; it does not move saves.
 func (s *server) acbaaEmigration(w http.ResponseWriter, r *http.Request, body []byte) {
 	caller, valid := acbaaVerifyToken(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-	if !valid && s.key != nil {
-		claims := s.bearer(r)
+	if !valid && s.Key != nil {
+		claims := s.Bearer(r)
 		exp, _ := claims["exp"].(float64)
 		if claims != nil && int64(exp) > time.Now().Unix() {
 			caller, _ = strconv.ParseUint(httpx.Str(claims, "sub"), 16, 64)

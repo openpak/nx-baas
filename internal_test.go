@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"encoding/json"
 	"net/http/httptest"
+	"nx-baas/internal/core"
 	"nx-baas/internal/identity"
 	"nx-baas/internal/token"
 	"strings"
@@ -22,8 +23,8 @@ func TestSwitchIdentityProvesAPlainConsoleIDToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.key, s.idKid, s.accKid = key, "test-id-kid", "test-acc-kid"
-	u := s.store.User("aaaa")
+	s.Key, s.IDKid, s.AccKid = key, "test-id-kid", "test-acc-kid"
+	u := s.Store.User("aaaa")
 
 	// id == nil is the retail shape: signed, but with no "openpak" claim in it.
 	tok := s.idToken(u, nil, "OutboundHost", nil)
@@ -50,7 +51,7 @@ func TestSwitchIdentityProvesAPlainConsoleIDToken(t *testing.T) {
 	// A genuine token for an account we do not know is NOT 401. platforms/switch/games/switch-nex maps 401 to
 	// TokenExpired, so the console would throw a perfectly good token away and fetch another,
 	// forever. It has to be the 404 that maps to ValidationFailed.
-	stranger, _ := s.store.NewUser()
+	stranger, _ := s.Store.NewUser()
 	unknown := s.idToken(stranger, nil, "", nil)
 	if w := do(t, s, "POST", "/internal/switch/identity", "", `{"id_token":"`+unknown+`"}`); w.Code != 404 {
 		t.Fatalf("unlinked account answered %d, want 404 -- 401 puts the console in a refresh loop: %s", w.Code, w.Body)
@@ -63,8 +64,8 @@ func TestSwitchIdentityExposesOnlyVerifiedApplication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.key = key
-	u := s.store.User("aaaa")
+	s.Key = key
+	u := s.Store.User("aaaa")
 	application := map[string]any{"nintendo": map[string]any{"ai": "010070201D1BA000"}}
 	tok := s.idToken(u, nil, "Keeper", application)
 	w := do(t, s, "POST", "/internal/switch/identity", "", `{"id_token":"`+tok+`"}`)
@@ -74,7 +75,7 @@ func TestSwitchIdentityExposesOnlyVerifiedApplication(t *testing.T) {
 		t.Fatalf("banned ID-token accepted: %d", w.Code)
 	}
 	// The fixture's second account is allowed.
-	u = s.store.User("bbbb")
+	u = s.Store.User("bbbb")
 	if u == nil {
 		t.Fatal("missing allowed user")
 	}
@@ -144,12 +145,12 @@ func TestAccountByFriendCodeFindsTheAccountHoweverItIsTyped(t *testing.T) {
 
 // The internal route the website calls, end to end.
 func TestSwitchAccountByFriendCodeRoute(t *testing.T) {
-	s := &server{acct: &identity.OpenpakBackend{Proj: &identity.ProjectionStore{
+	s := &server{Core: &core.Core{Acct: &identity.OpenpakBackend{Proj: &identity.ProjectionStore{
 		ByAccount: map[string]*identity.Projection{},
 		ByPID:     map[uint64]string{},
 		ByBaas:    map[string]string{},
 		ByCode:    map[string]string{"SW-1000-0000-0002": "5011153a-6621-451e-a299-082bc56fea50"},
-	}}}
+	}}}}
 
 	r := httptest.NewRequest("GET", "/internal/switch/account-by-friend-code?friend_code=SW-1000-0000-0002", nil)
 	w := httptest.NewRecorder()

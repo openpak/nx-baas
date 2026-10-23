@@ -176,8 +176,8 @@ func friendsUpdatedAt(u *store.User) int64 {
 // the stale list.
 func (s *server) friendGraphChanged(u *store.User, otherBaasID string) {
 	now := time.Now().Unix()
-	s.store.Update(u, func(u *store.User) { store.BumpFriendsUpdated(u, now) })
-	if other := s.store.User(otherBaasID); other != nil {
-		s.store.Update(other, func(o *store.User) { store.BumpFriendsUpdated(o, now) })
+	s.Store.Update(u, func(u *store.User) { store.BumpFriendsUpdated(u, now) })
+	if other := s.Store.User(otherBaasID); other != nil {
+		s.Store.Update(other, func(o *store.User) { store.BumpFriendsUpdated(o, now) })
 	}
 }

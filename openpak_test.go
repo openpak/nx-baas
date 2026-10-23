@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	accountv1 "nx-baas/accountpb"
+	"nx-baas/internal/core"
 	"nx-baas/internal/identity"
 )
 
@@ -435,7 +436,7 @@ func TestInternalSwitchIdentity(t *testing.T) {
 	}
 	key := strings.Repeat("i", 32)
 	t.Setenv("NX_INTERNAL_KEY", key)
-	srv := httptest.NewServer((&server{acct: b}).gameAPI())
+	srv := httptest.NewServer((&server{Core: &core.Core{Acct: b}}).gameAPI())
 	defer srv.Close()
 	post := func(body, k string) (int, struct {
 		switchPlayer

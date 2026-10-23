@@ -19,10 +19,10 @@ import (
 // nx-penne's (split.go). Shapes per kinnay's Penne-Servers page and the hardware trace.
 func (s *server) vermillion(w http.ResponseWriter, r *http.Request, body []byte) {
 	host, p := httpx.HostOf(r), r.URL.Path
-	if s.key != nil && s.store != nil {
+	if s.Key != nil && s.Store != nil {
 		// Nothing here needs the account, but the bearer check logs why a token does not
 		// name one, and that diagnostic has always come with these requests.
-		s.bearerUser(r)
+		s.BearerUser(r)
 	}
 	// The console reports its own last frontline attempt back on its Penne-family
 	// requests: X-Fro-Result carries the result code it recorded, X-Login-Try how many

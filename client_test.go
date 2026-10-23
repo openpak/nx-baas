@@ -72,7 +72,7 @@ func TestClientLabels(t *testing.T) {
 // reconciler's.
 func TestClientHeaderReachesTheCore(t *testing.T) {
 	s, sess, _, u := presenceFixture(t)
-	b := s.acct.(*identity.OpenpakBackend)
+	b := s.Acct.(*identity.OpenpakBackend)
 	account := b.AccountFor(u.PID)
 	r := authed("PATCH", "/1.0.0/users/"+u.ID+"/device_accounts/dev-emu",
 		`[{"op":"replace","path":"/presence/state","value":"PLAYING"},
@@ -83,7 +83,7 @@ func TestClientHeaderReachesTheCore(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("patch: %d %s", w.Code, w.Body.String())
 	}
-	if got := s.store.User(u.ID).DevicePresence["dev-emu"]; got.Client != "ryujinx" || got.OS != "macos" {
+	if got := s.Store.User(u.ID).DevicePresence["dev-emu"]; got.Client != "ryujinx" || got.OS != "macos" {
 		t.Fatalf("claim client = %q os = %q", got.Client, got.OS)
 	}
 	client := func() string {
@@ -103,7 +103,7 @@ func TestClientHeaderReachesTheCore(t *testing.T) {
 
 	// The same person moves to a real console (Penne): the session is
 	// re-registered with the new client, not heartbeaten with the old one.
-	s.noteClientPresence(s.store.User(u.ID), "dev-emu", "switch", "", "PLAYING", "01004d300c5ae000", "{}", "01004d300c5ae000", -1)
+	s.noteClientPresence(s.Store.User(u.ID), "dev-emu", "switch", "", "PLAYING", "01004d300c5ae000", "{}", "01004d300c5ae000", -1)
 	s.reconcilePresenceOnce(time.Now().Add(time.Second), presenceLease())
 	if got := client(); got != "switch/" {
 		t.Fatalf("after moving to the console, core client = %q", got)
@@ -115,7 +115,7 @@ func TestClientHeaderReachesTheCore(t *testing.T) {
 func TestForeignFriendDescriptionNamesTheTitle(t *testing.T) {
 	s, sess, viewer, friend := presenceFixture(t)
 	sess.namespace = "3ds"
-	b := s.acct.(*identity.OpenpakBackend)
+	b := s.Acct.(*identity.OpenpakBackend)
 	account := b.AccountFor(friend.PID)
 	prev := siteTitleNames
 	siteTitleNames = &titleNames{byKey: map[string]*titleNameEntry{}, fetch: func(ns, id string) (string, bool) {

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"nx-baas/internal/core"
 	"nx-baas/internal/msgpack"
 	"strconv"
 	"strings"
@@ -17,7 +18,7 @@ import (
 )
 
 func TestDownloadProbeServesExactlyItsAdvertisedSize(t *testing.T) {
-	s := &server{}
+	s := &server{Core: &core.Core{}}
 	r := httptest.NewRequest("GET", "http://ctest-dl-lp1.cdn.nintendo.net/30m", nil)
 	r.Host = "ctest-dl-lp1.cdn.nintendo.net"
 	w := httptest.NewRecorder()
@@ -35,7 +36,7 @@ func TestDownloadProbeServesExactlyItsAdvertisedSize(t *testing.T) {
 }
 
 func TestDownloadProbeResumes(t *testing.T) {
-	s := &server{}
+	s := &server{Core: &core.Core{}}
 	r := httptest.NewRequest("GET", "http://ctest-dl-lp1.cdn.nintendo.net/30m", nil)
 	r.Host = "ctest-dl-lp1.cdn.nintendo.net"
 	r.Header.Set("Range", "bytes=1000-1999")
@@ -55,7 +56,7 @@ func TestDownloadProbeResumes(t *testing.T) {
 }
 
 func TestUploadProbeAcceptsTheBody(t *testing.T) {
-	s := &server{}
+	s := &server{Core: &core.Core{}}
 	r := httptest.NewRequest("POST", "http://ctest-ul-lp1.cdn.nintendo.net/1m", zeroBody(1<<20))
 	r.Host = "ctest-ul-lp1.cdn.nintendo.net"
 	w := httptest.NewRecorder()
@@ -68,7 +69,7 @@ func TestUploadProbeAcceptsTheBody(t *testing.T) {
 // The console is behind Traefik here, so RemoteAddr is the proxy: reporting it
 // would tell every console its own network's address is the proxy's.
 func TestGlobalIPProbeReportsTheForwardedAddress(t *testing.T) {
-	s := &server{}
+	s := &server{Core: &core.Core{}}
 	r := httptest.NewRequest("GET", "https://api.hac.lp1.ctest.srv.nintendo.net/v1/ip", nil)
 	r.Host = "api.hac.lp1.ctest.srv.nintendo.net"
 	r.RemoteAddr = "10.0.0.1:5000"
@@ -107,7 +108,7 @@ func TestGlobalIPProbeDoesNotInventAnAddress(t *testing.T) {
 // value is a string of at most 19 digits, Unix milliseconds. A bare number, a numeric
 // value or an extra key is rejected and the console retries every 5 s.
 func TestNetworkClockIsAUnixtimeStringObject(t *testing.T) {
-	s := &server{}
+	s := &server{Core: &core.Core{}}
 	r := httptest.NewRequest("GET", "https://api.hac.lp1.ctest.srv.nintendo.net/v1/time", nil)
 	r.Host = "api.hac.lp1.ctest.srv.nintendo.net"
 	w := httptest.NewRecorder()
@@ -142,7 +143,7 @@ func TestNetworkClockIsAUnixtimeStringObject(t *testing.T) {
 // nifm decides "connected" from one header. A 200 without it reads as a captive
 // portal, which is the "check your connection" screen.
 func TestReachabilityProbeCarriesTheOrganizationHeader(t *testing.T) {
-	s := &server{}
+	s := &server{Core: &core.Core{}}
 	r := httptest.NewRequest("GET", "http://ctest.cdn.nintendo.net/", nil)
 	r.Host = "ctest.cdn.nintendo.net"
 	w := httptest.NewRecorder()
@@ -157,7 +158,7 @@ func TestReachabilityProbeCarriesTheOrganizationHeader(t *testing.T) {
 }
 
 func TestTelemetryAcceptsAReportAndRefusesAnUnmappedRoute(t *testing.T) {
-	s := &server{}
+	s := &server{Core: &core.Core{}}
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("POST", "https://receive-lp1.dg.srv.nintendo.net/post", nil)
 	r.Host = "receive-lp1.dg.srv.nintendo.net"
@@ -196,7 +197,7 @@ func (z *zeroLimit) Read(p []byte) (int, error) {
 // eupld posts a crash report to the root of its own host. It shares nothing
 // with prepo's routes, so it is routed on its own (errorreport.go) and accepted.
 func TestErrorReportUploadIsAccepted(t *testing.T) {
-	s := &server{reports: newReportSpool(t.TempDir())}
+	s := &server{Core: &core.Core{}, reports: newReportSpool(t.TempDir())}
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("POST", "https://receive.hac.lp1.er.srv.nintendo.net/", strings.NewReader("--boundary"))
 	r.Host = "receive.hac.lp1.er.srv.nintendo.net"

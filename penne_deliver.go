@@ -72,7 +72,7 @@ func (s *server) submitNotification(d PenneDelivery, wait bool) PenneSubmission 
 	if !eventKinds[d.Kind] {
 		return PenneSubmission{Outcome: penneRejectUser} // not a native event; refuse loudly via outcome
 	}
-	if s.store.User(d.UserID) == nil {
+	if s.Store.User(d.UserID) == nil {
 		return PenneSubmission{Outcome: penneRejectUser}
 	}
 	if d.ID == "" {

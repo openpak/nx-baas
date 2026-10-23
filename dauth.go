@@ -60,7 +60,7 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 	if strings.HasPrefix(host, "dcert") || strings.HasPrefix(host, "acert") {
 		if p == "/keys" {
 			w.Header().Set("Content-Type", "application/json")
-			w.Write(s.jwks)
+			w.Write(s.JWKS)
 			return
 		}
 		http.NotFound(w, r)
@@ -210,7 +210,7 @@ func (s *server) applicationToken(appID, appVersion string) string {
 	device := "openpak-device"
 	serial := consoleSerial(device)
 	return token.SignJWT(
-		map[string]any{"alg": "RS256", "jku": "https://acert-lp1.ndas.srv.nintendo.net/keys", "kid": s.idKid, "typ": "JWT"},
+		map[string]any{"alg": "RS256", "jku": "https://acert-lp1.ndas.srv.nintendo.net/keys", "kid": s.IDKid, "typ": "JWT"},
 		map[string]any{
 			"iss": "aauth-lp1.ndas.srv.nintendo.net",
 			"jti": token.UUID4(),
@@ -226,7 +226,7 @@ func (s *server) applicationToken(appID, appVersion string) string {
 				"di": device, "sn": serial, "pc": "HAC", "dt": "NX Prod 1",
 				"ist": false, "esv": token.RandB64(33),
 			},
-		}, s.key)
+		}, s.Key)
 }
 
 // deviceID identifies the console. Nothing in the request body says which console it is, so the
@@ -254,7 +254,7 @@ func (s *server) deviceToken(deviceID, clientID string) string {
 func (s *server) deviceTokenFor(deviceID, serial, clientID string) string {
 	now := time.Now().Unix()
 	return token.SignJWT(
-		map[string]any{"alg": "RS256", "jku": "https://dcert-lp1.ndas.srv.nintendo.net/keys", "kid": s.idKid, "typ": "JWT"},
+		map[string]any{"alg": "RS256", "jku": "https://dcert-lp1.ndas.srv.nintendo.net/keys", "kid": s.IDKid, "typ": "JWT"},
 		map[string]any{
 			"iss": "dauth-lp1.ndas.srv.nintendo.net",
 			"jti": token.UUID4(),
@@ -267,7 +267,7 @@ func (s *server) deviceTokenFor(deviceID, serial, clientID string) string {
 				"ist": false, "esv": token.RandB64(33), "x5t#S256": deviceThumbprint,
 			},
 			"client_id": clientID,
-		}, s.key)
+		}, s.Key)
 }
 
 // deviceThumbprint is the x5t#S256 the console's own tokens carry; BAAS relays it into the

@@ -65,7 +65,7 @@ func (s *server) coreSeen() *corePresenceCache {
 // it knows nothing (which is the same fact as offline there). A core that is
 // unreachable answers "nothing", never a guess.
 func (s *server) corePresenceOf(accountID string) (corePresence, bool) {
-	b, ok := s.acct.(*identity.OpenpakBackend)
+	b, ok := s.Acct.(*identity.OpenpakBackend)
 	if !ok || b == nil || b.Sessions == nil || accountID == "" {
 		return corePresence{}, false
 	}
