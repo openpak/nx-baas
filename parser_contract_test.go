@@ -403,9 +403,6 @@ func TestUnservedModuleRoutesAnswer(t *testing.T) {
 		{"api.hac.lp1.nim.nintendo.net", "/v1/accounts/in-same-family?accountIds=1", 200, `"inSameFamily":false`},
 		{"api.hac.lp1.nim.nintendo.net", "/v1/nearness-checks", 200, `"nearnessChecks":[]`},
 		{"api.hac.lp1.nim.nintendo.net", "/v1/system_update_meta?device_id=x", 200, `"system_update_metas":[]`},
-		{"api.hac.lp1.nim.nintendo.net", "/v1/acds/search", 200, `"acds":[]`},
-		{"frs.srv.nintendo.net", "/v1/apps/0100abcd00001000/catalog.json", 200, `"application_id":"0100abcd00001000"`},
-		{"pearljam.hac.lp1.eshop.nintendo.net", "/civil", 401, `"code":"0401"`},
 	} {
 		r := httptest.NewRequest("GET", "https://"+tc.host+tc.path, nil)
 		r.Host = tc.host
@@ -413,76 +410,6 @@ func TestUnservedModuleRoutesAnswer(t *testing.T) {
 		s.ServeHTTP(w, r)
 		if w.Code != tc.want || !strings.Contains(w.Body.String(), tc.contains) {
 			t.Errorf("%s%s = %d %s; want %d containing %s", tc.host, tc.path, w.Code, w.Body.String(), tc.want, tc.contains)
-		}
-	}
-}
-
-// The external application catalog answers from the shop catalog, not with
-// an empty list: 21000 asks about a friend-request route's 128-bit catalog
-// id, and the reply carries catalog_id, application_names and enable_icons
-// [friends-contract-22.5.0 §A.10].
-func TestFriendAppCatalogAnswersFromTheShopCatalog(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(dir+"/icon.jpg", []byte("\xff\xd8\xff-not-really-a-jpeg"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	s := &server{store: loadStore(dir + "/baas.json"), shop: newShopState(dir)}
-	s.shop.Catalog["0100abcd00001000"] = &ShopTitle{
-		TitleID: "0100abcd00001000", Publisher: "OpenPak", IconPath: "icon.jpg",
-		DefaultLang: "en-GB", Localized: map[string]ShopText{"en-GB": {Name: "Test Title"}},
-	}
-
-	get := func(path string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest("GET", "https://frs.srv.nintendo.net"+path, nil)
-		r.Host = "frs.srv.nintendo.net"
-		w := httptest.NewRecorder()
-		s.ServeHTTP(w, r)
-		return w
-	}
-
-	w := get("/v1/apps/0100abcd000010000000000000000000/catalog.json")
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "Test Title") {
-		t.Errorf("catalog = %d %s", w.Code, w.Body.String())
-	}
-	for _, want := range []string{
-		`"catalog_id":"0100abcd000010000000000000000000"`,
-		`"enable_icons":["nx"]`,
-		`"en-GB":"Test Title"`,
-	} {
-		if !strings.Contains(w.Body.String(), want) {
-			t.Errorf("catalog missing %s: %s", want, w.Body.String())
-		}
-	}
-	if w := get("/v1/apps/0100abcd000010000000000000000000/icon.jpg"); w.Code != 200 || !strings.Contains(w.Body.String(), "not-really-a-jpeg") {
-		t.Errorf("art did not come from the catalog: %d %q", w.Code, w.Body.String())
-	}
-	// A title this server does not carry still answers, so the console renders
-	// "unknown" instead of failing.
-	if w := get("/v1/apps/dead000000000000dead000000000000/catalog.json"); w.Code != 200 {
-		t.Errorf("unknown title = %d", w.Code)
-	}
-	if w := get("/v1/apps/dead000000000000dead000000000000/icon.jpg"); w.Code != 200 || !strings.Contains(w.Body.String(), "<svg") {
-		t.Errorf("unknown art = %d", w.Code)
-	}
-}
-
-// The catalogue search answers from the shop catalog, not with an empty list.
-func TestAcdSearchFindsCatalogTitles(t *testing.T) {
-	dir := t.TempDir()
-	s := &server{store: loadStore(dir + "/baas.json"), shop: newShopState(dir)}
-	s.shop.Catalog["0100abcd00001000"] = &ShopTitle{
-		TitleID: "0100abcd00001000", DefaultLang: "en-GB",
-		Localized: map[string]ShopText{"en-GB": {Name: "Test Title"}},
-	}
-	for _, tc := range []struct{ query, want string }{
-		{"", "Test Title"}, {"?q=test", "Test Title"}, {"?q=nothing", `"count":0`},
-	} {
-		r := httptest.NewRequest("GET", "https://api.hac.lp1.nim.nintendo.net/v1/acds/search"+tc.query, nil)
-		r.Host = "api.hac.lp1.nim.nintendo.net"
-		w := httptest.NewRecorder()
-		s.ServeHTTP(w, r)
-		if w.Code != 200 || !strings.Contains(w.Body.String(), tc.want) {
-			t.Errorf("search%q = %d %s; want %s", tc.query, w.Code, w.Body.String(), tc.want)
 		}
 	}
 }

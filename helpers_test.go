@@ -1,0 +1,54 @@
+package main
+
+import (
+	"encoding/json"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+const testNAID = "aabbccdd11223344"
+const testDevice = "6265ca40780b1c0d"
+
+// consoleUA is the SDK User-Agent shape the adapter already parses (did: extraction).
+func consoleUA() string {
+	return "NintendoSDK Firmware/22.5.0-1.0 (platform:NX; did:" + testDevice + "; eid:lp1)"
+}
+
+// linkedServer is a dauth-ready server with one console user (PID 7) linked to testNAID.
+func linkedServer(t *testing.T) *server {
+	t.Helper()
+	s := dauthServer(t)
+	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	u, _ := s.store.NewUser()
+	s.store.Update(u, func(u *User) { u.PID = 7; u.Nickname = "tester" })
+	s.store.RememberNA(testNAID, 7)
+	s.acct = fakeBackend{id: &Identity{PID: 7, NaID: testNAID, Nickname: "tester"}}
+	return s
+}
+
+// naIDTokenFor mints the NA id token a console page's identify() step would deliver.
+func naIDTokenFor(s *server) string {
+	return s.naIDToken(naCode{NaID: testNAID, ClientID: "test-client"}, "access", "")
+}
+
+func hostReq(s *server, host, method, path, token, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, "https://"+host+path, strings.NewReader(body))
+	req.Host = host
+	req.Header.Set("User-Agent", consoleUA())
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, req)
+	return rec
+}
+
+func decodeBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &m); err != nil {
+		t.Fatalf("reply is not JSON: %v: %s", err, rec.Body.String())
+	}
+	return m
+}

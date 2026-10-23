@@ -239,15 +239,3 @@ func TestBannedAccountGetsNoNotificationChannel(t *testing.T) {
 		t.Fatalf("frontline for a banned account = %d %s", w.Code, w.Body)
 	}
 }
-
-// The store treats a banned account as nobody.
-func TestBannedAccountIsNobodyToTheStore(t *testing.T) {
-	s := shopServerFor(t)
-	f := &fakeBans{status: map[string]accountv1.AccountStatus{}}
-	f.set(7, accountv1.AccountStatus_ACCOUNT_STATUS_BANNED)
-	s.banSource = f
-	rec := shopReq(s, "POST", "/ashigaru/api/v1/catalog/"+testTitleID+"/acquire", naIDTokenFor(s), "")
-	if rec.Code != 401 {
-		t.Fatalf("banned acquire = %d %s, want 401", rec.Code, rec.Body)
-	}
-}

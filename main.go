@@ -136,10 +136,6 @@ type server struct {
 	acbaaFriendReqs map[uint64]acbaaFriendReq
 	acbaaFriendList map[uint64][]uint64
 	acbaaPath       string
-	// shop is the store workstream's state (catalog, entitlements, tasks, beach links);
-	// shopUI holds the storefront's in-memory diagnostics ring.
-	shop   *shopState
-	shopUI *shopUI
 	// shopFwd forwards the eShop to nx-shop once it has moved (split.go); nil serves it here.
 	shopFwd *httputil.ReverseProxy
 	// penneFwd and penneRemote reach nx-penne once Penne has moved (split.go,
@@ -2722,53 +2718,12 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	case strings.Contains(host, "accounts.nintendo.com"):
 		s.na(w, r, body)
-	// Store workstream (native OpenPak store, prds/native-switch-store-prd.md): the shop
-	// applet host, the content host and the rights family. These sit before the dauth case
-	// because its prefix list claims the dragons hosts; dauth keeps its setup-critical
-	// dragons answers (console link, 2124-3121) and this only takes the store rights
-	// routes. Beach moved from penne's `{}` placeholder to a real handler; the extraction
-	// keeps penne's own cases untouched.
-	case strings.HasPrefix(host, "pearljam."):
-		// The eShop host NIM names beside dragons and tigers; /civil and /sugar
-		// answer a checked, recorded success (eshop_unserved.go).
-		s.pearljam(w, r, body)
-	case strings.HasPrefix(host, "idbe-hac."):
-		// NIM's icon data: Nintendo's 3DS / Wii U files relayed (eshop_idbe.go).
-		s.idbe(w, r, body)
-	case strings.HasPrefix(host, "bvc-hac-"):
-		// NIM's firmware-version check against the operator blocklist (eshop_unserved.go).
-		s.bvc(w, r)
 	case strings.HasSuffix(host, ".znc.srv.nintendo.net"):
 		// The voice-chat lobby page systemWeb opens (nso.go).
 		s.zncLobby(w, r, body)
-	case strings.HasPrefix(host, "bugyo."):
-		s.shopHandler(w, r, body)
-	case strings.HasSuffix(host, ".savanna.srv.nintendo.net"):
-		// Where 22.5.0's systemWeb opens the shop (shop.go).
-		s.savanna(w, r, body)
-	case strings.HasPrefix(host, "pushmo."):
-		s.pushmo(w, r, body)
-	case strings.HasPrefix(host, "tagaya."):
-		s.tagaya(w, r, body)
-	case strings.HasPrefix(host, "veer."):
-		s.veer(w, r, body)
-	// NIM's other d4c hosts: system-update metadata (sun, aqua), the version
-	// lookup (superfly) and atumn. They share the content domain, so they
-	// must be claimed before the atum case below, which only knows content
-	// routes and 404'd every one of them.
-	case isNimMetaHost(host):
-		if !s.nimUnserved(w, r, body) {
-			dump(r, body, "!! UNHANDLED nim metadata host")
-			writeJSON(w, 404, map[string]any{"status": 404, "title": "not found"})
-		}
-	case strings.Contains(host, ".d4c.nintendo.net"):
-		s.atum(w, r, body)
-	case strings.HasPrefix(host, "dragonst.") || strings.HasPrefix(host, "tigers."):
-		s.dragons(w, r, body)
-	case strings.HasPrefix(host, "dragons.") && shopRightsRoute(r.URL.Path):
-		s.dragons(w, r, body)
-	case strings.HasPrefix(host, "beach."):
-		s.beach(w, r, body)
+	// The eShop's hosts (pearljam, idbe, bvc, bugyo, savanna, pushmo, tagaya, the d4c family,
+	// dragonst, tigers, beach) and the store rights routes of dragons are nx-shop's, forwarded
+	// above (split.go). The dauth case below keeps dragons' setup-critical answers.
 	case strings.HasPrefix(host, "dauth") || strings.HasPrefix(host, "dcert") ||
 		strings.HasPrefix(host, "acert") || strings.HasPrefix(host, "aauth") ||
 		strings.HasPrefix(host, "dragons"):
@@ -2921,12 +2876,6 @@ func main() {
 	}
 	s.forwardersFromEnv()
 	s.initHarborDevices()
-	if s.shopFwd == nil {
-		s.shop = newShopState(getenv("NX_DATA", "/data") + "/shop")
-	} else {
-		// The shop's files belong to nx-shop now; this process must not read or write them.
-		s.shop = newShopState("")
-	}
 	s.acbaaPath = getenv("NX_DATA", "/data") + "/acbaa.json"
 	s.acbaaLoad()
 	if b, ok := s.acct.(*openpakBackend); ok {
@@ -3145,4 +3094,17 @@ func naProfile(id *Identity) (country, birthday string) {
 		birthday = getenv("NA_FALLBACK_BIRTHDAY", "2000-01-01")
 	}
 	return country, birthday
+}
+
+// bearerHeader verifies one of our own JWTs from "Bearer <token>" on the named header.
+func (s *server) bearerHeader(r *http.Request, header string) map[string]any {
+	v := r.Header.Get(header)
+	if !strings.HasPrefix(v, "Bearer ") {
+		return nil
+	}
+	c, err := parseJWT(strings.TrimPrefix(v, "Bearer "), &s.key.PublicKey)
+	if err != nil {
+		return nil
+	}
+	return c
 }

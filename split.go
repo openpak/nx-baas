@@ -177,3 +177,14 @@ func forwardRead(fwd *httputil.ReverseProxy, w http.ResponseWriter, r *http.Requ
 	r2.ContentLength = int64(len(body))
 	fwd.ServeHTTP(w, r2)
 }
+
+// shopRightsRoute: the dragons rights routes the store workstream owns. Everything else on
+// the dragons host stays with the dauth handler's setup-critical answers (they keep the
+// working console link alive); these are the acquisition surface (SHP-03) and the edge
+// token issuer, which NIM may address on dragons. as well as dragonst.
+func shopRightsRoute(p string) bool {
+	p = strings.TrimPrefix(p, "/v2")
+	p = strings.TrimPrefix(p, "/v1")
+	return p == "/rights/publish_elicenses" || p == "/rights/available_elicenses" || p == "/elicenses/revoke" ||
+		p == "/edge_token/issue" || p == "/edge_token/issuable_titles"
+}

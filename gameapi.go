@@ -454,8 +454,6 @@ func (s *server) gameAPI() http.Handler {
 	}
 	if s.shopFwd != nil {
 		mux.Handle("/internal/store/", s.shopFwd)
-	} else {
-		mux.HandleFunc("/internal/store/", s.storeAdmin)
 	}
 	// What the split-out services ask the core (internal_identity.go) and the push state
 	// they read while Penne is still served here (internal_penne.go).

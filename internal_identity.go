@@ -16,8 +16,13 @@ package main
 // internal_identity_test.go pin the field names instead.
 
 import (
+	"crypto/hmac"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
 	"net/http"
+	"nx-baas/redact"
 	"strings"
 )
 
@@ -151,4 +156,39 @@ func (s *server) identityPresence(w http.ResponseWriter, r *http.Request) {
 	// Only a real console speaks Penne: emulators publish over REST (penne_presence.go).
 	s.noteClientPresence(u, in.Device, "switch", "", in.State, in.AppID, in.AppField, in.GroupID, acd)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// adminError is the strict internal routes' error: {"error": code, "message": msg}. The
+// store admin API introduced it; the identity API answers in the same shape.
+type adminError struct {
+	status    int
+	code, msg string
+}
+
+func (e *adminError) Error() string { return e.code + ": " + e.msg }
+
+func adminErr(status int, code, format string, a ...any) *adminError {
+	return &adminError{status: status, code: code, msg: fmt.Sprintf(format, a...)}
+}
+
+func writeAdminErr(w http.ResponseWriter, err error) {
+	var ae *adminError
+	if !errors.As(err, &ae) {
+		log.Printf("[store-admin] internal: %v", redact.Err(err))
+		ae = adminErr(500, "internal", "%v", err)
+	}
+	writeJSON(w, ae.status, map[string]any{"error": ae.code, "message": ae.msg})
+}
+
+// storeAdminAuth is internalOK made strict: same header, same key, but no key configured
+// means nobody gets in.
+func storeAdminAuth(r *http.Request) error {
+	k := getenv("NX_INTERNAL_KEY", getenv("OPENPAK_INTERNAL_KEY", ""))
+	if k == "" {
+		return adminErr(503, "internal_key_not_configured", "set NX_INTERNAL_KEY to use the store admin API")
+	}
+	if !hmac.Equal([]byte(k), []byte(r.Header.Get("X-Internal-Key"))) {
+		return adminErr(401, "unauthorized", "X-Internal-Key missing or wrong")
+	}
+	return nil
 }

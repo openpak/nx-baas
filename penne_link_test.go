@@ -69,7 +69,7 @@ func TestMovedPenneReceivesTheCoresCalls(t *testing.T) {
 	t.Setenv("NX_INTERNAL_KEY", "test-internal-key")
 	srv, got := fakeNxPenne(t)
 	t.Setenv("NX_PENNE_URL", srv.URL)
-	s := shopServerFor(t)
+	s := linkedServer(t)
 	s.forwardersFromEnv()
 	u := s.store.UserByPID(7)
 
@@ -148,7 +148,7 @@ func TestMovedPenneReceivesTheCoresCalls(t *testing.T) {
 
 func TestPenneRoutesServedHereWhilePenneIsLocal(t *testing.T) {
 	t.Setenv("NX_INTERNAL_KEY", "test-internal-key")
-	s := shopServerFor(t)
+	s := linkedServer(t)
 	u := s.store.UserByPID(7)
 
 	if rec := identityDo(t, s, "POST", "/internal/penne/consoles", `{"device_id":"cert-9","user_id":"`+u.ID+`"}`); rec.Code != 204 {

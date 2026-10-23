@@ -16,7 +16,7 @@ import (
 // The HOME Menu's NSO button opens <env>.nso.nintendo.net/<any path>: every path, the
 // paywall launch included, gets the landing page with a way out.
 func TestLhubPageServesAnyPath(t *testing.T) {
-	s := shopServerFor(t)
+	s := linkedServer(t)
 	for _, path := range []string{"/", "/lhub?src_app_id=0100000000001000", "/launch?from=paywall&type=lex&app_id=0100000000010000&location=x"} {
 		rec := hostReq(s, "lp1.nso.nintendo.net", "GET", path, "", "")
 		body := rec.Body.String()
@@ -35,7 +35,7 @@ func TestLhubPageServesAnyPath(t *testing.T) {
 // The voice-chat lobby: /lobby/ with the shim's query renders the page that sends the player to
 // the app and leaves through the Lobby callback URL; the rest of the znc host is a recorded 404.
 func TestZncLobbyPageLeavesThroughTheCallback(t *testing.T) {
-	s := shopServerFor(t)
+	s := linkedServer(t)
 	for _, path := range []string{"/lobby/", "/lobby/?app_id=0100000000010000&param=abc", "/lobby"} {
 		rec := hostReq(s, "web-lp1.znc.srv.nintendo.net", "GET", path, "", "")
 		body := rec.Body.String()
@@ -52,7 +52,7 @@ func TestZncLobbyPageLeavesThroughTheCallback(t *testing.T) {
 // The lobby's room lookup names the console's core account to the website and passes its
 // answer through; a console it can't name gets 401.
 func TestZncLobbyVoiceAsksTheWebsiteForTheRoom(t *testing.T) {
-	s := shopServerFor(t)
+	s := linkedServer(t)
 	s.banSource = &fakeBans{}
 	var asked string
 	web := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -81,7 +81,7 @@ func TestZncLobbyVoiceAsksTheWebsiteForTheRoom(t *testing.T) {
 
 // The Switch Online pages' feature icons are served from the binary.
 func TestLhubIconsAreServed(t *testing.T) {
-	s := shopServerFor(t)
+	s := linkedServer(t)
 	for _, n := range []string{"online", "cloud", "app", "consoles", "faq", "help"} {
 		rec := hostReq(s, "lp1.nso.nintendo.net", "GET", "/_openpak/icon/"+n+".png", "", "")
 		if rec.Code != 200 || rec.Header().Get("Content-Type") != "image/png" {
@@ -95,7 +95,7 @@ func TestLhubIconsAreServed(t *testing.T) {
 
 // The badge feed answers an empty collection rather than the catch-all 404.
 func TestNsoEventsFeedAnswersEmpty(t *testing.T) {
-	s := shopServerFor(t)
+	s := linkedServer(t)
 	rec := hostReq(s, "fw-api.lp1.nso.nintendo.net", "POST", "/v1/events", "", `{"country_codes":["GB"]}`)
 	if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != "[]" {
 		t.Errorf("events = %d %s", rec.Code, rec.Body.String())

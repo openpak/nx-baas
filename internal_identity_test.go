@@ -25,7 +25,7 @@ func identityDo(t *testing.T, s *server, method, path, body string) *httptest.Re
 }
 
 func TestIdentityAPIRequiresTheKey(t *testing.T) {
-	s := shopServerFor(t)
+	s := linkedServer(t)
 	t.Setenv("NX_INTERNAL_KEY", "")
 	t.Setenv("OPENPAK_INTERNAL_KEY", "")
 	if rec := identityDo(t, s, "GET", "/internal/identity/na/"+testNAID, ""); rec.Code != 503 {
@@ -41,7 +41,7 @@ func TestIdentityAPIRequiresTheKey(t *testing.T) {
 
 func TestIdentityAPIAnswersWhatShopPrincipalComputed(t *testing.T) {
 	t.Setenv("NX_INTERNAL_KEY", "test-internal-key")
-	s := shopServerFor(t)
+	s := linkedServer(t)
 	u := s.store.UserByPID(7)
 	s.store.Update(u, func(u *User) { u.NaID = testNAID })
 
@@ -82,7 +82,7 @@ func TestIdentityAPIAnswersWhatShopPrincipalComputed(t *testing.T) {
 
 func TestIdentityPresenceIsTheFrontlinesPublish(t *testing.T) {
 	t.Setenv("NX_INTERNAL_KEY", "test-internal-key")
-	s := shopServerFor(t)
+	s := linkedServer(t)
 	u := s.store.UserByPID(7)
 	rec := identityDo(t, s, "POST", "/internal/identity/presence",
 		`{"user_id":"`+u.ID+`","device":"dev1","state":"PLAYING","app_id":"0100000000010000","app_field":"","group_id":"","acd_index":-1}`)
@@ -103,7 +103,7 @@ func TestIdentityPresenceIsTheFrontlinesPublish(t *testing.T) {
 
 func TestPenneRegistrationsAPI(t *testing.T) {
 	t.Setenv("NX_INTERNAL_KEY", "test-internal-key")
-	s := shopServerFor(t)
+	s := linkedServer(t)
 	u := s.store.UserByPID(7)
 	id, _ := s.notifStore().Register("dev1", u.ID, "", time.Now())
 	got := decodeBody(t, identityDo(t, s, "GET", "/internal/penne/registrations/"+id, ""))
@@ -129,7 +129,7 @@ func TestMovedShopIsForwarded(t *testing.T) {
 	}))
 	defer shop.Close()
 	t.Setenv("NX_SHOP_URL", shop.URL)
-	s := shopServerFor(t)
+	s := linkedServer(t)
 	s.forwardersFromEnv()
 
 	for _, c := range []struct{ host, path, body string }{

@@ -31,6 +31,7 @@ package main
 
 import (
 	"embed"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -405,3 +406,106 @@ function nxFooterSetup(handlers,rep){
 //
 //go:embed assets/lobby.html
 var lobbyPage string
+
+// shopPrincipal resolves the account acting on a shop request: a verified NA id token (or
+// our own BAAS-issued NSA id token) in Authorization or Nintendo-Nsa-Id-Token, corroborated
+// by the Nintendo-Account-Id header when present. A header id without a token is not trusted (principal binding).
+func (s *server) shopPrincipal(r *http.Request) (accountID, baasUserID string) {
+	accountID, baasUserID = s.shopPrincipalUnchecked(r)
+	// A banned account is nobody to the store: no acquisition, no tasks, no ownership.
+	if accountID != "" && s.naLock(accountID) != "" {
+		log.Printf("[shop] principal: account %s is locked; refusing", redact.Tag(accountID))
+		return "", ""
+	}
+	return accountID, baasUserID
+}
+
+func (s *server) shopPrincipalUnchecked(r *http.Request) (accountID, baasUserID string) {
+	headerID := r.Header.Get("Nintendo-Account-Id")
+	for _, h := range []string{"Authorization", "Nintendo-Nsa-Id-Token"} {
+		claims := s.bearerHeader(r, h)
+		if claims == nil {
+			continue
+		}
+		sub := str(claims, "sub")
+		iss := str(claims, "iss")
+		// The shop page may hold the network service account's id token instead
+		// (systemWeb's setNsaIdTokenAvailableCallback): our BAAS signs it, its subject
+		// is the BAAS user, and that user carries the Nintendo Account id.
+		if iss == baasIssuer && str(claims, "typ") == "id_token" && s.store != nil {
+			if u := s.store.User(sub); u != nil && u.NaID != "" {
+				if headerID != "" && headerID != u.NaID {
+					log.Printf("[shop] principal: header %s disagrees with nsa token's account %s; refusing", redact.Tag(headerID), redact.Tag(u.NaID))
+					return "", ""
+				}
+				return u.NaID, u.ID
+			}
+			continue
+		}
+		// NA id tokens come from our accounts.nintendo.com surface; a token from anywhere
+		// else does not name an account here.
+		if sub == "" || iss != naIssuer {
+			continue
+		}
+		if headerID != "" && headerID != sub {
+			log.Printf("[shop] principal: header %s disagrees with token sub %s; refusing", redact.Tag(headerID), redact.Tag(sub))
+			return "", ""
+		}
+		// Map the NA id to this adapter's BAAS user so entitlement rows carry both.
+		if pid := s.store.PIDForNA(sub); pid != 0 {
+			if u := s.store.UserByPID(pid); u != nil {
+				return sub, u.ID
+			}
+		}
+		return sub, ""
+	}
+	return "", ""
+}
+
+// shopBridgeJS is shared by every shop page. The 22.5.0 systemWeb binary names the bridge
+// functions but not the object carrying each one, nor how results come back, so a call
+// looks the name up across the candidate objects and accepts a callback, a promise or a
+// plain return value — whichever the console uses is what the diagnostics then record.
+// Leaving the shop navigates to eshop://success, the callback URL qlaunch checks.
+const shopBridgeJS = `
+var NX_SPACES=['shop','ec','account','lhub'];
+function nxFind(name){
+ var nx=window.nx; if(!nx){return null;}
+ for(var i=0;i<NX_SPACES.length;i++){var o=nx[NX_SPACES[i]];
+  if(o&&typeof(o[name])==='function'){return {fn:o[name],self:o,where:'nx.'+NX_SPACES[i]+'.'+name};}}
+ if(typeof(nx[name])==='function'){return {fn:nx[name],self:nx,where:'nx.'+name};}
+ return null;
+}
+function nxCall(name,args,cb){
+ var f=nxFind(name);
+ if(!f){if(cb){cb({absent:true,name:name});}return false;}
+ function got(v){if(cb){cb({where:f.where,value:v});}}
+ try{
+  var r=f.fn.apply(f.self,(args||[]).concat([got]));
+  if(r&&typeof(r.then)==='function'){r.then(got,function(e){got({error:String(e)});});}
+  else if(r!==undefined){got(r);}
+ }catch(e){got({error:String(e)});}
+ return true;
+}
+function nxToken(v){
+ if(!v){return null;}
+ if(typeof(v)==='string'){return v.split('.').length===3?v:null;}
+ return nxToken(v.idToken||v.id_token||v.naIdToken||v.nsaIdToken||v.token||null);
+}
+function brief(v){try{return String(JSON.stringify(v)).slice(0,400);}catch(e){return String(v).slice(0,400);}}
+function report(o){try{fetch('/ashigaru/api/v1/diag',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)});}catch(e){}}
+// Leave the way Nintendo's shop does: the applet's own endApplet, which ends it at once; the
+// eshop:// scheme (a navigation the applet then acts on) only when the bridge lacks it.
+function closeShop(){report({event:'close'});
+ if(nxCall('endApplet',[],null)){setTimeout(function(){location.href='eshop://success';},300);return;}
+ location.href='eshop://success';}
+(function(){var c=document.getElementById('close');if(c){c.addEventListener('click',closeShop);}})();
+`
+
+func mustJSON(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}

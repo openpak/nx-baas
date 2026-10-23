@@ -213,3 +213,33 @@ func clientIP(r *http.Request) (ip string, public bool) {
 func isPublic(a net.IP) bool {
 	return !a.IsLoopback() && !a.IsPrivate() && !a.IsLinkLocalUnicast() && !a.IsUnspecified()
 }
+
+// parseRange handles the single byte range NIM sends: "bytes=start-end" or "bytes=start-".
+func parseRange(h string, size int64) (start, end int64, err error) {
+	if size <= 0 {
+		return 0, 0, fmt.Errorf("empty content")
+	}
+	if !strings.HasPrefix(h, "bytes=") || strings.Contains(h, ",") {
+		return 0, 0, fmt.Errorf("unsupported range")
+	}
+	spec := strings.TrimPrefix(h, "bytes=")
+	dash := strings.IndexByte(spec, '-')
+	if dash < 0 {
+		return 0, 0, fmt.Errorf("bad range")
+	}
+	start, err = strconv.ParseInt(spec[:dash], 10, 64)
+	if err != nil || start < 0 || start >= size {
+		return 0, 0, fmt.Errorf("bad range start")
+	}
+	tail := spec[dash+1:]
+	if tail == "" {
+		return start, size - 1, nil
+	}
+	if end, err = strconv.ParseInt(tail, 10, 64); err != nil || end < start {
+		return 0, 0, fmt.Errorf("bad range end")
+	}
+	if end >= size {
+		end = size - 1
+	}
+	return start, end, nil
+}

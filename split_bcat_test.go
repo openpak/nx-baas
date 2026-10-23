@@ -19,7 +19,7 @@ func TestMovedBcatIsForwarded(t *testing.T) {
 	}))
 	defer bcat.Close()
 	t.Setenv("NX_BCAT_URL", bcat.URL)
-	s := shopServerFor(t)
+	s := linkedServer(t)
 	s.forwardersFromEnv()
 	for _, c := range [][2]string{
 		{"bcat-list-lp1.cdn.nintendo.net", "/api/nx/v1/list/openpak_news"},

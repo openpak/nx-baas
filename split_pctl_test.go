@@ -26,7 +26,7 @@ func TestMovedPctlIsForwarded(t *testing.T) {
 	defer pctl.Close()
 	t.Setenv("NX_PCTL_URL", pctl.URL)
 	t.Setenv("NX_INTERNAL_KEY", "test-internal-key")
-	s := shopServerFor(t)
+	s := linkedServer(t)
 	s.forwardersFromEnv()
 
 	for _, c := range []seen{
