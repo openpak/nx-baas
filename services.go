@@ -7,8 +7,8 @@ package main
 //
 // An empty, correctly shaped answer is a true statement -- this network has no
 // cloud saves -- and it lets the console finish the screen instead of failing
-// it. The saves PRD replaces the first one. BCAT and the News channel moved to
-// bcat.go once the module showed they speak msgpack, not JSON.
+// it. The saves PRD replaces the first one. BCAT and the News channel are
+// nx-bcat's.
 
 import (
 	"bytes"

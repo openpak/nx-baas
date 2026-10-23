@@ -2905,7 +2905,7 @@ func main() {
 		"dauth-lp1.ndas.srv.nintendo.net", "dcert-lp1.ndas.srv.nintendo.net", "acert-lp1.ndas.srv.nintendo.net",
 		"aauth-lp1.ndas.srv.nintendo.net", "aauth.hac.lp1.ndas.srv.nintendo.net",
 		"dragons.hac.lp1.dragons.nintendo.net", "dragonst.hac.lp1.dragons.nintendo.net",
-		// BCAT/News, prepo and the connection test (bcat.go, netdiag.go). The
+		// BCAT/News (nx-bcat's now), prepo and the connection test (netdiag.go). The
 		// ctest-dl/ctest-ul probes are plain HTTP and need no name here.
 		"bcat-list-lp1.cdn.nintendo.net", "bcat-topics-lp1.cdn.nintendo.net", "bcat-data-lp1.cdn.nintendo.net",
 		"api.hac.lp1.ctest.srv.nintendo.net", "fw-api.lp1.nso.nintendo.net",
@@ -2920,7 +2920,7 @@ func main() {
 		// handshake with EOF and the suggestions pane failed with no request
 		// ever sent. A fixed SAN is the difference between those two runs.
 		"api-lp1.frs.srv.nintendo.net",
-		// Parental controls (moon, moon.go). Added before the first on-console
+		// Parental controls (moon, nx-pctl's now). Added before the first on-console
 		// pairing attempt rather than after: this name was on the on-demand
 		// path too, and if pctl authenticates it the way friends does, that
 		// attempt would produce a handshake EOF and no log at all — which

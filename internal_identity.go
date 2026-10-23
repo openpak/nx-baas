@@ -153,7 +153,7 @@ func (s *server) identityPresence(w http.ResponseWriter, r *http.Request) {
 	if in.ACDIndex != nil {
 		acd = *in.ACDIndex
 	}
-	// Only a real console speaks Penne: emulators publish over REST (penne_presence.go).
+	// Only a real console speaks Penne: emulators publish over REST (the device-presence REST route).
 	s.noteClientPresence(u, in.Device, "switch", "", in.State, in.AppID, in.AppField, in.GroupID, acd)
 	w.WriteHeader(http.StatusNoContent)
 }

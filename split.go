@@ -4,14 +4,12 @@ package main
 //
 // Each moved family has a base URL: NX_SHOP_URL for the eShop (nx-shop), NX_PENNE_URL for
 // Penne (nx-penne; the core's own calls into Penne are penne_link.go's), NX_PCTL_URL for
-// parental controls (nx-pctl). Unset, this process serves the family itself exactly as
-// before, which is the state production stays in until the cut-over. Set, it stops touching
-// that family's state and forwards whatever of the family still reaches it: a console host
-// Traefik does not route to the new service yet (or any more, after a router is removed), a
-// path-routed request on a host this process keeps, and the family's internal admin routes
-// the website calls here. So the cut-over is one restart of this process with the URL set,
-// and every later step -- the Traefik routers that take this process out of the path -- can
-// be added and removed without touching it.
+// parental controls (nx-pctl), NX_BCAT_URL for BCAT (nx-bcat). nx-baas no longer serves any
+// of them itself, so the first three are required at startup (requiredForwards). BCAT is
+// optional: Traefik routes the bcat hosts straight to nx-bcat, and without the URL whatever
+// still lands here gets a 404. Whatever of a family still reaches this process is forwarded:
+// a console host Traefik does not route to the service, a path-routed request on a host this
+// process keeps, and the family's internal admin routes the website calls here.
 //
 // The forward is plain HTTP on the openpak network to the service's internal listener, with
 // the console's Host kept: TLS ended here, and the service answers the same routes there as on
@@ -112,7 +110,7 @@ func isPenneFrontline(host string) bool { return strings.HasPrefix(host, "fro-")
 
 // isPenneHost names Penne's own hosts: god (registrations), val (login tickets) and the
 // fro- frontlines. The vermillion gateway is not among them: it is the online-licence gate
-// and a title's bootstrap, stateless, and stays here (penne.go keeps answering it).
+// and a title's bootstrap, stateless, and stays here (vermillion.go keeps answering it).
 func isPenneHost(host string) bool {
 	return strings.Contains(host, "penne.")
 }

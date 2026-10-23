@@ -6,7 +6,7 @@ package main
 // Push. The module does not poll: a topic refreshes on an NPNS message
 // {"type":"news","topic_id":…,"revision":…[,"wait_range":…]}, which schedules a fetch at a
 // random delay within wait_range (default 3600 s) [firmware, bcat push parser]. Consoles
-// subscribe topics over the Penne frontline (penne_conn.go records every SubscribeTopic).
+// subscribe topics over the Penne frontline (nx-penne records every SubscribeTopic).
 // Which topic string the bcat module subscribes a followed News channel under is not
 // recovered — the only topics seen on hardware so far are nx_data_<titleId>. So delivery
 // here is keyed on the raw subscribed topic string: POST /internal/news/push names the

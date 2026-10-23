@@ -201,7 +201,7 @@ func acbaaLandPassword(inAppID uint64) string {
 }
 
 // msgpackOrdered encodes a string-keyed map with caller-chosen key order,
-// unlike msgpack() in bcat.go which sorts. Takes an even list of key, value.
+// unlike msgpack() in msgpack.go which sorts. Takes an even list of key, value.
 func msgpackOrdered(pairs ...any) []byte {
 	if len(pairs)%2 != 0 {
 		panic("msgpackOrdered: odd pair count")
@@ -1187,7 +1187,7 @@ func msgpackReadUintOf(v any) uint64 {
 // msgpackDecode reads the subset of msgpack the game and these documents use:
 // nil, booleans, integers through 64 bits, floats (kept whole), strings,
 // binary, arrays and string-keyed maps. It is the mirror of msgpack() in
-// bcat.go, which only encodes. Unknown type tags are an error, not a guess:
+// msgpack.go, which only encodes. Unknown type tags are an error, not a guess:
 // silently skipping a field would register a different island than the game
 // posted.
 func msgpackDecode(b []byte) (any, error) {

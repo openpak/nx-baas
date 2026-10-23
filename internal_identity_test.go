@@ -1,7 +1,6 @@
 package main
 
-// The identity and penne APIs the split-out services call (internal_identity.go,
-// internal_penne.go), and the forwarding that hands a moved family to its service (split.go).
+// The identity API the split-out services call (internal_identity.go), and the forwarding that hands a moved family to its service (split.go).
 // The field names asserted here are github.com/openpak/nx-common/nxapi's: this repository does
 // not import that module, so these tests are what keeps the two in step.
 

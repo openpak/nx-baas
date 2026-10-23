@@ -1,7 +1,7 @@
 package main
 
-// The core's side of a moved Penne (penne_link.go, split.go) and the /internal/penne routes
-// it serves while Penne is still here (internal_penne.go).
+// The core's side of Penne (penne_link.go, split.go): every push goes to nx-penne, and the
+// penne hosts and /internal/penne are forwarded there.
 
 import (
 	"encoding/json"
