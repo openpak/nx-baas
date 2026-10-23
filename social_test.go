@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"nx-baas/internal/store"
 	"nx-baas/internal/token"
 	"strings"
 	"testing"
@@ -20,15 +21,15 @@ import (
 // server and store, with two linked users: users[0] and users[1], each with
 // a projection, a friend code, and a mutual friendship. The store user is
 // keyed by the projection's BAAS id, exactly as a console link re-keys it.
-func socialServer(t *testing.T) (*server, *fakeCore, []*User) {
+func socialServer(t *testing.T) (*server, *fakeCore, []*store.User) {
 	t.Helper()
 	b, f := newTestBackend(t)
 	s := dauthServer(t)
-	s.store = loadStore(t.TempDir() + "/baas.json")
+	s.store = store.Load(t.TempDir() + "/baas.json")
 	s.acct = b
 	recordNotifications(s)
 
-	users := []*User{}
+	users := []*store.User{}
 	for _, acc := range []struct{ id, name, pw string }{
 		{"acc-a@example.com", "PlayerA", "pw-a-aaaaaaaaaaa"},
 		{"acc-b@example.com", "PlayerB", "pw-b-bbbbbbbbbbb"},
@@ -40,7 +41,7 @@ func socialServer(t *testing.T) (*server, *fakeCore, []*User) {
 		}
 		u, _ := s.store.NewUser()
 		baas := b.proj.ByAccount[acc.id].BaasUserID
-		s.store.mu.Lock()
+		s.store.Mu.Lock()
 		delete(s.store.Users, u.ID)
 		u.ID = baas
 		s.store.Users[baas] = u
@@ -49,8 +50,8 @@ func socialServer(t *testing.T) (*server, *fakeCore, []*User) {
 				d.UserID = baas
 			}
 		}
-		s.store.mu.Unlock()
-		s.store.Update(u, func(u *User) { u.PID, u.Nickname = res.PID, acc.name })
+		s.store.Mu.Unlock()
+		s.store.Update(u, func(u *store.User) { u.PID, u.Nickname = res.PID, acc.name })
 		users = append(users, s.store.User(baas))
 	}
 	f.befriend("acc-a@example.com", "acc-b@example.com")
@@ -58,7 +59,7 @@ func socialServer(t *testing.T) (*server, *fakeCore, []*User) {
 }
 
 // authed builds a request with the caller's own live access token.
-func authed(method, path, body string, u *User, s *server) *http.Request {
+func authed(method, path, body string, u *store.User, s *server) *http.Request {
 	r := httptest.NewRequest(method, "https://"+baasHost+path, strings.NewReader(body))
 	r.Host = baasHost
 	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
@@ -66,7 +67,7 @@ func authed(method, path, body string, u *User, s *server) *http.Request {
 }
 
 // postRequest drives POST /2.0.0/friend_requests and decodes the reply.
-func postRequest(t *testing.T, s *server, from *User, body string) (int, map[string]any) {
+func postRequest(t *testing.T, s *server, from *store.User, body string) (int, map[string]any) {
 	t.Helper()
 	r := authed("POST", "/2.0.0/friend_requests", body, from, s)
 	w := httptest.NewRecorder()
@@ -77,7 +78,7 @@ func postRequest(t *testing.T, s *server, from *User, body string) (int, map[str
 }
 
 // answerRequest drives PATCH/DELETE /2.0.0/friend_requests/<id>.
-func answerRequest(t *testing.T, s *server, by *User, method, id, body string) (int, map[string]any) {
+func answerRequest(t *testing.T, s *server, by *store.User, method, id, body string) (int, map[string]any) {
 	t.Helper()
 	r := authed(method, "/2.0.0/friend_requests/"+id, body, by, s)
 	w := httptest.NewRecorder()
@@ -117,7 +118,7 @@ func TestDurableRequestIdentitySurvivesRestart(t *testing.T) {
 	}
 
 	// Restart: the id still resolves and still authorizes the addressee.
-	s.store = loadStore(s.store.path)
+	s.store = store.Load(s.store.FilePath)
 	code, reply = answerRequest(t, s, b, "PATCH", reqID, `[{"op":"replace","path":"/state","value":"AUTHORIZED"}]`)
 	if code != http.StatusOK || reply["state"] != "AUTHORIZED" {
 		t.Fatalf("accept after restart: %d %v", code, reply)
@@ -194,7 +195,7 @@ func TestRequestAcceptAndTheReverseCase(t *testing.T) {
 	}
 	// Both lists are current with one mutual friend, and neither box holds
 	// the request any more.
-	for i, u := range []*User{a, b} {
+	for i, u := range []*store.User{a, b} {
 		id, err := s.acct.Identity(u.PID)
 		if err != nil || len(id.Friends) != 1 || len(id.FriendRequests)+len(id.SentRequests) != 0 {
 			t.Fatalf("user %d after the crossed request: %+v %v", i, id, err)
@@ -261,7 +262,7 @@ func TestRejectCancelRemoveCommitOrError(t *testing.T) {
 // this reply lacks, in the mode the console reads it: sender mode (send,
 // cancel) wants receiverId and receiver.*, receiver mode (accept, reject)
 // wants senderId and sender.* [friends-contract-22.5.0 §A.4.1, §A.4.4].
-func requestReplyGaps(reply map[string]any, other *User, senderMode bool) []string {
+func requestReplyGaps(reply map[string]any, other *store.User, senderMode bool) []string {
 	var gaps []string
 	if v, _ := reply["id"].(string); v == "" {
 		gaps = append(gaps, "id")
@@ -348,7 +349,7 @@ func TestCancelUsesTheConsolesSpellingAndEveryReplyIsTheFullRequest(t *testing.T
 }
 
 // requestBox drives GET /2.0.0/users/<id>/friend_requests/<box><query>.
-func requestBox(t *testing.T, s *server, u *User, box, query string) []map[string]any {
+func requestBox(t *testing.T, s *server, u *store.User, box, query string) []map[string]any {
 	t.Helper()
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, authed("GET", "/2.0.0/users/"+u.ID+"/friend_requests/"+box+query, "", u, s))
@@ -377,9 +378,9 @@ func TestRequestBoxCarriesReadAndHonoursThePage(t *testing.T) {
 	_, fromA := postRequest(t, s, a, `{"receiverId":"`+b.ID+`"}`)
 	_, fromC := postRequest(t, s, c, `{"receiverId":"`+b.ID+`"}`)
 	older, newer := fromA["id"].(string), fromC["id"].(string)
-	s.store.mu.Lock()
+	s.store.Mu.Lock()
 	s.store.Requests[older].CreatedAt -= 60
-	s.store.mu.Unlock()
+	s.store.Mu.Unlock()
 
 	const q = "?offset=0&count=10&sort=createdAt:desc&filter.state.$eq=PENDING"
 	inbox := requestBox(t, s, b, "inbox", q)
@@ -395,7 +396,7 @@ func TestRequestBoxCarriesReadAndHonoursThePage(t *testing.T) {
 		if read(it) != false {
 			t.Errorf("unread item carries extras.receiver.read=%v", read(it))
 		}
-		if gaps := requestReplyGaps(it, map[string]*User{older: a, newer: c}[it["id"].(string)], false); gaps != nil {
+		if gaps := requestReplyGaps(it, map[string]*store.User{older: a, newer: c}[it["id"].(string)], false); gaps != nil {
 			t.Errorf("inbox item lacks %v", gaps)
 		}
 	}
@@ -405,7 +406,7 @@ func TestRequestBoxCarriesReadAndHonoursThePage(t *testing.T) {
 	if code, _ := answerRequest(t, s, b, "PATCH", older, `[{"op":"add","path":"/extras/receiver/read","value":true}]`); code != http.StatusOK {
 		t.Fatalf("mark read: %d", code)
 	}
-	s.store = loadStore(s.store.path) // and it survives a restart
+	s.store = store.Load(s.store.FilePath) // and it survives a restart
 	inbox = requestBox(t, s, b, "inbox", q)
 	if read(inbox[0]) != false || read(inbox[1]) != true {
 		t.Errorf("read flags after 30205: %v, %v", read(inbox[0]), read(inbox[1]))
@@ -718,7 +719,7 @@ func TestPlayLogIsKeptAndShownToWhoMaySeeIt(t *testing.T) {
 	c := newUserFor(t, s, "acc-c@example.com", "pw-c-ccccccccccc") // a stranger to both
 	const played = `[{"appInfo:appId":"0100a5a020d5e000","appInfo:presenceGroupId":"0100a5a020d5e000","totalPlayCount":3,"totalPlayTime":95,"firstPlayedAt":1789000000,"lastPlayedAt":1789840000}]`
 
-	do := func(u *User, method, path, body string) map[string]any {
+	do := func(u *store.User, method, path, body string) map[string]any {
 		t.Helper()
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, authed(method, path, body, u, s))
@@ -801,7 +802,7 @@ func TestPlayLogIsKeptAndShownToWhoMaySeeIt(t *testing.T) {
 	if g := carries(seenByFriend()); g != "" {
 		t.Errorf("a friend sees a self-only log under %q", g)
 	}
-	s.store = loadStore(s.store.path)
+	s.store = store.Load(s.store.FilePath)
 	if own := extrasPlayLogs(do(b, "GET", "/1.0.0/users/"+b.ID, "")); own["self"] != played {
 		t.Errorf("own user after restart: %v", own)
 	}
@@ -856,7 +857,7 @@ func TestFriendNotePersistsAndProjects(t *testing.T) {
 		t.Errorf("list friendNote after overlong PATCH = %v", got)
 	}
 
-	s.store = loadStore(s.store.path)
+	s.store = store.Load(s.store.FilePath)
 	if got := entryOf()["friendNote"]; got != "raids tue" {
 		t.Errorf("list friendNote after restart = %v", got)
 	}
@@ -1016,7 +1017,7 @@ func TestThumbnailUrlChangesWhenThePictureDoes(t *testing.T) {
 	s, _, users := socialServer(t)
 	a, b := users[0], users[1]
 
-	get := func(viewer *User, id string) map[string]any {
+	get := func(viewer *store.User, id string) map[string]any {
 		t.Helper()
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, authed("GET", "/1.0.0/users/"+id, "", viewer, s))
@@ -1039,7 +1040,7 @@ func TestThumbnailUrlChangesWhenThePictureDoes(t *testing.T) {
 		return nil
 	}
 
-	s.store.Update(b, func(u *User) { u.Avatar, u.AvatarAt = "/9j/", 1789000000 })
+	s.store.Update(b, func(u *store.User) { u.Avatar, u.AvatarAt = "/9j/", 1789000000 })
 	if got := get(b, b.ID)["thumbnailUrl"]; got != cdnHost+"/1/"+b.ID+"?v=1789000000" {
 		t.Errorf("own thumbnailUrl = %v", got)
 	}
@@ -1053,7 +1054,7 @@ func TestThumbnailUrlChangesWhenThePictureDoes(t *testing.T) {
 
 	// A new picture is a new URL, and the versioned URL serves the picture:
 	// the route matches on the path, so the query is ignored on fetch.
-	s.store.Update(b, func(u *User) { u.AvatarAt = 1789100000 })
+	s.store.Update(b, func(u *store.User) { u.AvatarAt = 1789100000 })
 	second := entryOf()
 	if second["thumbnailUrl"] == first["thumbnailUrl"] {
 		t.Errorf("friend thumbnailUrl did not move with the picture: %v", second["thumbnailUrl"])
@@ -1095,13 +1096,13 @@ func TestEmulatorFriendCodeLookup(t *testing.T) {
 // (SOC-05): the friends-list version is strictly monotonic.
 func TestFriendsUpdatedAtIsStrictlyMonotonic(t *testing.T) {
 	s := dauthServer(t)
-	s.store = loadStore(t.TempDir() + "/baas.json")
+	s.store = store.Load(t.TempDir() + "/baas.json")
 	u, _ := s.store.NewUser()
 	now := time.Now().Unix()
-	s.store.Update(u, func(u *User) { bumpFriendsUpdated(u, now) })
+	s.store.Update(u, func(u *store.User) { store.BumpFriendsUpdated(u, now) })
 	first := s.store.User(u.ID).FriendsUpdatedAt
 	for i := 0; i < 3; i++ {
-		s.store.Update(u, func(u *User) { bumpFriendsUpdated(u, now) })
+		s.store.Update(u, func(u *store.User) { store.BumpFriendsUpdated(u, now) })
 	}
 	if got := s.store.User(u.ID).FriendsUpdatedAt; got != first+3 {
 		t.Errorf("three bumps within one second moved the version %d -> %d", first, got)
@@ -1157,7 +1158,7 @@ func TestExpiredAndForeignTokensAreRefused(t *testing.T) {
 
 // ---------- helpers ----------
 
-func codeOf(s *server, u *User) string {
+func codeOf(s *server, u *store.User) string {
 	id, err := s.acct.Identity(u.PID)
 	if err != nil {
 		return ""
@@ -1166,7 +1167,7 @@ func codeOf(s *server, u *User) string {
 }
 
 // newUserFor links a fresh store user to a core account's projection.
-func newUserFor(t *testing.T, s *server, accountID, pw string) *User {
+func newUserFor(t *testing.T, s *server, accountID, pw string) *store.User {
 	t.Helper()
 	b := s.acct.(*openpakBackend)
 	res, err := b.LoginPID(accountID, pw)
@@ -1175,7 +1176,7 @@ func newUserFor(t *testing.T, s *server, accountID, pw string) *User {
 	}
 	u, _ := s.store.NewUser()
 	baas := b.proj.ByAccount[accountID].BaasUserID
-	s.store.mu.Lock()
+	s.store.Mu.Lock()
 	delete(s.store.Users, u.ID)
 	u.ID = baas
 	s.store.Users[baas] = u
@@ -1184,7 +1185,7 @@ func newUserFor(t *testing.T, s *server, accountID, pw string) *User {
 			d.UserID = baas
 		}
 	}
-	s.store.mu.Unlock()
-	s.store.Update(u, func(u *User) { u.PID = res.PID })
+	s.store.Mu.Unlock()
+	s.store.Update(u, func(u *store.User) { u.PID = res.PID })
 	return s.store.User(baas)
 }

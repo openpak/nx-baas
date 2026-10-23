@@ -1,4 +1,6 @@
-package main
+// Package store is the BAAS state nx-baas keeps in $NX_DATA/baas.json: device accounts,
+// console users, their presence and friend preferences, friend requests and the NA id map.
+package store
 
 import (
 	"encoding/json"
@@ -174,8 +176,9 @@ type User struct {
 }
 
 type Store struct {
-	mu       sync.Mutex
-	path     string
+	// Mu guards every field below; FilePath is where save writes. Neither is persisted.
+	Mu       sync.Mutex                      `json:"-"`
+	FilePath string                          `json:"-"`
 	Devices  map[string]*DeviceAccount       `json:"devices"`
 	Users    map[string]*User                `json:"users"`
 	NaToPID  map[string]uint64               `json:"naToPid"` // Nintendo-Account id_token sub -> OpenPak PID
@@ -186,8 +189,8 @@ type Store struct {
 	PctlDevices json.RawMessage `json:"pctlDevices,omitempty"`
 }
 
-func loadStore(path string) *Store {
-	s := &Store{path: path, Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+func Load(path string) *Store {
+	s := &Store{FilePath: path, Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
 	if b, err := os.ReadFile(path); err == nil {
 		json.Unmarshal(b, s)
 	}
@@ -197,7 +200,7 @@ func loadStore(path string) *Store {
 	migrated := false
 	for _, u := range s.Users {
 		for _, f := range u.Favourites {
-			p := u.pref(f)
+			p := u.Pref(f)
 			if !p.Favorite {
 				p.Favorite = true
 				p.UpdatedAt = u.UpdatedAt
@@ -213,7 +216,7 @@ func loadStore(path string) *Store {
 
 // pref returns the caller's preference record for one friend, creating an
 // empty one when there is none. Called with the store lock held.
-func (u *User) pref(friendBaasID string) *FriendPreference {
+func (u *User) Pref(friendBaasID string) *FriendPreference {
 	if u.FriendPrefs == nil {
 		u.FriendPrefs = map[string]*FriendPreference{}
 	}
@@ -228,13 +231,13 @@ func (u *User) pref(friendBaasID string) *FriendPreference {
 // save is called with mu held.
 func (s *Store) save() {
 	b, _ := json.MarshalIndent(s, "", " ")
-	os.WriteFile(s.path+".tmp", b, 0o600)
-	os.Rename(s.path+".tmp", s.path)
+	os.WriteFile(s.FilePath+".tmp", b, 0o600)
+	os.Rename(s.FilePath+".tmp", s.FilePath)
 }
 
 func (s *Store) NewUser() (*User, *DeviceAccount) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
 	now := time.Now().Unix()
 	u := &User{ID: token.RandHex(8), Birthday: "0000-00-00", CreatedAt: now, UpdatedAt: now, Presence: Presence{State: "OFFLINE", UpdatedAt: now}}
 	d := &DeviceAccount{ID: token.RandHex(8), Password: token.RandPassword(), UserID: u.ID}
@@ -246,8 +249,8 @@ func (s *Store) NewUser() (*User, *DeviceAccount) {
 }
 
 func (s *Store) Login(id, password string) *User {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
 	d := s.Devices[id]
 	if d == nil && len(id) == 16 && len(password) >= 20 {
 		// ponytail: trust-on-first-use. A console that already holds a device account from
@@ -275,8 +278,8 @@ func (s *Store) Login(id, password string) *User {
 // BindDevice ties a device account to an enrolled console the first time one uses it, and
 // answers whether the device `di` may use it. Unknown accounts pass (the login refuses them).
 func (s *Store) BindDevice(accountID, di string, enrolled bool) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
 	d := s.Devices[accountID]
 	if d == nil {
 		return true
@@ -292,14 +295,14 @@ func (s *Store) BindDevice(accountID, di string, enrolled bool) bool {
 }
 
 func (s *Store) User(id string) *User {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
 	return s.Users[id]
 }
 
 func (s *Store) UserByPID(pid uint64) *User {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
 	for _, u := range s.Users {
 		if u.PID == pid {
 			return u
@@ -316,8 +319,8 @@ func (s *Store) UserByPID(pid uint64) *User {
 // account bs:did yet and presents its own BAAS id instead.
 // ponytail: linear scan -- a LAN store holds a handful of users.
 func (s *Store) UserByBsDid(bsDid string) *User {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
 	if bsDid == "" {
 		return nil
 	}
@@ -330,8 +333,8 @@ func (s *Store) UserByBsDid(bsDid string) *User {
 }
 
 func (s *Store) Link(from *User, pid uint64, baasUserID, naID string) *User {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
 	fromID := from.ID // captured: the target==nil branch rewrites from.ID below, and the
 	// device loop must still recognise the throwaway's old id (otherwise every device
 	// account stays pointed at a deleted user and the next /login fails 2124-5002).
@@ -363,8 +366,8 @@ func (s *Store) Link(from *User, pid uint64, baasUserID, naID string) *User {
 }
 
 func (s *Store) Update(u *User, f func(*User)) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
 	f(u)
 	u.UpdatedAt = time.Now().Unix()
 	s.save()
@@ -375,7 +378,7 @@ func (s *Store) Update(u *User, f func(*User)) {
 // distinguishable, or a console that refetched between them keeps the stale
 // list forever. The value stays Unix-shaped, so a console comparing it against
 // what it cached before the change sees nothing unusual.
-func bumpFriendsUpdated(u *User, now int64) int64 {
+func BumpFriendsUpdated(u *User, now int64) int64 {
 	if now <= u.FriendsUpdatedAt {
 		now = u.FriendsUpdatedAt + 1
 	}
@@ -387,8 +390,8 @@ func bumpFriendsUpdated(u *User, now int64) int64 {
 // the record on first sight. Idempotent: create, inbox and outbox all name
 // the same request by the same id (SOC-03).
 func (s *Store) EnsureRequest(fromPID, toPID uint64) (string, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
 	now := time.Now().Unix()
 	if s.Requests == nil {
 		s.Requests = map[string]*FriendRequestRecord{}
@@ -415,8 +418,8 @@ func (s *Store) EnsureRequest(fromPID, toPID uint64) (string, bool) {
 
 // RequestByID returns a copy of the record: callers read it without the lock.
 func (s *Store) RequestByID(id string) *FriendRequestRecord {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
 	r := s.Requests[id]
 	if r == nil {
 		return nil
@@ -427,8 +430,8 @@ func (s *Store) RequestByID(id string) *FriendRequestRecord {
 
 // MarkRequestRead records the receiver's extras.receiver.read on a request.
 func (s *Store) MarkRequestRead(id string, read bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
 	r := s.Requests[id]
 	if r == nil || r.Read == read {
 		return
@@ -440,8 +443,8 @@ func (s *Store) MarkRequestRead(id string, read bool) {
 // SetRequestRoute records how a request was sent: its channel and the route
 // extras of the POST that created it.
 func (s *Store) SetRequestRoute(id, channel string, sender, both map[string]any) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
 	r := s.Requests[id]
 	if r == nil {
 		return
@@ -459,8 +462,8 @@ const settledRequestRetention = 7 * 24 * 3600
 // same answer replies the same way, but it can no longer authorize a second
 // commit: the handler sees State and skips the core call.
 func (s *Store) SettleRequest(id, state string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
 	r := s.Requests[id]
 	if r == nil {
 		return
@@ -472,8 +475,8 @@ func (s *Store) SettleRequest(id, state string) {
 
 // OpenRequest reports whether an unanswered request from -> to exists.
 func (s *Store) OpenRequest(fromPID, toPID uint64) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
 	for _, r := range s.Requests {
 		if r.State == "" && r.FromPID == fromPID && r.ToPID == toPID {
 			return true
@@ -485,8 +488,8 @@ func (s *Store) OpenRequest(fromPID, toPID uint64) bool {
 // RequestChannel is the channel an unanswered request from -> to was sent
 // with, or "" when no open request names the pair.
 func (s *Store) RequestChannel(fromPID, toPID uint64) string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
 	for _, r := range s.Requests {
 		if r.State == "" && r.FromPID == fromPID && r.ToPID == toPID {
 			return r.Channel
@@ -501,8 +504,8 @@ func (s *Store) RequestChannel(fromPID, toPID uint64) string {
 // one level deep, which is enough because entries are replaced (never mutated
 // in place) under the same lock.
 func (s *Store) LiveUsers() []*User {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
 	out := make([]*User, 0, len(s.Users))
 	for _, u := range s.Users {
 		cp := *u
@@ -519,14 +522,14 @@ func (s *Store) LiveUsers() []*User {
 }
 
 func (s *Store) RememberNA(naID string, pid uint64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
 	s.NaToPID[naID] = pid
 	s.save()
 }
 
 func (s *Store) PIDForNA(naID string) uint64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
 	return s.NaToPID[naID]
 }

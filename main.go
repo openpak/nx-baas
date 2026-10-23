@@ -34,6 +34,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/store"
 	"nx-baas/internal/token"
 	"nx-baas/redact"
 	"os"
@@ -60,7 +61,7 @@ const (
 var defaultAvatar []byte
 
 type server struct {
-	store      *Store
+	store      *store.Store
 	acct       accountBackend
 	key        *rsa.PrivateKey
 	idKid      string // kid of id_tokens (openpak-baas-key-1: what Photon/NPLN/S2 already trust)
@@ -232,7 +233,7 @@ func (s *server) validBearer(r *http.Request) map[string]any {
 // access token from /1.0.0/login both carry typ "token" and the same issuer,
 // but the first has the DEVICE id as its subject and the second the BAAS user
 // id. Only the second can act as a user.
-func (s *server) bearerUser(r *http.Request) *User {
+func (s *server) bearerUser(r *http.Request) *store.User {
 	c := s.validBearer(r)
 	if c == nil {
 		if a := r.Header.Get("Authorization"); !strings.HasPrefix(a, "Bearer ") {
@@ -261,7 +262,7 @@ func (s *server) bearerUser(r *http.Request) *User {
 // requireCaller enforces the principal binding on a user-scoped path: the
 // path may only name the authenticated user. Returns false having written
 // the error when it does not.
-func (s *server) requireCaller(w http.ResponseWriter, r *http.Request, pathUserID string) *User {
+func (s *server) requireCaller(w http.ResponseWriter, r *http.Request, pathUserID string) *store.User {
 	me := s.bearerUser(r)
 	if me == nil {
 		httpx.BaasErr(w, r, 401, "invalid_token", "Invalid token", "a current access token is required")
@@ -297,7 +298,7 @@ func (s *server) accessToken(sub string, grant int, bsDid, di, sn string) string
 	return token.SignJWT(map[string]any{"alg": "RS256", "jku": baasJku + "/1.0.0/internal_certificates", "kid": s.accKid, "typ": "JWT"}, claims, s.key)
 }
 
-func (s *server) idToken(u *User, id *Identity, username string, app map[string]any) string {
+func (s *server) idToken(u *store.User, id *Identity, username string, app map[string]any) string {
 	now := time.Now().Unix()
 	// VPS parity: the id_token carries an APPLICATION block (ai/at/av/edi/tbh/tbn), taken from
 	// the appAuthNToken when the console sends one, else the VPS defaults.
@@ -434,7 +435,7 @@ func (s *server) naIDToken(c naCode, accessToken, code string) string {
 
 // ---------- user objects ----------
 
-func (s *server) identity(u *User) *Identity {
+func (s *server) identity(u *store.User) *Identity {
 	if u == nil || u.PID == 0 {
 		return nil
 	}
@@ -443,7 +444,7 @@ func (s *server) identity(u *User) *Identity {
 	// Remember the account's bs:did: it is what a console's id_token carries and what the
 	// Photon server reports back on /internal/photon-room, which has no PID of its own.
 	if id != nil && id.BsDid != "" && u.BsDid != id.BsDid {
-		s.store.Update(u, func(u *User) { u.BsDid = id.BsDid })
+		s.store.Update(u, func(u *store.User) { u.BsDid = id.BsDid })
 	}
 	return id
 }
@@ -480,7 +481,7 @@ func extras() map[string]any {
 	return map[string]any{"self": map[string]any{}, "favoriteFriends": map[string]any{}, "friends": map[string]any{}, "foaf": map[string]any{}, "everyone": map[string]any{}}
 }
 
-func presenceObj(p Presence) map[string]any {
+func presenceObj(p store.Presence) map[string]any {
 	ex := extras()
 	if p.AppID == "" && p.AppField != "" && p.AppField != "{}" {
 		// No title, but words: a friend on another platform (presenceFromCore).
@@ -521,7 +522,7 @@ func testPF(client string) (int, bool) {
 	return 0, false
 }
 
-func (s *server) userObj(u *User, id *Identity, devicePassword string) map[string]any {
+func (s *server) userObj(u *store.User, id *Identity, devicePassword string) map[string]any {
 	devs := []map[string]any{}
 	for _, d := range u.DeviceAccounts {
 		m := map[string]any{"id": d}
@@ -781,7 +782,7 @@ func (s *server) searchUserObj(f Friend, now int64) map[string]any {
 // said nothing, the client of the account's live claim is used, so a real
 // console's title-less session says "switch" once Penne has told us so.
 // clientOS travels with client and is taken from the same claim when client is.
-func (s *server) reportOnline(ctx context.Context, u *User, client, clientOS string) {
+func (s *server) reportOnline(ctx context.Context, u *store.User, client, clientOS string) {
 	if u == nil || u.PID == 0 {
 		return
 	}
@@ -796,7 +797,7 @@ func (s *server) reportOnline(ctx context.Context, u *User, client, clientOS str
 
 // reportOffline ends the session immediately when someone says they are going,
 // rather than leaving them online until the lease runs out.
-func (s *server) reportOffline(ctx context.Context, u *User) {
+func (s *server) reportOffline(ctx context.Context, u *store.User) {
 	if u == nil || u.PID == 0 {
 		return
 	}
@@ -933,7 +934,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			if raw, err := base64.StdEncoding.DecodeString(img.RawContent); err != nil {
 				log.Printf("[nx-baas] image_upload: not base64 (%d bytes): %v", len(img.RawContent), redact.Err(err))
 			} else if u := s.store.User(uid); u != nil {
-				s.store.Update(u, func(u *User) { u.Avatar, u.AvatarAt = img.RawContent, time.Now().Unix() })
+				s.store.Update(u, func(u *store.User) { u.Avatar, u.AvatarAt = img.RawContent, time.Now().Unix() })
 				log.Printf("[nx-baas] image_upload: stored %d bytes for %s", len(raw), redact.Tag(uid))
 				// And on to the account, so the picture a person set on their
 				// console is the one the website and the app show.
@@ -1075,7 +1076,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			}
 			json.Unmarshal(body, &ops)
 			renamed := ""
-			s.store.Update(u, func(u *User) {
+			s.store.Update(u, func(u *store.User) {
 				for _, o := range ops {
 					v, _ := o.Value.(string)
 					switch o.Path {
@@ -1169,7 +1170,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			}
 			httpx.WriteJSON(w, 200, s.userObj(nu, s.identity(nu), ""))
 		case "unlink":
-			s.store.Update(u, func(u *User) { u.PID, u.NaID = 0, "" })
+			s.store.Update(u, func(u *store.User) { u.PID, u.NaID = 0, "" })
 			httpx.WriteJSON(w, 200, s.userObj(u, nil, ""))
 		case "generate_code":
 			if s.requireCaller(w, r, seg[2]) == nil {
@@ -1187,7 +1188,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				httpx.BaasErr(w, r, 500, "internal_server_error", "Internal Server Error", "Internal Server Error")
 				return
 			}
-			s.store.Update(u, func(u *User) { u.CodeGeneratedAt = time.Now().Unix() })
+			s.store.Update(u, func(u *store.User) { u.CodeGeneratedAt = time.Now().Unix() })
 			httpx.WriteJSON(w, 200, s.userObj(u, s.identity(u), ""))
 		case "device_histories":
 			if s.requireCaller(w, r, seg[2]) == nil {
@@ -1231,11 +1232,11 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				}
 				_ = json.Unmarshal(body, &in)
 				now := time.Now().Unix()
-				s.store.Update(u, func(u *User) {
+				s.store.Update(u, func(u *store.User) {
 					if u.BlockDetails == nil {
-						u.BlockDetails = map[string]*BlockDetail{}
+						u.BlockDetails = map[string]*store.BlockDetail{}
 					}
-					u.BlockDetails[other.BaasUserID] = &BlockDetail{CreatedAt: now, Self: in.Extras.Self}
+					u.BlockDetails[other.BaasUserID] = &store.BlockDetail{CreatedAt: now, Self: in.Extras.Self}
 				})
 				// The console ignores this body; it re-syncs the list.
 				httpx.WriteJSON(w, 200, s.blockObj(u, other.BaasUserID, now))
@@ -1476,7 +1477,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 }
 
 // link binds a BAAS user to the OpenPak account behind a Nintendo-Account id_token we issued.
-func (s *server) link(u *User, idTok string) (*User, error) {
+func (s *server) link(u *store.User, idTok string) (*store.User, error) {
 	claims, err := token.ParseJWT(idTok, &s.key.PublicKey)
 	if err != nil {
 		return nil, err
@@ -1499,7 +1500,7 @@ func (s *server) link(u *User, idTok string) (*User, error) {
 }
 
 // /1.0.0/users/<id>/{friends,friend_requests,relationships}: older-firmware spellings, same data.
-func (s *server) friends(w http.ResponseWriter, r *http.Request, u *User, rest []string, body []byte) {
+func (s *server) friends(w http.ResponseWriter, r *http.Request, u *store.User, rest []string, body []byte) {
 	s.friends2(w, r, append([]string{"users", u.ID}, rest...), body)
 }
 
@@ -1564,9 +1565,9 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		}
 		_ = json.Unmarshal(body, &ops)
 		changed := false
-		s.store.Update(me, func(u *User) {
+		s.store.Update(me, func(u *store.User) {
 			for _, o := range ops {
-				p := u.pref(seg[3])
+				p := u.Pref(seg[3])
 				switch {
 				case strings.HasSuffix(o.Path, "isFavorite") || strings.HasSuffix(o.Path, "isFavoriteFriend"):
 					if b, ok := o.Value.(bool); ok {
@@ -1929,8 +1930,8 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		// An acceptance completes the new-friend acknowledgement too: the
 		// friendship is not news to the person who just accepted it.
 		if state == "AUTHORIZED" {
-			s.store.Update(me, func(u *User) {
-				p := u.pref(otherBaas)
+			s.store.Update(me, func(u *store.User) {
+				p := u.Pref(otherBaas)
 				p.Confirmed, p.UpdatedAt = true, now
 			})
 		}
@@ -2782,7 +2783,7 @@ func main() {
 	}
 	key := token.LoadRSAKey(httpx.Getenv("BAAS_SIGNING_KEY", "/keys/baas_signing_key.pem"))
 	s := &server{
-		store:      loadStore(httpx.Getenv("NX_DATA", "/data") + "/baas.json"),
+		store:      store.Load(httpx.Getenv("NX_DATA", "/data") + "/baas.json"),
 		key:        key,
 		idKid:      httpx.Getenv("BAAS_KID", "openpak-baas-key-1"),
 		accKid:     httpx.Getenv("BAAS_ACCESS_KID", "00000000-0000-0000-0000-000000000003"),

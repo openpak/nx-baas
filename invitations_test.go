@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"nx-baas/internal/store"
 	"nx-baas/internal/token"
 	"os"
 	"path/filepath"
@@ -67,9 +68,9 @@ func fiveServer(t *testing.T) *server {
 	st := loadInvitationStore(filepath.Join(dir, "invitations.json"))
 	invStoreOverride = st
 	t.Cleanup(func() { invStoreOverride = nil })
-	s := &server{key: key, store: loadStore(filepath.Join(dir, "baas.json"))}
+	s := &server{key: key, store: store.Load(filepath.Join(dir, "baas.json"))}
 	for uid, pid := range map[string]uint64{invSenderUID: 1800000010, invReceiverUID: 1800000011, invStrangerUID: 1800000012} {
-		s.store.Users[uid] = &User{ID: uid, PID: pid, Nickname: "user-" + uid}
+		s.store.Users[uid] = &store.User{ID: uid, PID: pid, Nickname: "user-" + uid}
 	}
 	s.acct = &stubBackend{
 		key: []byte("0123456789abcdef0123456789abcdef"),
@@ -477,7 +478,7 @@ func TestMailboxIsDurableAndNativelyVisible(t *testing.T) {
 	s := fiveServer(t)
 	host := s.store.Users[invSenderUID]
 	joiner := s.store.Users[invReceiverUID]
-	s.store.Update(host, func(u *User) { u.Presence = Presence{State: "PLAYING", AppID: "0100ed9024eb8000"} })
+	s.store.Update(host, func(u *store.User) { u.Presence = store.Presence{State: "PLAYING", AppID: "0100ed9024eb8000"} })
 
 	// The emulator sends exactly what it always sent.
 	r := httptest.NewRequest("POST", "/api/invitations", strings.NewReader(
@@ -516,11 +517,11 @@ func TestMailboxStaleRoomIsDroppedCleanly(t *testing.T) {
 	joiner := s.store.Users[invReceiverUID]
 
 	// Hosted a room (presence carries the title), sent, then went away.
-	s.store.Update(host, func(u *User) { u.Presence = Presence{State: "PLAYING", AppID: "0100ed9024eb8000"} })
+	s.store.Update(host, func(u *store.User) { u.Presence = store.Presence{State: "PLAYING", AppID: "0100ed9024eb8000"} })
 	if _, ok := createMailboxInvitation(host, "host", joiner, validAppData, "0100ed9024eb8000"); !ok {
 		t.Fatal("create failed")
 	}
-	s.store.Update(host, func(u *User) { u.Presence = Presence{State: "OFFLINE"} })
+	s.store.Update(host, func(u *store.User) { u.Presence = store.Presence{State: "OFFLINE"} })
 	if got := popMailboxInvitations(s, joiner); len(got) != 0 {
 		t.Fatalf("a dead room was delivered: %d rows", len(got))
 	}
@@ -534,7 +535,7 @@ func TestMailboxStaleRoomIsDroppedCleanly(t *testing.T) {
 	}
 
 	// A live core session keeps the invitation deliverable.
-	s.store.Update(host, func(u *User) { u.Presence = Presence{State: "OFFLINE"} })
+	s.store.Update(host, func(u *store.User) { u.Presence = store.Presence{State: "OFFLINE"} })
 	if _, ok := createMailboxInvitation(host, "host", joiner, validAppData, "0100ed9024eb8000"); !ok {
 		t.Fatal("create failed")
 	}
@@ -606,13 +607,13 @@ func TestOpenPakFallbackEnforcesBlocks(t *testing.T) {
 	}
 	// Friends, but the receiver blocked the sender -> refused.
 	s.acct.(*stubBackend).friends[sender.PID] = []uint64{receiver.PID}
-	s.store.Update(receiver, func(u *User) { u.Blocks = []string{sender.ID} })
+	s.store.Update(receiver, func(u *store.User) { u.Blocks = []string{sender.ID} })
 	w = fiveDo(t, s, "POST", "/v2/invitation_groups", fiveToken(s, invSenderUID), createBody(invReceiverUID))
 	if w.Code != 400 || !strings.Contains(w.Body.String(), "sender_blocks_receiver") {
 		t.Fatalf("blocked invite = %d %s", w.Code, w.Body)
 	}
 	// Unblock -> the invitation commits.
-	s.store.Update(receiver, func(u *User) { u.Blocks = nil })
+	s.store.Update(receiver, func(u *store.User) { u.Blocks = nil })
 	w = fiveDo(t, s, "POST", "/v2/invitation_groups", fiveToken(s, invSenderUID), createBody(invReceiverUID))
 	if w.Code != 200 {
 		t.Fatalf("clean invite = %d %s", w.Code, w.Body)

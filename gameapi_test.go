@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"nx-baas/internal/store"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -70,9 +71,9 @@ func testServer(t *testing.T) *server {
 		friends: map[uint64][]uint64{hostPID: {joinerPID}, joinerPID: {hostPID}},
 		names:   map[uint64]string{hostPID: "OutboundHost", joinerPID: "OutboundJoiner"},
 	}
-	s := &server{store: loadStore(t.TempDir() + "/baas.json"), acct: acct}
-	s.store.Users["aaaa"] = &User{ID: "aaaa", PID: hostPID, BsDid: "hostbsdid"}
-	s.store.Users["bbbb"] = &User{ID: "bbbb", PID: joinerPID, BsDid: "joinerbsdid"}
+	s := &server{store: store.Load(t.TempDir() + "/baas.json"), acct: acct}
+	s.store.Users["aaaa"] = &store.User{ID: "aaaa", PID: hostPID, BsDid: "hostbsdid"}
+	s.store.Users["bbbb"] = &store.User{ID: "bbbb", PID: joinerPID, BsDid: "joinerbsdid"}
 	return s
 }
 
@@ -161,7 +162,7 @@ func TestPhotonRoomSetsJoinablePresence(t *testing.T) {
 	want := base64.StdEncoding.EncodeToString([]byte{1, 0, 0, 0, 6, 'Q', '3', '5', 'V', '9', 'E'})
 
 	for _, identity := range []string{"nex:" + s.acct.nexToken(hostPID, "OutboundHost"), "bsdid:hostbsdid"} {
-		s.store.Update(s.store.User("aaaa"), func(u *User) { u.Presence = Presence{State: "ONLINE"} })
+		s.store.Update(s.store.User("aaaa"), func(u *store.User) { u.Presence = store.Presence{State: "ONLINE"} })
 		body := fmt.Sprintf(`{"identity":%q,"room":"Q35V9E","app_id":"0100ED9024EB8000"}`, identity)
 		if w := do(t, s, "POST", "/internal/photon-room", "", body); w.Code != 200 {
 			t.Fatalf("%s: %d %s", identity, w.Code, w.Body)

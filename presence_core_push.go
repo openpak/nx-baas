@@ -12,6 +12,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"nx-baas/internal/store"
 	"strings"
 	"time"
 )
@@ -49,7 +50,7 @@ func (s *server) notifyCorePresence(b *openpakBackend, viewerAccount, subjectAcc
 	}
 	agg, live := s.presenceFromCore(subjectAccount, b.namespace, now)
 	if !live {
-		agg = Presence{State: "OFFLINE", UpdatedAt: now, LogoutAt: now, ACDIndex: -1}
+		agg = store.Presence{State: "OFFLINE", UpdatedAt: now, LogoutAt: now, ACDIndex: -1}
 	}
 	snap := agg.State + "|" + agg.AppID + "|" + agg.AppField
 	createdAt := nextPresenceStamp(spr.BaasUserID, viewer.ID, agg.UpdatedAt)

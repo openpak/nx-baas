@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"nx-baas/internal/store"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,7 +67,7 @@ func TestPctlRecordsSurviveASaveVerbatim(t *testing.T) {
 	if err := os.WriteFile(path, []byte(in), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	st := loadStore(path)
+	st := store.Load(path)
 	st.NewUser() // any write rewrites the whole file
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -85,7 +86,7 @@ func TestPctlRecordsSurviveASaveVerbatim(t *testing.T) {
 
 	// A store that never had records does not grow the key.
 	empty := filepath.Join(t.TempDir(), "baas.json")
-	loadStore(empty).NewUser()
+	store.Load(empty).NewUser()
 	b, _ = os.ReadFile(empty)
 	if !strings.Contains(string(b), `"users"`) || strings.Contains(string(b), "pctlDevices") {
 		t.Fatalf("a store without records wrote the key: %s", b)

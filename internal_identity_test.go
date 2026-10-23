@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"nx-baas/internal/store"
 	"strings"
 	"testing"
 	"time"
@@ -42,7 +43,7 @@ func TestIdentityAPIAnswersWhatShopPrincipalComputed(t *testing.T) {
 	t.Setenv("NX_INTERNAL_KEY", "test-internal-key")
 	s := linkedServer(t)
 	u := s.store.UserByPID(7)
-	s.store.Update(u, func(u *User) { u.NaID = testNAID })
+	s.store.Update(u, func(u *store.User) { u.NaID = testNAID })
 
 	rec := identityDo(t, s, "GET", "/internal/identity/users/"+u.ID, "")
 	got := decodeBody(t, rec)

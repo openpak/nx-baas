@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"nx-baas/internal/store"
 	"strings"
 	"testing"
 	"time"
@@ -16,9 +17,9 @@ import (
 // as an error code on a television.
 func TestEveryDocumentedBaasMethodIsAnswered(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	u, _ := s.store.NewUser()
-	s.store.Update(u, func(u *User) { u.PID, u.Nickname = 1, "tester" })
+	s.store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "tester" })
 	s.acct = fakeBackend{id: &Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
 		FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did"}}
 	other := "1111222233334444"
@@ -75,9 +76,9 @@ func TestEveryDocumentedBaasMethodIsAnswered(t *testing.T) {
 // and the code that comes back is a different one.
 func TestFriendCodeRegeneratesOncePerDay(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	u, _ := s.store.NewUser()
-	s.store.Update(u, func(u *User) { u.PID, u.Nickname = 1, "tester" })
+	s.store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "tester" })
 	s.acct = fakeBackend{id: &Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
 		FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did"}}
 
@@ -109,9 +110,9 @@ func TestFriendCodeRegeneratesOncePerDay(t *testing.T) {
 // and true [friends-contract-22.5.0 §A.6, C11].
 func TestFriendCodeAdvertisesTheEnforcedCooldown(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	u, _ := s.store.NewUser()
-	s.store.Update(u, func(u *User) { u.PID, u.Nickname = 1, "tester" })
+	s.store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "tester" })
 	s.acct = fakeBackend{id: &Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
 		FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did"}}
 
@@ -144,7 +145,7 @@ func TestFriendCodeAdvertisesTheEnforcedCooldown(t *testing.T) {
 // to show" — the exact requests are from the log, hosts included.
 func TestTheOtherConsoleServicesAnswer(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 
 	for _, c := range []struct {
 		host, method, path, body string
@@ -183,9 +184,9 @@ func TestTheOtherConsoleServicesAnswer(t *testing.T) {
 // hardware sends, captured 2026-09-08.
 func TestSendingAFriendRequestReachesTheHandler(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	u, _ := s.store.NewUser()
-	s.store.Update(u, func(u *User) { u.PID, u.Nickname = 1, "tester" })
+	s.store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "tester" })
 	s.acct = codeBackend{
 		fakeBackend: fakeBackend{id: &Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
 			FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did"}},
@@ -244,9 +245,9 @@ func TestSendingAFriendRequestReachesTheHandler(t *testing.T) {
 // sitting in the reply the whole time.
 func TestListsUseTheEnvelopeAConsoleReads(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	u, _ := s.store.NewUser()
-	s.store.Update(u, func(u *User) { u.PID, u.Nickname = 1, "tester" })
+	s.store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "tester" })
 	s.acct = fakeBackend{id: &Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
 		FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did",
 		Friends:        []Friend{{PID: 2, BaasUserID: "aaaaaaaaaaaa0002", Nickname: "Leia", FriendCode: "SW-1000-0000-0002"}},
@@ -314,9 +315,9 @@ func TestListsUseTheEnvelopeAConsoleReads(t *testing.T) {
 // The relationship check the console runs before it offers to add somebody.
 func TestRelationshipShape(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	u, _ := s.store.NewUser()
-	s.store.Update(u, func(u *User) { u.PID, u.Nickname = 1, "tester" })
+	s.store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "tester" })
 	s.acct = fakeBackend{id: &Identity{PID: 1, Nickname: "tester", FriendCode: "SW-0000-0000-0000", BsDid: "did"}}
 
 	r := httptest.NewRequest("GET", "https://"+baasHost+"/2.0.0/users/"+u.ID+"/relationships/aaaaaaaaaaaa0002", nil)
@@ -346,9 +347,9 @@ func TestRelationshipShape(t *testing.T) {
 // gone through report itself as a communication error.
 func TestAcceptingAFriendRequestAnswersInTheConsolesWords(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	u, _ := s.store.NewUser()
-	s.store.Update(u, func(u *User) { u.PID, u.Nickname = 1, "Leia" })
+	s.store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "Leia" })
 	s.acct = codeBackend{
 		fakeBackend: fakeBackend{id: &Identity{PID: 1, NaID: "bbbbbbbbbbbb0002", Nickname: "Leia",
 			FriendCode: "SW-1000-0000-0002", Country: "IE", BsDid: "did"}},
@@ -404,12 +405,12 @@ func TestAcceptingAFriendRequestAnswersInTheConsolesWords(t *testing.T) {
 // never asked for the list again and showed nothing.
 func TestBecomingFriendsMovesFriendsUpdatedAt(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	old := time.Now().Unix() - 3600 // yesterday's friend list, as far as a console knows
 	me, _ := s.store.NewUser()
-	s.store.Update(me, func(u *User) { u.PID, u.Nickname, u.FriendsUpdatedAt = 1, "Leia", old })
+	s.store.Update(me, func(u *store.User) { u.PID, u.Nickname, u.FriendsUpdatedAt = 1, "Leia", old })
 	other, _ := s.store.NewUser()
-	s.store.Update(other, func(u *User) { u.PID, u.Nickname, u.FriendsUpdatedAt = 2, "hansolo", old })
+	s.store.Update(other, func(u *store.User) { u.PID, u.Nickname, u.FriendsUpdatedAt = 2, "hansolo", old })
 
 	s.acct = codeBackend{
 		fakeBackend: fakeBackend{id: &Identity{PID: 1, Nickname: "Leia", FriendCode: "SW-1000-0000-0002", BsDid: "did"}},
@@ -445,7 +446,7 @@ func TestBecomingFriendsMovesFriendsUpdatedAt(t *testing.T) {
 // The honest empty answer is {"items":[]} [friends-contract-22.5.0 §A.9, C18].
 func TestFriendRecommendationsAnswerLikeTheReferenceDoes(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 
 	const host = "api-lp1.frs.srv.nintendo.net"
 	r := httptest.NewRequest("GET", "https://"+host+"/v1/friend_recommendations?id_token=x&type=nintendo_account", nil)
@@ -474,14 +475,14 @@ func TestFriendRecommendationsAnswerLikeTheReferenceDoes(t *testing.T) {
 // The format epoch is that one-time nudge: every account reports at least it.
 func TestOldFriendListCacheIsInvalidatedOnce(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	me, _ := s.store.NewUser()
-	s.store.Update(me, func(u *User) { u.PID, u.FriendsUpdatedAt = 1, friendListFormatEpoch-1 })
+	s.store.Update(me, func(u *store.User) { u.PID, u.FriendsUpdatedAt = 1, friendListFormatEpoch-1 })
 	if got := s.userObj(me, nil, "")["friendsUpdatedAt"].(int64); got != friendListFormatEpoch {
 		t.Errorf("stale cache not invalidated: friendsUpdatedAt = %d, want %d", got, friendListFormatEpoch)
 	}
 	// A later friendship still wins; the floor is a floor, not the answer.
-	s.store.Update(me, func(u *User) { u.FriendsUpdatedAt = friendListFormatEpoch + 5 })
+	s.store.Update(me, func(u *store.User) { u.FriendsUpdatedAt = friendListFormatEpoch + 5 })
 	if got := s.userObj(me, nil, "")["friendsUpdatedAt"].(int64); got != friendListFormatEpoch+5 {
 		t.Errorf("friendsUpdatedAt = %d, want %d", got, friendListFormatEpoch+5)
 	}
@@ -494,7 +495,7 @@ func TestOldFriendListCacheIsInvalidatedOnce(t *testing.T) {
 // `/v1/users/%016llx/membership?application_id=%016llx` -> `$.membership.active`].
 func TestPerTitleMembershipCheckIsAnswered(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 
 	const host = "capi.lp1.op2.nintendo.net"
 	r := httptest.NewRequest("GET", "https://"+host+
@@ -521,7 +522,7 @@ func TestPerTitleMembershipCheckIsAnswered(t *testing.T) {
 // else's 404.
 func TestUserTransferIsNotForwardedIntoTheSavesService(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	s.saves = newSavesProxy("http://saves.invalid")
 
 	const host = "migration.lp1.scsi.srv.nintendo.net"

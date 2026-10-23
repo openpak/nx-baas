@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/store"
 	"nx-baas/internal/token"
 	"os"
 	"time"
@@ -227,7 +228,7 @@ func (s *server) switchEmulator(w http.ResponseWriter, r *http.Request) {
 		// Wii U" for a friend whose title it could never draw.
 		namespace, since, client := "", int64(0), ""
 		if subject := s.store.User(f.BaasUserID); subject != nil {
-			p := Presence{State: "OFFLINE"}
+			p := store.Presence{State: "OFFLINE"}
 			if viewer == nil || presenceVisible(viewer, subject, true) {
 				p = aggregatePresence(subject, now, lease)
 			}

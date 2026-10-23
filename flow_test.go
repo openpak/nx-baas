@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"nx-baas/internal/store"
 	"os"
 	"regexp"
 	"sort"
@@ -35,10 +36,10 @@ func TestEveryURLTheConsoleIsHandedIsServed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("NX_DATA", t.TempDir()) // nothing hand-placed, as on a fresh deploy
 			s := dauthServer(t)
-			s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+			s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 			u, d := s.store.NewUser()
 			if tc.linked {
-				s.store.Update(u, func(u *User) { u.PID = 1; u.Nickname = "tester"; u.Avatar = tc.avatar })
+				s.store.Update(u, func(u *store.User) { u.PID = 1; u.Nickname = "tester"; u.Avatar = tc.avatar })
 				s.acct = fakeBackend{id: &Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
 					FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did"}}
 			} else {
@@ -112,9 +113,9 @@ func TestTheConsoleIsShownTheAccountsOwnPicture(t *testing.T) {
 
 	t.Setenv("NX_DATA", t.TempDir())
 	s := dauthServer(t)
-	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	u, _ := s.store.NewUser()
-	s.store.Update(u, func(u *User) { u.PID = 1; u.Nickname = "tester" }) // no console upload
+	s.store.Update(u, func(u *store.User) { u.PID = 1; u.Nickname = "tester" }) // no console upload
 	s.acct = fakeBackend{id: &Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
 		FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did",
 		AvatarURL: site.URL + "/media/avatars/acct-1/console.jpg"}}
@@ -142,7 +143,7 @@ func TestTheConsoleIsShownTheAccountsOwnPicture(t *testing.T) {
 func TestTheNewerPictureWins(t *testing.T) {
 	const consoleUpload, websiteEdit = int64(1000), int64(2000)
 
-	newServer := func(t *testing.T, siteBody []byte, siteAt int64) (*server, *User) {
+	newServer := func(t *testing.T, siteBody []byte, siteAt int64) (*server, *store.User) {
 		t.Helper()
 		site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "image/jpeg")
@@ -151,9 +152,9 @@ func TestTheNewerPictureWins(t *testing.T) {
 		t.Cleanup(site.Close)
 		t.Setenv("NX_DATA", t.TempDir())
 		s := dauthServer(t)
-		s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+		s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 		u, _ := s.store.NewUser()
-		s.store.Update(u, func(u *User) {
+		s.store.Update(u, func(u *store.User) {
 			u.PID, u.Nickname = 1, "tester"
 			u.Avatar, u.AvatarAt = "/9j/4AAQSkZJRg==", consoleUpload // the console's own
 		})
@@ -200,7 +201,7 @@ func TestTheNewerPictureWins(t *testing.T) {
 // console said it could not find the user.
 func TestFriendCodeLookupUsesTheQueryTheConsoleSends(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	u, _ := s.store.NewUser() // the signed-in console doing the looking up
 	s.acct = codeBackend{code: "SW-1000-0000-0002", friend: &Friend{
 		PID: 1900000002, BaasUserID: "aaaaaaaaaaaa0002", NaID: "bbbbbbbbbbbb0002",
@@ -287,7 +288,7 @@ func TestFriendObjectCarriesWhatAUserObjectCarries(t *testing.T) {
 	}
 
 	s := dauthServer(t)
-	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	obj := s.friendObj(Friend{
 		PID: 1900000002, BaasUserID: "aaaaaaaaaaaa0002", NaID: "bbbbbbbbbbbb0002",
 		FriendCode: "SW-1000-0000-0002", Nickname: "Leia", Country: "GB", CreatedAt: 1788896080,
@@ -325,7 +326,7 @@ func TestSearchReplyMatchesTheAcceptedShape(t *testing.T) {
 	}
 
 	s := dauthServer(t)
-	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	u, _ := s.store.NewUser() // the signed-in console doing the looking up
 	s.acct = codeBackend{code: "SW-1000-0000-0002", friend: &Friend{
 		PID: 1900000002, BaasUserID: "aaaaaaaaaaaa0002", NaID: "bbbbbbbbbbbb0002",
@@ -395,9 +396,9 @@ func TestSearchReplyMatchesTheAcceptedShape(t *testing.T) {
 // list looked like from the sofa with the data sitting in the reply.
 func TestFriendListEntriesCarryACountry(t *testing.T) {
 	s := dauthServer(t)
-	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	u, _ := s.store.NewUser()
-	s.store.Update(u, func(u *User) { u.PID, u.Nickname = 1, "Leia" })
+	s.store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "Leia" })
 	s.acct = fakeBackend{id: &Identity{PID: 1, Nickname: "Leia", FriendCode: "SW-1000-0000-0002", BsDid: "did",
 		Friends: []Friend{{PID: 2, BaasUserID: "aaaaaaaaaaaa0001", Nickname: "hansolo",
 			FriendCode: "SW-1000-0000-0001", Country: "IE", CreatedAt: 1788818380}}}}

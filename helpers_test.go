@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http/httptest"
+	"nx-baas/internal/store"
 	"strings"
 	"sync"
 	"testing"
@@ -20,9 +21,9 @@ func consoleUA() string {
 func linkedServer(t *testing.T) *server {
 	t.Helper()
 	s := dauthServer(t)
-	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	u, _ := s.store.NewUser()
-	s.store.Update(u, func(u *User) { u.PID = 7; u.Nickname = "tester" })
+	s.store.Update(u, func(u *store.User) { u.PID = 7; u.Nickname = "tester" })
 	s.store.RememberNA(testNAID, 7)
 	s.acct = fakeBackend{id: &Identity{PID: 7, NaID: testNAID, Nickname: "tester"}}
 	return s

@@ -741,13 +741,13 @@ func (s *server) acbaaLoad() {
 	// happens to re-register (warm boots reuse the cached token and never
 	// POST /users, so lazy migration can wait forever while lookups miss).
 	if s.store != nil {
-		s.store.mu.Lock()
+		s.store.Mu.Lock()
 		for sub, u := range s.store.Users {
 			if earlier, err := strconv.ParseUint(sub, 16, 64); err == nil && earlier != 0 && u != nil && u.PID != 0 && earlier != u.PID {
 				s.migrateUIDLocked(earlier, u.PID)
 			}
 		}
-		s.store.mu.Unlock()
+		s.store.Mu.Unlock()
 	}
 	s.mu.Unlock()
 	log.Printf("[acbaa] store %s: %d profile(s) restored", s.acbaaPath, n)

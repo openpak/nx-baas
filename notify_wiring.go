@@ -18,6 +18,7 @@ package main
 
 import (
 	"fmt"
+	"nx-baas/internal/store"
 	"sync"
 	"time"
 )
@@ -162,7 +163,7 @@ func (s *server) notifyPresenceIfChanged(userID, before string) {
 
 // presenceEventValue is the presence a presence_updated event carries: the same fields the friend
 // list carries, so a cached friend does not change shape between the two.
-func presenceEventValue(userID string, agg Presence) map[string]any {
+func presenceEventValue(userID string, agg store.Presence) map[string]any {
 	v := map[string]any{
 		"userId":    userID,
 		"state":     agg.State,
@@ -190,7 +191,7 @@ func presenceEventValue(userID string, agg Presence) map[string]any {
 // ("%016llx" of 0), never an absent key: until 2026-10-10 every INACTIVE,
 // OFFLINE and title-less ONLINE event was dropped by the console, which then
 // never saw a friend leave and so never saw them come back.
-func presenceEventExtras(p Presence) map[string]any {
+func presenceEventExtras(p store.Presence) map[string]any {
 	// appField is a JSON-object string: "" fails the parse too [firmware, 0x1a7670].
 	out := map[string]any{
 		"appField":                appFieldOrEmpty(p.AppField),

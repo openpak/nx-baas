@@ -36,6 +36,7 @@ import (
 	"net/http"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/msgpack"
+	"nx-baas/internal/store"
 	"nx-baas/internal/token"
 	"nx-baas/redact"
 	"os"
@@ -134,7 +135,7 @@ func (s *server) reportIdentity(r *http.Request) (device, account string) {
 			if n, ok := c["nintendo"].(map[string]any); ok {
 				device = httpx.Str(n, "di")
 			}
-			var u *User
+			var u *store.User
 			if s.store != nil {
 				u = s.store.User(sub)
 			}

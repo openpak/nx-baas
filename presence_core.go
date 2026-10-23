@@ -19,6 +19,7 @@ import (
 
 	accountv1 "nx-baas/accountpb"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/store"
 )
 
 // corePresence is one account's presence as the core holds it.
@@ -118,12 +119,12 @@ func (s *server) corePresenceOf(accountID string) (corePresence, bool) {
 // system friend list actually shows a description for a friend with no
 // title is NOT verified on hardware; NX_FOREIGN_PRESENCE_DESCRIPTION=0 turns
 // the text off and leaves the plain ONLINE this served before.
-func (s *server) presenceFromCore(accountID, namespace string, now int64) (Presence, bool) {
+func (s *server) presenceFromCore(accountID, namespace string, now int64) (store.Presence, bool) {
 	p, ok := s.corePresenceOf(accountID)
 	if !ok {
-		return Presence{}, false
+		return store.Presence{}, false
 	}
-	out := Presence{State: "ONLINE", UpdatedAt: p.Since, ACDIndex: -1, Client: p.Client}
+	out := store.Presence{State: "ONLINE", UpdatedAt: p.Since, ACDIndex: -1, Client: p.Client}
 	if out.UpdatedAt == 0 {
 		out.UpdatedAt = now
 	}

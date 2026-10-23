@@ -15,6 +15,7 @@ package main
 
 import (
 	"net/url"
+	"nx-baas/internal/store"
 	"regexp"
 	"testing"
 	"time"
@@ -120,16 +121,16 @@ func TestSigningInAtHomeKeepsTheLastDeparture(t *testing.T) {
 	viewer, subject := users[0], users[1]
 	// socialServer renames its users after the device accounts were made, so
 	// the subject's device account is pointed back at it here.
-	s.store.mu.Lock()
+	s.store.Mu.Lock()
 	dev := s.store.Devices[subject.DeviceAccounts[0]]
 	dev.UserID = subject.ID
-	s.store.mu.Unlock()
+	s.store.Mu.Unlock()
 	away := time.Now().Unix() - 2*3600
-	s.store.Update(s.store.User(subject.ID), func(u *User) {
-		u.DevicePresence = map[string]*DevicePresence{
+	s.store.Update(s.store.User(subject.ID), func(u *store.User) {
+		u.DevicePresence = map[string]*store.DevicePresence{
 			dev.ID: {DeviceID: dev.ID, State: "OFFLINE", UpdatedAt: away, LogoutAt: away},
 		}
-		u.Presence = Presence{State: "OFFLINE", UpdatedAt: away, LogoutAt: away}
+		u.Presence = store.Presence{State: "OFFLINE", UpdatedAt: away, LogoutAt: away}
 	})
 
 	form := url.Values{"id": {dev.ID}, "password": {dev.Password}}.Encode()

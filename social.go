@@ -21,6 +21,7 @@ import (
 	"errors"
 	"net/url"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/store"
 	"strings"
 )
 
@@ -57,7 +58,7 @@ func relationshipEntryGaps(entry map[string]any) []string {
 // native default is on, so an unset preference means enabled — and a set
 // false must stay false (SOC-02). This preference gates the *alert* (PRE-04);
 // it never gates the state: a friend list stays current with alerts off.
-func onlineNotificationOf(p *FriendPreference) bool {
+func onlineNotificationOf(p *store.FriendPreference) bool {
 	return p == nil || p.OnlineNotification == nil || *p.OnlineNotification
 }
 
@@ -65,7 +66,7 @@ func onlineNotificationOf(p *FriendPreference) bool {
 // the viewer's own relationship state, and the presence the viewer may see.
 // Every timestamp is state-derived, so rendering an unchanged list twice
 // produces identical entries — a stable etag (SOC-05).
-func (s *server) relationshipObj(viewer *User, f Friend, now int64) map[string]any {
+func (s *server) relationshipObj(viewer *store.User, f Friend, now int64) map[string]any {
 	user := s.friendObj(f, now)
 	presence, on := s.visiblePresenceOn(viewer, f, now)
 	user["presence"] = presence
@@ -119,7 +120,7 @@ var playLogGroups = []string{"self", "favoriteFriends", "friends", "everyone"}
 // permission, and the log. A value counts only as the console's parser takes
 // it: a string that starts with [ and ends with ] [§A.1]. Called with the
 // store lock held.
-func playLogGroup(u *User) (group, pl string) {
+func playLogGroup(u *store.User) (group, pl string) {
 	for _, g := range playLogGroups {
 		if v := u.PlayLog[g]; strings.HasPrefix(v, "[") && strings.HasSuffix(v, "]") {
 			return g, v
@@ -132,12 +133,12 @@ func playLogGroup(u *User) (group, pl string) {
 // is served under: the one that carries it. everyone is anyone's (viewer nil
 // is anyone), friends a friend's, favoriteFriends only a friend the subject
 // marked favourite, self nobody else's. A block either way hides it.
-func (s *server) visiblePlayLog(viewer, subject *User, areFriends bool) (group, pl string) {
+func (s *server) visiblePlayLog(viewer, subject *store.User, areFriends bool) (group, pl string) {
 	if subject == nil {
 		return "", ""
 	}
-	s.store.mu.Lock()
-	defer s.store.mu.Unlock()
+	s.store.Mu.Lock()
+	defer s.store.Mu.Unlock()
 	group, pl = playLogGroup(subject)
 	if viewer != nil && viewer.ID == subject.ID {
 		return group, pl
@@ -193,7 +194,7 @@ func normalizePresencePermission(v any) string {
 // acceptsFriendRequests reports the receiver's 30811 switch: unset is the
 // documented default (on), and only an explicit false refuses. Anything that
 // is not a bool is a stored-raw relic, not a switch position [C10].
-func acceptsFriendRequests(u *User) bool {
+func acceptsFriendRequests(u *store.User) bool {
 	if u == nil {
 		return true
 	}
@@ -207,12 +208,12 @@ func acceptsFriendRequests(u *User) bool {
 
 // prefOf reads the viewer's preference record for one friend. Empty records
 // are never created by a read: a preference that was never set stays unset.
-func (s *server) prefOf(viewer *User, friendBaasID string) *FriendPreference {
+func (s *server) prefOf(viewer *store.User, friendBaasID string) *store.FriendPreference {
 	if viewer == nil {
 		return nil
 	}
-	s.store.mu.Lock()
-	defer s.store.mu.Unlock()
+	s.store.Mu.Lock()
+	defer s.store.Mu.Unlock()
 	if viewer.FriendPrefs == nil {
 		return nil
 	}
@@ -228,22 +229,22 @@ func (s *server) prefOf(viewer *User, friendBaasID string) *FriendPreference {
 // aggregate of their devices, flattened to a plain OFFLINE when the viewer
 // may not see it (PRE-03). It never invents recency: timestamps come from the
 // state changes that produced the entry, not from this render.
-func (s *server) visiblePresence(viewer *User, f Friend, now int64) map[string]any {
+func (s *server) visiblePresence(viewer *store.User, f Friend, now int64) map[string]any {
 	p, _ := s.visiblePresenceOn(viewer, f, now)
 	return p
 }
 
 // visiblePresenceOn is visiblePresence plus where the friend is live, as a person reads it
 // ("Harbor", "Switch", "Pier"), or "" when they are not live or the viewer may not see them.
-func (s *server) visiblePresenceOn(viewer *User, f Friend, now int64) (map[string]any, string) {
+func (s *server) visiblePresenceOn(viewer *store.User, f Friend, now int64) (map[string]any, string) {
 	lease := presenceLease()
 	subject := s.store.User(f.BaasUserID)
 	if subject == nil {
 		// No local record: fall back to what the lookup carried, timestamped
 		// by what we know about the relationship rather than by this render.
-		p := Presence{State: "OFFLINE", UpdatedAt: f.CreatedAt}
+		p := store.Presence{State: "OFFLINE", UpdatedAt: f.CreatedAt}
 		if f.PresenceStatus > 0 {
-			p = Presence{State: "ONLINE", AppField: f.PresenceAppField, AppID: f.PresenceAppID,
+			p = store.Presence{State: "ONLINE", AppField: f.PresenceAppField, AppID: f.PresenceAppID,
 				PresenceGroupID: f.PresenceAppID, UpdatedAt: f.CreatedAt}
 			if f.PresenceStatus == 2 {
 				p.State = "PLAYING"
@@ -254,7 +255,7 @@ func (s *server) visiblePresenceOn(viewer *User, f Friend, now int64) (map[strin
 	// The caller renders the core's friend list, so friendship is established;
 	// presenceVisible answers the privacy half.
 	if !presenceVisible(viewer, subject, true) {
-		return presenceObj(Presence{State: "OFFLINE", UpdatedAt: now}), ""
+		return presenceObj(store.Presence{State: "OFFLINE", UpdatedAt: now}), ""
 	}
 	agg := aggregatePresence(subject, now, lease)
 	if agg.State == "OFFLINE" {
@@ -339,7 +340,7 @@ func baasFailure(err error) (int, string, string, string) {
 // so. The console expects exactly that: a send answered with state
 // AUTHORIZED is the case "the receiver had already asked the sender", and it
 // syncs its friend list at once [friends-contract-22.5.0 §A.4.1, C4].
-func (s *server) commitFriendRequest(me *User, target *Friend) (created, authorized bool, reqID string, err error) {
+func (s *server) commitFriendRequest(me *store.User, target *Friend) (created, authorized bool, reqID string, err error) {
 	if err := s.acct.FriendRequest(me.PID, target.PID); err != nil {
 		if errors.Is(err, errReversePending) {
 			id, _ := s.store.EnsureRequest(target.PID, me.PID)
@@ -358,7 +359,7 @@ func (s *server) commitFriendRequest(me *User, target *Friend) (created, authori
 // friendRequestReply renders the request the console should believe in, after
 // the core call has committed or matched it. When incoming, sender/receiver
 // are the truth of the existing request, not what the caller asked for.
-func (s *server) friendRequestReply(me *User, id *Identity, target *Friend, reqID string, incoming bool, body []byte, now int64) map[string]any {
+func (s *server) friendRequestReply(me *store.User, id *Identity, target *Friend, reqID string, incoming bool, body []byte, now int64) map[string]any {
 	record := s.store.RequestByID(reqID)
 	createdAt, updatedAt := now, now
 	if record != nil {
@@ -386,7 +387,7 @@ func (s *server) friendRequestReply(me *User, id *Identity, target *Friend, reqI
 // array the console reads channels[0] from. Requests that predate the record
 // keeping it, or that came from the core rather than a console, say
 // FRIEND_CODE as they always did.
-func requestChannels(record *FriendRequestRecord) []string {
+func requestChannels(record *store.FriendRequestRecord) []string {
 	if record == nil || record.Channel == "" {
 		return []string{"FRIEND_CODE"}
 	}
@@ -421,7 +422,7 @@ func (s *server) noteRequestRoute(reqID string, body []byte) {
 // record names the pair; the core owns the state. Reject, like cancel and
 // remove, ends the pending relationship, which is why all three map to the
 // backend's RemoveFriend.
-func (s *server) settleRequest(me *User, record *FriendRequestRecord, accept bool) error {
+func (s *server) settleRequest(me *store.User, record *store.FriendRequestRecord, accept bool) error {
 	if me.PID != record.ToPID {
 		return errForbiddenMutation
 	}
@@ -429,7 +430,7 @@ func (s *server) settleRequest(me *User, record *FriendRequestRecord, accept boo
 }
 
 // cancelRequest withdraws a request I sent.
-func (s *server) cancelRequest(me *User, record *FriendRequestRecord) error {
+func (s *server) cancelRequest(me *store.User, record *store.FriendRequestRecord) error {
 	if me.PID != record.FromPID {
 		return errForbiddenMutation
 	}
@@ -439,7 +440,7 @@ func (s *server) cancelRequest(me *User, record *FriendRequestRecord) error {
 // removeFriend commits a removal through the core and marks both lists.
 // Never a silent no-op: the console's remove button must either commit or
 // say so.
-func (s *server) removeFriend(me *User, other *Friend) error {
+func (s *server) removeFriend(me *store.User, other *Friend) error {
 	if err := s.acct.RemoveFriend(me.PID, other.PID); err != nil {
 		return err
 	}
@@ -450,7 +451,7 @@ func (s *server) removeFriend(me *User, other *Friend) error {
 // setBlock commits a block or unblock through the core (which owns
 // enforcement) and mirrors it locally for the surfaces that read this store's
 // block list.
-func (s *server) setBlock(me *User, other *Friend, block bool) error {
+func (s *server) setBlock(me *store.User, other *Friend, block bool) error {
 	var err error
 	if block {
 		err = s.acct.Block(me.PID, other.PID)
@@ -460,7 +461,7 @@ func (s *server) setBlock(me *User, other *Friend, block bool) error {
 	if err != nil {
 		return err
 	}
-	s.store.Update(me, func(u *User) {
+	s.store.Update(me, func(u *store.User) {
 		kept := u.Blocks[:0]
 		for _, b := range u.Blocks {
 			if b != other.BaasUserID {
@@ -487,15 +488,15 @@ const maxBlockEntries = 100
 // them fails the whole list, so a target this network cannot resolve still
 // gets a nickname (empty) and the default picture [friends-contract-22.5.0
 // §A.8].
-func (s *server) blockObj(u *User, target string, now int64) map[string]any {
+func (s *server) blockObj(u *store.User, target string, now int64) map[string]any {
 	user := map[string]any{"nickname": "", "thumbnailUrl": cdnHost + "/1/default"}
 	if f := s.resolveFriend(target); f != nil {
 		user = s.friendObj(*f, now)
 	}
 	item := map[string]any{"targetUserId": target, "targetUser": user}
-	s.store.mu.Lock()
+	s.store.Mu.Lock()
 	d := u.BlockDetails[target]
-	s.store.mu.Unlock()
+	s.store.Mu.Unlock()
 	if d != nil {
 		item["createdAt"] = d.CreatedAt
 		if d.Self != nil {
@@ -531,7 +532,7 @@ func (s *server) friendByPID(pid uint64) *Friend {
 // id from this server, or a bare user id from an inbox rendered by an older
 // build — onto its record and the friend it is about. Exactly one of the two
 // results is non-nil.
-func (s *server) friendRequestByRef(ref string) (*FriendRequestRecord, *Friend) {
+func (s *server) friendRequestByRef(ref string) (*store.FriendRequestRecord, *Friend) {
 	if record := s.store.RequestByID(ref); record != nil {
 		return record, nil
 	}

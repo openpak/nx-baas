@@ -15,6 +15,7 @@ import (
 	"time"
 
 	accountv1 "nx-baas/accountpb"
+	"nx-baas/internal/store"
 )
 
 // fakeBans stands in for the core: pid -> account, account -> status, and a lookup count.
@@ -102,7 +103,7 @@ func errorCodeOf(t *testing.T, w *httptest.ResponseRecorder) string {
 func TestBannedAccountCannotSignInOnTheConsole(t *testing.T) {
 	s, f := banServer(t)
 	u, d := s.store.NewUser()
-	s.store.Update(u, func(u *User) { u.PID = hostPID })
+	s.store.Update(u, func(u *store.User) { u.PID = hostPID })
 	form := url.Values{"id": {d.ID}, "password": {d.Password}}.Encode()
 
 	w := baasReq(s, "POST", "/1.0.0/login", "", form)

@@ -8,6 +8,7 @@ import (
 	"image/jpeg"
 	"net/http"
 	"net/http/httptest"
+	"nx-baas/internal/store"
 	"testing"
 )
 
@@ -17,7 +18,7 @@ import (
 func TestThumbnailIsServedAtTheRequestedSize(t *testing.T) {
 	t.Setenv("NX_DATA", t.TempDir())
 	s := dauthServer(t)
-	s.store = loadStore(t.TempDir() + "/baas.json")
+	s.store = store.Load(t.TempDir() + "/baas.json")
 	u, _ := s.store.NewUser()
 
 	src := image.NewRGBA(image.Rect(0, 0, 256, 256))
@@ -30,7 +31,7 @@ func TestThumbnailIsServedAtTheRequestedSize(t *testing.T) {
 	if err := jpeg.Encode(&stored, src, nil); err != nil {
 		t.Fatal(err)
 	}
-	s.store.Update(u, func(u *User) { u.PID = 1 })
+	s.store.Update(u, func(u *store.User) { u.PID = 1 })
 	s.acct = fakeBackend{id: &Identity{PID: 1, Avatar: base64.StdEncoding.EncodeToString(stored.Bytes())}}
 
 	get := func(path string) []byte {

@@ -13,6 +13,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"nx-baas/internal/store"
 	"nx-baas/redact"
 	"strings"
 	"time"
@@ -255,7 +256,7 @@ func bodyField(body []byte, form url.Values, keys ...string) string {
 // permissionsOf serves the user's privacy switches: the documented defaults,
 // overridden by anything they changed on the console. Values are the console's
 // own (friends EVERYONE|FRIENDS|SELF, presence FRIENDS|FAVORITE_FRIENDS|SELF).
-func permissionsOf(u *User) map[string]any {
+func permissionsOf(u *store.User) map[string]any {
 	p := map[string]any{
 		"friendRequestReception": true, "friends": "EVERYONE",
 		"personalAnalytics": true, "personalAnalyticsUpdatedAt": u.CreatedAt,
@@ -366,7 +367,7 @@ const friendListFormatEpoch = 1789159700 // 2026-09-11T20:48:20Z, when this ship
 // cached friend list is stale. It used to be the user's UpdatedAt, which moves
 // for a picture or a nickname and not for a friendship, so a console that had
 // just become friends with somebody never asked for the list again.
-func friendsUpdatedAt(u *User) int64 {
+func friendsUpdatedAt(u *store.User) int64 {
 	v := u.UpdatedAt
 	if u.FriendsUpdatedAt > 0 {
 		v = u.FriendsUpdatedAt
@@ -382,10 +383,10 @@ func friendsUpdatedAt(u *User) int64 {
 // strictly monotonic (see bumpFriendsUpdated): two changes inside one second
 // must not collapse into one, or a console that refetched between them keeps
 // the stale list.
-func (s *server) friendGraphChanged(u *User, otherBaasID string) {
+func (s *server) friendGraphChanged(u *store.User, otherBaasID string) {
 	now := time.Now().Unix()
-	s.store.Update(u, func(u *User) { bumpFriendsUpdated(u, now) })
+	s.store.Update(u, func(u *store.User) { store.BumpFriendsUpdated(u, now) })
 	if other := s.store.User(otherBaasID); other != nil {
-		s.store.Update(other, func(o *User) { bumpFriendsUpdated(o, now) })
+		s.store.Update(other, func(o *store.User) { store.BumpFriendsUpdated(o, now) })
 	}
 }

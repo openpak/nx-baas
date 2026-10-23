@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"net/url"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/store"
 	"nx-baas/internal/token"
 	"nx-baas/redact"
 	"strconv"
@@ -149,7 +150,7 @@ func (s *server) pidLock(pid uint64) string {
 	return s.accountLock(src.accountFor(pid))
 }
 
-func (s *server) userLock(u *User) string {
+func (s *server) userLock(u *store.User) string {
 	if u == nil {
 		return ""
 	}

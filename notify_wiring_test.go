@@ -7,6 +7,7 @@ package main
 // console parsed anything; nx-penne's own tests cover the outbox and the wire.
 
 import (
+	"nx-baas/internal/store"
 	"testing"
 	"time"
 )
@@ -168,7 +169,7 @@ func TestPresenceChangeNotifiesFriendsOnceAndOnlyOnChange(t *testing.T) {
 func TestBlockedViewerIsNotToldAboutPresence(t *testing.T) {
 	s, _, users := socialServer(t)
 	viewer, subject := users[0], users[1]
-	s.store.Update(viewer, func(u *User) { u.Blocks = append(u.Blocks, subject.ID) })
+	s.store.Update(viewer, func(u *store.User) { u.Blocks = append(u.Blocks, subject.ID) })
 
 	s.noteDevicePresence(s.store.User(subject.ID), "dev-1", "ONLINE", "", "", "", -1)
 
@@ -247,7 +248,7 @@ func TestInvitationNotifyWithoutWiringIsHarmless(t *testing.T) {
 // $.createdAt, and the app fields keep the types the console publishes them in
 // [firmware, friends module 0xa7510].
 func TestPresenceEventCarriesTheParsersShape(t *testing.T) {
-	p := Presence{State: "PLAYING", AppID: "0100000000010000", AppField: "AA==",
+	p := store.Presence{State: "PLAYING", AppID: "0100000000010000", AppField: "AA==",
 		PresenceGroupID: "0100000000010000", ACDIndex: 3, UpdatedAt: 100, LogoutAt: 0}
 	extras := presenceEventExtras(p)
 	if extras["appInfo:appId"] != "0100000000010000" || extras["appInfo:acdIndex"] != 3 {
@@ -257,7 +258,7 @@ func TestPresenceEventCarriesTheParsersShape(t *testing.T) {
 	// parser fails the whole event without appInfo:appId, appInfo:presenceGroupId
 	// and appField (mask 0x3eb, friends 0x1a74a0). acdIndex is optional and stays
 	// out when nobody published one, rather than reading as "index 0".
-	empty := presenceEventExtras(Presence{State: "ONLINE", ACDIndex: -1})
+	empty := presenceEventExtras(store.Presence{State: "ONLINE", ACDIndex: -1})
 	if len(empty) != 3 || empty["appField"] != "{}" || empty["appInfo:appId"] != "0000000000000000" ||
 		empty["appInfo:presenceGroupId"] != "0000000000000000" {
 		t.Errorf("extras for a bare ONLINE = %v, want appField \"{}\" and all-zero ids", empty)

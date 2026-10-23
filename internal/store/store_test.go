@@ -1,9 +1,9 @@
-package main
+package store
 
 import "testing"
 
 func TestLoginAdoptsSeededDevicePassword(t *testing.T) {
-	s := &Store{path: t.TempDir() + "/baas.json", Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	s := &Store{FilePath: t.TempDir() + "/baas.json", Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
 	s.Users["ae575806b0efa797"] = &User{ID: "ae575806b0efa797", PID: 1800000008, DeviceAccounts: []string{"6656e0bbf2927116"}}
 	s.Devices["6656e0bbf2927116"] = &DeviceAccount{ID: "6656e0bbf2927116", UserID: "ae575806b0efa797"}
 	pw := "PsXq5yp32d0zFUPUD9KBTH0BpIqIZkwJnfdrpeNt"
@@ -23,7 +23,7 @@ func TestLoginAdoptsSeededDevicePassword(t *testing.T) {
 // if it keeps pointing at the old id, the console's next /login gets invalid_device_account
 // (console 2124-5002) right after a successful federation.
 func TestLinkRepointsDeviceOfRenamedThrowaway(t *testing.T) {
-	s := &Store{path: t.TempDir() + "/baas.json", Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
+	s := &Store{FilePath: t.TempDir() + "/baas.json", Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
 	u, d := s.NewUser()
 	throwawayID := u.ID
 	linked := s.Link(u, 1849186229, "93fb5b4c4717a199", "e2d6a8df6511f680")

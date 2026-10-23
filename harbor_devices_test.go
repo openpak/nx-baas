@@ -27,6 +27,7 @@ import (
 
 	"nx-baas/internal/b233"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/store"
 	"nx-baas/internal/token"
 )
 
@@ -153,7 +154,7 @@ func (c *fakeClock) now() time.Time { return c.t }
 func enrolServer(t *testing.T) (*server, *fakeClock) {
 	t.Helper()
 	s := dauthServer(t)
-	s.store = &Store{path: filepath.Join(t.TempDir(), "baas.json"), Users: map[string]*User{}, Devices: map[string]*DeviceAccount{}}
+	s.store = &store.Store{FilePath: filepath.Join(t.TempDir(), "baas.json"), Users: map[string]*store.User{}, Devices: map[string]*store.DeviceAccount{}}
 	s.harbor = newHarborDevices(testDeviceCA(t), filepath.Join(t.TempDir(), "harbor-devices.json"))
 	clock := &fakeClock{t: time.Now()}
 	s.harbor.now = clock.now
@@ -289,7 +290,7 @@ func TestHarborEnrolSignsAndBinds(t *testing.T) {
 	}
 
 	// BaaS: the device account belongs to this console from its first login.
-	s.store.Devices["acct1"] = &DeviceAccount{ID: "acct1", Password: "p"}
+	s.store.Devices["acct1"] = &store.DeviceAccount{ID: "acct1", Password: "p"}
 	if !s.bindDeviceAccount("acct1", sub) || s.store.Devices["acct1"].BoundDevice != sub {
 		t.Fatal("the device account was not bound")
 	}
@@ -297,7 +298,7 @@ func TestHarborEnrolSignsAndBinds(t *testing.T) {
 		t.Fatal("another device used a bound device account")
 	}
 	// An account first used by a console that is not enrolled stays unbound.
-	s.store.Devices["acct2"] = &DeviceAccount{ID: "acct2", Password: "p"}
+	s.store.Devices["acct2"] = &store.DeviceAccount{ID: "acct2", Password: "p"}
 	if !s.bindDeviceAccount("acct2", "cert-1111111111111111") || s.store.Devices["acct2"].BoundDevice != "" {
 		t.Fatal("an unenrolled device bound an account")
 	}

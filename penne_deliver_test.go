@@ -4,14 +4,15 @@ package main
 // is not a native event or has no recipient here, and hands everything else on.
 
 import (
+	"nx-baas/internal/store"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
-func mustStore(t *testing.T) *Store {
+func mustStore(t *testing.T) *store.Store {
 	t.Helper()
-	return loadStore(filepath.Join(t.TempDir(), "baas.json"))
+	return store.Load(filepath.Join(t.TempDir(), "baas.json"))
 }
 
 func deliverServer(t *testing.T) (*server, string) {

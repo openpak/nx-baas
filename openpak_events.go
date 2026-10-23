@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"nx-baas/internal/store"
 	"nx-baas/redact"
 	"os"
 	"path/filepath"
@@ -109,9 +110,9 @@ func (s *server) revokeAccountPresence(b *openpakBackend, accountID string) {
 		return
 	}
 	if u := s.store.User(pr.BaasUserID); u != nil {
-		s.store.Update(u, func(u *User) {
+		s.store.Update(u, func(u *store.User) {
 			u.DevicePresence = nil
-			u.Presence = Presence{State: "OFFLINE", UpdatedAt: time.Now().Unix(), LogoutAt: time.Now().Unix()}
+			u.Presence = store.Presence{State: "OFFLINE", UpdatedAt: time.Now().Unix(), LogoutAt: time.Now().Unix()}
 		})
 	}
 }

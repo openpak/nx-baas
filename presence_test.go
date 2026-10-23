@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	accountv1 "nx-baas/accountpb"
+	"nx-baas/internal/store"
 )
 
 // fakeSessions is the core's session registry, the way the reconciler sees
@@ -127,7 +128,7 @@ func (x *fakeSessions) live(id string) bool {
 
 // presenceFixture: a server with the OpenPak backend and a fake core session
 // registry, with the fixture's two linked users.
-func presenceFixture(t *testing.T) (*server, *fakeSessions, *User, *User) {
+func presenceFixture(t *testing.T) (*server, *fakeSessions, *store.User, *store.User) {
 	t.Helper()
 	s, _, users := socialServer(t)
 	sess := newFakeSessions()
@@ -138,7 +139,7 @@ func presenceFixture(t *testing.T) (*server, *fakeSessions, *User, *User) {
 }
 
 // patchPresence drives the console's per-device presence PATCH.
-func patchPresence(t *testing.T, s *server, u *User, device, state string) *httptest.ResponseRecorder {
+func patchPresence(t *testing.T, s *server, u *store.User, device, state string) *httptest.ResponseRecorder {
 	t.Helper()
 	r := authed("PATCH", "/1.0.0/users/"+u.ID+"/device_accounts/"+device,
 		`[{"op":"replace","path":"/presence/state","value":"`+state+`"}]`, u, s)
@@ -148,7 +149,7 @@ func patchPresence(t *testing.T, s *server, u *User, device, state string) *http
 }
 
 // friendPresenceOf renders what A's friend list shows about B.
-func friendPresenceOf(t *testing.T, s *server, viewer, subject *User) map[string]any {
+func friendPresenceOf(t *testing.T, s *server, viewer, subject *store.User) map[string]any {
 	t.Helper()
 	r := authed("GET", "/2.0.0/users/"+viewer.ID+"/friends", "", viewer, s)
 	w := httptest.NewRecorder()
@@ -168,13 +169,13 @@ func friendPresenceOf(t *testing.T, s *server, viewer, subject *User) map[string
 // to OFFLINE with the lease deadline as the departure time.
 func TestAggregatePresencePrecedence(t *testing.T) {
 	s := dauthServer(t)
-	s.store = loadStore(t.TempDir() + "/baas.json")
+	s.store = store.Load(t.TempDir() + "/baas.json")
 	u, _ := s.store.NewUser()
 	now := time.Now().Unix()
 	lease := presenceLease()
 
-	s.store.Update(u, func(u *User) {
-		u.DevicePresence = map[string]*DevicePresence{
+	s.store.Update(u, func(u *store.User) {
+		u.DevicePresence = map[string]*store.DevicePresence{
 			"dev-a": {DeviceID: "dev-a", State: "ONLINE", UpdatedAt: now - 5, ExpiresAt: now + 60},
 			"dev-b": {DeviceID: "dev-b", State: "PLAYING", AppID: "0100", UpdatedAt: now - 3, ExpiresAt: now + 60},
 		}
@@ -186,14 +187,14 @@ func TestAggregatePresencePrecedence(t *testing.T) {
 
 	// The playing device's lease lapses: the other console keeps the account
 	// ONLINE — one device going quiet is not the person leaving.
-	s.store.Update(u, func(u *User) { u.DevicePresence["dev-b"].ExpiresAt = now - 1 })
+	s.store.Update(u, func(u *store.User) { u.DevicePresence["dev-b"].ExpiresAt = now - 1 })
 	agg = aggregatePresence(s.store.User(u.ID), now, lease)
 	if agg.State != "ONLINE" {
 		t.Errorf("after one device expired: %+v", agg)
 	}
 
 	// Both gone: OFFLINE, and the departure is the later lease deadline.
-	s.store.Update(u, func(u *User) { u.DevicePresence["dev-a"].ExpiresAt = now - 10 })
+	s.store.Update(u, func(u *store.User) { u.DevicePresence["dev-a"].ExpiresAt = now - 10 })
 	agg = aggregatePresence(s.store.User(u.ID), now, lease)
 	if agg.State != "OFFLINE" || agg.LogoutAt != now-1 {
 		t.Errorf("after all expired: %+v", agg)
@@ -239,16 +240,16 @@ func TestPresencePatchIsPerDevice(t *testing.T) {
 func TestStalePresenceDoesNotSurviveARestart(t *testing.T) {
 	dir := t.TempDir()
 	s := dauthServer(t)
-	s.store = loadStore(dir + "/baas.json")
+	s.store = store.Load(dir + "/baas.json")
 	u, _ := s.store.NewUser()
 	past := time.Now().Unix() - 3600
-	s.store.Update(u, func(u *User) {
-		u.DevicePresence = map[string]*DevicePresence{
+	s.store.Update(u, func(u *store.User) {
+		u.DevicePresence = map[string]*store.DevicePresence{
 			"dev-1": {DeviceID: "dev-1", State: "PLAYING", AppID: "0100", UpdatedAt: past - 60, ExpiresAt: past},
 		}
 	})
 	// Reload from disk, as a restarted process would.
-	s.store = loadStore(dir + "/baas.json")
+	s.store = store.Load(dir + "/baas.json")
 	agg := aggregatePresence(s.store.User(u.ID), time.Now().Unix(), presenceLease())
 	if agg.State != "OFFLINE" {
 		t.Errorf("a claim that lapsed an hour ago still renders: %+v", agg)
@@ -271,24 +272,24 @@ func TestPresenceVisibility(t *testing.T) {
 
 	// B narrows presence to favourite friends only; A is not one of B's
 	// favourites.
-	s.store.Update(s.store.User(b.ID), func(u *User) { u.Permissions = map[string]any{"presence": "FAVORITE_FRIENDS"} })
+	s.store.Update(s.store.User(b.ID), func(u *store.User) { u.Permissions = map[string]any{"presence": "FAVORITE_FRIENDS"} })
 	if got := view(); got != "OFFLINE" {
 		t.Errorf("non-favourite viewer saw %v under FAVORITE_FRIENDS", got)
 	}
 	// B favourites A: presence flows again.
-	s.store.Update(s.store.User(b.ID), func(u *User) { u.pref(a.ID).Favorite = true })
+	s.store.Update(s.store.User(b.ID), func(u *store.User) { u.Pref(a.ID).Favorite = true })
 	if got := view(); got != "PLAYING" {
 		t.Errorf("favourite viewer saw %v", got)
 	}
 	// SELF hides from everyone but the subject.
-	s.store.Update(s.store.User(b.ID), func(u *User) { u.Permissions["presence"] = "SELF" })
+	s.store.Update(s.store.User(b.ID), func(u *store.User) { u.Permissions["presence"] = "SELF" })
 	if got := view(); got != "OFFLINE" {
 		t.Errorf("viewer saw %v under SELF", got)
 	}
-	s.store.Update(s.store.User(b.ID), func(u *User) { u.Permissions["presence"] = "FRIENDS" })
+	s.store.Update(s.store.User(b.ID), func(u *store.User) { u.Permissions["presence"] = "FRIENDS" })
 
 	// A block in either direction hides presence outright.
-	s.store.Update(s.store.User(b.ID), func(u *User) { u.Blocks = []string{a.ID} })
+	s.store.Update(s.store.User(b.ID), func(u *store.User) { u.Blocks = []string{a.ID} })
 	if got := view(); got != "OFFLINE" {
 		t.Errorf("viewer saw %v while blocked by the subject", got)
 	}
@@ -352,7 +353,7 @@ func TestReconcilerAgreesWithTheCore(t *testing.T) {
 
 	// Silent loss: B's claim lapses, the reconciler expires it locally and
 	// tears the core session down instead of waiting out its lease.
-	s.store.Update(s.store.User(b.ID), func(u *User) {
+	s.store.Update(s.store.User(b.ID), func(u *store.User) {
 		u.DevicePresence["dev-1"].ExpiresAt = now + 2
 	})
 	s.reconcilePresenceOnce(time.Unix(now+3, 0), lease)
@@ -403,7 +404,7 @@ func TestPresenceCarriesTheConsolesOwnACDIndex(t *testing.T) {
 		s.ServeHTTP(w, r)
 		return w.Code
 	}
-	friendsOf := func(u *User) map[string]any {
+	friendsOf := func(u *store.User) map[string]any {
 		r := authed("GET", "/2.0.0/users/"+u.ID+"/friends", "", u, s)
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, r)
@@ -442,15 +443,15 @@ func TestPresenceCarriesTheConsolesOwnACDIndex(t *testing.T) {
 // but the three known values is SELF, so nobody else sees it. Unset stays the
 // documented default (open to friends) [friends-contract-22.5.0 §A.6, C10].
 func TestPresenceVisibleTreatsJunkPermissionAsSelf(t *testing.T) {
-	viewer := &User{ID: "viewer-1"}
-	junk := &User{ID: "subject-1", Permissions: map[string]any{"presence": "EVERYONE"}}
+	viewer := &store.User{ID: "viewer-1"}
+	junk := &store.User{ID: "subject-1", Permissions: map[string]any{"presence": "EVERYONE"}}
 	if presenceVisible(viewer, junk, true) {
 		t.Error("junk presence permission is visible to a friend; console reads SELF")
 	}
 	if !presenceVisible(junk, junk, true) {
 		t.Error("own presence hidden from self")
 	}
-	unset := &User{ID: "subject-2"}
+	unset := &store.User{ID: "subject-2"}
 	if !presenceVisible(viewer, unset, true) {
 		t.Error("unset presence permission hidden from a friend; default is open")
 	}
@@ -619,11 +620,11 @@ func TestLogoutAtIsStampedWhenPresenceGoesInactiveOrOffline(t *testing.T) {
 	s, _, a, b := presenceFixture(t)
 	lease := presenceLease()
 	old := time.Now().Unix() - 14*3600
-	s.store.Update(s.store.User(b.ID), func(u *User) {
-		u.DevicePresence = map[string]*DevicePresence{
+	s.store.Update(s.store.User(b.ID), func(u *store.User) {
+		u.DevicePresence = map[string]*store.DevicePresence{
 			"dev-1": {DeviceID: "dev-1", State: "OFFLINE", UpdatedAt: old, LogoutAt: old},
 		}
-		u.Presence = Presence{State: "OFFLINE", UpdatedAt: old, LogoutAt: old}
+		u.Presence = store.Presence{State: "OFFLINE", UpdatedAt: old, LogoutAt: old}
 	})
 	logoutAt := func() int64 {
 		t.Helper()
@@ -642,7 +643,7 @@ func TestLogoutAtIsStampedWhenPresenceGoesInactiveOrOffline(t *testing.T) {
 	// Staying at HOME, then switching off from there, keeps that moment: the
 	// friend never saw them online in between.
 	stamp := now - 600
-	s.store.Update(s.store.User(b.ID), func(u *User) { u.DevicePresence["dev-1"].LogoutAt = stamp })
+	s.store.Update(s.store.User(b.ID), func(u *store.User) { u.DevicePresence["dev-1"].LogoutAt = stamp })
 	s.noteDevicePresence(s.store.User(b.ID), "dev-1", "INACTIVE", "", "", "", -1)
 	if got := logoutAt(); got != stamp {
 		t.Errorf("a repeated INACTIVE moved logoutAt: %d, want %d", got, stamp)
@@ -662,8 +663,8 @@ func TestLogoutAtIsStampedWhenPresenceGoesInactiveOrOffline(t *testing.T) {
 	// A lapsed lease is swept into departure evidence, not deleted: the
 	// lease deadline stays the answer after the reconciler has run.
 	deadline := time.Now().Unix() + 3600 // later than every stamp above
-	s.store.Update(s.store.User(b.ID), func(u *User) {
-		u.DevicePresence["dev-2"] = &DevicePresence{DeviceID: "dev-2", State: "PLAYING", AppID: "0100",
+	s.store.Update(s.store.User(b.ID), func(u *store.User) {
+		u.DevicePresence["dev-2"] = &store.DevicePresence{DeviceID: "dev-2", State: "PLAYING", AppID: "0100",
 			UpdatedAt: deadline - 60, ExpiresAt: deadline}
 	})
 	s.expireLocalPresence(s.store.User(b.ID), deadline+1, lease)
@@ -678,7 +679,7 @@ func TestLogoutAtIsStampedWhenPresenceGoesInactiveOrOffline(t *testing.T) {
 // A console at HOME (INACTIVE) is served as ONLINE with its platform in the description, only
 // when asked for; a title or an offline claim is left alone.
 func TestHomeAsOnline(t *testing.T) {
-	home := Presence{State: "INACTIVE", Client: "harbor", UpdatedAt: 5, LogoutAt: 3}
+	home := store.Presence{State: "INACTIVE", Client: "harbor", UpdatedAt: 5, LogoutAt: 3}
 	t.Setenv("NX_PLATFORM_TITLE", "")
 	if got := homeAsOnline(home); got != home {
 		t.Fatalf("flag off must not change anything: %+v", got)
@@ -688,10 +689,10 @@ func TestHomeAsOnline(t *testing.T) {
 	if got.State != "ONLINE" || got.AppField != `{"sys_description":"Harbor"}` || got.AppID != "" {
 		t.Fatalf("home with harbor: %+v", got)
 	}
-	if got := homeAsOnline(Presence{State: "INACTIVE"}); got.AppField != `{"sys_description":"Switch"}` {
+	if got := homeAsOnline(store.Presence{State: "INACTIVE"}); got.AppField != `{"sys_description":"Switch"}` {
 		t.Fatalf("home on a console: %+v", got)
 	}
-	for _, p := range []Presence{{State: "OFFLINE"}, {State: "PLAYING", AppID: "0100a5a020d5e000"}, {State: "ONLINE"}} {
+	for _, p := range []store.Presence{{State: "OFFLINE"}, {State: "PLAYING", AppID: "0100a5a020d5e000"}, {State: "ONLINE"}} {
 		if got := homeAsOnline(p); got != p {
 			t.Fatalf("%s must be left alone: %+v", p.State, got)
 		}
@@ -702,12 +703,12 @@ func TestHomeAsOnline(t *testing.T) {
 // console that reconnected has published nothing on its new connection) and leaves an
 // emulator's claims, a claim already gone and a lapsed game alone; a lapsed HOME claim comes back.
 func TestRenewWithoutADeviceExtendsTheConsolesClaims(t *testing.T) {
-	s := &server{store: loadStore(t.TempDir() + "/baas.json")}
+	s := &server{store: store.Load(t.TempDir() + "/baas.json")}
 	u, _ := s.store.NewUser()
 	now := time.Now().Unix()
 	soon := now + 30
-	s.store.Update(u, func(u *User) {
-		u.DevicePresence = map[string]*DevicePresence{
+	s.store.Update(u, func(u *store.User) {
+		u.DevicePresence = map[string]*store.DevicePresence{
 			"console":    {DeviceID: "console", State: "INACTIVE", Client: "switch", ExpiresAt: soon},
 			"harbor":     {DeviceID: "harbor", State: "INACTIVE", Client: "harbor", ExpiresAt: soon},
 			"gone":       {DeviceID: "gone", State: "OFFLINE", Client: "switch", ExpiresAt: soon},
@@ -764,11 +765,11 @@ func TestTestPF(t *testing.T) {
 			t.Fatalf("%s: out-of-range, unparsable and unlisted must send nothing", c)
 		}
 	}
-	p := presenceObj(Presence{State: "ONLINE", Client: "harbor", ACDIndex: -1})
+	p := presenceObj(store.Presence{State: "ONLINE", Client: "harbor", ACDIndex: -1})
 	if p["pf"] != 2 {
 		t.Fatalf("friend list entry: %v", p["pf"])
 	}
-	if v := presenceEventValue("u", Presence{State: "ONLINE", Client: "harbor"}); v["pf"] != 2 {
+	if v := presenceEventValue("u", store.Presence{State: "ONLINE", Client: "harbor"}); v["pf"] != 2 {
 		t.Fatalf("event: %v", v["pf"])
 	}
 }
@@ -788,12 +789,12 @@ func TestReservedIDs(t *testing.T) {
 	}
 	t.Setenv("NX_HOME_AS_ONLINE", "1")
 	t.Setenv("NX_PLATFORM_TITLE", "1")
-	got := homeAsOnline(Presence{State: "INACTIVE", Client: "harbor"})
+	got := homeAsOnline(store.Presence{State: "INACTIVE", Client: "harbor"})
 	if got.State != "ONLINE" || got.AppID != "01fe00fe00002000" || got.PresenceGroupID != got.AppID {
 		t.Fatalf("home on harbor: %+v", got)
 	}
 	// A real title is never replaced by the platform's.
-	if got := homeAsOnline(Presence{State: "INACTIVE", Client: "harbor", AppID: "0100a5a020d5e000"}); got.AppID != "0100a5a020d5e000" {
+	if got := homeAsOnline(store.Presence{State: "INACTIVE", Client: "harbor", AppID: "0100a5a020d5e000"}); got.AppID != "0100a5a020d5e000" {
 		t.Fatalf("a title was replaced: %+v", got)
 	}
 }

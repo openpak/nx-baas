@@ -13,6 +13,7 @@ import (
 	"encoding/base64"
 	"net/http/httptest"
 	"nx-baas/internal/msgpack"
+	"nx-baas/internal/store"
 	"nx-baas/internal/token"
 	"strconv"
 	"strings"
@@ -717,8 +718,8 @@ func TestAcbaaRegisterUserAnswersNEXPID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &server{key: key, store: loadStore(t.TempDir() + "/baas.json")}
-	s.store.Users["aaaaaaaaaaaa0001"] = &User{ID: "aaaaaaaaaaaa0001", PID: 1800000042}
+	s := &server{key: key, store: store.Load(t.TempDir() + "/baas.json")}
+	s.store.Users["aaaaaaaaaaaa0001"] = &store.User{ID: "aaaaaaaaaaaa0001", PID: 1800000042}
 	now := time.Now().Unix()
 	tok := token.SignJWT(map[string]any{"alg": "RS256", "kid": "x", "typ": "JWT"}, map[string]any{
 		"typ": "id_token", "iss": baasIssuer, "sub": "aaaaaaaaaaaa0001",
@@ -755,8 +756,8 @@ func TestAcbaaMintedPIDRecordsMigrateToNSA(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &server{key: key, store: loadStore(t.TempDir() + "/baas.json"), acbaaPath: t.TempDir() + "/acbaa.json"}
-	s.store.Users["aaaaaaaaaaaa0002"] = &User{ID: "aaaaaaaaaaaa0002", PID: 1800000043}
+	s := &server{key: key, store: store.Load(t.TempDir() + "/baas.json"), acbaaPath: t.TempDir() + "/acbaa.json"}
+	s.store.Users["aaaaaaaaaaaa0002"] = &store.User{ID: "aaaaaaaaaaaa0002", PID: 1800000043}
 	now := time.Now().Unix()
 	tok := token.SignJWT(map[string]any{"alg": "RS256", "kid": "x", "typ": "JWT"}, map[string]any{
 		"typ": "id_token", "iss": baasIssuer, "sub": "aaaaaaaaaaaa0002",

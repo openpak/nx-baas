@@ -42,6 +42,7 @@ import (
 	"net/http"
 	"net/url"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/store"
 	"nx-baas/redact"
 	"os"
 	"regexp"
@@ -417,7 +418,7 @@ func notifyCommitted(ev InvitationEvent) {
 // lifetime, issuer, token type, grant and subject are each checked here
 // (audit P1: jwt.go alone does not do this). The returned user is the
 // principal every path/body id is bound against.
-func (s *server) fiveAuth(r *http.Request) *User {
+func (s *server) fiveAuth(r *http.Request) *store.User {
 	// Integration: the base rules (signature, issuer, type, expiry) are A's
 	// validBearer, so the two surfaces cannot drift apart -- the shared
 	// contract names one token validator. The checks below are the extra
@@ -729,7 +730,7 @@ func (s *server) invitationCoreFor() invitationCore {
 // local block lists on both sides. The core path (CheckInteraction) is the
 // authoritative one; this exists so the proven earlier deployment keeps
 // working unchanged.
-func (s *server) fallbackMayInvite(me *User, targetUID string) bool {
+func (s *server) fallbackMayInvite(me *store.User, targetUID string) bool {
 	target := s.store.User(targetUID)
 	if target == nil || target.PID == 0 {
 		return false
@@ -746,7 +747,7 @@ func (s *server) fallbackMayInvite(me *User, targetUID string) bool {
 	return false
 }
 
-func meBlocks(u *User, other string) bool {
+func meBlocks(u *store.User, other string) bool {
 	for _, b := range u.Blocks {
 		if b == other {
 			return true
@@ -1162,7 +1163,7 @@ func (s *server) mailboxSessionLive(senderUID, appID string) bool {
 
 // createMailboxInvitation stores one emulator-sent invitation. The friend and
 // policy checks are the caller's (gameapi.sendInvitation kept its behavior).
-func createMailboxInvitation(sender *User, senderName string, receiver *User, appParamB64, appID string) (string, bool) {
+func createMailboxInvitation(sender *store.User, senderName string, receiver *store.User, appParamB64, appID string) (string, bool) {
 	now := time.Now()
 	st := invitationStoreFor()
 	st.mu.Lock()
@@ -1199,7 +1200,7 @@ func createMailboxInvitation(sender *User, senderName string, receiver *User, ap
 // popMailboxInvitations returns and removes the caller's live mailbox
 // invitations. Rows whose room went stale are dropped, not delivered: joining
 // a dead room must fail quietly on the sender's side of the wire (INV-04).
-func popMailboxInvitations(s *server, receiver *User) []*invitationRecord {
+func popMailboxInvitations(s *server, receiver *store.User) []*invitationRecord {
 	now := time.Now()
 	st := invitationStoreFor()
 	st.mu.Lock()

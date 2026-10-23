@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/store"
 	"nx-baas/redact"
 	"time"
 )
@@ -81,7 +82,7 @@ func fetchAvatar(url string) ([]byte, error) {
 // change" across the two places one can be set: the console's own upload and
 // the account's avatar on the website. Zero means neither, which is the only
 // case where a console should be sent to /1/default.
-func newerPicture(u *User, id *Identity) int64 {
+func newerPicture(u *store.User, id *Identity) int64 {
 	at := u.AvatarAt
 	if u.Avatar != "" && at == 0 {
 		at = u.UpdatedAt // uploaded before this field existed
