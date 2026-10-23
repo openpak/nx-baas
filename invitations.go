@@ -430,7 +430,7 @@ func (s *server) five(w http.ResponseWriter, r *http.Request, body []byte) {
 	seg := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	// A banned account neither sends nor reads invitations (bans.go). 403 with the code
 	// the module already knows for a refused operation.
-	if lock := s.userLock(s.fiveAuth(r)); lock != "" {
+	if lock := s.locks().UserLock(s.fiveAuth(r)); lock != "" {
 		fiveError(w, r, http.StatusForbidden, "0006", "operation_is_not_permitted")
 		return
 	}

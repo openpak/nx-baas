@@ -25,6 +25,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"nx-baas/internal/bans"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
 	"nx-baas/internal/token"
@@ -451,12 +452,12 @@ func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) b
 			return true
 		}
 		res, err := s.Acct.LoginPID(form.Get("email"), form.Get("password"))
-		lock := s.pidLock(res.PID)
+		lock := s.locks().PIDLock(res.PID)
 		if errors.Is(err, identity.ErrAccountLocked) && lock == "" {
-			lock = lockBanned
+			lock = bans.Banned
 		}
 		if lock != "" {
-			s.phoneLoginPage(w, pair, lockedPageMessage(lock))
+			s.phoneLoginPage(w, pair, bans.LockedPageMessage(lock))
 			return true
 		}
 		if errors.Is(err, identity.ErrSecondFactorRequired) {

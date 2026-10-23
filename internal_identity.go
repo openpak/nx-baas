@@ -47,7 +47,7 @@ func (s *server) identityUsers(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case len(parts) == 1:
 		httpx.WriteJSON(w, 200, map[string]any{
-			"id": u.ID, "na_id": u.NaID, "pid": u.PID, "nickname": u.Nickname, "lock": s.userLock(u),
+			"id": u.ID, "na_id": u.NaID, "pid": u.PID, "nickname": u.Nickname, "lock": s.locks().UserLock(u),
 		})
 	case len(parts) == 2 && parts[1] == "avatar":
 		// Exactly what the cdn-image host serves for /1/<id>: the shop's corner picture is
@@ -74,7 +74,7 @@ func (s *server) identityNA(w http.ResponseWriter, r *http.Request) {
 		httpx.APIErr(w, http.StatusNotFound, "no such route")
 		return
 	}
-	out := map[string]any{"na_id": naID, "baas_user_id": "", "pid": uint64(0), "lock": s.naLock(naID)}
+	out := map[string]any{"na_id": naID, "baas_user_id": "", "pid": uint64(0), "lock": s.locks().NALock(naID)}
 	if pid := s.Store.PIDForNA(naID); pid != 0 {
 		out["pid"] = pid
 		if u := s.Store.UserByPID(pid); u != nil {

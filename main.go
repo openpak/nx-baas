@@ -33,6 +33,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"nx-baas/internal/bans"
 	"nx-baas/internal/core"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
@@ -123,10 +124,10 @@ type server struct {
 	bcatFwd *httputil.ReverseProxy
 	// playfabFwd serves only explicitly supported PlayFab titles (playfab.go).
 	playfabFwd *httputil.ReverseProxy
-	// Ban state (bans.go): a short cache of the core's answer, and a test stand-in for it.
-	bans      *banCache
-	bansOnce  sync.Once
-	banSource banSource
+	// bansChecker answers whether an account may use the network (internal/bans); locks()
+	// creates it on first use so test servers built as literals work unchanged.
+	bansChecker *bans.Checker
+	bansOnce    sync.Once
 	// reports is the console error-report spool (errorreport.go).
 	reports *reportSpool
 }
@@ -716,8 +717,8 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 	// 2124-5110 (bans.go). Pictures and key sets stay public.
 	if strings.HasPrefix(p, "/1.0.0/users/") || strings.HasPrefix(p, "/2.0.0/") {
 		if c := s.ValidBearer(r); c != nil {
-			if lock := s.userLock(s.Store.User(httpx.Str(c, "sub"))); lock != "" {
-				baasLocked(w, r, lock)
+			if lock := s.locks().UserLock(s.Store.User(httpx.Str(c, "sub"))); lock != "" {
+				bans.BaasLocked(w, r, lock)
 				return
 			}
 		}
@@ -889,7 +890,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			var err error
 			if u, err = s.link(u, form.Get("idToken")); err != nil {
 				if errors.Is(err, identity.ErrAccountLocked) {
-					baasLocked(w, r, s.naLockOfToken(form.Get("idToken")))
+					bans.BaasLocked(w, r, s.locks().NALockOfToken(form.Get("idToken")))
 					return
 				}
 				log.Printf("[nx-baas] federation failed: %v", redact.Err(err))
@@ -899,9 +900,9 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		// A console whose device account is linked to a banned account signs in to nothing:
 		// no token, no presence, no notification binding.
-		if lock := s.userLock(u); lock != "" {
+		if lock := s.locks().UserLock(u); lock != "" {
 			log.Printf("[nx-baas] %s refused: user=%s pid=%s is %s", seg[1], redact.Tag(u.ID), redact.Tag(u.PID), lock)
-			baasLocked(w, r, lock)
+			bans.BaasLocked(w, r, lock)
 			return
 		}
 		app, _ := token.ParseJWT(form.Get("appAuthNToken"), nil)
@@ -1387,7 +1388,7 @@ func (s *server) link(u *store.User, idTok string) (*store.User, error) {
 	if pid == 0 {
 		return nil, fmt.Errorf("unknown Nintendo-Account sub %q", naID)
 	}
-	if lock := s.pidLock(pid); lock != "" {
+	if lock := s.locks().PIDLock(pid); lock != "" {
 		return nil, fmt.Errorf("link pid %d: %w (%s)", pid, identity.ErrAccountLocked, lock)
 	}
 	id, err := s.Acct.Identity(pid)
@@ -1965,9 +1966,9 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			httpx.WriteJSON(w, 401, map[string]any{"error": "login_required"})
 			return
 		}
-		if s.pidLock(pid) != "" {
+		if s.locks().PIDLock(pid) != "" {
 			log.Printf("[nx-baas] NA silent authorize refused: pid=%s is locked", redact.Tag(pid))
-			naAuthorizeLocked(w, r, form.Get("redirect_uri"), form.Get("state"))
+			bans.NAAuthorizeLocked(w, r, form.Get("redirect_uri"), form.Get("state"))
 			return
 		}
 		id, err := s.Acct.Identity(pid)
@@ -2021,13 +2022,13 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 				return
 			}
 			res, err := s.Acct.LoginPID(form.Get("email"), form.Get("password"))
-			lock := s.pidLock(res.PID)
+			lock := s.locks().PIDLock(res.PID)
 			if errors.Is(err, identity.ErrAccountLocked) && lock == "" {
-				lock = lockBanned
+				lock = bans.Banned
 			}
 			if lock != "" {
 				log.Printf("[nx-baas] NA login refused for %s: account is %s", redact.Tag(form.Get("email")), lock)
-				s.authorizePage(w, r, q, `<p class="err">`+lockedPageMessage(lock)+`</p>`)
+				s.authorizePage(w, r, q, `<p class="err">`+bans.LockedPageMessage(lock)+`</p>`)
 				return
 			}
 			if errors.Is(err, identity.ErrSecondFactorRequired) {
@@ -2137,9 +2138,9 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		// Codes and refresh tokens minted before a ban stop here: no token for a banned
 		// account, whichever grant it arrives on.
-		if lock := s.pidLock(c.PID); lock != "" {
+		if lock := s.locks().PIDLock(c.PID); lock != "" {
 			log.Printf("[nx-baas] NA token refused: pid=%s is %s", redact.Tag(c.PID), lock)
-			naTokenLocked(w, lock)
+			bans.NATokenLocked(w, lock)
 			return
 		}
 		if p == "/connect/1.0.0/api/session_token" {
@@ -2172,8 +2173,8 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			return
 		}
 		pid := s.Store.PIDForNA(httpx.Str(c, "sub"))
-		if lock := s.pidLock(pid); lock != "" {
-			naTokenLocked(w, lock)
+		if lock := s.locks().PIDLock(pid); lock != "" {
+			bans.NATokenLocked(w, lock)
 			return
 		}
 		id, err := s.Acct.Identity(pid)
@@ -2907,4 +2908,10 @@ func naProfile(id *identity.Identity) (country, birthday string) {
 		birthday = httpx.Getenv("NA_FALLBACK_BIRTHDAY", "2000-01-01")
 	}
 	return country, birthday
+}
+
+// locks is the ban check, shared by every surface.
+func (s *server) locks() *bans.Checker {
+	s.bansOnce.Do(func() { s.bansChecker = bans.New(s.Core) })
+	return s.bansChecker
 }

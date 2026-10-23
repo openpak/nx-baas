@@ -15,6 +15,7 @@ import (
 	"time"
 
 	accountv1 "nx-baas/accountpb"
+	"nx-baas/internal/bans"
 	"nx-baas/internal/core"
 	"nx-baas/internal/store"
 )
@@ -67,7 +68,7 @@ func banServer(t *testing.T) (*server, *fakeBans) {
 	s.device = map[string]string{}
 	f := &fakeBans{status: map[string]accountv1.AccountStatus{}}
 	f.set(hostPID, accountv1.AccountStatus_ACCOUNT_STATUS_BANNED)
-	s.banSource = f
+	s.locks().Source = f
 	return s, f
 }
 
@@ -116,13 +117,13 @@ func TestBannedAccountCannotSignInOnTheConsole(t *testing.T) {
 	}
 
 	f.set(hostPID, accountv1.AccountStatus_ACCOUNT_STATUS_ACTIVE)
-	s.forgetBan(f.AccountFor(hostPID)) // what the core's account_unbanned event does
+	s.locks().Forget(f.AccountFor(hostPID)) // what the core's account_unbanned event does
 	if w := baasReq(s, "POST", "/1.0.0/login", "", form); w.Code != 200 {
 		t.Fatalf("unbanned login = %d %s", w.Code, w.Body)
 	}
 
 	f.set(hostPID, accountv1.AccountStatus_ACCOUNT_STATUS_DELETION_PENDING)
-	s.forgetBan(f.AccountFor(hostPID))
+	s.locks().Forget(f.AccountFor(hostPID))
 	if w := baasReq(s, "POST", "/1.0.0/login", "", form); w.Code != 404 || errorCodeOf(t, w) != "deleted_user" {
 		t.Fatalf("deleted login = %d %s, want 404 deleted_user", w.Code, w.Body)
 	}
@@ -205,24 +206,24 @@ func TestBannedAccountIsRefusedByTheGameAPI(t *testing.T) {
 func TestBanCacheAndFailOpen(t *testing.T) {
 	s, f := banServer(t)
 	for range 5 {
-		if s.pidLock(hostPID) != lockBanned {
+		if s.locks().PIDLock(hostPID) != bans.Banned {
 			t.Fatal("banned account read as allowed")
 		}
 	}
 	if f.lookups != 1 {
 		t.Fatalf("%d core lookups for 5 checks, want 1", f.lookups)
 	}
-	s.forgetBan(f.AccountFor(hostPID))
-	s.pidLock(hostPID)
+	s.locks().Forget(f.AccountFor(hostPID))
+	s.locks().PIDLock(hostPID)
 	if f.lookups != 2 {
 		t.Fatalf("forget did not force a re-read (%d lookups)", f.lookups)
 	}
 	f.down = true
-	if s.pidLock(joinerPID) != "" {
+	if s.locks().PIDLock(joinerPID) != "" {
 		t.Fatal("an unreachable core locked an account out")
 	}
 	t.Setenv("NX_BAN_CACHE_SECONDS", "3600")
-	if got := banTTL(); got.Seconds() != 60 {
+	if got := bans.TTL(); got.Seconds() != 60 {
 		t.Fatalf("ttl %v, want capped at 60s", got)
 	}
 }

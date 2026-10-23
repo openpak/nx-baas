@@ -140,7 +140,7 @@ func (s *server) reportIdentity(r *http.Request) (device, account string) {
 				u = s.Store.User(sub)
 			}
 			if u != nil {
-				if src := s.banSrc(); src != nil {
+				if src := s.locks().Src(); src != nil {
 					account = src.AccountFor(u.PID)
 				}
 			} else if device == "" {

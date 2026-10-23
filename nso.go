@@ -123,8 +123,8 @@ func (s *server) lobbyVoice(w http.ResponseWriter, r *http.Request) {
 	account := ""
 	if s.Store == nil || baasUser == "" {
 		// fall through to 401
-	} else if u := s.Store.User(baasUser); u != nil && s.banSrc() != nil {
-		account = s.banSrc().AccountFor(u.PID)
+	} else if u := s.Store.User(baasUser); u != nil && s.locks().Src() != nil {
+		account = s.locks().Src().AccountFor(u.PID)
 	}
 	if account == "" {
 		httpx.WriteJSON(w, 401, map[string]any{"status": 401, "title": "who is this console?"})
@@ -415,7 +415,7 @@ var lobbyPage string
 func (s *server) shopPrincipal(r *http.Request) (accountID, baasUserID string) {
 	accountID, baasUserID = s.shopPrincipalUnchecked(r)
 	// A banned account is nobody to the store: no acquisition, no tasks, no ownership.
-	if accountID != "" && s.naLock(accountID) != "" {
+	if accountID != "" && s.locks().NALock(accountID) != "" {
 		log.Printf("[shop] principal: account %s is locked; refusing", redact.Tag(accountID))
 		return "", ""
 	}

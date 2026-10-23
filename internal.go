@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"nx-baas/internal/bans"
 	"nx-baas/internal/core"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
@@ -66,8 +67,8 @@ func (s *server) switchIdentity(w http.ResponseWriter, r *http.Request) {
 	}
 	// A banned account's title-server login ends here: 403 account_banned, never 401
 	// (platforms/switch/games/switch-nex maps 401 to TokenExpired and the console would refresh forever).
-	if lock := s.pidLock(pid); lock != "" {
-		internalLocked(w, lock)
+	if lock := s.locks().PIDLock(pid); lock != "" {
+		bans.InternalLocked(w, lock)
 		return
 	}
 	id, err := s.Acct.Identity(pid)
@@ -77,7 +78,7 @@ func (s *server) switchIdentity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	accountID := ""
-	if src := s.banSrc(); src != nil {
+	if src := s.locks().Src(); src != nil {
 		accountID = src.AccountFor(pid)
 	}
 	// A game server just proved who this player is: they are on it (playtime starts here).
@@ -194,8 +195,8 @@ func (s *server) switchEmulator(w http.ResponseWriter, r *http.Request) {
 		httpx.APIErr(w, http.StatusBadRequest, "account_id required")
 		return
 	}
-	if lock := s.accountLock(accountID); lock != "" {
-		internalLocked(w, lock)
+	if lock := s.locks().AccountLock(accountID); lock != "" {
+		bans.InternalLocked(w, lock)
 		return
 	}
 	b, ok := s.Acct.(*identity.OpenpakBackend)
@@ -300,8 +301,8 @@ func (s *server) switchEmulatorLinkToken(w http.ResponseWriter, r *http.Request)
 		httpx.APIErr(w, http.StatusBadRequest, "account_id required")
 		return
 	}
-	if lock := s.accountLock(accountID); lock != "" {
-		internalLocked(w, lock)
+	if lock := s.locks().AccountLock(accountID); lock != "" {
+		bans.InternalLocked(w, lock)
 		return
 	}
 	b, ok := s.Acct.(*identity.OpenpakBackend)
@@ -344,8 +345,8 @@ func (s *server) switchEmulatorFriend(w http.ResponseWriter, r *http.Request) {
 		httpx.APIErr(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if lock := s.accountLock(in.AccountID); lock != "" {
-		internalLocked(w, lock)
+	if lock := s.locks().AccountLock(in.AccountID); lock != "" {
+		bans.InternalLocked(w, lock)
 		return
 	}
 	b, ok := s.Acct.(*identity.OpenpakBackend)

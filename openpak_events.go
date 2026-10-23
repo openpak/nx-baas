@@ -69,12 +69,12 @@ func (s *server) followCoreEvents(b *identity.OpenpakBackend) {
 					s.notifyCorePresence(b, e.GetAccountId(), e.GetSubjectId())
 				}
 			case "account_unbanned":
-				s.forgetBan(e.GetAccountId())
+				s.locks().Forget(e.GetAccountId())
 			case "account_banned", "account_deleted", "account_delete_started", "credential_revoked", "link_unlinked":
 				if e.GetType() != "credential_revoked" && e.GetType() != "link_unlinked" {
 					// Bans take effect now, not when the cache entry ages out, and the
 					// console's open notification channel goes with them.
-					s.forgetBan(e.GetAccountId())
+					s.locks().Forget(e.GetAccountId())
 					s.closeAccountSessions(b, e.GetAccountId())
 				}
 				if e.GetType() == "account_deleted" {

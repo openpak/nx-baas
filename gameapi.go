@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"nx-baas/internal/bans"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
 	"nx-baas/redact"
@@ -141,8 +142,8 @@ func (s *server) photonRoom(w http.ResponseWriter, r *http.Request) {
 		httpx.APIErr(w, http.StatusBadRequest, "unknown identity")
 		return
 	}
-	if lock := s.pidLock(pid); lock != "" {
-		internalLocked(w, lock)
+	if lock := s.locks().PIDLock(pid); lock != "" {
+		bans.InternalLocked(w, lock)
 		return
 	}
 	appParam := append([]byte{1, 0, 0, 0, byte(len(in.Room))}, in.Room...)
@@ -203,8 +204,8 @@ func (s *server) photonIdentity(w http.ResponseWriter, r *http.Request) {
 		httpx.APIErr(w, http.StatusBadRequest, "unknown identity")
 		return
 	}
-	if lock := s.pidLock(pid); lock != "" {
-		internalLocked(w, lock)
+	if lock := s.locks().PIDLock(pid); lock != "" {
+		bans.InternalLocked(w, lock)
 		return
 	}
 	id, err := s.Acct.Identity(pid)
@@ -242,8 +243,8 @@ func (s *server) invitations(w http.ResponseWriter, r *http.Request) {
 		httpx.APIErr(w, http.StatusUnauthorized, "invalid or expired session")
 		return
 	}
-	if lock := s.pidLock(pid); lock != "" {
-		internalLocked(w, lock)
+	if lock := s.locks().PIDLock(pid); lock != "" {
+		bans.InternalLocked(w, lock)
 		return
 	}
 	switch r.Method {
@@ -302,7 +303,7 @@ func (s *server) sendInvitation(w http.ResponseWriter, r *http.Request, from uin
 	sent := 0
 	for _, pid := range in.TargetPIDs {
 		target := s.Store.UserByPID(pid)
-		if target == nil || !isFriend(id, pid) || s.pidLock(pid) != "" {
+		if target == nil || !isFriend(id, pid) || s.locks().PIDLock(pid) != "" {
 			continue
 		}
 		if core != nil {
@@ -364,8 +365,8 @@ func (s *server) mintToken(w http.ResponseWriter, r *http.Request) {
 		httpx.APIErr(w, http.StatusBadRequest, "pid required")
 		return
 	}
-	if lock := s.pidLock(in.PID); lock != "" {
-		internalLocked(w, lock)
+	if lock := s.locks().PIDLock(in.PID); lock != "" {
+		bans.InternalLocked(w, lock)
 		return
 	}
 	id, err := s.Acct.Identity(in.PID)

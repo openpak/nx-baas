@@ -52,7 +52,7 @@ func TestZncLobbyPageLeavesThroughTheCallback(t *testing.T) {
 // answer through; a console it can't name gets 401.
 func TestZncLobbyVoiceAsksTheWebsiteForTheRoom(t *testing.T) {
 	s := linkedServer(t)
-	s.banSource = &fakeBans{}
+	s.locks().Source = &fakeBans{}
 	var asked string
 	web := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer k" {
