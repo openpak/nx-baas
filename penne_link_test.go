@@ -114,12 +114,6 @@ func TestMovedPenneReceivesTheCoresCalls(t *testing.T) {
 		t.Fatalf("topic message = %v", c.body)
 	}
 
-	// Parental controls: the console's registration from its device certificate.
-	s.pctlPush(&PctlDevice{MoonID: 1, DauthID: "cert-1"})
-	if c := expectCall(t, got, "/internal/penne/device-messages"); str(c.body, "dauth_user") != "cert-1" || str(c.body, "receivers") != "pctl" {
-		t.Fatalf("device message = %v", c.body)
-	}
-
 	s.penneCloseUser(u.ID)
 	expectCall(t, got, "/internal/penne/users/"+u.ID+"/close")
 

@@ -36,6 +36,7 @@ import (
 	"net/url"
 	"nx-baas/redact"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -2628,6 +2629,10 @@ func (rec *recorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 }
 
 var debug = os.Getenv("NX_DEBUG") != ""
+
+// pctlPinInBody finds a PIN in a body about to be logged: the console's own
+// keys, and the parent side's `unlock_code`.
+var pctlPinInBody = regexp.MustCompile(`("(?:synchronizedUnlockCode|unlockCode|unlock_code)"\s*:\s*")[^"]*"`)
 var minimal = os.Getenv("NX_MINIMAL") != "" // bisecting 2124-0292: only the NA link on top of the POST /users shape
 
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -2824,13 +2829,6 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.netdiag(w, r)
 	case strings.Contains(host, "scsi.srv.nintendo.net"):
 		s.olsc(w, r, body)
-	case strings.Contains(host, "pctl.srv.nintendo.net"):
-		// Parental controls: the pctl sysmodule's moon API (moon.go). Anything
-		// outside /moon/v1 on this host still gets the service-status answer.
-		s.moon(w, r, body)
-	case strings.HasPrefix(host, "parentalcontrols-movie-"):
-		// The Parental Controls explainer clip (moon.go).
-		s.pctlMovie(w, r)
 	case strings.HasPrefix(host, "app.lp1.srv"):
 		s.serviceStatus(w, r, body)
 	// Answered by path rather than host, and only after every host-specific
@@ -2923,8 +2921,6 @@ func main() {
 	}
 	s.forwardersFromEnv()
 	s.initHarborDevices()
-	// A parental-controls rollback hands nx-pctl's records back (split.go).
-	s.store.importPctlRollback(getenv("NX_DATA", "/data") + "/pctl-rollback.json")
 	if s.shopFwd == nil {
 		s.shop = newShopState(getenv("NX_DATA", "/data") + "/shop")
 	} else {

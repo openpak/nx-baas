@@ -19,7 +19,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"io"
 	"log"
 	"net/http"
@@ -28,7 +27,6 @@ import (
 	"nx-baas/redact"
 	"os"
 	"strings"
-	"time"
 )
 
 // newForwarder is a streaming reverse proxy that keeps the request's Host.
@@ -178,42 +176,4 @@ func forwardRead(fwd *httputil.ReverseProxy, w http.ResponseWriter, r *http.Requ
 	r2.Body = io.NopCloser(bytes.NewReader(body))
 	r2.ContentLength = int64(len(body))
 	fwd.ServeHTTP(w, r2)
-}
-
-// importPctlRollback takes parental controls back from nx-pctl: when $NX_DATA holds a
-// pctl-rollback.json (nx-pctl's pctl.json, copied in for a rollback), its records replace the
-// ones baas.json kept from before the cut-over, and the file is renamed so a later restart
-// does not apply it again. Without the file this does nothing.
-func (s *Store) importPctlRollback(path string) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return
-	}
-	// Only nx-pctl's own file is applied: a JSON object with a pctlDevices object in it.
-	// Anything else -- a truncated copy, baas.json by mistake, "{}" -- would otherwise
-	// decode to no records and wipe every pairing, so it is refused and left in place.
-	var top map[string]json.RawMessage
-	var in struct {
-		PctlDevices map[string]*PctlDevice `json:"pctlDevices"`
-	}
-	if err := json.Unmarshal(b, &top); err != nil {
-		log.Printf("[nx-baas] %s is not nx-pctl's state (%v); not applied", path, redact.Err(err))
-		return
-	}
-	raw, ok := top["pctlDevices"]
-	if !ok || len(top) != 1 {
-		log.Printf("[nx-baas] %s is not nx-pctl's state (want exactly a pctlDevices object, got %d key(s)); not applied", path, len(top))
-		return
-	}
-	if err := json.Unmarshal(raw, &in.PctlDevices); err != nil || in.PctlDevices == nil {
-		log.Printf("[nx-baas] %s: pctlDevices is not an object of records (%v); not applied", path, redact.Err(err))
-		return
-	}
-	s.mu.Lock()
-	s.PctlDevices = in.PctlDevices
-	s.save()
-	s.mu.Unlock()
-	done := path + ".applied-" + time.Now().UTC().Format("20060102T150405")
-	os.Rename(path, done)
-	log.Printf("[nx-baas] parental controls taken back from nx-pctl: %d record(s) from %s (now %s)", len(in.PctlDevices), path, done)
 }

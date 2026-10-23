@@ -1,7 +1,8 @@
 package main
 
 // Parental controls once they have moved to nx-pctl (split.go): the pctl hosts and the
-// website's /internal/pctl routes are forwarded, and a rollback file hands the records back.
+// website's /internal/pctl routes are forwarded, and the records nx-baas kept before the move
+// stay in baas.json byte for byte, because nx-pctl fingerprints them on import.
 
 import (
 	"encoding/json"
@@ -26,7 +27,6 @@ func TestMovedPctlIsForwarded(t *testing.T) {
 	t.Setenv("NX_PCTL_URL", pctl.URL)
 	t.Setenv("NX_INTERNAL_KEY", "test-internal-key")
 	s := shopServerFor(t)
-	s.store = pctlStore(t)
 	s.forwardersFromEnv()
 
 	for _, c := range []seen{
@@ -53,52 +53,41 @@ func TestMovedPctlIsForwarded(t *testing.T) {
 	}
 }
 
-func TestPctlRollbackHandsTheRecordsBack(t *testing.T) {
-	dir := t.TempDir()
-	st := &Store{path: filepath.Join(dir, "baas.json"), Users: map[string]*User{}, Devices: map[string]*DeviceAccount{}, NaToPID: map[string]uint64{}}
-	stale := st.PctlNewPairing("acct-parent")
+func TestPctlRecordsSurviveASaveVerbatim(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "baas.json")
+	records := `{
+  "0123456789abcdef": {
+   "moonId": 81985529216486895,
+   "dauthId": "cert-1",
+   "unlockCode": "1234"
+  }
+ }`
+	in := "{\n \"devices\": {},\n \"users\": {},\n \"naToPid\": {},\n \"pctlDevices\": " + records + "\n}"
+	if err := os.WriteFile(path, []byte(in), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st := loadStore(path)
+	st.NewUser() // any write rewrites the whole file
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(b, &top); err != nil {
+		t.Fatal(err)
+	}
+	if len(top["users"]) <= 2 {
+		t.Fatalf("the store was not rewritten: %s", b)
+	}
+	if got := string(top["pctlDevices"]); got != records {
+		t.Fatalf("pctlDevices after a save:\n%s\nwant:\n%s", got, records)
+	}
 
-	// nx-pctl's file: the pctlDevices key alone, a record paired after the cut-over.
-	other := &Store{path: filepath.Join(dir, "scratch.json")}
-	d := other.PctlNewPairing("acct-parent")
-	other.PctlActivate(d.Hex(), "cert-aaaaaaaaaaaaaaaa")
-	b, _ := json.Marshal(map[string]any{"pctlDevices": other.PctlDevices})
-	os.WriteFile(filepath.Join(dir, "pctl-rollback.json"), b, 0o600)
-
-	st.importPctlRollback(filepath.Join(dir, "pctl-rollback.json"))
-	if got := st.PctlByMoonID(d.Hex()); got == nil || got.DauthID != "cert-aaaaaaaaaaaaaaaa" {
-		t.Fatalf("rolled-back record = %+v", got)
-	}
-	if st.PctlByMoonID(stale.Hex()) != nil {
-		t.Fatal("the pre-cut-over record survived the rollback")
-	}
-	if _, err := os.Stat(filepath.Join(dir, "pctl-rollback.json")); !os.IsNotExist(err) {
-		t.Fatal("the rollback file was left to be applied again")
-	}
-	b, _ = os.ReadFile(filepath.Join(dir, "baas.json"))
-	if !strings.Contains(string(b), d.Hex()) {
-		t.Fatal("the rollback was not saved to baas.json")
-	}
-	// A wrong file never wipes the records: refused, and left where it is.
-	for _, bad := range []string{`{}`, `{"pctlDevices":null}`, `{"pctlDevices":{},"users":{}}`, `[]`, `{"pctlDev`} {
-		os.WriteFile(filepath.Join(dir, "pctl-rollback.json"), []byte(bad), 0o600)
-		st.importPctlRollback(filepath.Join(dir, "pctl-rollback.json"))
-		if st.PctlByMoonID(d.Hex()) == nil {
-			t.Fatalf("rollback file %s wiped the records", bad)
-		}
-		if _, err := os.Stat(filepath.Join(dir, "pctl-rollback.json")); err != nil {
-			t.Fatalf("refused rollback file %s was moved away", bad)
-		}
-	}
-	// nx-pctl's file for a household that unlinked everything is applied: no records.
-	os.WriteFile(filepath.Join(dir, "pctl-rollback.json"), []byte(`{"pctlDevices":{}}`), 0o600)
-	st.importPctlRollback(filepath.Join(dir, "pctl-rollback.json"))
-	if st.PctlByMoonID(d.Hex()) != nil {
-		t.Fatal("an empty pctlDevices object was not applied")
-	}
-	// No file: nothing happens.
-	st.importPctlRollback(filepath.Join(dir, "pctl-rollback.json"))
-	if len(st.PctlDevices) != 0 {
-		t.Fatal("a missing rollback file changed the records")
+	// A store that never had records does not grow the key.
+	empty := filepath.Join(t.TempDir(), "baas.json")
+	loadStore(empty).NewUser()
+	b, _ = os.ReadFile(empty)
+	if !strings.Contains(string(b), `"users"`) || strings.Contains(string(b), "pctlDevices") {
+		t.Fatalf("a store without records wrote the key: %s", b)
 	}
 }
