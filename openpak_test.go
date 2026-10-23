@@ -553,3 +553,41 @@ func TestEarlierBackendStepUpUnsupported(t *testing.T) {
 		t.Fatalf("earlier-backend step-up = %v, want unsupported", err)
 	}
 }
+
+// TestDropProjectionForgetsADeletedAccount: every index loses the row, the
+// file is rewritten, and nothing else moves. Ban/pending paths must not call
+// this (those accounts may return); only the account_deleted event does.
+func TestDropProjectionForgetsADeletedAccount(t *testing.T) {
+	b, f := newTestBackend(t)
+	f.addAccount("gone@example.com", "Gone", "correct horse battery")
+	f.addAccount("stays@example.com", "Stays", "correct horse battery")
+	gone, err := b.LoginPID("gone@example.com", "correct horse battery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stays, err := b.LoginPID("stays@example.com", "correct horse battery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.dropProjection("gone@example.com")
+	if _, ok := b.proj.ByAccount["gone@example.com"]; ok {
+		t.Error("ByAccount keeps the deleted account")
+	}
+	if _, ok := b.proj.ByPID[gone.PID]; ok {
+		t.Error("ByPID keeps the deleted account")
+	}
+	for _, m := range []map[string]string{b.proj.ByBaas, b.proj.ByCode} {
+		for _, v := range m {
+			if v == "gone@example.com" {
+				t.Error("secondary index keeps the deleted account")
+			}
+		}
+	}
+	if _, ok := b.proj.ByAccount["stays@example.com"]; !ok {
+		t.Error("a live account lost its projection")
+	}
+	if _, ok := b.proj.ByPID[stays.PID]; !ok {
+		t.Error("a live account lost its PID index")
+	}
+	b.dropProjection("nobody@example.com") // unknown: no-op, no panic
+}

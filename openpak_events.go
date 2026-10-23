@@ -75,6 +75,12 @@ func (s *server) followCoreEvents(b *openpakBackend) {
 					s.forgetBan(e.GetAccountId())
 					s.closeAccountSessions(b, e.GetAccountId())
 				}
+				if e.GetType() == "account_deleted" {
+					// Final destruction only: bans, pending deletion, revoked
+					// credentials and unlinked devices all keep the projection
+					// (those accounts may come back; a deleted one cannot).
+					b.dropProjection(e.GetAccountId())
+				}
 				// An account that can no longer sign in has no live presence:
 				// end its claims here, and let its friends' consoles re-fetch
 				// (PRE-03: account status reaches every read). unbanned needs

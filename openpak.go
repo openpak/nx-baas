@@ -164,6 +164,28 @@ func (p *projectionStore) saveLocked() {
 	_ = os.Rename(tmp, p.path)
 }
 
+// dropProjection forgets a core account's Switch identifiers from every
+// index and persists. Called only on account_deleted (final destruction):
+// banned, pending-deletion and unlinked accounts keep theirs, because those
+// accounts may come back and SW-01 identifiers never migrate. Friends'
+// projections reference PIDs, never this row, so dropping it orphans
+// nothing: their consoles re-fetch and learn the account is gone.
+func (b *openpakBackend) dropProjection(accountID string) {
+	p := b.proj
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	pr, ok := p.ByAccount[accountID]
+	if !ok {
+		return
+	}
+	delete(p.ByAccount, accountID)
+	delete(p.ByPID, pr.PID)
+	delete(p.ByBaas, pr.BaasUserID)
+	delete(p.ByCode, pr.FriendCode)
+	p.saveLocked()
+	log.Printf("[nx-baas] openpak: projection dropped for a deleted account")
+}
+
 // ensure returns the projection for a core account, minting one (and
 // registering the core link) on first sight. Idempotent and race-safe: the
 // core's active-link lookup is consulted so retries never mint duplicates.
