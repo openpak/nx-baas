@@ -465,7 +465,7 @@ func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) b
 func (s *server) finishLink(p *pendingLink) string {
 	code := randHex(16)
 	s.mu.Lock()
-	s.codes[code] = naCode{PID: p.PID, Username: p.Username, ClientID: p.Query.Get("client_id"), NaID: p.NaID}
+	s.codes[code] = naCode{PID: p.PID, Username: p.Username, ClientID: p.Query.Get("client_id"), NaID: p.NaID, Created: time.Now()}
 	s.mu.Unlock()
 	s.store.RememberNA(p.NaID, p.PID)
 	return s.authorizeRedirect(p.Query, code)

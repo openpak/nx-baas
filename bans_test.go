@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	accountv1 "nx-baas/accountpb"
 )
@@ -145,7 +146,7 @@ func TestBannedAccountsLiveTokenStopsWorking(t *testing.T) {
 // pair the account module maps.
 func TestBannedAccountGetsNoNintendoAccountToken(t *testing.T) {
 	s, _ := banServer(t)
-	s.codes["c0de"] = naCode{PID: hostPID, NaID: "00aa00aa00aa00aa"}
+	s.codes["c0de"] = naCode{PID: hostPID, NaID: "00aa00aa00aa00aa", Created: time.Now()}
 	r := httptest.NewRequest("POST", "https://accounts.nintendo.com/connect/1.0.0/api/token", strings.NewReader("code=c0de"))
 	r.Host = "accounts.nintendo.com"
 	w := httptest.NewRecorder()

@@ -173,6 +173,42 @@ type naCode struct {
 	ClientID string
 	NaID     string
 	Nonce    string
+	// Created bounds the code's life (see takeCode): a code the console
+	// never spends must stop working and stop occupying the map.
+	Created time.Time
+	// Spent marks a code already traded at the token endpoint. The console
+	// presents the same code twice by design (session_token, then token),
+	// so the session_token exchange checks but does not set this; the token
+	// exchange sets it, and any later presentation is a replay.
+	Spent bool
+}
+
+// codeTTL caps an authorization code's life: console round-trips take
+// seconds, and anything unspent after this is abandoned, not pending.
+const naCodeTTL = 10 * time.Minute
+
+// takeCode spends an authorization code: unknown, expired or already-spent
+// codes are refused, and expired rows are purged so the map cannot grow
+// without end.
+func (s *server) takeCode(code string, spend bool) (naCode, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	for k, v := range s.codes {
+		if now.Sub(v.Created) > naCodeTTL {
+			delete(s.codes, k)
+		}
+	}
+	c, ok := s.codes[code]
+	if !ok || now.Sub(c.Created) > naCodeTTL || c.Spent {
+		delete(s.codes, code)
+		return naCode{}, false
+	}
+	if spend {
+		c.Spent = true
+		s.codes[code] = c
+	}
+	return c, true
 }
 
 // ---------- errors / helpers ----------
@@ -2117,7 +2153,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			writeJSON(w, 401, map[string]any{"error": "login_required"})
 			return
 		}
-		c := naCode{PID: pid, Username: id.Nickname, ClientID: form.Get("client_id"), NaID: id.NaID, Nonce: form.Get("nonce")}
+		c := naCode{PID: pid, Username: id.Nickname, ClientID: form.Get("client_id"), NaID: id.NaID, Nonce: form.Get("nonce"), Created: time.Now()}
 		code := randHex(16)
 		s.mu.Lock()
 		s.codes[code] = c
@@ -2177,7 +2213,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			}
 			code := randHex(16)
 			s.mu.Lock()
-			s.codes[code] = naCode{PID: pid, Username: username, ClientID: q.Get("client_id"), NaID: id.NaID}
+			s.codes[code] = naCode{PID: pid, Username: username, ClientID: q.Get("client_id"), NaID: id.NaID, Created: time.Now()}
 			s.mu.Unlock()
 			s.store.RememberNA(id.NaID, pid)
 			// ponytail: the redirect shape is inferred from the response_type the console sends;
@@ -2200,9 +2236,10 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		if code == "" {
 			code = form.Get("session_token")
 		}
-		s.mu.Lock()
-		c, ok := s.codes[code]
-		s.mu.Unlock()
+		// The session_token exchange checks without marking (the console
+		// presents the same code again at the token endpoint); the token
+		// exchange marks spent, so a replayed code is refused.
+		c, ok := s.takeCode(code, p != "/connect/1.0.0/api/session_token")
 		if !ok && form.Get("refresh_token") != "" {
 			// Later boots: the console refreshes with the token we issued (a signed JWT whose sub
 			// is the NA id); the NA id -> PID map is persisted, so this survives restarts.
