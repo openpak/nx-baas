@@ -222,7 +222,7 @@ func (s *server) photonIdentity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.markLoginOnline(pid) // the Photon master authenticated this player: playtime starts here
-	writeJSON(w, 200, map[string]any{"pid": pid, "country": id.Country})
+	writeJSON(w, 200, map[string]any{"pid": pid, "country": id.Country, "baas_user_id": id.BaasUserID})
 }
 
 func validRoomCode(room string) bool {
