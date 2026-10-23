@@ -4,13 +4,11 @@ package main
 // adapter (forwarding to the news service, the topic push).
 
 import (
-	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 )
 
 // The HOME Menu's NSO button opens <env>.nso.nintendo.net/<any path>: every path, the
@@ -126,50 +124,40 @@ func TestCapiMembershipsAnswerExpansionPackActive(t *testing.T) {
 
 // ---------- news ----------
 
-// The push is an internal route: without the key it is refused; with it, the message goes
-// to the live connection of a console subscribed to the topic, and nowhere else.
-func TestNewsPushNeedsTheKeyAndReachesSubscribers(t *testing.T) {
-	t.Setenv("NX_INTERNAL_KEY", "k-0123456789")
+// The push is an internal route: without the key it is refused; with it, nx-penne gets one
+// topic message for the subscribed topic, carrying the revision as a string (bcat ignores a
+// bare number), and the console-facing counts are nx-penne's.
+func TestNewsPushNeedsTheKeyAndGoesToPenne(t *testing.T) {
+	t.Setenv("NX_INTERNAL_KEY", "test-internal-key")
+	srv, got := fakeNxPenne(t)
 	s := testServer(t)
-	store := s.notifStore()
-	store.AddSubscription("aaaa", "dev-a", "openpak_news", time.Now())
-	store.AddSubscription("aaaa", "dev-a", "nx_data_0100000000010000", time.Now())
-	store.AddSubscription("bbbb", "dev-b", "other_topic", time.Now())
-	subscribed := &penneSession{user: "aaaa", device: "dev-a", send: make(chan penneOutbound, 4)}
-	other := &penneSession{user: "bbbb", device: "dev-b", send: make(chan penneOutbound, 4)}
-	s.notifHub().attach(subscribed)
-	s.notifHub().attach(other)
+	s.penneRemote = newPenneRemote(srv.URL)
 
-	body := `{"topic_id":"openpak_news","revision":7}`
+	body := `{"topic_id":"OpenPak_News","revision":7,"wait_range":600}`
 	if w := do(t, s, "POST", "/internal/news/push", "", body); w.Code != http.StatusUnauthorized {
 		t.Fatalf("push without the key = %d, want 401", w.Code)
 	}
-	r := httptest.NewRequest("POST", "/internal/news/push", strings.NewReader(body))
-	r.Header.Set("X-Internal-Key", "k-0123456789")
-	w := httptest.NewRecorder()
-	s.gameAPI().ServeHTTP(w, r)
+	w := identityDo(t, s, "POST", "/internal/news/push", body)
 	if w.Code != 200 {
 		t.Fatalf("push = %d %s", w.Code, w.Body.String())
 	}
-	if d := decodeBody(t, w); d["subscribers"] != float64(1) || d["delivered"] != float64(1) {
+	if d := decodeBody(t, w); d["topic"] != "OpenPak_News" || d["subscribers"] != float64(2) || d["delivered"] != float64(1) {
 		t.Errorf("push reply = %s", w.Body.String())
 	}
-	select {
-	case out := <-subscribed.send:
-		if !bytes.Contains(out.frame, []byte(`"type":"news"`)) || !bytes.Contains(out.frame, []byte(`"topic_id":"openpak_news"`)) ||
-			!bytes.Contains(out.frame, []byte(`"revision":"7"`)) {
-			t.Errorf("frame does not carry the news message: %q", out.frame)
+	c := expectCall(t, got, "/internal/penne/topic-messages")
+	if str(c.body, "topic") != "openpak_news" || str(c.body, "name") != "news" || str(c.body, "receivers") != newsReceiverToken {
+		t.Fatalf("topic message = %v", c.body)
+	}
+	msg := str(c.body, "body")
+	for _, want := range []string{`"type":"news"`, `"topic_id":"OpenPak_News"`, `"revision":"7"`, `"wait_range":600`} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message %s lacks %s", msg, want)
 		}
-	default:
-		t.Fatal("the subscribed console got nothing")
 	}
-	select {
-	case <-other.send:
-		t.Error("a console not subscribed to the topic got the push")
-	default:
-	}
-	// Both of the device's topics are still held: subscribing one does not drop another.
-	if n := len(store.TopicSubscribers("nx_data_0100000000010000")); n != 1 {
-		t.Errorf("earlier subscription lost: %d", n)
+
+	// "subscription" names the Penne topic when it differs from the News topic id.
+	identityDo(t, s, "POST", "/internal/news/push", `{"topic_id":"openpak_news","revision":8,"subscription":"nx_data_0100000000010000"}`)
+	if c := expectCall(t, got, "/internal/penne/topic-messages"); str(c.body, "topic") != "nx_data_0100000000010000" {
+		t.Fatalf("subscription override = %v", c.body)
 	}
 }

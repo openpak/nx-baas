@@ -86,6 +86,7 @@ func (s *server) forwardersFromEnv() {
 	if u := os.Getenv("NX_PENNE_URL"); u != "" {
 		s.penneFwd = newForwarder("nx-penne", u)
 		s.penneRemote = newPenneRemote(u)
+		s.notifier = s.penneRemote
 		log.Printf("[nx-baas] Penne moved: registrations, tickets, /internal/penne and every push go to %s", u)
 	}
 	if u := os.Getenv("NX_PCTL_URL"); u != "" {
@@ -105,6 +106,9 @@ func isBcatHost(host string) bool { return strings.HasPrefix(host, "bcat-") }
 func isPctlHost(host string) bool {
 	return strings.Contains(host, "pctl.srv.nintendo.net") || strings.HasPrefix(host, "parentalcontrols-movie-")
 }
+
+// isPenneFrontline names Penne's persistent-connection hosts (fro-).
+func isPenneFrontline(host string) bool { return strings.HasPrefix(host, "fro-") }
 
 // isPenneHost names Penne's own hosts: god (registrations), val (login tickets) and the
 // fro- frontlines. The vermillion gateway is not among them: it is the online-licence gate
@@ -142,8 +146,8 @@ func (s *server) forwardMoved(w http.ResponseWriter, r *http.Request) bool {
 	}
 	if s.penneFwd != nil && isPenneHost(host) {
 		if isPenneFrontline(host) {
-			// A full-duplex stream this process cannot proxy (penne_conn.go: net/http
-			// drains the request body on the first flush). Traefik must send the
+			// A full-duplex stream this process cannot proxy (net/http drains the request
+			// body on the first flush). Traefik must send the
 			// frontline straight to nx-penne; reaching here means its router is missing.
 			log.Printf("[nx-baas] !! MISROUTED Penne frontline %s: route it to nx-penne in Traefik", host)
 			writeJSON(w, http.StatusMisdirectedRequest, map[string]any{"status": 421, "title": "misdirected request"})

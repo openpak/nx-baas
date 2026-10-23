@@ -144,11 +144,11 @@ func TestSigningInAtHomeKeepsTheLastDeparture(t *testing.T) {
 		t.Fatalf("sign-in logoutAt %d, want the last departure %d", got, away)
 	}
 
-	// The device's own INACTIVE right after changes nothing the friends see.
-	before := len(outboxOf(s, viewer.ID))
+	// The device's own INACTIVE right after changes nothing the friends see: whatever goes
+	// out (nx-penne coalesces per subject) still says INACTIVE since the last departure.
 	s.noteClientPresence(s.store.User(subject.ID), dev.ID, "harbor", "android", "INACTIVE", "0000000000000000", "{}", "", -1)
-	if q := outboxOf(s, viewer.ID); len(q) != before || valueOf(q[len(q)-1].Payload)["logoutAt"].(int64) != away {
-		t.Fatalf("the device's INACTIVE after the sign-in moved what friends hold: %v", valueOf(q[len(q)-1].Payload))
+	if v := valueOf(lastPresenceEvent(t, s, viewer.ID)); v["state"] != "INACTIVE" || v["logoutAt"].(int64) != away {
+		t.Fatalf("the device's INACTIVE after the sign-in moved what friends hold: %v", v)
 	}
 
 	s.noteClientPresence(s.store.User(subject.ID), dev.ID, "harbor", "android", "ONLINE", "0100152000022000", "{}", "", -1)

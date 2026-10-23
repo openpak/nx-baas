@@ -455,20 +455,15 @@ func (s *server) gameAPI() http.Handler {
 	if s.shopFwd != nil {
 		mux.Handle("/internal/store/", s.shopFwd)
 	}
-	// What the split-out services ask the core (internal_identity.go) and the push state
-	// they read while Penne is still served here (internal_penne.go).
+	// What the split-out services ask the core (internal_identity.go).
 	mux.HandleFunc("/internal/identity/users/", s.identityUsers)
 	mux.HandleFunc("/internal/identity/na/", s.identityNA)
 	mux.HandleFunc("/internal/identity/accounts/", s.identityAccounts)
 	mux.HandleFunc("/internal/identity/presence", s.identityPresence)
 	mux.HandleFunc("/internal/identity/presence/renew", s.identityPresence)
 	if s.penneFwd != nil {
-		// Penne's API is nx-penne's now; a caller still pointed here is forwarded.
+		// Penne's API is nx-penne's; a caller still pointed here is forwarded.
 		mux.Handle("/internal/penne/", s.penneFwd)
-	} else {
-		mux.HandleFunc("/internal/penne/registrations/", s.penneRegistrations)
-		mux.HandleFunc("/internal/penne/console-registrations/", s.penneConsoleRegistrations)
-		mux.HandleFunc("/internal/penne/", s.penneInternal)
 	}
 	if base := os.Getenv("ACCOUNT_API"); base != "" {
 		if u, err := url.Parse(strings.TrimRight(base, "/")); err == nil {

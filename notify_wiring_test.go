@@ -2,24 +2,14 @@ package main
 
 // Tests for the integration seams in notify_wiring.go: core friend events and
 // presence changes (A's side) and committed invitations (C's side) becoming
-// durable deliveries in B's outbox. These prove the pipeline end to end on the
-// server; they do not and cannot prove a console parsed anything.
+// deliveries handed to nx-penne (recorded here by recordNotifications). These prove the
+// core's decisions -- who hears what, in which shape, under which event id -- not that a
+// console parsed anything; nx-penne's own tests cover the outbox and the wire.
 
 import (
 	"testing"
 	"time"
 )
-
-// outboxOf reads a recipient's pending deliveries without claiming them (a
-// claim would reschedule them and hide a duplicate).
-func outboxOf(s *server, userID string) []*penneOutRec {
-	st := s.notifStore()
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	out := make([]*penneOutRec, len(st.d.Outbox[userID]))
-	copy(out, st.d.Outbox[userID])
-	return out
-}
 
 // The core addresses each friend event at the account that must hear it, so
 // the recipient is AccountId and the counterparty is SubjectId. Getting this
@@ -92,17 +82,18 @@ func TestRequestReceivedPushCarriesTheChannel(t *testing.T) {
 	}
 }
 
-// A poll page reprocessed after a crash resubmits the same core versions. The
-// event id is the version, so the recipient must not be alerted twice.
-func TestReplayedCoreEventsDoNotAlertTwice(t *testing.T) {
+// A poll page reprocessed after a crash resubmits the same core versions. The event id is
+// the version, so nx-penne (which dedups on it) alerts the recipient once.
+func TestReplayedCoreEventsKeepTheirEventID(t *testing.T) {
 	s, _, users := socialServer(t)
 	b := s.acct.(*openpakBackend)
 
 	s.notifyCoreFriendEvent(b, "friend_requested", "acc-a@example.com", "acc-b@example.com", 77)
 	s.notifyCoreFriendEvent(b, "friend_requested", "acc-a@example.com", "acc-b@example.com", 77)
 
-	if got := len(outboxOf(s, users[0].ID)); got != 1 {
-		t.Fatalf("a replayed core event queued %d deliveries, want 1", got)
+	q := outboxOf(s, users[0].ID)
+	if len(q) != 2 || q[0].ID == "" || q[0].ID != q[1].ID {
+		t.Fatalf("a replayed core event went out as %+v; both must carry one event id", q)
 	}
 }
 
@@ -154,15 +145,16 @@ func TestPresenceChangeNotifiesFriendsOnceAndOnlyOnChange(t *testing.T) {
 		t.Fatalf("a heartbeat queued another delivery (%d total)", got)
 	}
 
-	// Starting a title is a change, and coalescing keeps one entry per subject.
+	// Starting a title is a change: one more event, carrying the new state (nx-penne
+	// coalesces per subject, so a sleeping console still converges to the latest).
 	s.noteDevicePresence(s.store.User(subject.ID), "dev-1", "PLAYING", "0100000000010000", "", "", -1)
 	queue = outboxOf(s, viewer.ID)
-	if len(queue) != 1 {
-		t.Fatalf("presence updates did not coalesce: %d pending", len(queue))
+	if len(queue) != 2 {
+		t.Fatalf("starting a title produced %d deliveries in all, want 2", len(queue))
 	}
-	value, _ = queue[0].Payload["value"].(map[string]any)
+	value, _ = queue[1].Payload["value"].(map[string]any)
 	if got, _ := value["state"].(string); got != "PLAYING" {
-		t.Fatalf("coalesced state %q, want the latest (PLAYING)", got)
+		t.Fatalf("state %q, want the latest (PLAYING)", got)
 	}
 	extras, _ := value["extras"].(map[string]any)
 	friends, _ := extras["friends"].(map[string]any)
@@ -188,7 +180,7 @@ func TestBlockedViewerIsNotToldAboutPresence(t *testing.T) {
 // C commits the invitation, then calls its hook. The wiring turns that into a
 // friend_invitation_received carrying the parser paths C recorded as
 // firmware-confirmed.
-func TestCommittedInvitationReachesTheOutbox(t *testing.T) {
+func TestCommittedInvitationIsHandedToPenne(t *testing.T) {
 	s, _, users := socialServer(t)
 	s.wireInvitationNotifications()
 	t.Cleanup(func() { invitationNotify = nil })
@@ -232,13 +224,13 @@ func TestCommittedInvitationReachesTheOutbox(t *testing.T) {
 		}
 	}
 
-	// The hook is idempotent by C's event id: a retried notify is one alert.
+	// A retried notify carries C's event id again, which nx-penne dedups on.
 	notifyCommitted(InvitationEvent{
 		EventID: "invitation:1234", Type: EventFriendInvitationReceived,
 		ReceiverID: users[0].ID, SenderID: users[1].ID, InvitationID: "1234",
 	})
-	if got := len(outboxOf(s, users[0].ID)); got != 1 {
-		t.Fatalf("a retried invitation notify queued %d deliveries", got)
+	if q := outboxOf(s, users[0].ID); len(q) != 2 || q[1].ID != "invitation:1234" {
+		t.Fatalf("a retried invitation notify went out as %+v", q)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -51,4 +52,41 @@ func decodeBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
 		t.Fatalf("reply is not JSON: %v: %s", err, rec.Body.String())
 	}
 	return m
+}
+
+// recordingNotifier stands in for nx-penne: it keeps what the core handed on, in order.
+type recordingNotifier struct {
+	mu  sync.Mutex
+	got []PenneDelivery
+}
+
+func (n *recordingNotifier) submit(d PenneDelivery, _ bool) PenneSubmission {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.got = append(n.got, d)
+	return PenneSubmission{Accepted: true, Outcome: "recorded", ID: d.ID}
+}
+
+// recordNotifications points s's notifications at a recorder.
+func recordNotifications(s *server) *recordingNotifier {
+	n := &recordingNotifier{}
+	s.notifier = n
+	return n
+}
+
+// outboxOf lists what the core handed on for one recipient, oldest first.
+func outboxOf(s *server, userID string) []PenneDelivery {
+	n, _ := s.notifier.(*recordingNotifier)
+	if n == nil {
+		panic("outboxOf: the server has no recording notifier (recordNotifications)")
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	var out []PenneDelivery
+	for _, d := range n.got {
+		if d.UserID == userID {
+			out = append(out, d)
+		}
+	}
+	return out
 }

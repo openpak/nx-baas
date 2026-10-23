@@ -106,12 +106,6 @@ type server struct {
 	// corePresence caches what the core last said about other platforms.
 	corePresence *corePresenceCache
 	coreSeenOnce sync.Once
-	// Penne notification channel (workstream B): durable push-channel state
-	// (registrations, tokens, tickets, subscriptions, delivery outbox) and the
-	// live frontline session registry. notifStore() lazily creates in-memory
-	// versions when unset, so direct handler tests keep working.
-	penneState *penneStore
-	penneHub   *penneHub
 	// acbaaProfiles remembers uploaded ACNH player profiles by ACNH user id
 	// so profile_status reflects them after a PUT, and acbaaResources the
 	// per-user web_service_resources uploads. Both file-backed (acbaaPath)
@@ -136,22 +130,19 @@ type server struct {
 	acbaaFriendReqs map[uint64]acbaaFriendReq
 	acbaaFriendList map[uint64][]uint64
 	acbaaPath       string
-	// shopFwd forwards the eShop to nx-shop once it has moved (split.go); nil serves it here.
+	// shopFwd forwards the eShop to nx-shop (split.go).
 	shopFwd *httputil.ReverseProxy
-	// penneFwd and penneRemote reach nx-penne once Penne has moved (split.go,
-	// penne_link.go); nil serves Penne here.
+	// penneFwd and penneRemote reach nx-penne (split.go, penne_link.go).
 	penneFwd    *httputil.ReverseProxy
 	penneRemote *penneRemote
-	// pctlFwd forwards parental controls to nx-pctl once they have moved (split.go).
+	// notifier is where checked notifications go (penne_deliver.go): penneRemote.
+	notifier notifier
+	// pctlFwd forwards parental controls to nx-pctl (split.go).
 	pctlFwd *httputil.ReverseProxy
 	// bcatFwd is nx-bcat once the bcat hosts have moved (NX_BCAT_URL, split.go).
 	bcatFwd *httputil.ReverseProxy
 	// playfabFwd serves only explicitly supported PlayFab titles (playfab.go).
 	playfabFwd *httputil.ReverseProxy
-	// Penne record store: what this server has written to each account's
-	// records, and its digests (penne_records.go).
-	recordStore *penneRecordStore
-	recordsOnce sync.Once
 	// Ban state (bans.go): a short cache of the core's answer, and a test stand-in for it.
 	bans      *banCache
 	bansOnce  sync.Once
@@ -2684,15 +2675,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.savesProxy(w, r)
 		return
 	}
-	// B workstream (NTF-02): the Penne frontline POST is bidirectional -- the
-	// request body carries the client's frames, so it must reach the handler
-	// unread. Everything else keeps the buffered path it has always had.
-	var body []byte
-	if isPenneFrontline(host) {
-		body = nil
-	} else {
-		body, _ = io.ReadAll(io.LimitReader(r.Body, 1<<20))
-	}
+	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if debug && !strings.HasPrefix(r.URL.Path, "/avatar/") {
 		// No PIN either: parental controls carry one in both directions.
 		dump(r, pctlPinInBody.ReplaceAll(passwordRe.ReplaceAll(body, []byte("password=***")), []byte(`${1}****"`)), "DBG >>>")
@@ -2731,7 +2714,8 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// setup-critical answers (elicense archives, exercise, migration state, penne id).
 		s.dauth(w, r, body)
 	case strings.Contains(host, "penne.") || strings.Contains(host, "vermillion."):
-		s.penne(w, r, body)
+		// Penne's own hosts are nx-penne's, forwarded above; this is the vermillion gateway.
+		s.vermillion(w, r, body)
 	case strings.HasSuffix(host, ".five.nintendo.net"):
 		// Native online-play invitations (the friends sysmodule's invite UI).
 		s.five(w, r, body)
@@ -2885,21 +2869,10 @@ func main() {
 		go s.reconcilePresenceLoop()
 		go s.provisionAllAccounts(b)
 	}
-	// B workstream: the penne state file lives beside the BAAS store; the
-	// sweeper drives delivery retries, expiry and retention (NTF-05). Once Penne
-	// has moved (NX_PENNE_URL, split.go) the file is nx-penne's and is not opened.
-	if s.penneRemote == nil {
-		s.penneState = newPenneStore(getenv("NX_DATA", "/data") + "/penne.json")
-	}
-	s.penneHub = newPenneHub()
-	s.registerDefaultPennePolicies()
 	// Integration wiring: C's committed-invitation seam delivers through B
 	// (notify_wiring.go). Registered here so the REST surface keeps working
 	// unchanged when the notification side is absent.
 	s.wireInvitationNotifications()
-	if s.penneRemote == nil {
-		go s.penneSweep()
-	}
 	// Console error reports: kept raw, forwarded to the website, retried (errorreport.go).
 	go s.errorReports().run()
 	// Latest version only: outdated titles get 2124-3001 at aauth (versiongate.go).

@@ -25,6 +25,7 @@ func socialServer(t *testing.T) (*server, *fakeCore, []*User) {
 	s := dauthServer(t)
 	s.store = loadStore(t.TempDir() + "/baas.json")
 	s.acct = b
+	recordNotifications(s)
 
 	users := []*User{}
 	for _, acc := range []struct{ id, name, pw string }{

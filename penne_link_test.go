@@ -146,41 +146,6 @@ func TestMovedPenneReceivesTheCoresCalls(t *testing.T) {
 	}
 }
 
-func TestPenneRoutesServedHereWhilePenneIsLocal(t *testing.T) {
-	t.Setenv("NX_INTERNAL_KEY", "test-internal-key")
-	s := linkedServer(t)
-	u := s.store.UserByPID(7)
-
-	if rec := identityDo(t, s, "POST", "/internal/penne/consoles", `{"device_id":"cert-9","user_id":"`+u.ID+`"}`); rec.Code != 204 {
-		t.Fatalf("consoles = %d %s", rec.Code, rec.Body)
-	}
-	if got := s.notifStore().ResolveUser("cert-9"); got != u.ID {
-		t.Fatalf("console binding not recorded: %q", got)
-	}
-	rec := identityDo(t, s, "POST", "/internal/penne/notifications", `{"id":"n1","user_id":"`+u.ID+`","kind":"friend_deleted","payload":{"friendId":"x"}}`)
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"accepted":true`) {
-		t.Fatalf("notifications = %d %s", rec.Code, rec.Body)
-	}
-	rec = identityDo(t, s, "POST", "/internal/penne/topic-messages", `{"topic":"t1","name":"news","receivers":"0x1","body":"{}"}`)
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"subscribers":0`) {
-		t.Fatalf("topic-messages = %d %s", rec.Code, rec.Body)
-	}
-	id, _ := s.notifStore().Register("cert-9", "cert-9", "", time.Now())
-	rec = identityDo(t, s, "POST", "/internal/penne/device-messages", `{"dauth_user":"cert-9","name":"x","receivers":"pctl","body":"{}"}`)
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"penne_id":"`+id+`"`) {
-		t.Fatalf("device-messages = %d %s", rec.Code, rec.Body)
-	}
-	if rec := identityDo(t, s, "POST", "/internal/penne/users/"+u.ID+"/close", `{}`); rec.Code != 200 {
-		t.Fatalf("close = %d", rec.Code)
-	}
-	if rec := identityDo(t, s, "POST", "/internal/penne/token-bindings", `{"notification_token":"none","user_id":"`+u.ID+`"}`); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"bound":false`) {
-		t.Fatalf("token-bindings = %d %s", rec.Code, rec.Body)
-	}
-	if rec := identityDo(t, s, "POST", "/internal/penne/nope", `{}`); rec.Code != 404 {
-		t.Fatalf("unknown route = %d", rec.Code)
-	}
-}
-
 // A restart of nx-penne loses nothing the core queued: the worker retries, in order, until
 // it is back.
 func TestQueuedPushesSurviveAnNxPenneRestart(t *testing.T) {
@@ -267,15 +232,5 @@ func TestQueueSharesOneOutageAndGivesUpOnDeploymentFaults(t *testing.T) {
 		if err == nil || errors.As(err, &again) {
 			t.Fatalf("%d %s: err %v, want a final error", c.status, c.body, err)
 		}
-	}
-}
-
-// A push nx-penne did not take is reported as such, not as a console without a token.
-func TestFailedRemotePushIsNotAMissingToken(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(502) }))
-	defer srv.Close()
-	s := &server{penneRemote: newPenneRemote(srv.URL)}
-	if _, _, err := s.penneDeviceMessage("", "cert-1", "x", "pctl", "{}"); err == nil {
-		t.Fatal("an unreachable nx-penne was not an error")
 	}
 }

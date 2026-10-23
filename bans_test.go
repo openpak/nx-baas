@@ -224,18 +224,3 @@ func TestBanCacheAndFailOpen(t *testing.T) {
 		t.Fatalf("ttl %v, want capped at 60s", got)
 	}
 }
-
-// Penne: a banned account's console gets no notification channel.
-func TestBannedAccountGetsNoNotificationChannel(t *testing.T) {
-	s, ticket := frontlineServer(t, "dev1")
-	s.store = loadStore(t.TempDir() + "/baas.json")
-	s.store.Users["u_dev1"] = &User{ID: "u_dev1", PID: hostPID}
-	f := &fakeBans{status: map[string]accountv1.AccountStatus{}}
-	f.set(hostPID, accountv1.AccountStatus_ACCOUNT_STATUS_BANNED)
-	s.banSource = f
-	w := httptest.NewRecorder()
-	s.frontline(w, frontlineRequest(ticket, "dev1"))
-	if w.Code != 403 {
-		t.Fatalf("frontline for a banned account = %d %s", w.Code, w.Body)
-	}
-}

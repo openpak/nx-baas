@@ -32,7 +32,7 @@ func TestIdentityAPIRequiresTheKey(t *testing.T) {
 		t.Fatalf("no key configured: %d, want 503 (nobody gets in)", rec.Code)
 	}
 	t.Setenv("NX_INTERNAL_KEY", "another-key")
-	for _, p := range []string{"/internal/identity/na/" + testNAID, "/internal/identity/users/x", "/internal/penne/registrations/x"} {
+	for _, p := range []string{"/internal/identity/na/" + testNAID, "/internal/identity/users/x"} {
 		if rec := identityDo(t, s, "GET", p, ""); rec.Code != 401 {
 			t.Fatalf("%s with the wrong key: %d", p, rec.Code)
 		}
@@ -98,21 +98,6 @@ func TestIdentityPresenceIsTheFrontlinesPublish(t *testing.T) {
 	}
 	if rec := identityDo(t, s, "POST", "/internal/identity/presence", `{"user_id":"nobody","state":"ONLINE"}`); rec.Code != 404 {
 		t.Fatalf("unknown user's presence = %d", rec.Code)
-	}
-}
-
-func TestPenneRegistrationsAPI(t *testing.T) {
-	t.Setenv("NX_INTERNAL_KEY", "test-internal-key")
-	s := linkedServer(t)
-	u := s.store.UserByPID(7)
-	id, _ := s.notifStore().Register("dev1", u.ID, "", time.Now())
-	got := decodeBody(t, identityDo(t, s, "GET", "/internal/penne/registrations/"+id, ""))
-	if got["live"] != true || got["user_id"] != u.ID || got["penne_id"] != id {
-		t.Fatalf("registration = %v", got)
-	}
-	got = decodeBody(t, identityDo(t, s, "GET", "/internal/penne/registrations/unknown", ""))
-	if got["live"] != false {
-		t.Fatalf("unknown registration = %v", got)
 	}
 }
 

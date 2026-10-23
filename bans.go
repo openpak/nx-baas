@@ -231,13 +231,3 @@ func (s *server) closeAccountSessions(b *openpakBackend, accountID string) {
 	}
 	s.penneCloseUser(pr.BaasUserID)
 }
-
-// closeUser cancels a BAAS user's live frontline sessions and reports how many.
-func (h *penneHub) closeUser(user string) int {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for _, sess := range h.sessions[user] {
-		sess.cancel()
-	}
-	return len(h.sessions[user])
-}
