@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"nx-baas/internal/identity"
+	"nx-baas/internal/penne"
 	"nx-baas/internal/store"
 	"strings"
 	"sync"
@@ -59,14 +60,14 @@ func decodeBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
 // recordingNotifier stands in for nx-penne: it keeps what the core handed on, in order.
 type recordingNotifier struct {
 	mu  sync.Mutex
-	got []PenneDelivery
+	got []penne.Delivery
 }
 
-func (n *recordingNotifier) submit(d PenneDelivery, _ bool) PenneSubmission {
+func (n *recordingNotifier) Submit(d penne.Delivery, _ bool) penne.Submission {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.got = append(n.got, d)
-	return PenneSubmission{Accepted: true, Outcome: "recorded", ID: d.ID}
+	return penne.Submission{Accepted: true, Outcome: "recorded", ID: d.ID}
 }
 
 // recordNotifications points s's notifications at a recorder.
@@ -77,14 +78,14 @@ func recordNotifications(s *server) *recordingNotifier {
 }
 
 // outboxOf lists what the core handed on for one recipient, oldest first.
-func outboxOf(s *server, userID string) []PenneDelivery {
+func outboxOf(s *server, userID string) []penne.Delivery {
 	n, _ := s.notifier.(*recordingNotifier)
 	if n == nil {
 		panic("outboxOf: the server has no recording notifier (recordNotifications)")
 	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	var out []PenneDelivery
+	var out []penne.Delivery
 	for _, d := range n.got {
 		if d.UserID == userID {
 			out = append(out, d)

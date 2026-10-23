@@ -5,6 +5,7 @@ package main
 
 import (
 	"nx-baas/internal/core"
+	"nx-baas/internal/penne"
 	"nx-baas/internal/store"
 	"os"
 	"path/filepath"
@@ -27,23 +28,23 @@ func deliverServer(t *testing.T) (*server, string) {
 func TestSubmitNotificationValidatesKindAndRecipient(t *testing.T) {
 	s, uid := deliverServer(t)
 
-	if r := s.SubmitNotification(PenneDelivery{UserID: uid, Kind: "presence_updated"}); !r.Accepted || r.ID == "" {
+	if r := s.SubmitNotification(penne.Delivery{UserID: uid, Kind: "presence_updated"}); !r.Accepted || r.ID == "" {
 		t.Fatalf("native kind not handed on: %+v", r)
 	}
-	if r := s.SubmitNotification(PenneDelivery{UserID: uid, Kind: "arbitrary_json"}); r.Accepted {
+	if r := s.SubmitNotification(penne.Delivery{UserID: uid, Kind: "arbitrary_json"}); r.Accepted {
 		t.Fatal("non-native kind accepted")
 	}
-	if r := s.SubmitNotification(PenneDelivery{UserID: "nobody", Kind: EventFriendDeleted}); r.Outcome != penneRejectUser {
+	if r := s.SubmitNotification(penne.Delivery{UserID: "nobody", Kind: penne.EventFriendDeleted}); r.Outcome != penne.RejectUser {
 		t.Fatalf("unknown recipient: %+v", r)
 	}
 	if got := len(outboxOf(s, uid)); got != 1 {
 		t.Fatalf("%d deliveries handed on, want only the valid one", got)
 	}
 	for _, kind := range []string{
-		EventPresenceUpdated, EventFriendInvitationReceived, EventFriendRequestReceived,
-		EventFriendRequestAuthorized, EventFriendDeleted,
+		penne.EventPresenceUpdated, penne.EventFriendInvitationReceived, penne.EventFriendRequestReceived,
+		penne.EventFriendRequestAuthorized, penne.EventFriendDeleted,
 	} {
-		if r := s.SubmitNotification(PenneDelivery{ID: "id-" + kind, UserID: uid, Kind: kind}); !r.Accepted || r.ID != "id-"+kind {
+		if r := s.SubmitNotification(penne.Delivery{ID: "id-" + kind, UserID: uid, Kind: kind}); !r.Accepted || r.ID != "id-"+kind {
 			t.Fatalf("%s: %+v", kind, r)
 		}
 	}
@@ -54,7 +55,7 @@ func TestSubmitNotificationValidatesKindAndRecipient(t *testing.T) {
 func TestSubmitWithoutNxPenneIsNotAccepted(t *testing.T) {
 	s := &server{Core: &core.Core{Store: mustStore(t)}}
 	u, _ := s.Store.NewUser()
-	if r := s.SubmitNotification(PenneDelivery{UserID: u.ID, Kind: EventFriendDeleted}); r.Accepted || r.Outcome != penneNoService {
+	if r := s.SubmitNotification(penne.Delivery{UserID: u.ID, Kind: penne.EventFriendDeleted}); r.Accepted || r.Outcome != penne.NoService {
 		t.Fatalf("no nx-penne: %+v", r)
 	}
 }

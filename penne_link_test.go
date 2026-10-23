@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"nx-baas/internal/core"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/penne"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -88,17 +89,17 @@ func TestMovedPenneReceivesTheCoresCalls(t *testing.T) {
 		t.Fatalf("push channel reached nx-penne as %v", c.body)
 	}
 
-	s.penneBindConsole("cert-1", u.ID)
+	s.penneClient.BindConsole("cert-1", u.ID)
 	if c := expectCall(t, got, "/internal/penne/consoles"); httpx.Str(c.body, "device_id") != "cert-1" || httpx.Str(c.body, "user_id") != u.ID {
 		t.Fatalf("console binding = %v", c.body)
 	}
 
 	// A notification: the core still checks kind and recipient, then hands it over.
-	if res := s.SubmitNotification(PenneDelivery{UserID: "nobody", Kind: EventFriendDeleted}); res.Accepted {
+	if res := s.SubmitNotification(penne.Delivery{UserID: "nobody", Kind: penne.EventFriendDeleted}); res.Accepted {
 		t.Fatal("a notification for an unknown user was handed over")
 	}
-	s.SubmitNotification(PenneDelivery{ID: "core:9", UserID: u.ID, Kind: EventFriendDeleted, Payload: map[string]any{"friendId": "x"}})
-	if c := expectCall(t, got, "/internal/penne/notifications"); httpx.Str(c.body, "id") != "core:9" || httpx.Str(c.body, "kind") != EventFriendDeleted {
+	s.SubmitNotification(penne.Delivery{ID: "core:9", UserID: u.ID, Kind: penne.EventFriendDeleted, Payload: map[string]any{"friendId": "x"}})
+	if c := expectCall(t, got, "/internal/penne/notifications"); httpx.Str(c.body, "id") != "core:9" || httpx.Str(c.body, "kind") != penne.EventFriendDeleted {
 		t.Fatalf("notification = %v", c.body)
 	}
 	// The test route waits for nx-penne's outcome.
@@ -112,11 +113,11 @@ func TestMovedPenneReceivesTheCoresCalls(t *testing.T) {
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"delivered":1`) {
 		t.Fatalf("news push = %d %s", rec.Code, rec.Body)
 	}
-	if c := expectCall(t, got, "/internal/penne/topic-messages"); httpx.Str(c.body, "topic") != "openpak_news" || httpx.Str(c.body, "receivers") != newsReceiverToken {
+	if c := expectCall(t, got, "/internal/penne/topic-messages"); httpx.Str(c.body, "topic") != "openpak_news" || httpx.Str(c.body, "receivers") != penne.NewsReceiverToken {
 		t.Fatalf("topic message = %v", c.body)
 	}
 
-	s.penneCloseUser(u.ID)
+	s.penneClient.CloseUser(u.ID)
 	expectCall(t, got, "/internal/penne/users/"+u.ID+"/close")
 
 	// Penne's hosts are forwarded, the frontline is refused, the gateway stays here.
@@ -165,10 +166,10 @@ func TestQueuedPushesSurviveAnNxPenneRestart(t *testing.T) {
 		w.WriteHeader(204)
 	}))
 	defer srv.Close()
-	p := newPenneRemote(srv.URL)
-	s := &server{Core: &core.Core{}, penneRemote: p}
-	s.penneBindConsole("first", "u")
-	s.penneBindConsole("second", "u")
+	p := penne.NewRemote(srv.URL)
+	s := &server{Core: &core.Core{}, penneClient: p}
+	s.penneClient.BindConsole("first", "u")
+	s.penneClient.BindConsole("second", "u")
 	time.Sleep(300 * time.Millisecond)
 	up.Store(true)
 	for _, want := range []string{"first", "second"} {
@@ -186,9 +187,9 @@ func TestQueuedPushesSurviveAnNxPenneRestart(t *testing.T) {
 // A dead nx-penne costs the queue one shared outage, not a minute per job, and a
 // deployment fault (501, or nx-penne without an internal key) is never retried.
 func TestQueueSharesOneOutageAndGivesUpOnDeploymentFaults(t *testing.T) {
-	oldFor, oldProbe := penneRetryFor, pennePauseProbe
-	penneRetryFor, pennePauseProbe = 300*time.Millisecond, time.Hour
-	t.Cleanup(func() { penneRetryFor, pennePauseProbe = oldFor, oldProbe })
+	oldFor, oldProbe := penne.RetryFor, penne.PauseProbe
+	penne.RetryFor, penne.PauseProbe = 300*time.Millisecond, time.Hour
+	t.Cleanup(func() { penne.RetryFor, penne.PauseProbe = oldFor, oldProbe })
 
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -196,16 +197,16 @@ func TestQueueSharesOneOutageAndGivesUpOnDeploymentFaults(t *testing.T) {
 		w.WriteHeader(http.StatusBadGateway)
 	}))
 	defer srv.Close()
-	p := newPenneRemote(srv.URL)
+	p := penne.NewRemote(srv.URL)
 	var ran atomic.Int32
 	for i := 0; i < 20; i++ {
-		p.later("job", func() error {
+		p.Later("job", func() error {
 			ran.Add(1)
-			return p.call("POST", "/internal/penne/consoles", map[string]any{}, nil)
+			return p.Call("POST", "/internal/penne/consoles", map[string]any{}, nil)
 		})
 	}
 	// Past the budget the rest are dropped without running, so the queue drains at once.
-	for deadline := time.Now().Add(3 * time.Second); len(p.queue) > 0; time.Sleep(10 * time.Millisecond) {
+	for deadline := time.Now().Add(3 * time.Second); p.Pending() > 0; time.Sleep(10 * time.Millisecond) {
 		if time.Now().After(deadline) {
 			t.Fatal("twenty jobs against a dead nx-penne held the queue past one outage budget")
 		}
@@ -228,9 +229,9 @@ func TestQueueSharesOneOutageAndGivesUpOnDeploymentFaults(t *testing.T) {
 			w.WriteHeader(c.status)
 			w.Write([]byte(c.body))
 		}))
-		err := newPenneRemote(fault.URL).call("POST", "/internal/penne/consoles", map[string]any{}, nil)
+		err := penne.NewRemote(fault.URL).Call("POST", "/internal/penne/consoles", map[string]any{}, nil)
 		fault.Close()
-		var again retryable
+		var again penne.Retryable
 		if err == nil || errors.As(err, &again) {
 			t.Fatalf("%d %s: err %v, want a final error", c.status, c.body, err)
 		}

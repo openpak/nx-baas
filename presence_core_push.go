@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"nx-baas/internal/identity"
+	"nx-baas/internal/penne"
 	"nx-baas/internal/store"
 	"strings"
 	"time"
@@ -55,10 +56,10 @@ func (s *server) notifyCorePresence(b *identity.OpenpakBackend, viewerAccount, s
 	}
 	snap := agg.State + "|" + agg.AppID + "|" + agg.AppField
 	createdAt := nextPresenceStamp(spr.BaasUserID, viewer.ID, agg.UpdatedAt)
-	s.SubmitNotification(PenneDelivery{
+	s.SubmitNotification(penne.Delivery{
 		ID:     fmt.Sprintf("presence:%s:%s:%d:%s", spr.BaasUserID, viewer.ID, createdAt, snap),
 		UserID: viewer.ID,
-		Kind:   EventPresenceUpdated,
+		Kind:   penne.EventPresenceUpdated,
 		Payload: map[string]any{
 			"friendId":  spr.BaasUserID,
 			"createdAt": createdAt,

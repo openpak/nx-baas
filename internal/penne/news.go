@@ -1,4 +1,4 @@
-package main
+package penne
 
 // The News channel's half that stays in this adapter: pushing "this topic changed" to the
 // consoles that follow it. The News fetches themselves are nx-bcat's (the bcat hosts).
@@ -30,7 +30,7 @@ import (
 // registers its npns listen key with ListenToByName("bcat") (23.0.1 bcat, rodata 0x3119e7),
 // not its program id like friends; confirmed on Harbor 2026-10-16 (the frame reaches
 // nn.bcat.EventWatcher and the list is fetched). NX_PENNE_NEWS_RECEIVER overrides it.
-var newsReceiverToken = func() string {
+var NewsReceiverToken = func() string {
 	if v := os.Getenv("NX_PENNE_NEWS_RECEIVER"); v != "" {
 		return v
 	}
@@ -45,7 +45,7 @@ var newsReceiverToken = func() string {
 // from the News topic id (the naming is what hardware still has to show); without it the
 // topic id itself is matched. Live delivery only: a console that is offline refreshes on
 // its next boot anyway, and a stale revision is worthless.
-func (s *server) newsPush(w http.ResponseWriter, r *http.Request) {
+func (p *Remote) NewsPush(w http.ResponseWriter, r *http.Request) {
 	if !httpx.InternalOK(r) {
 		httpx.APIErr(w, http.StatusUnauthorized, "internal")
 		return
@@ -77,7 +77,7 @@ func (s *server) newsPush(w http.ResponseWriter, r *http.Request) {
 	if topic == "" {
 		topic = in.TopicID
 	}
-	subscribers, delivered := s.deliverToTopic(strings.ToLower(topic), "news", string(body))
+	subscribers, delivered := p.deliverToTopic(strings.ToLower(topic), "news", string(body))
 	log.Printf("[news] push %s revision %s -> topic %q: %d subscriber(s), %d connection(s)", in.TopicID, in.Revision, topic, subscribers, delivered)
 	httpx.WriteJSON(w, 200, map[string]any{"topic": topic, "subscribers": subscribers, "delivered": delivered})
 }
@@ -86,6 +86,6 @@ func (s *server) newsPush(w http.ResponseWriter, r *http.Request) {
 // subscribed the topic on that connection's device. It returns how many subscriptions
 // matched and how many connections the message was queued on. The delivery itself is
 // penne_link.go's: here, or in nx-penne once Penne has moved.
-func (s *server) deliverToTopic(topic, name, body string) (subscribers, delivered int) {
-	return s.penneTopicMessage(topic, name, newsReceiverToken, body)
+func (p *Remote) deliverToTopic(topic, name, body string) (subscribers, delivered int) {
+	return p.TopicMessage(topic, name, NewsReceiverToken, body)
 }

@@ -39,6 +39,7 @@ import (
 	"nx-baas/internal/devices"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
+	"nx-baas/internal/penne"
 	"nx-baas/internal/store"
 	"nx-baas/internal/token"
 	"nx-baas/redact"
@@ -112,9 +113,9 @@ type server struct {
 	shopFwd *httputil.ReverseProxy
 	// penneFwd and penneRemote reach nx-penne (split.go, penne_link.go).
 	penneFwd    *httputil.ReverseProxy
-	penneRemote *penneRemote
+	penneClient *penne.Remote
 	// notifier is where checked notifications go (penne_deliver.go): penneRemote.
-	notifier notifier
+	notifier penne.Notifier
 	// pctlFwd forwards parental controls to nx-pctl (split.go).
 	pctlFwd *httputil.ReverseProxy
 	// bcatFwd is nx-bcat once the bcat hosts have moved (NX_BCAT_URL, split.go).
@@ -254,7 +255,7 @@ func (s *server) bindNotificationChannel(deviceAuthenticationToken, baasUserID s
 		return
 	}
 	if dt, err := token.ParseJWT(deviceAuthenticationToken, &s.Key.PublicKey); err == nil {
-		s.penneBindConsole(httpx.Str(dt, "sub"), baasUserID)
+		s.penneClient.BindConsole(httpx.Str(dt, "sub"), baasUserID)
 	}
 }
 
@@ -918,7 +919,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		// Penne sees only the console's device token, whose subject is the
 		// certificate; this is where both halves are in hand, so the account
 		// behind the console is recorded for the notification channel.
-		s.penneBindConsole(di, u.ID)
+		s.penneClient.BindConsole(di, u.ID)
 		s.expireDeviceEverywhere(form.Get("id"), u.ID)
 		// A console re-logs in every hour while it plays; the login knows no
 		// title, so it must not overwrite the one the device already published
@@ -1349,7 +1350,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		now := time.Now().Unix()
 		// B workstream (NTF-01): keep the association this echo used to drop.
-		s.penneRecordPushChannel(userID, devID, httpx.Str(in, "service"), httpx.Str(in, "deviceToken"))
+		s.penneClient.RecordPushChannel(userID, devID, httpx.Str(in, "service"), httpx.Str(in, "deviceToken"))
 		httpx.WriteJSON(w, 200, map[string]any{
 			"createdAt": now, "deviceAccountId": devID, "deviceAttributes": map[string]any{}, "deviceToken": httpx.Str(in, "deviceToken"),
 			"service": httpx.Str(in, "service"), "updatedAt": now, "userAttributes": map[string]any{}, "userId": userID,

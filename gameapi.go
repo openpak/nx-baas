@@ -28,6 +28,7 @@ import (
 	"nx-baas/internal/bans"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
+	"nx-baas/internal/penne"
 	"nx-baas/redact"
 	"os"
 	"strconv"
@@ -409,7 +410,7 @@ func (s *server) penneTestNotification(w http.ResponseWriter, r *http.Request) {
 		httpx.APIErr(w, http.StatusBadRequest, "user_id and kind required")
 		return
 	}
-	res := s.submitNotification(PenneDelivery{
+	res := s.submitNotification(penne.Delivery{
 		ID: in.ID, UserID: in.UserID, Kind: in.Kind, Payload: in.Payload,
 	}, true)
 	log.Printf("[nx-baas] penne: test notification user=%s kind=%s -> %s", redact.Tag(in.UserID), in.Kind, res.Outcome)
@@ -434,7 +435,7 @@ func (s *server) gameAPI() http.Handler {
 	mux.HandleFunc("/internal/title-version", s.dauthSvc().TitleVersion)
 	mux.HandleFunc("/api/invitations", s.invitations)
 	mux.HandleFunc("/internal/notifications/test", s.penneTestNotification)
-	mux.HandleFunc("/internal/news/push", s.newsPush)
+	mux.HandleFunc("/internal/news/push", s.penneClient.NewsPush)
 	if s.pctlFwd != nil {
 		// The website's parent routes are nx-pctl's now; forwarded until it points there.
 		mux.Handle("/internal/pctl/", s.pctlFwd)

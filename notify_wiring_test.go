@@ -8,6 +8,7 @@ package main
 
 import (
 	"nx-baas/internal/identity"
+	"nx-baas/internal/penne"
 	"nx-baas/internal/store"
 	"testing"
 	"time"
@@ -25,9 +26,9 @@ func TestCoreFriendEventsNotifyTheAccountTheCoreAddressed(t *testing.T) {
 		core, native string
 		version      uint64
 	}{
-		{"friend_requested", EventFriendRequestReceived, 11},
-		{"friend_accepted", EventFriendRequestAuthorized, 12},
-		{"friend_removed", EventFriendDeleted, 13},
+		{"friend_requested", penne.EventFriendRequestReceived, 11},
+		{"friend_accepted", penne.EventFriendRequestAuthorized, 12},
+		{"friend_removed", penne.EventFriendDeleted, 13},
 	} {
 		s.notifyCoreFriendEvent(b, tc.core, "acc-a@example.com", "acc-b@example.com", tc.version)
 		queue := outboxOf(s, a.ID)
@@ -125,8 +126,8 @@ func TestPresenceChangeNotifiesFriendsOnceAndOnlyOnChange(t *testing.T) {
 	if len(queue) != 1 {
 		t.Fatalf("going online produced %d deliveries, want 1", len(queue))
 	}
-	if queue[0].Kind != EventPresenceUpdated {
-		t.Fatalf("kind %q, want %q", queue[0].Kind, EventPresenceUpdated)
+	if queue[0].Kind != penne.EventPresenceUpdated {
+		t.Fatalf("kind %q, want %q", queue[0].Kind, penne.EventPresenceUpdated)
 	}
 	if got, _ := queue[0].Payload["friendId"].(string); got != subject.ID {
 		t.Fatalf("presence names %q, want the subject %q", got, subject.ID)
@@ -189,7 +190,7 @@ func TestCommittedInvitationIsHandedToPenne(t *testing.T) {
 
 	notifyCommitted(InvitationEvent{
 		EventID:       "invitation:1234",
-		Type:          EventFriendInvitationReceived,
+		Type:          penne.EventFriendInvitationReceived,
 		ReceiverID:    users[0].ID,
 		SenderID:      users[1].ID,
 		InvitationID:  "1234",
@@ -202,7 +203,7 @@ func TestCommittedInvitationIsHandedToPenne(t *testing.T) {
 	if len(queue) != 1 {
 		t.Fatalf("a committed invitation queued %d deliveries, want 1", len(queue))
 	}
-	if queue[0].Kind != EventFriendInvitationReceived {
+	if queue[0].Kind != penne.EventFriendInvitationReceived {
 		t.Fatalf("kind %q", queue[0].Kind)
 	}
 	if queue[0].ID != "invitation:1234" {
@@ -228,7 +229,7 @@ func TestCommittedInvitationIsHandedToPenne(t *testing.T) {
 
 	// A retried notify carries C's event id again, which nx-penne dedups on.
 	notifyCommitted(InvitationEvent{
-		EventID: "invitation:1234", Type: EventFriendInvitationReceived,
+		EventID: "invitation:1234", Type: penne.EventFriendInvitationReceived,
 		ReceiverID: users[0].ID, SenderID: users[1].ID, InvitationID: "1234",
 	})
 	if q := outboxOf(s, users[0].ID); len(q) != 2 || q[1].ID != "invitation:1234" {

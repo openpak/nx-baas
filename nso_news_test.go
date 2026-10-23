@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/penne"
 	"strings"
 	"testing"
 )
@@ -132,7 +133,7 @@ func TestNewsPushNeedsTheKeyAndGoesToPenne(t *testing.T) {
 	t.Setenv("NX_INTERNAL_KEY", "test-internal-key")
 	srv, got := fakeNxPenne(t)
 	s := testServer(t)
-	s.penneRemote = newPenneRemote(srv.URL)
+	s.penneClient = penne.NewRemote(srv.URL)
 
 	body := `{"topic_id":"OpenPak_News","revision":7,"wait_range":600}`
 	if w := do(t, s, "POST", "/internal/news/push", "", body); w.Code != http.StatusUnauthorized {
@@ -146,7 +147,7 @@ func TestNewsPushNeedsTheKeyAndGoesToPenne(t *testing.T) {
 		t.Errorf("push reply = %s", w.Body.String())
 	}
 	c := expectCall(t, got, "/internal/penne/topic-messages")
-	if httpx.Str(c.body, "topic") != "openpak_news" || httpx.Str(c.body, "name") != "news" || httpx.Str(c.body, "receivers") != newsReceiverToken {
+	if httpx.Str(c.body, "topic") != "openpak_news" || httpx.Str(c.body, "name") != "news" || httpx.Str(c.body, "receivers") != penne.NewsReceiverToken {
 		t.Fatalf("topic message = %v", c.body)
 	}
 	msg := httpx.Str(c.body, "body")

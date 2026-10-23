@@ -19,19 +19,32 @@ package main
 import (
 	"fmt"
 	"nx-baas/internal/identity"
+	"nx-baas/internal/penne"
 	"nx-baas/internal/store"
 	"sync"
 	"time"
 )
+
+// SubmitNotification is the entry point the social, presence and invitation code calls.
+// Accepted means nx-penne has it (or will, through the ordered queue); the caller never
+// retries a submission that returned Accepted.
+func (s *server) SubmitNotification(d penne.Delivery) penne.Submission {
+	return s.submitNotification(d, false)
+}
+
+// submitNotification is SubmitNotification with the choice to wait for nx-penne's outcome.
+func (s *server) submitNotification(d penne.Delivery, wait bool) penne.Submission {
+	return penne.Submit(s.Store, s.notifier, d, wait)
+}
 
 // coreEventKind maps the account core's friend events onto the five event
 // kinds the 22.5.0 friends module recognizes. Only these three core events
 // carry a native counterpart; presence has its own path below and invitations
 // arrive through C's seam.
 var coreEventKind = map[string]string{
-	"friend_requested": EventFriendRequestReceived,
-	"friend_accepted":  EventFriendRequestAuthorized,
-	"friend_removed":   EventFriendDeleted,
+	"friend_requested": penne.EventFriendRequestReceived,
+	"friend_accepted":  penne.EventFriendRequestAuthorized,
+	"friend_removed":   penne.EventFriendDeleted,
 }
 
 // notifyCoreFriendEvent submits one native notification for one core friend
@@ -64,7 +77,7 @@ func (s *server) notifyCoreFriendEvent(b *identity.OpenpakBackend, evType, accou
 		otherBaas = other.BaasUserID
 	}
 	payload := map[string]any{"friendId": otherBaas}
-	if kind == EventFriendRequestReceived && other != nil {
+	if kind == penne.EventFriendRequestReceived && other != nil {
 		// The console's received parser fails the whole event without
 		// $.value.channels[0]; nothing else in the body is read
 		// [friends-notifications-firmware-2026-09-19.md §2.2]. The channel
@@ -76,7 +89,7 @@ func (s *server) notifyCoreFriendEvent(b *identity.OpenpakBackend, evType, accou
 		}
 		payload["value"] = map[string]any{"channels": []string{ch}}
 	}
-	s.SubmitNotification(PenneDelivery{
+	s.SubmitNotification(penne.Delivery{
 		ID:      fmt.Sprintf("core:%d", version),
 		UserID:  me.BaasUserID,
 		Kind:    kind,
@@ -142,10 +155,10 @@ func (s *server) notifyPresenceIfChanged(userID, before string) {
 		// rather than a duplicate of the first, and a newer state coalesces
 		// over a pending older one inside B's outbox.
 		createdAt := nextPresenceStamp(u.ID, viewer.ID, agg.UpdatedAt)
-		s.SubmitNotification(PenneDelivery{
+		s.SubmitNotification(penne.Delivery{
 			ID:     fmt.Sprintf("presence:%s:%s:%d:%s", u.ID, viewer.ID, createdAt, after),
 			UserID: viewer.ID,
-			Kind:   EventPresenceUpdated,
+			Kind:   penne.EventPresenceUpdated,
 			// The parser's own paths, recovered from the module: the presence
 			// nests under $.value with the friend's id inside it, and the
 			// event's own timestamp is $.createdAt (camelCase here, while an
@@ -249,10 +262,10 @@ func nextPresenceStamp(subjectID, viewerID string, at int64) int64 {
 // $.invitation.{id, sender_id, application_id, invitation_group_id}.
 func (s *server) wireInvitationNotifications() {
 	invitationNotify = func(ev InvitationEvent) {
-		s.SubmitNotification(PenneDelivery{
+		s.SubmitNotification(penne.Delivery{
 			ID:     ev.EventID, // "invitation:<id>", already stable across retries
 			UserID: ev.ReceiverID,
-			Kind:   EventFriendInvitationReceived,
+			Kind:   penne.EventFriendInvitationReceived,
 			Payload: map[string]any{
 				// id and invitation_group_id are JSON integers: the event parser
 				// type-checks them and drops the whole event on a string
