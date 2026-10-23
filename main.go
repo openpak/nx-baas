@@ -2990,7 +2990,11 @@ func main() {
 	go func() {
 		addr := getenv("NX_API_ADDR", ":20070")
 		if getenv("NX_INTERNAL_KEY", getenv("OPENPAK_INTERNAL_KEY", "")) == "" {
-			log.Printf("[nx-baas] WARNING: game API on %s has no NX_INTERNAL_KEY; keep the port off any untrusted network", addr)
+			if os.Getenv("NX_INTERNAL_INSECURE") == "1" {
+				log.Printf("[nx-baas] WARNING: game API on %s runs with NX_INTERNAL_INSECURE=1: /internal routes accept without a key. Isolated development only.", addr)
+			} else {
+				log.Printf("[nx-baas] game API on %s has no NX_INTERNAL_KEY: /internal routes refuse everything until one is configured", addr)
+			}
 		}
 		log.Printf("[nx-baas] game API listening %s (photon-room, invitations, mint-token)", addr)
 		log.Fatal((&http.Server{Addr: addr, Handler: s.gameAPI(), ErrorLog: redact.ErrorLog()}).ListenAndServe())

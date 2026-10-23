@@ -208,6 +208,11 @@ func TestOnlineNotificationPreferenceGatesOnlyPresence(t *testing.T) {
 // steady state drops the connection on a type it does not accept.
 func TestMain(m *testing.M) {
 	penneSendEvents = true
+	// The suite drives /internal routes the way isolated development does:
+	// without a configured key, under the explicit insecure opt-out. The
+	// fail-closed default (key required) is pinned by TestInternalRoutes*
+	// in internal_test.go, which manage the environment themselves.
+	os.Setenv("NX_INTERNAL_INSECURE", "1")
 	os.Exit(m.Run())
 }
 

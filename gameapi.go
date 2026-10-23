@@ -96,10 +96,15 @@ func (s *server) callerPID(r *http.Request) (uint64, string, bool) {
 }
 
 // internalOK guards the /internal endpoints. The API port is internal (compose network or
-// loopback); the key is the second lock, and its absence is loud at startup.
+// loopback) and the key is the second lock. Fail closed: with no key configured there is
+// nothing to compare, so every /internal route refuses. Isolated development opts out
+// explicitly (and loudly) with NX_INTERNAL_INSECURE=1, which production must never set.
 func (s *server) internalOK(r *http.Request) bool {
 	k := getenv("NX_INTERNAL_KEY", getenv("OPENPAK_INTERNAL_KEY", ""))
-	return k == "" || hmac.Equal([]byte(k), []byte(r.Header.Get("X-Internal-Key")))
+	if k == "" {
+		return os.Getenv("NX_INTERNAL_INSECURE") == "1"
+	}
+	return hmac.Equal([]byte(k), []byte(r.Header.Get("X-Internal-Key")))
 }
 
 // ---------- room presence ----------
