@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"nx-baas/internal/core"
 	"nx-baas/internal/identity"
+	"nx-baas/internal/invitations"
 	"nx-baas/internal/store"
 	"path/filepath"
 	"strings"
@@ -68,8 +69,8 @@ func testServer(t *testing.T) *server {
 	t.Helper()
 	// The durable invitation store lives in the test's temp dir (INV-03: the
 	// mailbox survives restarts, so tests must exercise the file, not memory).
-	invStoreOverride = loadInvitationStore(filepath.Join(t.TempDir(), "invitations.json"))
-	t.Cleanup(func() { invStoreOverride = nil })
+	invitations.StoreOverride = invitations.LoadStore(filepath.Join(t.TempDir(), "invitations.json"))
+	t.Cleanup(func() { invitations.StoreOverride = nil })
 	acct := &stubBackend{
 		key:     []byte("0123456789abcdef0123456789abcdef"),
 		friends: map[uint64][]uint64{hostPID: {joinerPID}, joinerPID: {hostPID}},

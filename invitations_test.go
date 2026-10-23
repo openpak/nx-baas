@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"nx-baas/internal/core"
+	"nx-baas/internal/invitations"
 	"nx-baas/internal/store"
 	"nx-baas/internal/token"
 	"os"
@@ -66,9 +67,9 @@ func fiveServer(t *testing.T) *server {
 	dir := t.TempDir()
 	// The durable store is the behavior under test: every server instance in a
 	// test may reopen the same file to prove restart/cross-device semantics.
-	st := loadInvitationStore(filepath.Join(dir, "invitations.json"))
-	invStoreOverride = st
-	t.Cleanup(func() { invStoreOverride = nil })
+	st := invitations.LoadStore(filepath.Join(dir, "invitations.json"))
+	invitations.StoreOverride = st
+	t.Cleanup(func() { invitations.StoreOverride = nil })
 	s := &server{Core: &core.Core{Key: key, Store: store.Load(filepath.Join(dir, "baas.json"))}}
 	for uid, pid := range map[string]uint64{invSenderUID: 1800000010, invReceiverUID: 1800000011, invStrangerUID: 1800000012} {
 		s.Store.Users[uid] = &store.User{ID: uid, PID: pid, Nickname: "user-" + uid}
@@ -99,7 +100,7 @@ func fiveDo(t *testing.T, s *server, method, path, token, body string) *httptest
 		r.Header.Set("Authorization", "Bearer "+token)
 	}
 	w := httptest.NewRecorder()
-	s.five(w, r, []byte(body))
+	s.invitationsSvc().Five(w, r, []byte(body))
 	return w
 }
 
@@ -183,11 +184,11 @@ func TestFiveCreateGroupV2(t *testing.T) {
 	if group["sender_id"] != invSenderUID {
 		t.Fatalf("sender_id = %v", group["sender_id"])
 	}
-	invitations, ok := group["invitations"].([]any)
-	if !ok || len(invitations) != 1 {
+	invs, ok := group["invitations"].([]any)
+	if !ok || len(invs) != 1 {
 		t.Fatalf("invitations = %v", group["invitations"])
 	}
-	inv := invitations[0].(map[string]any)
+	inv := invs[0].(map[string]any)
 	if _, ok := inv["id"].(float64); !ok {
 		t.Fatalf("invitation id is not a number: %v", inv["id"])
 	}
@@ -197,7 +198,7 @@ func TestFiveCreateGroupV2(t *testing.T) {
 
 	// INV-02: the row is durable before the response — a fresh store instance
 	// on the same file (a restart, another device) sees the same invitation.
-	reopened := loadInvitationStore(invStoreOverride.path)
+	reopened := invitations.LoadStore(invitations.StoreOverride.FilePath)
 	if len(reopened.Invitations) != 1 {
 		t.Fatalf("reopened store holds %d invitations, want 1", len(reopened.Invitations))
 	}
@@ -245,7 +246,7 @@ func TestFiveCreateValidation(t *testing.T) {
 	}
 	// Bound: one more receiver than the documented adapter cap is refused.
 	var ids []string
-	for i := 0; i < invitationMaxReceivers+1; i++ {
+	for i := 0; i < invitations.MaxReceivers+1; i++ {
 		ids = append(ids, fmt.Sprintf("%016x", i+1000))
 	}
 	w := fiveDo(t, s, "POST", "/v2/invitation_groups", token,
@@ -258,16 +259,16 @@ func TestFiveCreateValidation(t *testing.T) {
 func TestFiveCreatePolicyDenial(t *testing.T) {
 	s := fiveServer(t)
 	core := &fakeInvCore{denied: map[string]string{"acct-" + invReceiverUID: "blocked"}}
-	invCoreOverride = core
-	t.Cleanup(func() { invCoreOverride = nil })
+	invitations.CoreOverride = core
+	t.Cleanup(func() { invitations.CoreOverride = nil })
 
 	// Only receiver is denied -> the native error names it, nothing commits.
 	w := fiveDo(t, s, "POST", "/v2/invitation_groups", fiveToken(s, invSenderUID), createBody(invReceiverUID))
 	if w.Code != 400 || !strings.Contains(w.Body.String(), "sender_blocks_receiver") {
 		t.Fatalf("all denied = %d %s", w.Code, w.Body)
 	}
-	if len(invStoreOverride.Invitations) != 0 {
-		t.Fatalf("denied invitation committed anyway: %d rows", len(invStoreOverride.Invitations))
+	if len(invitations.StoreOverride.Invitations) != 0 {
+		t.Fatalf("denied invitation committed anyway: %d rows", len(invitations.StoreOverride.Invitations))
 	}
 
 	// A core outage must not read as policy: the call fails, the console retries.
@@ -283,8 +284,8 @@ func TestFiveCreatePolicyDenial(t *testing.T) {
 
 func TestFiveInboxShapeAndFilters(t *testing.T) {
 	s := fiveServer(t)
-	invCoreOverride = &fakeInvCore{}
-	t.Cleanup(func() { invCoreOverride = nil })
+	invitations.CoreOverride = &fakeInvCore{}
+	t.Cleanup(func() { invitations.CoreOverride = nil })
 	if w := fiveDo(t, s, "POST", "/v2/invitation_groups", fiveToken(s, invSenderUID), createBody(invReceiverUID)); w.Code != 200 {
 		t.Fatalf("create = %d %s", w.Code, w.Body)
 	}
@@ -356,8 +357,8 @@ func TestFiveInboxShapeAndFilters(t *testing.T) {
 
 func TestFiveReadStateSurvivesRestartAndSyncs(t *testing.T) {
 	s := fiveServer(t)
-	invCoreOverride = &fakeInvCore{}
-	t.Cleanup(func() { invCoreOverride = nil })
+	invitations.CoreOverride = &fakeInvCore{}
+	t.Cleanup(func() { invitations.CoreOverride = nil })
 	if w := fiveDo(t, s, "POST", "/v2/invitation_groups", fiveToken(s, invSenderUID), createBody(invReceiverUID)); w.Code != 200 {
 		t.Fatalf("create = %d %s", w.Code, w.Body)
 	}
@@ -372,14 +373,14 @@ func TestFiveReadStateSurvivesRestartAndSyncs(t *testing.T) {
 		}
 	}
 	// A restart (fresh store instance on the same file) sees the read state.
-	reopened := loadInvitationStore(invStoreOverride.path)
+	reopened := invitations.LoadStore(invitations.StoreOverride.FilePath)
 	for _, inv := range reopened.Invitations {
 		if !inv.Read || inv.ReadAt == 0 {
 			t.Fatalf("read state did not survive the restart: %+v", inv)
 		}
 	}
 	// And the unread count the console polls is zero on a third instance.
-	invStoreOverride = loadInvitationStore(invStoreOverride.path)
+	invitations.StoreOverride = invitations.LoadStore(invitations.StoreOverride.FilePath)
 	w := fiveDo(t, s, "GET", "/v2/users/"+invReceiverUID+"/invitations/inbox?fields=count&read=false",
 		fiveToken(s, invReceiverUID), "")
 	if !strings.Contains(w.Body.String(), `"count":0`) {
@@ -389,13 +390,13 @@ func TestFiveReadStateSurvivesRestartAndSyncs(t *testing.T) {
 
 func TestFiveJSONPatchReadForms(t *testing.T) {
 	s := fiveServer(t)
-	invCoreOverride = &fakeInvCore{}
-	t.Cleanup(func() { invCoreOverride = nil })
+	invitations.CoreOverride = &fakeInvCore{}
+	t.Cleanup(func() { invitations.CoreOverride = nil })
 	if w := fiveDo(t, s, "POST", "/v2/invitation_groups", fiveToken(s, invSenderUID), createBody(invReceiverUID)); w.Code != 200 {
 		t.Fatalf("create = %d %s", w.Code, w.Body)
 	}
 	var id string
-	for k := range invStoreOverride.Invitations {
+	for k := range invitations.StoreOverride.Invitations {
 		id = k
 	}
 
@@ -405,7 +406,7 @@ func TestFiveJSONPatchReadForms(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("patch = %d %s", w.Code, w.Body)
 	}
-	if invStoreOverride.Invitations[id].Read != true {
+	if invitations.StoreOverride.Invitations[id].Read != true {
 		t.Fatal("patch did not commit read state")
 	}
 
@@ -427,13 +428,13 @@ func TestFiveJSONPatchReadForms(t *testing.T) {
 
 func TestFiveGroupDetailAuthorization(t *testing.T) {
 	s := fiveServer(t)
-	invCoreOverride = &fakeInvCore{}
-	t.Cleanup(func() { invCoreOverride = nil })
+	invitations.CoreOverride = &fakeInvCore{}
+	t.Cleanup(func() { invitations.CoreOverride = nil })
 	if w := fiveDo(t, s, "POST", "/v2/invitation_groups", fiveToken(s, invSenderUID), createBody(invReceiverUID)); w.Code != 200 {
 		t.Fatalf("create = %d %s", w.Code, w.Body)
 	}
 	var id string
-	for k := range invStoreOverride.Groups {
+	for k := range invitations.StoreOverride.Groups {
 		id = k
 	}
 	for _, c := range []struct {
@@ -459,12 +460,12 @@ func TestFiveGroupDetailAuthorization(t *testing.T) {
 
 func TestFiveInboxExcludesExpired(t *testing.T) {
 	s := fiveServer(t)
-	invCoreOverride = &fakeInvCore{}
-	t.Cleanup(func() { invCoreOverride = nil })
+	invitations.CoreOverride = &fakeInvCore{}
+	t.Cleanup(func() { invitations.CoreOverride = nil })
 	if w := fiveDo(t, s, "POST", "/v2/invitation_groups", fiveToken(s, invSenderUID), createBody(invReceiverUID)); w.Code != 200 {
 		t.Fatalf("create = %d %s", w.Code, w.Body)
 	}
-	for _, inv := range invStoreOverride.Invitations {
+	for _, inv := range invitations.StoreOverride.Invitations {
 		inv.ExpiresAt = time.Now().Unix() - 1
 	}
 	w := fiveDo(t, s, "GET", "/v2/users/"+invReceiverUID+"/invitations/inbox", fiveToken(s, invReceiverUID), "")
@@ -506,7 +507,7 @@ func TestMailboxIsDurableAndNativelyVisible(t *testing.T) {
 	if !strings.Contains(w.Body.String(), `"from_pid":`) {
 		t.Fatalf("pop = %d %s", w.Code, w.Body)
 	}
-	reopened := loadInvitationStore(invStoreOverride.path)
+	reopened := invitations.LoadStore(invitations.StoreOverride.FilePath)
 	if len(reopened.Invitations) != 0 {
 		t.Fatalf("popped invitation came back: %d rows", len(reopened.Invitations))
 	}
@@ -519,30 +520,30 @@ func TestMailboxStaleRoomIsDroppedCleanly(t *testing.T) {
 
 	// Hosted a room (presence carries the title), sent, then went away.
 	s.Store.Update(host, func(u *store.User) { u.Presence = store.Presence{State: "PLAYING", AppID: "0100ed9024eb8000"} })
-	if _, ok := createMailboxInvitation(host, "host", joiner, validAppData, "0100ed9024eb8000"); !ok {
+	if _, ok := invitations.CreateMailbox(host, "host", joiner, validAppData, "0100ed9024eb8000"); !ok {
 		t.Fatal("create failed")
 	}
 	s.Store.Update(host, func(u *store.User) { u.Presence = store.Presence{State: "OFFLINE"} })
-	if got := popMailboxInvitations(s, joiner); len(got) != 0 {
+	if got := invitations.PopMailbox(s.invitationsSvc(), joiner); len(got) != 0 {
 		t.Fatalf("a dead room was delivered: %d rows", len(got))
 	}
 
 	// No title recorded at send time: nothing to judge, the TTL decides.
-	if _, ok := createMailboxInvitation(host, "host", joiner, validAppData, ""); !ok {
+	if _, ok := invitations.CreateMailbox(host, "host", joiner, validAppData, ""); !ok {
 		t.Fatal("create failed")
 	}
-	if got := popMailboxInvitations(s, joiner); len(got) != 1 {
+	if got := invitations.PopMailbox(s.invitationsSvc(), joiner); len(got) != 1 {
 		t.Fatalf("unjudgeable invitation was dropped: %d rows", len(got))
 	}
 
 	// A live core session keeps the invitation deliverable.
 	s.Store.Update(host, func(u *store.User) { u.Presence = store.Presence{State: "OFFLINE"} })
-	if _, ok := createMailboxInvitation(host, "host", joiner, validAppData, "0100ed9024eb8000"); !ok {
+	if _, ok := invitations.CreateMailbox(host, "host", joiner, validAppData, "0100ed9024eb8000"); !ok {
 		t.Fatal("create failed")
 	}
-	invCoreOverride = &fakeInvCore{live: map[string]bool{"acct-" + invSenderUID: true}}
-	t.Cleanup(func() { invCoreOverride = nil })
-	if got := popMailboxInvitations(s, joiner); len(got) != 1 {
+	invitations.CoreOverride = &fakeInvCore{live: map[string]bool{"acct-" + invSenderUID: true}}
+	t.Cleanup(func() { invitations.CoreOverride = nil })
+	if got := invitations.PopMailbox(s.invitationsSvc(), joiner); len(got) != 1 {
 		t.Fatalf("core-live room was dropped: %d rows", len(got))
 	}
 }
@@ -551,12 +552,12 @@ func TestMailboxQueueIsBounded(t *testing.T) {
 	s := fiveServer(t)
 	host := s.Store.Users[invSenderUID]
 	joiner := s.Store.Users[invReceiverUID]
-	for i := 0; i < maxQueuedMailboxPerTarget+3; i++ {
-		if _, ok := createMailboxInvitation(host, "host", joiner, validAppData, ""); !ok {
+	for i := 0; i < invitations.MaxQueuedMailboxPerTarget+3; i++ {
+		if _, ok := invitations.CreateMailbox(host, "host", joiner, validAppData, ""); !ok {
 			t.Fatal("create failed")
 		}
 	}
-	if got := popMailboxInvitations(s, joiner); len(got) != maxQueuedMailboxPerTarget {
+	if got := invitations.PopMailbox(s.invitationsSvc(), joiner); len(got) != invitations.MaxQueuedMailboxPerTarget {
 		t.Fatalf("queue grew past the bound: %d", len(got))
 	}
 }
@@ -565,18 +566,18 @@ func TestMailboxQueueIsBounded(t *testing.T) {
 
 func TestNotificationHookFiresAfterCommit(t *testing.T) {
 	s := fiveServer(t)
-	invCoreOverride = &fakeInvCore{}
-	t.Cleanup(func() { invCoreOverride = nil })
-	var got []InvitationEvent
-	invitationNotify = func(ev InvitationEvent) {
+	invitations.CoreOverride = &fakeInvCore{}
+	t.Cleanup(func() { invitations.CoreOverride = nil })
+	var got []invitations.Event
+	invitations.NotifyHook = func(ev invitations.Event) {
 		// The event promises an invitation the inbox really has: by the time
 		// the hook runs, the store must already hold the committed row.
-		if invStoreOverride.Invitations[ev.InvitationID] == nil {
+		if invitations.StoreOverride.Invitations[ev.InvitationID] == nil {
 			t.Error("event fired before the invitation was committed")
 		}
 		got = append(got, ev)
 	}
-	t.Cleanup(func() { invitationNotify = nil })
+	t.Cleanup(func() { invitations.NotifyHook = nil })
 
 	if w := fiveDo(t, s, "POST", "/v2/invitation_groups", fiveToken(s, invSenderUID), createBody(invReceiverUID)); w.Code != 200 {
 		t.Fatalf("create = %d %s", w.Code, w.Body)
@@ -624,8 +625,8 @@ func TestOpenPakFallbackEnforcesBlocks(t *testing.T) {
 // invGroupID returns the nth group id in the store (tests create exactly one).
 func invGroupID(t *testing.T, n int) string {
 	t.Helper()
-	ids := make([]string, 0, len(invStoreOverride.Groups))
-	for k := range invStoreOverride.Groups {
+	ids := make([]string, 0, len(invitations.StoreOverride.Groups))
+	for k := range invitations.StoreOverride.Groups {
 		ids = append(ids, k)
 	}
 	if n >= len(ids) {
@@ -699,12 +700,12 @@ func TestInvitationDropsOutWhenTheSenderLeftTheGame(t *testing.T) {
 	}
 
 	// Age it past the grace, with the sender still hosting that title.
-	st := invitationStoreFor()
-	st.mu.Lock()
+	st := invitations.StoreFor()
+	st.Mu.Lock()
 	for _, inv := range st.Invitations {
-		inv.CreatedAt -= int64(invitationSenderGrace.Seconds()) + 60
+		inv.CreatedAt -= int64(invitations.SenderGrace.Seconds()) + 60
 	}
-	st.mu.Unlock()
+	st.Mu.Unlock()
 	sender := s.Store.User(invSenderUID)
 	if sender == nil {
 		t.Skip("the five test server has no user store entry for the sender")

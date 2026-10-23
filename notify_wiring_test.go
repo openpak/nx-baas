@@ -8,6 +8,7 @@ package main
 
 import (
 	"nx-baas/internal/identity"
+	"nx-baas/internal/invitations"
 	"nx-baas/internal/penne"
 	"nx-baas/internal/presence"
 	"nx-baas/internal/store"
@@ -187,9 +188,9 @@ func TestBlockedViewerIsNotToldAboutPresence(t *testing.T) {
 func TestCommittedInvitationIsHandedToPenne(t *testing.T) {
 	s, _, users := socialServer(t)
 	s.wireInvitationNotifications()
-	t.Cleanup(func() { invitationNotify = nil })
+	t.Cleanup(func() { invitations.NotifyHook = nil })
 
-	notifyCommitted(InvitationEvent{
+	invitations.NotifyCommitted(invitations.Event{
 		EventID:       "invitation:1234",
 		Type:          penne.EventFriendInvitationReceived,
 		ReceiverID:    users[0].ID,
@@ -229,7 +230,7 @@ func TestCommittedInvitationIsHandedToPenne(t *testing.T) {
 	}
 
 	// A retried notify carries C's event id again, which nx-penne dedups on.
-	notifyCommitted(InvitationEvent{
+	invitations.NotifyCommitted(invitations.Event{
 		EventID: "invitation:1234", Type: penne.EventFriendInvitationReceived,
 		ReceiverID: users[0].ID, SenderID: users[1].ID, InvitationID: "1234",
 	})
@@ -241,8 +242,8 @@ func TestCommittedInvitationIsHandedToPenne(t *testing.T) {
 // The REST surfaces must not depend on the notification side existing: an
 // unwired hook is a no-op, not a failure.
 func TestInvitationNotifyWithoutWiringIsHarmless(t *testing.T) {
-	invitationNotify = nil
-	notifyCommitted(InvitationEvent{EventID: "invitation:1", ReceiverID: "nobody"})
+	invitations.NotifyHook = nil
+	invitations.NotifyCommitted(invitations.Event{EventID: "invitation:1", ReceiverID: "nobody"})
 	_ = time.Now()
 }
 

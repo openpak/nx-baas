@@ -28,6 +28,7 @@ import (
 	"nx-baas/internal/bans"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
+	"nx-baas/internal/invitations"
 	"nx-baas/internal/penne"
 	"nx-baas/redact"
 	"os"
@@ -298,7 +299,7 @@ func (s *server) sendInvitation(w http.ResponseWriter, r *http.Request, from uin
 	// The sender's title now, so the invitation carries an application id and
 	// the staleness check can answer "is this room still alive" later.
 	appID := sender.Presence.AppID
-	core := s.invitationCoreFor()
+	core := s.invitationsSvc().CoreFor()
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	sent := 0
@@ -317,10 +318,10 @@ func (s *server) sendInvitation(w http.ResponseWriter, r *http.Request, from uin
 			if err != nil || !allowed {
 				continue
 			}
-		} else if meBlocks(sender, target.ID) || targetBlocksUser(s, target.ID, sender.ID) {
+		} else if invitations.MeBlocks(sender, target.ID) || invitations.TargetBlocksUser(s.invitationsSvc(), target.ID, sender.ID) {
 			continue
 		}
-		createMailboxInvitation(sender, name, target, in.AppParamBase64, appID)
+		invitations.CreateMailbox(sender, name, target, in.AppParamBase64, appID)
 		sent++
 	}
 	log.Printf("[nx-baas] invitation %s(%s) -> %d/%d target(s)", redact.Text(name), redact.Tag(from), sent, len(in.TargetPIDs))
@@ -345,7 +346,7 @@ func (s *server) pollInvitations(w http.ResponseWriter, pid uint64) {
 		return
 	}
 	out := make([]map[string]any, 0, 4)
-	for _, inv := range popMailboxInvitations(s, receiver) {
+	for _, inv := range invitations.PopMailbox(s.invitationsSvc(), receiver) {
 		out = append(out, map[string]any{"from_pid": inv.MailboxFromPID, "from_name": inv.MailboxFromName,
 			"app_param_base64": inv.ApplicationData})
 	}

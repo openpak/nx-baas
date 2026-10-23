@@ -39,6 +39,7 @@ import (
 	"nx-baas/internal/devices"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
+	"nx-baas/internal/invitations"
 	"nx-baas/internal/penne"
 	"nx-baas/internal/presence"
 	"nx-baas/internal/store"
@@ -113,6 +114,9 @@ type server struct {
 	// sessions and other platforms (internal/presence).
 	presenceService *presence.Service
 	presenceOnce    sync.Once
+	// invitationsService is online-play invitations, five and the mailbox (internal/invitations).
+	invitationsService *invitations.Service
+	invitationsOnce    sync.Once
 	// dauthService is device and application authentication (internal/dauth).
 	dauthService *dauth.Service
 	dauthOnce    sync.Once
@@ -2528,7 +2532,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.vermillion(w, r, body)
 	case strings.HasSuffix(host, ".five.nintendo.net"):
 		// Native online-play invitations (the friends sysmodule's invite UI).
-		s.five(w, r, body)
+		s.invitationsSvc().Five(w, r, body)
 	case strings.HasPrefix(host, "capi.") && strings.HasSuffix(r.URL.Path, "/membership"):
 		// The per-title check, beside the list below: nn.account asks
 		// `/v1/users/<id>/membership?application_id=<tid>` and reads
@@ -2897,4 +2901,10 @@ func (s *server) dauthSvc() *dauth.Service {
 func (s *server) presenceSvc() *presence.Service {
 	s.presenceOnce.Do(func() { s.presenceService = &presence.Service{Core: s.Core, Notify: s.SubmitNotification} })
 	return s.presenceService
+}
+
+// invitationsSvc is the invitations surface, created on first use like locks.
+func (s *server) invitationsSvc() *invitations.Service {
+	s.invitationsOnce.Do(func() { s.invitationsService = &invitations.Service{Core: s.Core, Locks: s.locks()} })
+	return s.invitationsService
 }

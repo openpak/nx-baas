@@ -19,6 +19,7 @@ package main
 import (
 	"fmt"
 	"nx-baas/internal/identity"
+	"nx-baas/internal/invitations"
 	"nx-baas/internal/penne"
 	"time"
 )
@@ -107,7 +108,7 @@ func (s *server) notifyCoreFriendEvent(b *identity.OpenpakBackend, evType, accou
 // parser paths C recorded as firmware-confirmed: $.type and
 // $.invitation.{id, sender_id, application_id, invitation_group_id}.
 func (s *server) wireInvitationNotifications() {
-	invitationNotify = func(ev InvitationEvent) {
+	invitations.NotifyHook = func(ev invitations.Event) {
 		s.SubmitNotification(penne.Delivery{
 			ID:     ev.EventID, // "invitation:<id>", already stable across retries
 			UserID: ev.ReceiverID,
@@ -117,10 +118,10 @@ func (s *server) wireInvitationNotifications() {
 				// type-checks them and drops the whole event on a string
 				// [firmware, 0x1a9870; docs/switch/friend-invitations-firmware-2026-09-19.md §1a].
 				"invitation": map[string]any{
-					"id":                  jsonUint(ev.InvitationID),
+					"id":                  invitations.JSONUint(ev.InvitationID),
 					"sender_id":           ev.SenderID,
 					"application_id":      ev.ApplicationID,
-					"invitation_group_id": jsonUint(ev.GroupID),
+					"invitation_group_id": invitations.JSONUint(ev.GroupID),
 				},
 				"unread_count": ev.UnreadCount,
 				// Read by the invitation event's numeric parser beside the

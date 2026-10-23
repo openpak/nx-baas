@@ -1,6 +1,4 @@
-package main
-
-// Native online-play invitations: the app.lp1.five.nintendo.net REST surface
+// Package invitations is native online-play invitations: the app.lp1.five.nintendo.net REST surface
 // the friends sysmodule drives on Horizon 22.5.0 (PRD INV-01..04, workstream C
 // of prds/native-switch-parallel-plan.md).
 //
@@ -32,6 +30,7 @@ package main
 // contract request (docs/invitations.md, C-1); until it lands, this store is
 // the lifecycle record for native invitations and the core is consulted for
 // every policy answer.
+package invitations
 
 import (
 	"context"
@@ -64,7 +63,7 @@ const invitationMaxAppData = 1024
 
 // Per-group receiver bound; the native cap is unknown, so this is a documented
 // adapter bound rather than a protocol claim.
-const invitationMaxReceivers = 100
+const MaxReceivers = 100
 
 // Localized messages: the languages the create call documents, one message
 // each, bounded so one request cannot balloon the store.
@@ -87,7 +86,7 @@ const invitationTTLDefault = 4 * time.Hour
 // for the same title. An invitation carries a room code, so an older one
 // names a room its sender has already left: offering both invites the
 // receiver to join the dead one.
-func (st *invitationStore) supersedeLocked(fresh *invitationRecord, now int64) {
+func (st *Store) supersedeLocked(fresh *Record, now int64) {
 	for _, inv := range st.Invitations {
 		if inv.ID == fresh.ID || inv.ReceiverID != fresh.ReceiverID || inv.SenderID != fresh.SenderID {
 			continue
@@ -102,14 +101,14 @@ func (st *invitationStore) supersedeLocked(fresh *invitationRecord, now int64) {
 // invitationSenderGrace is how long an invitation is offered regardless of
 // what the sender's presence says. Presence arrives late and a host publishes
 // its title after the room exists, so a fresh invitation is never judged by it.
-const invitationSenderGrace = 2 * time.Minute
+const SenderGrace = 2 * time.Minute
 
 // invitationSenderGone reports that the sender has demonstrably left the game
 // they invited into: their presence names another title, or no title at all.
 // Unknown presence is never taken as evidence — a console publishes presence
 // for only some of its profiles — so the 24h expiry remains the backstop.
-func (s *server) invitationSenderGone(inv *invitationRecord, now int64) bool {
-	if s == nil || s.Store == nil || now-inv.CreatedAt < int64(invitationSenderGrace.Seconds()) {
+func (s *Service) invitationSenderGone(inv *Record, now int64) bool {
+	if s == nil || s.Store == nil || now-inv.CreatedAt < int64(SenderGrace.Seconds()) {
 		return false
 	}
 	u := s.Store.User(inv.SenderID)
@@ -137,7 +136,7 @@ const invitationReadRetention = 7 * 24 * time.Hour
 // identity, the title payload, and that recipient's read state. IDs are decimal
 // strings that render with the firmware's %llu; they are minted once and never
 // re-minted on restart (parent PRD §6).
-type invitationRecord struct {
+type Record struct {
 	ID                 string            `json:"id"`
 	GroupID            string            `json:"group_id"`
 	Type               string            `json:"type"`
@@ -164,7 +163,7 @@ type invitationRecord struct {
 // invitationGroup is the sender-side grouping one create call made. Kept so
 // GET /v1/invitation_groups/<id> answers with the shape the console parsed
 // when it created the group.
-type invitationGroup struct {
+type Group struct {
 	ID                 string            `json:"id"`
 	SenderID           string            `json:"sender_id"`
 	Type               string            `json:"type"`
@@ -179,39 +178,40 @@ type invitationGroup struct {
 	InvitationIDs      []string          `json:"invitation_ids"`
 }
 
-type invitationStore struct {
-	mu          sync.Mutex
-	path        string
-	Seq         uint64                       `json:"seq"`
-	Groups      map[string]*invitationGroup  `json:"groups"`
-	Invitations map[string]*invitationRecord `json:"invitations"`
+type Store struct {
+	// Mu guards the maps; FilePath is invitations.json. Neither is persisted.
+	Mu          sync.Mutex         `json:"-"`
+	FilePath    string             `json:"-"`
+	Seq         uint64             `json:"seq"`
+	Groups      map[string]*Group  `json:"groups"`
+	Invitations map[string]*Record `json:"invitations"`
 }
 
 var (
 	invStoreOnce sync.Once
-	invStore     *invitationStore
+	invStore     *Store
 	// invStoreOverride lets tests install a store before first use.
-	invStoreOverride *invitationStore
+	StoreOverride *Store
 )
 
 // invitationStoreFor lazily opens the durable invitation store under NX_DATA.
 // A package singleton because the store is process-global state (like the
 // BAAS store) and the game API handlers reach it without a server argument.
-func invitationStoreFor() *invitationStore {
-	if invStoreOverride != nil {
-		return invStoreOverride
+func StoreFor() *Store {
+	if StoreOverride != nil {
+		return StoreOverride
 	}
 	invStoreOnce.Do(func() {
-		invStore = loadInvitationStore(httpx.Getenv("NX_DATA", "/data") + "/invitations.json")
+		invStore = LoadStore(httpx.Getenv("NX_DATA", "/data") + "/invitations.json")
 	})
 	return invStore
 }
 
-func loadInvitationStore(path string) *invitationStore {
-	st := &invitationStore{
-		path:        path,
-		Groups:      map[string]*invitationGroup{},
-		Invitations: map[string]*invitationRecord{},
+func LoadStore(path string) *Store {
+	st := &Store{
+		FilePath:    path,
+		Groups:      map[string]*Group{},
+		Invitations: map[string]*Record{},
 	}
 	if b, err := os.ReadFile(path); err == nil {
 		_ = json.Unmarshal(b, st)
@@ -226,7 +226,7 @@ func loadInvitationStore(path string) *invitationStore {
 	return st
 }
 
-func (st *invitationStore) highestIDLocked() uint64 {
+func (st *Store) highestIDLocked() uint64 {
 	var hi uint64
 	for id := range st.Invitations {
 		if n, err := strconv.ParseUint(id, 10, 64); err == nil && n > hi {
@@ -241,18 +241,18 @@ func (st *invitationStore) highestIDLocked() uint64 {
 	return hi
 }
 
-func (st *invitationStore) saveLocked() {
+func (st *Store) saveLocked() {
 	b, err := json.MarshalIndent(st, "", " ")
 	if err != nil {
 		log.Printf("[nx-baas] invitations: marshal: %v", redact.Err(err))
 		return
 	}
-	tmp := st.path + ".tmp"
+	tmp := st.FilePath + ".tmp"
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
 		log.Printf("[nx-baas] invitations: save: %v", redact.Err(err))
 		return
 	}
-	if err := os.Rename(tmp, st.path); err != nil {
+	if err := os.Rename(tmp, st.FilePath); err != nil {
 		log.Printf("[nx-baas] invitations: save: %v", redact.Err(err))
 	}
 }
@@ -260,7 +260,7 @@ func (st *invitationStore) saveLocked() {
 // nextIDLocked mints the next stable decimal id. Microsecond time plus a
 // sequence stays far below 2^53, so the id is safe for any JSON consumer and
 // renders exactly as the firmware's %llu expects.
-func (st *invitationStore) nextIDLocked(now time.Time) string {
+func (st *Store) nextIDLocked(now time.Time) string {
 	if st.Seq == 0 {
 		st.Seq = uint64(now.UnixNano()) / 1000 // µs since epoch, ~2^50
 	}
@@ -275,7 +275,7 @@ func (st *invitationStore) nextIDLocked(now time.Time) string {
 
 // pruneLocked drops dead rows: anything expired longer than the read
 // retention, and read rows past retention. Runs with the lock held.
-func (st *invitationStore) pruneLocked(now time.Time) {
+func (st *Store) pruneLocked(now time.Time) {
 	for id, inv := range st.Invitations {
 		deadline := inv.ExpiresAt
 		if inv.Read && inv.ReadAt+int64(invitationReadRetention.Seconds()) > deadline {
@@ -293,7 +293,7 @@ func (st *invitationStore) pruneLocked(now time.Time) {
 	}
 }
 
-func (st *invitationStore) dropLocked(inv *invitationRecord) {
+func (st *Store) dropLocked(inv *Record) {
 	if g := st.Groups[inv.GroupID]; g != nil {
 		kept := g.InvitationIDs[:0]
 		for _, id := range g.InvitationIDs {
@@ -308,7 +308,7 @@ func (st *invitationStore) dropLocked(inv *invitationRecord) {
 // unreadCountLocked counts live, unread rows for one receiver.
 // unreadCountLocked counts what the badge should show. gone, when given,
 // drops invitations whose sender has left the game they invited into.
-func (st *invitationStore) unreadCountLocked(receiverID string, now int64, gone func(*invitationRecord) bool) int {
+func (st *Store) unreadCountLocked(receiverID string, now int64, gone func(*Record) bool) int {
 	n := 0
 	for _, inv := range st.Invitations {
 		if inv.ReceiverID != receiverID || inv.Read || inv.ExpiresAt <= now {
@@ -327,7 +327,7 @@ func (st *invitationStore) unreadCountLocked(receiverID string, now int64, gone 
 // invitationCore is the core-moderation/session surface invitations consult.
 // The openpak backend implements it over A's shared gRPC clients; any other
 // backend yields nil and the adapter falls back to its own projections.
-type invitationCore interface {
+type CoreAPI interface {
 	// CheckInteraction answers whether actor may invite target, consulting
 	// friendship, blocks and account status in the core. reason is the core's
 	// DenialReason name ("blocked", "not_friends", …) or "" when allowed.
@@ -344,7 +344,7 @@ type invitationCore interface {
 // InvitationEvent is the idempotent semantic event the friends module's
 // invitation workflow needs. EventID is stable across retries, so delivery
 // can dedup without a second canonical store.
-type InvitationEvent struct {
+type Event struct {
 	EventID       string `json:"event_id"` // "invitation:<id>"
 	Type          string `json:"type"`     // "friend_invitation_received"
 	ReceiverID    string `json:"receiver_id"`
@@ -360,13 +360,13 @@ type InvitationEvent struct {
 // $.type, $.invitation.{id, sender_id, application_id, invitation_group_id}.
 // Nil until B wires it; REST completeness never depends on it — the console
 // also polls the unread count on its own cooldown.
-var invitationNotify func(InvitationEvent)
+var NotifyHook func(Event)
 
 // notifyCommitted must be called strictly after the store write returns: the
 // event promises an invitation the inbox really has. A failed hook never
 // fails the REST call — delivery converges through the unread-count poll.
-func notifyCommitted(ev InvitationEvent) {
-	if invitationNotify == nil {
+func NotifyCommitted(ev Event) {
+	if NotifyHook == nil {
 		return
 	}
 	func() {
@@ -375,7 +375,7 @@ func notifyCommitted(ev InvitationEvent) {
 				log.Printf("[nx-baas] invitations: notify panicked: %s", redact.IDs(fmt.Sprint(r)))
 			}
 		}()
-		invitationNotify(ev)
+		NotifyHook(ev)
 	}()
 }
 
@@ -385,7 +385,7 @@ func notifyCommitted(ev InvitationEvent) {
 // lifetime, issuer, token type, grant and subject are each checked here
 // (audit P1: jwt.go alone does not do this). The returned user is the
 // principal every path/body id is bound against.
-func (s *server) fiveAuth(r *http.Request) *store.User {
+func (s *Service) fiveAuth(r *http.Request) *store.User {
 	// Integration: the base rules (signature, issuer, type, expiry) are A's
 	// validBearer, so the two surfaces cannot drift apart -- the shared
 	// contract names one token validator. The checks below are the extra
@@ -427,11 +427,11 @@ func fiveError(w http.ResponseWriter, r *http.Request, status int, code, message
 
 // five is the router entry for *.five.nintendo.net (main.go routes the host
 // here and lists app.lp1.five.nintendo.net on the fixed TLS certificate).
-func (s *server) five(w http.ResponseWriter, r *http.Request, body []byte) {
+func (s *Service) Five(w http.ResponseWriter, r *http.Request, body []byte) {
 	seg := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	// A banned account neither sends nor reads invitations (bans.go). 403 with the code
 	// the module already knows for a refused operation.
-	if lock := s.locks().UserLock(s.fiveAuth(r)); lock != "" {
+	if lock := s.Locks.UserLock(s.fiveAuth(r)); lock != "" {
 		fiveError(w, r, http.StatusForbidden, "0006", "operation_is_not_permitted")
 		return
 	}
@@ -486,7 +486,7 @@ var hexID = regexp.MustCompile(`^[0-9a-fA-F]{16}$`)
 
 // invitationGroupCreate implements POST /v1|v2/invitation_groups. v2 (22.5.0)
 // requires invitation_type=friend; v1 predates the field.
-func (s *server) invitationGroupCreate(w http.ResponseWriter, r *http.Request, body []byte, version string) {
+func (s *Service) invitationGroupCreate(w http.ResponseWriter, r *http.Request, body []byte, version string) {
 	me := s.fiveAuth(r)
 	if me == nil {
 		fiveError(w, r, http.StatusUnauthorized, "0006", "invalid_token")
@@ -562,7 +562,7 @@ func (s *server) invitationGroupCreate(w http.ResponseWriter, r *http.Request, b
 		fiveError(w, r, http.StatusBadRequest, "0002", "could_not_retrieve_receiver")
 		return
 	}
-	if len(receivers) > invitationMaxReceivers {
+	if len(receivers) > MaxReceivers {
 		fiveError(w, r, http.StatusBadRequest, "0002", "invalid_params")
 		return
 	}
@@ -571,7 +571,7 @@ func (s *server) invitationGroupCreate(w http.ResponseWriter, r *http.Request, b
 	// Denied or unknown receivers are omitted from the group (their invitation
 	// is never committed); the sender sees only what exists. If nothing
 	// survives, the native error names why.
-	core := s.invitationCoreFor()
+	core := s.CoreFor()
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	var accepted, unknown, denied []string
@@ -629,19 +629,19 @@ func (s *server) invitationGroupCreate(w http.ResponseWriter, r *http.Request, b
 		}
 	}
 	now := time.Now()
-	st := invitationStoreFor()
-	group := &invitationGroup{
+	st := StoreFor()
+	group := &Group{
 		SenderID: me.ID, Type: in.InvitationType,
 		ApplicationID: strings.ToLower(in.ApplicationID), ApplicationGroupID: strings.ToLower(in.ApplicationGroupID),
 		ApplicationIDMatch: in.ApplicationIDMatch, ACDIndex: in.ACDIndex,
 		ApplicationData: appData, Messages: in.Messages,
 		CreatedAt: now.Unix(), UpdatedAt: now.Unix(),
 	}
-	var invitations []*invitationRecord
-	st.mu.Lock()
+	var invitations []*Record
+	st.Mu.Lock()
 	group.ID = st.nextIDLocked(now)
 	for _, uid := range accepted {
-		inv := &invitationRecord{
+		inv := &Record{
 			GroupID: group.ID, Type: group.Type,
 			SenderID: me.ID, ReceiverID: uid,
 			ApplicationID: group.ApplicationID, ApplicationGroupID: group.ApplicationGroupID,
@@ -663,12 +663,12 @@ func (s *server) invitationGroupCreate(w http.ResponseWriter, r *http.Request, b
 	for _, inv := range invitations {
 		unread[inv.ReceiverID] = st.unreadCountLocked(inv.ReceiverID, now.Unix(), nil)
 	}
-	st.mu.Unlock()
+	st.Mu.Unlock()
 
 	log.Printf("[nx-baas] five: group %s by %s -> %d/%d receiver(s) (denied=%d unknown=%d)",
 		redact.Tag(group.ID), redact.Tag(me.ID), len(invitations), len(receivers), len(denied), len(unknown))
 	for _, inv := range invitations {
-		notifyCommitted(InvitationEvent{
+		NotifyCommitted(Event{
 			EventID: "invitation:" + inv.ID, Type: "friend_invitation_received",
 			ReceiverID: inv.ReceiverID, SenderID: inv.SenderID,
 			InvitationID: inv.ID, GroupID: inv.GroupID, ApplicationID: inv.ApplicationID,
@@ -681,11 +681,11 @@ func (s *server) invitationGroupCreate(w http.ResponseWriter, r *http.Request, b
 // invitationCoreFor returns the core surface when the adapter runs on the
 // openpak core; nil otherwise (the fallback uses projections).
 // Tests install a fake through invCoreOverride.
-var invCoreOverride invitationCore
+var CoreOverride CoreAPI
 
-func (s *server) invitationCoreFor() invitationCore {
-	if invCoreOverride != nil {
-		return invCoreOverride
+func (s *Service) CoreFor() CoreAPI {
+	if CoreOverride != nil {
+		return CoreOverride
 	}
 	if b, ok := s.Acct.(*identity.OpenpakBackend); ok && b.Social != nil {
 		return b
@@ -697,7 +697,7 @@ func (s *server) invitationCoreFor() invitationCore {
 // local block lists on both sides. The core path (CheckInteraction) is the
 // authoritative one; this exists so the proven earlier deployment keeps
 // working unchanged.
-func (s *server) fallbackMayInvite(me *store.User, targetUID string) bool {
+func (s *Service) fallbackMayInvite(me *store.User, targetUID string) bool {
 	target := s.Store.User(targetUID)
 	if target == nil || target.PID == 0 {
 		return false
@@ -708,13 +708,13 @@ func (s *server) fallbackMayInvite(me *store.User, targetUID string) bool {
 	}
 	for _, f := range id.Friends {
 		if f.PID == target.PID {
-			return !meBlocks(me, targetUID) && !targetBlocksUser(s, targetUID, me.ID)
+			return !MeBlocks(me, targetUID) && !TargetBlocksUser(s, targetUID, me.ID)
 		}
 	}
 	return false
 }
 
-func meBlocks(u *store.User, other string) bool {
+func MeBlocks(u *store.User, other string) bool {
 	for _, b := range u.Blocks {
 		if b == other {
 			return true
@@ -725,14 +725,14 @@ func meBlocks(u *store.User, other string) bool {
 
 // targetBlocksUser reads the target's own block list; a directional block by
 // the receiver refuses the invitation exactly like the core's enforcement.
-func targetBlocksUser(s *server, uid, other string) bool {
+func TargetBlocksUser(s *Service, uid, other string) bool {
 	t := s.Store.User(uid)
-	return t != nil && meBlocks(t, other)
+	return t != nil && MeBlocks(t, other)
 }
 
 // ---------- shapes ----------
 
-func (s *server) invitationGroupObj(g *invitationGroup, invitations []*invitationRecord) map[string]any {
+func (s *Service) invitationGroupObj(g *Group, invitations []*Record) map[string]any {
 	obj := invitationGroupFields(g)
 	items := []any{}
 	for _, inv := range invitations {
@@ -742,9 +742,9 @@ func (s *server) invitationGroupObj(g *invitationGroup, invitations []*invitatio
 	return obj
 }
 
-func invitationGroupFields(g *invitationGroup) map[string]any {
+func invitationGroupFields(g *Group) map[string]any {
 	obj := map[string]any{
-		"id":                   jsonUint(g.ID),
+		"id":                   JSONUint(g.ID),
 		"sender_id":            g.SenderID,
 		"invitation_type":      g.Type,
 		"application_id":       g.ApplicationID,
@@ -768,16 +768,16 @@ func invitationGroupFields(g *invitationGroup) map[string]any {
 
 // invitationGroupEntry is one element of a group's invitations array: the
 // firmware reads $.invitations[*].receiver_id and the invitation id beside it.
-func invitationGroupEntry(inv *invitationRecord) map[string]any {
+func invitationGroupEntry(inv *Record) map[string]any {
 	return map[string]any{
-		"id":          jsonUint(inv.ID),
+		"id":          JSONUint(inv.ID),
 		"receiver_id": inv.ReceiverID,
 	}
 }
 
 // jsonUint renders a decimal id as a JSON number: the firmware parses group
 // and invitation ids with %llu, so a string would not survive the parser.
-func jsonUint(dec string) uint64 {
+func JSONUint(dec string) uint64 {
 	n, err := strconv.ParseUint(dec, 10, 64)
 	if err != nil {
 		return 0
@@ -787,7 +787,7 @@ func jsonUint(dec string) uint64 {
 
 // ---------- group detail ----------
 
-func (s *server) invitationGroupDetail(w http.ResponseWriter, r *http.Request, id string) {
+func (s *Service) invitationGroupDetail(w http.ResponseWriter, r *http.Request, id string) {
 	me := s.fiveAuth(r)
 	if me == nil {
 		fiveError(w, r, http.StatusUnauthorized, "0006", "invalid_token")
@@ -797,10 +797,10 @@ func (s *server) invitationGroupDetail(w http.ResponseWriter, r *http.Request, i
 		fiveError(w, r, http.StatusNotFound, "0010", "resource_is_not_found")
 		return
 	}
-	st := invitationStoreFor()
-	st.mu.Lock()
+	st := StoreFor()
+	st.Mu.Lock()
 	g := st.Groups[id]
-	var invitations []*invitationRecord
+	var invitations []*Record
 	if g != nil {
 		if g.SenderID != me.ID && !s.groupReceiver(g, me.ID) {
 			// Not the sender and not a receiver: the group does not exist for
@@ -815,7 +815,7 @@ func (s *server) invitationGroupDetail(w http.ResponseWriter, r *http.Request, i
 			}
 		}
 	}
-	st.mu.Unlock()
+	st.Mu.Unlock()
 	if g == nil {
 		fiveError(w, r, http.StatusNotFound, "0010", "resource_is_not_found")
 		return
@@ -823,9 +823,9 @@ func (s *server) invitationGroupDetail(w http.ResponseWriter, r *http.Request, i
 	httpx.WriteJSON(w, 200, s.invitationGroupObj(g, invitations))
 }
 
-func (s *server) groupReceiver(g *invitationGroup, uid string) bool {
+func (s *Service) groupReceiver(g *Group, uid string) bool {
 	for _, iid := range g.InvitationIDs {
-		if inv := invitationStoreFor().Invitations[iid]; inv != nil && inv.ReceiverID == uid {
+		if inv := StoreFor().Invitations[iid]; inv != nil && inv.ReceiverID == uid {
 			return true
 		}
 	}
@@ -837,7 +837,7 @@ func (s *server) groupReceiver(g *invitationGroup, uid string) bool {
 // invitationInbox implements GET /v1|v2/users/<uid>/invitations/inbox. The
 // uid in the path is bound to the authenticated principal: a valid token for
 // another user reads an empty error, never someone else's invitations.
-func (s *server) invitationInbox(w http.ResponseWriter, r *http.Request, uid string, q url.Values) {
+func (s *Service) invitationInbox(w http.ResponseWriter, r *http.Request, uid string, q url.Values) {
 	me := s.fiveAuth(r)
 	if me == nil {
 		fiveError(w, r, http.StatusUnauthorized, "0006", "invalid_token")
@@ -863,9 +863,9 @@ func (s *server) invitationInbox(w http.ResponseWriter, r *http.Request, uid str
 		return
 	}
 
-	st := invitationStoreFor()
-	st.mu.Lock()
-	var items []*invitationRecord
+	st := StoreFor()
+	st.Mu.Lock()
+	var items []*Record
 	for _, inv := range st.Invitations {
 		if inv.ReceiverID != me.ID || inv.ExpiresAt <= now {
 			continue
@@ -893,7 +893,7 @@ func (s *server) invitationInbox(w http.ResponseWriter, r *http.Request, uid str
 	for _, inv := range items {
 		list = append(list, invitationInboxItem(inv))
 	}
-	st.mu.Unlock()
+	st.Mu.Unlock()
 
 	if countOnly {
 		httpx.WriteJSON(w, 200, map[string]any{"count": count, "original_count": count})
@@ -905,10 +905,10 @@ func (s *server) invitationInbox(w http.ResponseWriter, r *http.Request, uid str
 	httpx.WriteJSON(w, 200, map[string]any{"count": count, "original_count": count, "items": list})
 }
 
-func invitationInboxItem(inv *invitationRecord) map[string]any {
+func invitationInboxItem(inv *Record) map[string]any {
 	obj := map[string]any{
-		"id":                   jsonUint(inv.ID),
-		"invitation_group_id":  jsonUint(inv.GroupID),
+		"id":                   JSONUint(inv.ID),
+		"invitation_group_id":  JSONUint(inv.GroupID),
 		"sender_id":            inv.SenderID,
 		"application_id":       inv.ApplicationID,
 		"application_group_id": inv.ApplicationGroupID,
@@ -947,7 +947,7 @@ func invitationInboxItem(inv *invitationRecord) map[string]any {
 // invitationMarkAllRead implements PATCH /v1/users/<uid>/invitations/mark_as_read:
 // every unread invitation addressed to the caller becomes read. An empty body
 // means all; a body naming ids narrows the operation to those.
-func (s *server) invitationMarkAllRead(w http.ResponseWriter, r *http.Request, uid string, body []byte) {
+func (s *Service) invitationMarkAllRead(w http.ResponseWriter, r *http.Request, uid string, body []byte) {
 	me := s.fiveAuth(r)
 	if me == nil {
 		fiveError(w, r, http.StatusUnauthorized, "0006", "invalid_token")
@@ -979,7 +979,7 @@ func (s *server) invitationMarkAllRead(w http.ResponseWriter, r *http.Request, u
 // application/json-patch+json on the wire). The console's patch paths end in
 // /extras/receiver/read (firmware string table); the invitation id appears in
 // the path. Paths we cannot bind to an id are a 400 — never a silent success.
-func (s *server) invitationPatch(w http.ResponseWriter, r *http.Request, body []byte) {
+func (s *Service) invitationPatch(w http.ResponseWriter, r *http.Request, body []byte) {
 	me := s.fiveAuth(r)
 	if me == nil {
 		fiveError(w, r, http.StatusUnauthorized, "0006", "invalid_token")
@@ -1055,10 +1055,10 @@ func invitationIDFromPath(path string) (string, bool) {
 // applyRead commits read state for the caller's own invitations. Unknown ids
 // are ignored (idempotent re-apply), ownership is enforced by the receiver
 // clause, and the write lands before the response.
-func (s *server) applyRead(w http.ResponseWriter, receiverID string, ids map[string]bool) {
+func (s *Service) applyRead(w http.ResponseWriter, receiverID string, ids map[string]bool) {
 	now := time.Now().Unix()
-	st := invitationStoreFor()
-	st.mu.Lock()
+	st := StoreFor()
+	st.Mu.Lock()
 	applied := 0
 	for _, inv := range st.Invitations {
 		if inv.ReceiverID != receiverID || inv.ExpiresAt <= now {
@@ -1076,10 +1076,10 @@ func (s *server) applyRead(w http.ResponseWriter, receiverID string, ids map[str
 	}
 	st.pruneLocked(time.Unix(now, 0))
 	st.saveLocked()
-	unread := st.unreadCountLocked(receiverID, now, func(inv *invitationRecord) bool {
+	unread := st.unreadCountLocked(receiverID, now, func(inv *Record) bool {
 		return s.invitationSenderGone(inv, now)
 	})
-	st.mu.Unlock()
+	st.Mu.Unlock()
 	log.Printf("[nx-baas] five: mark read for %s: %d applied, %d unread left", redact.Tag(receiverID), applied, unread)
 	httpx.WriteJSON(w, 200, map[string]any{"count": unread})
 }
@@ -1096,7 +1096,7 @@ func invitationMailboxTTL() time.Duration { return 5 * time.Minute }
 
 // maxQueuedPerTarget keeps the mailbox per-target queue depth bound (unchanged
 // from the in-memory implementation).
-const maxQueuedMailboxPerTarget = 8
+const MaxQueuedMailboxPerTarget = 8
 
 // mailboxSessionLive answers whether the sender's room plausibly still exists.
 // Presence is the adapter's own truth (the Photon room wrote it); a live core
@@ -1105,7 +1105,7 @@ const maxQueuedMailboxPerTarget = 8
 // TTL is the bound. When the adapter cannot tell, the invitation is delivered
 // and the title fails the join cleanly, which is the gate INV-04 keeps
 // separate from delivery.
-func (s *server) mailboxSessionLive(senderUID, appID string) bool {
+func (s *Service) mailboxSessionLive(senderUID, appID string) bool {
 	if appID == "" {
 		return true // no title recorded: nothing to judge, TTL decides
 	}
@@ -1116,7 +1116,7 @@ func (s *server) mailboxSessionLive(senderUID, appID string) bool {
 	if u.Presence.State == "PLAYING" && (u.Presence.AppID == "" || u.Presence.AppID == appID) {
 		return true
 	}
-	if core := s.invitationCoreFor(); core != nil {
+	if core := s.CoreFor(); core != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		if accountID, ok := core.AccountForBaas(senderUID); ok {
@@ -1130,26 +1130,26 @@ func (s *server) mailboxSessionLive(senderUID, appID string) bool {
 
 // createMailboxInvitation stores one emulator-sent invitation. The friend and
 // policy checks are the caller's (gameapi.sendInvitation kept its behavior).
-func createMailboxInvitation(sender *store.User, senderName string, receiver *store.User, appParamB64, appID string) (string, bool) {
+func CreateMailbox(sender *store.User, senderName string, receiver *store.User, appParamB64, appID string) (string, bool) {
 	now := time.Now()
-	st := invitationStoreFor()
-	st.mu.Lock()
-	defer st.mu.Unlock()
+	st := StoreFor()
+	st.Mu.Lock()
+	defer st.Mu.Unlock()
 	// Bound: oldest mailbox rows for this receiver are dropped first.
-	var queue []*invitationRecord
+	var queue []*Record
 	for _, inv := range st.Invitations {
 		if inv.Mailbox && inv.ReceiverID == receiver.ID && inv.ExpiresAt > now.Unix() {
 			queue = append(queue, inv)
 		}
 	}
 	sort.Slice(queue, func(i, j int) bool { return queue[i].CreatedAt < queue[j].CreatedAt })
-	for len(queue) >= maxQueuedMailboxPerTarget {
+	for len(queue) >= MaxQueuedMailboxPerTarget {
 		dropped := queue[0]
 		queue = queue[1:]
 		delete(st.Invitations, dropped.ID)
 		log.Printf("[nx-baas] invitation: queue full for %s, dropped %s", redact.Tag(receiver.ID), redact.Tag(dropped.ID))
 	}
-	inv := &invitationRecord{
+	inv := &Record{
 		Type: "friend", SenderID: sender.ID, ReceiverID: receiver.ID,
 		ApplicationID:   strings.ToLower(appID),
 		ApplicationData: appParamB64,
@@ -1167,12 +1167,12 @@ func createMailboxInvitation(sender *store.User, senderName string, receiver *st
 // popMailboxInvitations returns and removes the caller's live mailbox
 // invitations. Rows whose room went stale are dropped, not delivered: joining
 // a dead room must fail quietly on the sender's side of the wire (INV-04).
-func popMailboxInvitations(s *server, receiver *store.User) []*invitationRecord {
+func PopMailbox(s *Service, receiver *store.User) []*Record {
 	now := time.Now()
-	st := invitationStoreFor()
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	var out []*invitationRecord
+	st := StoreFor()
+	st.Mu.Lock()
+	defer st.Mu.Unlock()
+	var out []*Record
 	for id, inv := range st.Invitations {
 		if !inv.Mailbox || inv.ReceiverID != receiver.ID {
 			continue
@@ -1194,4 +1194,10 @@ func popMailboxInvitations(s *server, receiver *store.User) []*invitationRecord 
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt < out[j].CreatedAt })
 	return out
+}
+
+// Service is the invitations surface over the shared state. Locks refuses banned accounts.
+type Service struct {
+	*core.Core
+	Locks interface{ UserLock(u *store.User) string }
 }
