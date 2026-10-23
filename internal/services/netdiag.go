@@ -1,4 +1,4 @@
-package main
+package services
 
 // Two surfaces the 22.5.0 modules name that nothing here answered: the Internet
 // connection test (qlaunch's `nn::netdiag`) and prepo, the play-report uploader
@@ -28,13 +28,13 @@ import (
 // ctestPayload is the download probe's size. The console asks for
 // `http://ctest-dl-<env>.cdn.nintendo.net/30m`, so 30 MiB is the name's own
 // promise; the upload probe posts 1 MiB the other way.
-const ctestPayload = 30 << 20
+const CtestPayload = 30 << 20
 
 // netdiag serves the connection test, the network clock and nifm's reachability
 // check. `/v1/ip` tells the console the address this server sees it from -- the
 // one measurement only the server can make -- the two cdn hosts are the
 // throughput probes, and `/v1/time` is where NIM corrects the system clock.
-func (s *server) netdiag(w http.ResponseWriter, r *http.Request) {
+func (s *Service) Netdiag(w http.ResponseWriter, r *http.Request) {
 	host := httpx.HostOf(r)
 	switch {
 	// nifm's reachability probe, and the reason a console says "connected"
@@ -48,7 +48,7 @@ func (s *server) netdiag(w http.ResponseWriter, r *http.Request) {
 		// A fixed-size body the console times. Range is honored because the
 		// probe may resume, and Content-Length must be exact or the measurement
 		// is of a truncated transfer.
-		serveZeros(w, r, ctestPayload)
+		serveZeros(w, r, CtestPayload)
 	case strings.HasPrefix(host, "ctest-ul-"):
 		n, _ := io.Copy(io.Discard, r.Body)
 		log.Printf("[netdiag] upload probe: %d bytes", n)
@@ -64,7 +64,7 @@ func (s *server) netdiag(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 		w.Write([]byte(`{"unixtime":"` + strconv.FormatInt(ms, 10) + `"}`))
 	case r.URL.Path == "/v1/ip":
-		ip, public := clientIP(r)
+		ip, public := ClientIP(r)
 		if public {
 			log.Printf("[netdiag] global IP probe -> %s", redact.Addr(ip))
 		} else {
@@ -94,7 +94,7 @@ func (s *server) netdiag(w http.ResponseWriter, r *http.Request) {
 // and retries; accepting it is what actually clears the spool. eupld's crash
 // reports are kept and forwarded instead (errorreport.go). The size is logged
 // so an operator can see the surface is live, never the contents.
-func (s *server) telemetry(w http.ResponseWriter, r *http.Request, body []byte) {
+func (s *Service) Telemetry(w http.ResponseWriter, r *http.Request, body []byte) {
 	host, p := httpx.HostOf(r), r.URL.Path
 	kind := "play report"
 	ok := p == "/post" || p == "/api/v1/realtime_reports"
@@ -103,14 +103,14 @@ func (s *server) telemetry(w http.ResponseWriter, r *http.Request, body []byte) 
 		http.Error(w, "no such route", 404)
 		return
 	}
-	log.Printf("[telemetry] %s %d bytes discarded (OpenPak collects no %ss)%s", redact.Path(p), len(body), kind, reportEvents(body))
+	log.Printf("[telemetry] %s %d bytes discarded (OpenPak collects no %ss)%s", redact.Path(p), len(body), kind, ReportEvents(body))
 	w.WriteHeader(200)
 }
 
 // reportEvents names what a play report is about: the event ids and application ids it carries,
 // the only fields read (a game's error event is the console's own account of a failure no server
 // saw). Every other value stays unread. For a body that is not msgpack, only its first byte.
-func reportEvents(body []byte) string {
+func ReportEvents(body []byte) string {
 	v, err := msgpack.Decode(body)
 	if err != nil {
 		if len(body) == 0 {
@@ -198,7 +198,7 @@ func (zeroReader) Read(p []byte) (int, error) {
 // Prefer the first PUBLIC address in the forwarded chain -- a private one is a
 // proxy, never the console -- and say so plainly when the chain has none rather
 // than reporting 10.x to a screen that is labelled "global IP".
-func clientIP(r *http.Request) (ip string, public bool) {
+func ClientIP(r *http.Request) (ip string, public bool) {
 	for _, hop := range strings.Split(r.Header.Get("X-Forwarded-For"), ",") {
 		if a := net.ParseIP(strings.TrimSpace(hop)); a != nil && isPublic(a) {
 			return a.String(), true

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"nx-baas/internal/core"
+	"nx-baas/internal/services"
 	"strings"
 	"testing"
 )
@@ -87,7 +88,7 @@ func TestIsPlayFabStaysInItsFamily(t *testing.T) {
 		"playfabapi.com.example.io": false,
 		"accounts.nintendo.com":     false,
 	} {
-		if got := isPlayFab(host); got != want {
+		if got := services.IsPlayFab(host); got != want {
 			t.Errorf("isPlayFab(%q) = %v, want %v", host, got, want)
 		}
 	}

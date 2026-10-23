@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/penne"
+	"nx-baas/internal/services"
 	"nx-baas/redact"
 	"os"
 	"strings"
@@ -51,7 +52,7 @@ func (s *server) forwardersFromEnv() {
 		s.PlayfabFwd = httpx.NewForwarder("playfab", u)
 		// Preserve the SDK error envelope even when the upstream is unavailable.
 		s.PlayfabFwd.ErrorHandler = func(w http.ResponseWriter, r *http.Request, _ error) {
-			playfabUnavailable(w, r)
+			services.PlayfabUnavailable(w, r)
 		}
 		log.Printf("[nx-baas] Core Keeper PlayFab forwarding enabled")
 	}

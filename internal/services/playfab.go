@@ -1,4 +1,4 @@
-package main
+package services
 
 import (
 	"log"
@@ -17,12 +17,12 @@ import (
 //
 // Answered before the body is read and never dumped: the login calls carry the console's
 // identity token.
-func isPlayFab(host string) bool {
+func IsPlayFab(host string) bool {
 	host = strings.ToLower(host)
 	return host == "playfabapi.com" || strings.HasSuffix(host, ".playfabapi.com")
 }
 
-func playfabUnavailable(w http.ResponseWriter, r *http.Request) {
+func PlayfabUnavailable(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[nx-baas] playfab unavailable: %s %s%s -> 503", r.Method, httpx.HostOf(r), redact.Path(r.URL.Path))
 	httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{
 		"code":         http.StatusServiceUnavailable,

@@ -1,4 +1,4 @@
-package main
+package services
 
 import (
 	"crypto/sha256"
@@ -17,7 +17,7 @@ import (
 // Penne in the console's sequence but is not push: it is stateless, a 404 here restarts a
 // title's whole bootstrap, and it stays in nx-baas while Penne itself (god, val, fro-) is
 // nx-penne's (split.go). Shapes per kinnay's Penne-Servers page and the hardware trace.
-func (s *server) vermillion(w http.ResponseWriter, r *http.Request, body []byte) {
+func (s *Service) Vermillion(w http.ResponseWriter, r *http.Request, body []byte) {
 	host, p := httpx.HostOf(r), r.URL.Path
 	if s.Key != nil && s.Store != nil {
 		// Nothing here needs the account, but the bearer check logs why a token does not
@@ -44,7 +44,7 @@ func (s *server) vermillion(w http.ResponseWriter, r *http.Request, body []byte)
 		httpx.WriteJSON(w, 200, map[string]any{"vermillionDeviceId": vermillionDeviceID(deviceIDFromUA(r.UserAgent()))})
 	// The vermillion gateway also carries NIM's family, nearness and notify routes
 	// (eshop_unserved.go); those get their own answers rather than a bare {}.
-	case strings.HasPrefix(host, "gw.") && s.nimUnserved(w, r, body):
+	case strings.HasPrefix(host, "gw.") && s.NimUnserved(w, r, body):
 	case strings.HasPrefix(host, "gw.") && r.Method == "GET" && strings.HasPrefix(p, "/v1/devices/"):
 		httpx.WriteJSON(w, 200, map[string]any{}) // /v1/devices/<id>
 	case strings.HasPrefix(host, "gw."):

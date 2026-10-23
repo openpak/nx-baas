@@ -1,4 +1,4 @@
-package main
+package services
 
 import (
 	"log"
@@ -20,7 +20,7 @@ import (
 // ponytail: histories are discarded like prepo's play reports (netdiag.go: OpenPak collects no
 // play reports) and every statistic is a 404. Storing them would give cross-device play time for
 // the title grid; add a table here when that is wanted.
-func (s *server) tabiji(w http.ResponseWriter, r *http.Request, body []byte) {
+func (s *Service) Tabiji(w http.ResponseWriter, r *http.Request, body []byte) {
 	p := r.URL.Path
 	if _, genuine := s.PIDForIDToken(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")); !genuine {
 		log.Printf("[tabiji] %s %s: no valid NSA id token", r.Method, redact.Path(p))

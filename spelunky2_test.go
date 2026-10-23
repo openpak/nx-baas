@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"nx-baas/internal/core"
+	"nx-baas/internal/services"
 	"strings"
 	"testing"
 )
@@ -19,7 +20,7 @@ func TestIsSpelunkyStaysOnItsName(t *testing.T) {
 		"x.spelunky2.net.evil.io": false,
 		"accounts.nintendo.com":   false,
 	} {
-		if got := isSpelunky(host); got != want {
+		if got := services.IsSpelunky(host); got != want {
 			t.Errorf("isSpelunky(%q) = %v, want %v", host, got, want)
 		}
 	}

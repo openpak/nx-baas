@@ -18,7 +18,7 @@
 // handlers here (split.go). What stays is path-routed: the answers that need no catalog, and
 // the two catalog questions (superfly's dv, acds search) and the friends module's app
 // catalog, which are forwarded to nx-shop from whichever host asks them.
-package main
+package services
 
 import (
 	"log"
@@ -33,7 +33,7 @@ import (
 //
 // Returns false when the path is not one of them, so the caller can fall
 // through to its own routing.
-func (s *server) nimUnserved(w http.ResponseWriter, r *http.Request, body []byte) bool {
+func (s *Service) NimUnserved(w http.ResponseWriter, r *http.Request, body []byte) bool {
 	p := r.URL.Path
 	switch {
 	// "Who in this family could lend me this title?" — the virtual-card
@@ -127,7 +127,7 @@ func (s *server) nimUnserved(w http.ResponseWriter, r *http.Request, body []byte
 // [friends-contract-22.5.0 §A.10]. The module only builds the nx.jpg URL and
 // never downloads it. A catalog id this server does not carry renders as
 // "unknown" instead of failing. The catalog is nx-shop's, so both are forwarded there.
-func (s *server) friendsAppCatalog(w http.ResponseWriter, r *http.Request) bool {
+func (s *Service) FriendsAppCatalog(w http.ResponseWriter, r *http.Request) bool {
 	p := r.URL.Path
 	if !strings.HasPrefix(p, "/v1/apps/") {
 		return false

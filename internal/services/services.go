@@ -1,6 +1,4 @@
-package main
-
-// The other console services, per kinnay's server list: online save storage
+// Package services is the other console services, per kinnay's server list: online save storage
 // (OLSC/SCSI), friend recommendations and the per-title service status. Each was
 // reaching this server and being answered with a 404 and an empty object, which
 // is what a console shows as an error rather than as "there is nothing here".
@@ -9,6 +7,7 @@ package main
 // cloud saves -- and it lets the console finish the screen instead of failing
 // it. The saves PRD replaces the first one. BCAT and the News channel are
 // nx-bcat's.
+package services
 
 import (
 	"bytes"
@@ -17,10 +16,13 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"nx-baas/internal/bans"
+	"nx-baas/internal/core"
 	"nx-baas/internal/friends"
 	"nx-baas/internal/httpx"
 	"nx-baas/redact"
 	"strings"
+	"sync"
 )
 
 // olsc is the answer when no saves service is configured (SAVES_URL empty):
@@ -28,7 +30,7 @@ import (
 // politely rather than 404'd. A console that gets a 404 here reports a
 // save-data error; one that gets an empty list simply has no cloud saves.
 // With SAVES_URL set the scsi hosts never reach this: see savesProxy.
-func (s *server) olsc(w http.ResponseWriter, r *http.Request, body []byte) {
+func (s *Service) OLSC(w http.ResponseWriter, r *http.Request, body []byte) {
 	p := r.URL.Path
 	switch {
 	case strings.HasSuffix(p, "notification_tokens"):
@@ -73,7 +75,7 @@ func (s *server) olsc(w http.ResponseWriter, r *http.Request, body []byte) {
 // body is indistinguishable from a working one, which is exactly how
 // unsupported operations stay broken and invisible. A console trace naming
 // another operation is the evidence that promotes it to a documented answer.
-func (s *server) frs(w http.ResponseWriter, r *http.Request, _ []byte) {
+func (s *Service) FRS(w http.ResponseWriter, r *http.Request, _ []byte) {
 	const knownGood = "/v1/friend_recommendations"
 	if strings.HasPrefix(r.URL.Path, knownGood) {
 		log.Printf("[nx-baas] frs %s", redact.Path(r.URL.Path))
@@ -91,14 +93,14 @@ func (s *server) frs(w http.ResponseWriter, r *http.Request, _ []byte) {
 
 // serviceStatus is the "is this game's online service up" check. Saying yes for
 // everything we serve is right; saying nothing at all reads as an outage.
-func (s *server) serviceStatus(w http.ResponseWriter, r *http.Request, _ []byte) {
+func (s *Service) ServiceStatus(w http.ResponseWriter, r *http.Request, _ []byte) {
 	log.Printf("[nx-baas] service status %s", redact.Path(r.URL.Path))
 	httpx.WriteJSON(w, 200, map[string]any{"status": "available", "type": "NORMAL"})
 }
 
 // newSavesProxy forwards a scsi-host request to the saves service: same path under /scsi,
 // same query, body streamed. The console's bearer is replaced by the account it proves.
-func newSavesProxy(base string) *httputil.ReverseProxy {
+func NewSavesProxy(base string) *httputil.ReverseProxy {
 	target, err := url.Parse(base)
 	if err != nil {
 		log.Fatalf("[nx-baas] SAVES_URL %q: %v", base, redact.Err(err))
@@ -122,7 +124,7 @@ func newSavesProxy(base string) *httputil.ReverseProxy {
 // scsi .../network_service_accounts/<user>/notification_tokens with the user's
 // own token: token -> profile (recorded at mint) -> user (proven here)
 // [firmware, olsc; internal research notes §1].
-func (s *server) bindTokenProfile(r *http.Request, tok string) {
+func (s *Service) bindTokenProfile(r *http.Request, tok string) {
 	claims := s.Bearer(r)
 	if tok == "" || claims == nil {
 		return
@@ -134,7 +136,7 @@ func (s *server) bindTokenProfile(r *http.Request, tok string) {
 	s.Penne.BindToken(tok, uid)
 }
 
-func (s *server) savesProxy(w http.ResponseWriter, r *http.Request) {
+func (s *Service) SavesProxy(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/notification_tokens") {
 		// Small JSON; read it for the profile binding and hand it on intact.
 		body, _ := io.ReadAll(io.LimitReader(r.Body, 4096))
@@ -145,7 +147,7 @@ func (s *server) savesProxy(w http.ResponseWriter, r *http.Request) {
 	r.Header.Del("X-OpenPak-Account")
 	r.Header.Del("X-OpenPak-NSA")
 	r.Header.Del("X-OpenPak-Device")
-	r.Header.Set("X-Internal-Key", s.savesKey)
+	r.Header.Set("X-Internal-Key", s.SavesKey)
 	if claims := s.Bearer(r); claims != nil {
 		if uid := httpx.Str(claims, "sub"); uid != "" {
 			if u := s.Store.User(uid); u != nil {
@@ -160,5 +162,20 @@ func (s *server) savesProxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	r.Header.Del("Authorization")
-	s.saves.ServeHTTP(w, r)
+	s.Saves.ServeHTTP(w, r)
+}
+
+// Service is the other Nintendo services a console reaches through nx-baas: the NSO pages,
+// the voice lobby, error reports, play reports and the connection test, play history, the
+// vermillion gateway, the save-data cloud and the NIM routes that need no catalog.
+type Service struct {
+	*core.Core
+	Locks *bans.Checker
+	// Saves forwards the scsi hosts (save-data cloud) to the saves service, with the console's
+	// proven account attached; nil answers the empty-cloud fallback instead.
+	Saves    *httputil.ReverseProxy
+	SavesKey string
+	// Reports is the console error-report spool (errorreport.go).
+	Reports *ReportSpool
+	mu      sync.Mutex
 }

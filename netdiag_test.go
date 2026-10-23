@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"nx-baas/internal/core"
 	"nx-baas/internal/msgpack"
+	"nx-baas/internal/services"
 	"strconv"
 	"strings"
 	"testing"
@@ -22,16 +23,16 @@ func TestDownloadProbeServesExactlyItsAdvertisedSize(t *testing.T) {
 	r := httptest.NewRequest("GET", "http://ctest-dl-lp1.cdn.nintendo.net/30m", nil)
 	r.Host = "ctest-dl-lp1.cdn.nintendo.net"
 	w := httptest.NewRecorder()
-	s.netdiag(w, r)
+	s.consoleSvc().Netdiag(w, r)
 
 	if w.Code != 200 {
 		t.Fatalf("status %d", w.Code)
 	}
-	if got := w.Header().Get("Content-Length"); got != strconv.Itoa(ctestPayload) {
-		t.Fatalf("Content-Length %q, want %d", got, ctestPayload)
+	if got := w.Header().Get("Content-Length"); got != strconv.Itoa(services.CtestPayload) {
+		t.Fatalf("Content-Length %q, want %d", got, services.CtestPayload)
 	}
-	if got := w.Body.Len(); got != ctestPayload {
-		t.Fatalf("wrote %d bytes, want %d -- a short body measures as a slow link", got, ctestPayload)
+	if got := w.Body.Len(); got != services.CtestPayload {
+		t.Fatalf("wrote %d bytes, want %d -- a short body measures as a slow link", got, services.CtestPayload)
 	}
 }
 
@@ -41,7 +42,7 @@ func TestDownloadProbeResumes(t *testing.T) {
 	r.Host = "ctest-dl-lp1.cdn.nintendo.net"
 	r.Header.Set("Range", "bytes=1000-1999")
 	w := httptest.NewRecorder()
-	s.netdiag(w, r)
+	s.consoleSvc().Netdiag(w, r)
 
 	if w.Code != 206 {
 		t.Fatalf("status %d, want 206", w.Code)
@@ -49,7 +50,7 @@ func TestDownloadProbeResumes(t *testing.T) {
 	if got := w.Body.Len(); got != 1000 {
 		t.Fatalf("range served %d bytes, want 1000", got)
 	}
-	want := "bytes 1000-1999/" + strconv.Itoa(ctestPayload)
+	want := "bytes 1000-1999/" + strconv.Itoa(services.CtestPayload)
 	if got := w.Header().Get("Content-Range"); got != want {
 		t.Fatalf("Content-Range %q, want %q", got, want)
 	}
@@ -60,7 +61,7 @@ func TestUploadProbeAcceptsTheBody(t *testing.T) {
 	r := httptest.NewRequest("POST", "http://ctest-ul-lp1.cdn.nintendo.net/1m", zeroBody(1<<20))
 	r.Host = "ctest-ul-lp1.cdn.nintendo.net"
 	w := httptest.NewRecorder()
-	s.netdiag(w, r)
+	s.consoleSvc().Netdiag(w, r)
 	if w.Code != 200 {
 		t.Fatalf("status %d", w.Code)
 	}
@@ -75,7 +76,7 @@ func TestGlobalIPProbeReportsTheForwardedAddress(t *testing.T) {
 	r.RemoteAddr = "10.0.0.1:5000"
 	r.Header.Set("X-Forwarded-For", "10.89.2.12, 203.0.113.7")
 	w := httptest.NewRecorder()
-	s.netdiag(w, r)
+	s.consoleSvc().Netdiag(w, r)
 
 	var got map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
@@ -92,7 +93,7 @@ func TestGlobalIPProbeReportsTheForwardedAddress(t *testing.T) {
 // When every hop is private the console's address is genuinely not visible.
 // Report what we can see rather than inventing a plausible public address.
 func TestGlobalIPProbeDoesNotInventAnAddress(t *testing.T) {
-	ip, public := clientIP(&http.Request{
+	ip, public := services.ClientIP(&http.Request{
 		RemoteAddr: "10.89.2.12:40000",
 		Header:     http.Header{"X-Forwarded-For": []string{"10.89.2.247"}},
 	})
@@ -112,7 +113,7 @@ func TestNetworkClockIsAUnixtimeStringObject(t *testing.T) {
 	r := httptest.NewRequest("GET", "https://api.hac.lp1.ctest.srv.nintendo.net/v1/time", nil)
 	r.Host = "api.hac.lp1.ctest.srv.nintendo.net"
 	w := httptest.NewRecorder()
-	s.netdiag(w, r)
+	s.consoleSvc().Netdiag(w, r)
 
 	var body map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
@@ -147,7 +148,7 @@ func TestReachabilityProbeCarriesTheOrganizationHeader(t *testing.T) {
 	r := httptest.NewRequest("GET", "http://ctest.cdn.nintendo.net/", nil)
 	r.Host = "ctest.cdn.nintendo.net"
 	w := httptest.NewRecorder()
-	s.netdiag(w, r)
+	s.consoleSvc().Netdiag(w, r)
 
 	if w.Code != 200 {
 		t.Fatalf("status %d", w.Code)
@@ -162,7 +163,7 @@ func TestTelemetryAcceptsAReportAndRefusesAnUnmappedRoute(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("POST", "https://receive-lp1.dg.srv.nintendo.net/post", nil)
 	r.Host = "receive-lp1.dg.srv.nintendo.net"
-	s.telemetry(w, r, []byte{0x80})
+	s.consoleSvc().Telemetry(w, r, []byte{0x80})
 	if w.Code != 200 {
 		t.Fatalf("a play report was refused (%d); the console will keep retrying it", w.Code)
 	}
@@ -170,7 +171,7 @@ func TestTelemetryAcceptsAReportAndRefusesAnUnmappedRoute(t *testing.T) {
 	w = httptest.NewRecorder()
 	r = httptest.NewRequest("POST", "https://receive-lp1.dg.srv.nintendo.net/elsewhere", nil)
 	r.Host = "receive-lp1.dg.srv.nintendo.net"
-	s.telemetry(w, r, nil)
+	s.consoleSvc().Telemetry(w, r, nil)
 	if w.Code != 404 {
 		t.Fatalf("unmapped prepo route answered %d, want 404", w.Code)
 	}
@@ -197,7 +198,8 @@ func (z *zeroLimit) Read(p []byte) (int, error) {
 // eupld posts a crash report to the root of its own host. It shares nothing
 // with prepo's routes, so it is routed on its own (errorreport.go) and accepted.
 func TestErrorReportUploadIsAccepted(t *testing.T) {
-	s := &server{Core: &core.Core{}, reports: newReportSpool(t.TempDir())}
+	s := &server{Core: &core.Core{}}
+	s.consoleSvc().Reports = services.NewReportSpool(t.TempDir())
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("POST", "https://receive.hac.lp1.er.srv.nintendo.net/", strings.NewReader("--boundary"))
 	r.Host = "receive.hac.lp1.er.srv.nintendo.net"
@@ -210,11 +212,11 @@ func TestErrorReportUploadIsAccepted(t *testing.T) {
 // A play report names its events and application, and nothing else is read.
 func TestReportEvents(t *testing.T) {
 	body := msgpack.Ordered("application_id", "0100c2500fc20000", "event_id", "online_error", "data", msgpack.Ordered("user", "secret"))
-	got := reportEvents(body)
+	got := services.ReportEvents(body)
 	if got != " [application_id=0100c2500fc20000 event_id=online_error]" {
 		t.Fatalf("got %q", got)
 	}
-	if reportEvents([]byte("\xc1 not msgpack")) != " [not msgpack: first byte 0xc1]" {
+	if services.ReportEvents([]byte("\xc1 not msgpack")) != " [not msgpack: first byte 0xc1]" {
 		t.Fatal("non-msgpack body named events")
 	}
 }

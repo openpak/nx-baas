@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/services"
 	"nx-baas/redact"
 	"os"
 	"regexp"
@@ -71,10 +72,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.forwardMoved(w, r) {
 		return
 	}
-	if isSpelunky(host) {
+	if services.IsSpelunky(host) {
 		// Before the body read: /nso carries the raw identity token (spelunky2.go).
 		// Unset, this falls through to the catch-all below, which logs and 404s.
-		if fwd := spelunky2Forwarder(); fwd != nil {
+		if fwd := services.Spelunky2Forwarder(); fwd != nil {
 			fwd.ServeHTTP(w, r)
 			return
 		}
@@ -82,7 +83,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// The friends module fetches its app catalog and art from a configured
 	// host, so this matches on the path before host routing claims it
 	// (eshop_unserved.go). It declines anything that is not /v1/apps/<id>/.
-	if s.friendsAppCatalog(w, r) {
+	if s.consoleSvc().FriendsAppCatalog(w, r) {
 		return
 	}
 	// migration.<env>.scsi.srv.nintendo.net is not save data: it is the
@@ -97,23 +98,23 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "user transfer is not implemented by OpenPak", 501)
 		return
 	}
-	if isPlayFab(host) {
+	if services.IsPlayFab(host) {
 		// Before the body read: login bodies carry identity tokens (playfab.go).
 		if s.PlayfabFwd != nil && strings.EqualFold(host, "94845.playfabapi.com") {
 			s.PlayfabFwd.ServeHTTP(w, r)
 			return
 		}
-		playfabUnavailable(w, r)
+		services.PlayfabUnavailable(w, r)
 		return
 	}
 	if strings.Contains(host, ".er.srv.nintendo.net") {
 		// eupld's error reports, before the shared 1 MiB body read (errorreport.go).
-		s.errorReport(w, r)
+		s.consoleSvc().ErrorReport(w, r)
 		return
 	}
-	if s.saves != nil && strings.Contains(host, "scsi.srv.nintendo.net") {
+	if s.consoleSvc().Saves != nil && strings.Contains(host, "scsi.srv.nintendo.net") {
 		// Before the body is read: a save can be hundreds of MB and streams through.
-		s.savesProxy(w, r)
+		s.consoleSvc().SavesProxy(w, r)
 		return
 	}
 	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
@@ -144,7 +145,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.naSvc().Handle(w, r, body)
 	case strings.HasSuffix(host, ".znc.srv.nintendo.net"):
 		// The voice-chat lobby page systemWeb opens (nso.go).
-		s.zncLobby(w, r, body)
+		s.consoleSvc().ZncLobby(w, r, body)
 	// The eShop's hosts (pearljam, idbe, bvc, bugyo, savanna, pushmo, tagaya, the d4c family,
 	// dragonst, tigers, beach) and the store rights routes of dragons are nx-shop's, forwarded
 	// above (split.go). The dauth case below keeps dragons' setup-critical answers.
@@ -156,7 +157,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.dauthSvc().Handle(w, r, body)
 	case strings.Contains(host, "penne.") || strings.Contains(host, "vermillion."):
 		// Penne's own hosts are nx-penne's, forwarded above; this is the vermillion gateway.
-		s.vermillion(w, r, body)
+		s.consoleSvc().Vermillion(w, r, body)
 	case strings.HasSuffix(host, ".five.nintendo.net"):
 		// Native online-play invitations (the friends sysmodule's invite UI).
 		s.invitationsSvc().Five(w, r, body)
@@ -185,9 +186,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasSuffix(host, ".nso.nintendo.net"):
 		// The HOME Menu's Nintendo Switch Online button (Lhub) and its red-dot
 		// feed (nso.go).
-		s.nso(w, r, body)
+		s.consoleSvc().NSO(w, r, body)
 	case strings.Contains(host, "frs.srv.nintendo.net"):
-		s.frs(w, r, body)
+		s.consoleSvc().FRS(w, r, body)
 	case isBcatHost(host):
 		// BCAT and the News channel are nx-bcat's: Traefik routes these hosts there, and
 		// NX_BCAT_URL forwards whatever still lands here (split.go). Without it, nothing.
@@ -200,21 +201,21 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.acbaaSvc().Handle(w, r, body)
 	case strings.Contains(host, ".tabiji.srv.nintendo.net"):
 		// Firmware 23's play-history upload (tabiji.go).
-		s.tabiji(w, r, body)
+		s.consoleSvc().Tabiji(w, r, body)
 	case strings.HasSuffix(host, ".dg.srv.nintendo.net"):
 		// prepo's play reports (netdiag.go); eupld's error reports are routed above.
-		s.telemetry(w, r, body)
+		s.consoleSvc().Telemetry(w, r, body)
 	case strings.HasPrefix(host, "ctest") || strings.Contains(host, ".ctest.srv.nintendo.net"):
 		// The Internet connection test in System Settings (netdiag.go).
-		s.netdiag(w, r)
+		s.consoleSvc().Netdiag(w, r)
 	case strings.Contains(host, "scsi.srv.nintendo.net"):
-		s.olsc(w, r, body)
+		s.consoleSvc().OLSC(w, r, body)
 	case strings.HasPrefix(host, "app.lp1.srv"):
-		s.serviceStatus(w, r, body)
+		s.consoleSvc().ServiceStatus(w, r, body)
 	// Answered by path rather than host, and only after every host-specific
 	// handler above has declined: the NIM surfaces that had no handler
 	// (eshop_unserved.go). It returns false when the path is not one of them.
-	case s.nimUnserved(w, r, body):
+	case s.consoleSvc().NimUnserved(w, r, body):
 	case !strings.Contains(host, "baas.nintendo.com"):
 		httpx.Dump(r, body, "!! UNHANDLED host (catch-all)")
 		httpx.WriteJSON(w, 404, map[string]any{})

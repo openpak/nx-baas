@@ -7,6 +7,7 @@ import (
 	"nx-baas/internal/core"
 	"nx-baas/internal/friends"
 	"nx-baas/internal/identity"
+	"nx-baas/internal/services"
 	"nx-baas/internal/store"
 	"strings"
 	"testing"
@@ -526,7 +527,7 @@ func TestPerTitleMembershipCheckIsAnswered(t *testing.T) {
 func TestUserTransferIsNotForwardedIntoTheSavesService(t *testing.T) {
 	s := dauthServer(t)
 	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
-	s.saves = newSavesProxy("http://saves.invalid")
+	s.consoleSvc().Saves = services.NewSavesProxy("http://saves.invalid")
 
 	const host = "migration.lp1.scsi.srv.nintendo.net"
 	r := httptest.NewRequest("POST", "https://"+host+"/api/nx/v1/account_migrations/gen_key", nil)

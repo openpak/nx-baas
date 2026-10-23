@@ -1,4 +1,4 @@
-package main
+package services
 
 // Console error reports: eupld, the Switch's error-report uploader, POSTs every report erpt
 // collected to https://receive.hac.<env>.er.srv.nintendo.net/ [firmware, 22.5.0 eupld
@@ -49,29 +49,29 @@ import (
 
 const defaultErrorReportMax = 16 << 20 // a report plus a screenshot is well under this
 
-type reportSpool struct {
+type ReportSpool struct {
 	dir  string
 	kick chan struct{}
 	mu   sync.Mutex // one sender at a time
 	http *http.Client
 }
 
-func newReportSpool(dir string) *reportSpool {
-	return &reportSpool{dir: dir, kick: make(chan struct{}, 1), http: &http.Client{Timeout: 20 * time.Second}}
+func NewReportSpool(dir string) *ReportSpool {
+	return &ReportSpool{dir: dir, kick: make(chan struct{}, 1), http: &http.Client{Timeout: 20 * time.Second}}
 }
 
-func (s *server) errorReports() *reportSpool {
+func (s *Service) ErrorReports() *ReportSpool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.reports == nil {
-		s.reports = newReportSpool(httpx.Getenv("NX_DATA", "/data") + "/error-reports")
+	if s.Reports == nil {
+		s.Reports = NewReportSpool(httpx.Getenv("NX_DATA", "/data") + "/error-reports")
 	}
-	return s.reports
+	return s.Reports
 }
 
 // errorReport serves the er host. Routed before the shared body read (main.go), which caps
 // bodies at 1 MiB; a report with a screenshot can be larger.
-func (s *server) errorReport(w http.ResponseWriter, r *http.Request) {
+func (s *Service) ErrorReport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost || r.URL.Path != "/" {
 		log.Printf("[error-report] UNMAPPED %s %s%s", r.Method, httpx.HostOf(r), redact.Path(r.URL.Path))
 		http.Error(w, "no such route", 404)
@@ -87,7 +87,7 @@ func (s *server) errorReport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "report too large or truncated", http.StatusRequestEntityTooLarge)
 		return
 	}
-	sp := s.errorReports()
+	sp := s.ErrorReports()
 	received := time.Now().UTC()
 	rep := decodeErrorReport(r.Header.Get("Content-Type"), body)
 	id := rep.id
@@ -128,7 +128,7 @@ func (s *server) errorReport(w http.ResponseWriter, r *http.Request) {
 // reportIdentity names the console and, when the bearer is one of our user tokens, the
 // core account. The bearer eupld sends is not recovered: a device token names the device,
 // a BAAS user token names the account; anything else leaves the User-Agent's did.
-func (s *server) reportIdentity(r *http.Request) (device, account string) {
+func (s *Service) reportIdentity(r *http.Request) (device, account string) {
 	if s.Key != nil {
 		if c := s.Bearer(r); c != nil {
 			sub := httpx.Str(c, "sub")
@@ -140,7 +140,7 @@ func (s *server) reportIdentity(r *http.Request) (device, account string) {
 				u = s.Store.User(sub)
 			}
 			if u != nil {
-				if src := s.locks().Src(); src != nil {
+				if src := s.Locks.Src(); src != nil {
 					account = src.AccountFor(u.PID)
 				}
 			} else if device == "" {
@@ -228,7 +228,7 @@ func decodeErrorReport(contentType string, body []byte) decodedReport {
 	rep.firmware = fieldString(rep.fields["OsVersion"])
 	rep.message = fieldString(rep.fields["ErrorDescription"])
 	for _, k := range []string{"ApplicationID", "RunningApplicationId", "ProgramId"} {
-		if t := titleIDOf(rep.fields[k]); t != "" {
+		if t := TitleIDOf(rep.fields[k]); t != "" {
 			rep.titleID = t
 			break
 		}
@@ -296,7 +296,7 @@ func fieldString(v any) string {
 
 // titleIDOf reads an application id however erpt stored it: a hex string (with or without
 // 0x) or an integer.
-func titleIDOf(v any) string {
+func TitleIDOf(v any) string {
 	switch t := v.(type) {
 	case string:
 		s := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(strings.TrimRight(t, "\x00")), "0x"))
@@ -317,7 +317,7 @@ func titleIDOf(v any) string {
 
 // ---------- spool ----------
 
-func (sp *reportSpool) keepRaw(id, contentType string, body []byte) error {
+func (sp *ReportSpool) keepRaw(id, contentType string, body []byte) error {
 	dir := filepath.Join(sp.dir, "raw")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -329,7 +329,7 @@ func (sp *reportSpool) keepRaw(id, contentType string, body []byte) error {
 	return os.WriteFile(filepath.Join(dir, id+".meta.json"), meta, 0o600)
 }
 
-func (sp *reportSpool) enqueue(id string, payload map[string]any) error {
+func (sp *ReportSpool) enqueue(id string, payload map[string]any) error {
 	dir := filepath.Join(sp.dir, "spool")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -354,11 +354,11 @@ func (sp *reportSpool) enqueue(id string, payload map[string]any) error {
 
 // run forwards the spool now and then every minute, and prunes raw payloads past
 // NX_ERROR_REPORT_KEEP_DAYS (default 30): a report can carry a serial number.
-func (sp *reportSpool) run() {
+func (sp *ReportSpool) Run() {
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
 	for {
-		sp.flush()
+		sp.Flush()
 		sp.prune()
 		select {
 		case <-sp.kick:
@@ -368,7 +368,7 @@ func (sp *reportSpool) run() {
 }
 
 // flush sends every spooled report once. It returns how many went.
-func (sp *reportSpool) flush() int {
+func (sp *ReportSpool) Flush() int {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 	base, key := strings.TrimRight(httpx.Getenv("WEBSITE_INTERNAL_URL", ""), "/"), httpx.Getenv("WEBSITE_INTERNAL_KEY", "")
@@ -422,7 +422,7 @@ func (sp *reportSpool) flush() int {
 	return sent
 }
 
-func (sp *reportSpool) prune() {
+func (sp *ReportSpool) prune() {
 	days, err := strconv.Atoi(httpx.Getenv("NX_ERROR_REPORT_KEEP_DAYS", "30"))
 	if err != nil || days <= 0 {
 		return

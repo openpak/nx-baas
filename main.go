@@ -17,7 +17,6 @@ import (
 	_ "embed"
 	"log"
 	"net/http"
-	"net/http/httputil"
 	"nx-baas/internal/acbaa"
 	"nx-baas/internal/baas"
 	"nx-baas/internal/bans"
@@ -33,6 +32,7 @@ import (
 	"nx-baas/internal/nxaccount"
 	"nx-baas/internal/penne"
 	"nx-baas/internal/presence"
+	"nx-baas/internal/services"
 	"nx-baas/internal/store"
 	"nx-baas/internal/token"
 	"nx-baas/redact"
@@ -44,11 +44,6 @@ import (
 
 type server struct {
 	*core.Core
-	mu sync.Mutex
-	// saves forwards the scsi hosts (save-data cloud) to the saves service, with the
-	// console's proven account attached. nil answers the empty-cloud fallback instead.
-	saves    *httputil.ReverseProxy
-	savesKey string
 	// notifier is where checked notifications go (internal/penne): Core.Penne.
 	notifier penne.Notifier
 	// bansChecker answers whether an account may use the network (internal/bans); locks()
@@ -74,12 +69,13 @@ type server struct {
 	// acbaaService is Animal Crossing's web API (internal/acbaa).
 	acbaaService *acbaa.Service
 	acbaaOnce    sync.Once
+	// consoleService is the other Nintendo services consoles reach here (internal/services).
+	consoleService *services.Service
+	consoleOnce    sync.Once
 	// dauthService is device and application authentication (internal/dauth).
 	dauthService *dauth.Service
 	dauthOnce    sync.Once
 	bansOnce     sync.Once
-	// reports is the console error-report spool (errorreport.go).
-	reports *reportSpool
 }
 
 // newBackend selects the identity source: the historical OpenPak HTTP
@@ -131,7 +127,7 @@ func main() {
 	// unchanged when the notification side is absent.
 	s.eventsSvc().WireInvitations()
 	// Console error reports: kept raw, forwarded to the website, retried (errorreport.go).
-	go s.errorReports().run()
+	go s.consoleSvc().ErrorReports().Run()
 	// Latest version only: outdated titles get 2124-3001 at aauth (versiongate.go).
 	s.dauthSvc().Versions = dauth.NewVersionGateFromEnv()
 	if s.dauthSvc().Versions.On {
@@ -141,7 +137,7 @@ func main() {
 		log.Printf("[version-gate] off (NX_VERSION_GATE)")
 	}
 	if u := os.Getenv("SAVES_URL"); u != "" {
-		s.saves, s.savesKey = newSavesProxy(u), os.Getenv("SAVES_INTERNAL_KEY")
+		s.consoleSvc().Saves, s.consoleSvc().SavesKey = services.NewSavesProxy(u), os.Getenv("SAVES_INTERNAL_KEY")
 		log.Printf("[nx-baas] save-data cloud: forwarding scsi hosts to %s", u)
 	}
 	s.JWKS = token.JWKSFor(&key.PublicKey, s.IDKid, httpx.Getenv("BAAS_ID_KID", "00000000-0000-0000-0000-000000000002"), s.AccKid, s.NAKid)
@@ -371,4 +367,10 @@ func (s *server) SubmitNotification(d penne.Delivery) penne.Submission {
 // submitNotification is SubmitNotification with the choice to wait for nx-penne's outcome.
 func (s *server) submitNotification(d penne.Delivery, wait bool) penne.Submission {
 	return penne.Submit(s.Store, s.notifier, d, wait)
+}
+
+// consoleSvc is the other console-facing services, created on first use like locks.
+func (s *server) consoleSvc() *services.Service {
+	s.consoleOnce.Do(func() { s.consoleService = &services.Service{Core: s.Core, Locks: s.locks()} })
+	return s.consoleService
 }

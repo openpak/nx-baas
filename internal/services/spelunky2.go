@@ -1,4 +1,4 @@
-package main
+package services
 
 import (
 	"log"
@@ -26,11 +26,11 @@ import (
 // Traefik router, so there is no cut-over to stage — the env var alone moves
 // it, and unsetting it restores the catch-all with no restart semantics
 // beyond the quadlet's.
-func isSpelunky(host string) bool {
+func IsSpelunky(host string) bool {
 	return strings.EqualFold(host, "x.spelunky2.net")
 }
 
-func spelunky2Forwarder() *httputil.ReverseProxy {
+func Spelunky2Forwarder() *httputil.ReverseProxy {
 	u := strings.TrimRight(os.Getenv("NX_SPELUNKY2_URL"), "/")
 	if u == "" {
 		return nil

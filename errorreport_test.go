@@ -11,6 +11,7 @@ import (
 	"net/textproto"
 	"nx-baas/internal/core"
 	"nx-baas/internal/msgpack"
+	"nx-baas/internal/services"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,7 +93,8 @@ func TestErrorReportIsDecodedKeptAndForwarded(t *testing.T) {
 	t.Setenv("WEBSITE_INTERNAL_URL", site.URL)
 	t.Setenv("WEBSITE_INTERNAL_KEY", "site-key")
 	dir := t.TempDir()
-	s := &server{Core: &core.Core{}, reports: newReportSpool(dir)}
+	s := &server{Core: &core.Core{}}
+	s.consoleSvc().Reports = services.NewReportSpool(dir)
 
 	body, ct := consoleReport(t)
 	if w := postReport(s, body, ct); w.Code != 200 {
@@ -103,7 +105,7 @@ func TestErrorReportIsDecodedKeptAndForwarded(t *testing.T) {
 	if err != nil || !bytes.Equal(raw, body) {
 		t.Fatalf("raw payload: %v (equal=%v)", err, bytes.Equal(raw, body))
 	}
-	if n := s.reports.flush(); n != 1 {
+	if n := s.consoleSvc().Reports.Flush(); n != 1 {
 		t.Fatalf("flushed %d, want 1", n)
 	}
 	if len(ingest.got) != 1 || ingest.keys[0] != "site-key" {
@@ -141,11 +143,12 @@ func TestErrorReportSpoolRetriesAndParksRefusals(t *testing.T) {
 	t.Setenv("WEBSITE_INTERNAL_URL", site.URL)
 	t.Setenv("WEBSITE_INTERNAL_KEY", "k")
 	dir := t.TempDir()
-	s := &server{Core: &core.Core{}, reports: newReportSpool(dir)}
+	s := &server{Core: &core.Core{}}
+	s.consoleSvc().Reports = services.NewReportSpool(dir)
 	body, ct := consoleReport(t)
 	postReport(s, body, ct)
 
-	if n := s.reports.flush(); n != 0 {
+	if n := s.consoleSvc().Reports.Flush(); n != 0 {
 		t.Fatalf("sent %d to a website answering 503", n)
 	}
 	if left, _ := filepath.Glob(filepath.Join(dir, "spool", "*.json")); len(left) != 1 {
@@ -154,7 +157,7 @@ func TestErrorReportSpoolRetriesAndParksRefusals(t *testing.T) {
 	ingest.mu.Lock()
 	ingest.status = 0
 	ingest.mu.Unlock()
-	if n := s.reports.flush(); n != 1 || len(ingest.got) != 1 {
+	if n := s.consoleSvc().Reports.Flush(); n != 1 || len(ingest.got) != 1 {
 		t.Fatalf("retry sent %d", n)
 	}
 
@@ -162,7 +165,7 @@ func TestErrorReportSpoolRetriesAndParksRefusals(t *testing.T) {
 	ingest.status = 400
 	ingest.mu.Unlock()
 	postReport(s, []byte{0x81, 0xa9, 'E', 'r', 'r', 'o', 'r', 'C', 'o', 'd', 'e', 0xa3, 'x', 'y', 'z'}, "application/x-msgpack")
-	s.reports.flush()
+	s.consoleSvc().Reports.Flush()
 	if parked, _ := filepath.Glob(filepath.Join(dir, "spool", "rejected", "*.json")); len(parked) != 1 {
 		t.Fatalf("refused report not parked: %v", parked)
 	}
@@ -172,7 +175,8 @@ func TestErrorReportSpoolRetriesAndParksRefusals(t *testing.T) {
 func TestErrorReportUnknownShapeIsKept(t *testing.T) {
 	t.Setenv("WEBSITE_INTERNAL_URL", "")
 	dir := t.TempDir()
-	s := &server{Core: &core.Core{}, reports: newReportSpool(dir)}
+	s := &server{Core: &core.Core{}}
+	s.consoleSvc().Reports = services.NewReportSpool(dir)
 	if w := postReport(s, []byte("<xml>what</xml>"), "text/xml"); w.Code != 200 {
 		t.Fatalf("unknown shape = %d", w.Code)
 	}
@@ -194,7 +198,7 @@ func TestTitleIDOfReadsEveryEncoding(t *testing.T) {
 		"0x01006F8002326000": "01006f8002326000", "1006f8002326000": "01006f8002326000",
 		uint64(0x01006f8002326000): "01006f8002326000", int64(0): "", "": "",
 	} {
-		if got := titleIDOf(in); got != want {
+		if got := services.TitleIDOf(in); got != want {
 			t.Errorf("titleIDOf(%#v) = %q, want %q", in, got, want)
 		}
 	}

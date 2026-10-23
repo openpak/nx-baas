@@ -1,4 +1,4 @@
-package main
+package services
 
 // Nintendo Switch Online on the console's own terms: the HOME Menu button and its badge.
 //
@@ -46,7 +46,7 @@ import (
 	"time"
 )
 
-func (s *server) nso(w http.ResponseWriter, r *http.Request, body []byte) {
+func (s *Service) NSO(w http.ResponseWriter, r *http.Request, body []byte) {
 	host, p := httpx.HostOf(r), r.URL.Path
 	if strings.HasPrefix(host, "fw-api.") {
 		// Logged in full whatever the path: the body is the unrecovered half.
@@ -95,7 +95,7 @@ func (s *server) nso(w http.ResponseWriter, r *http.Request, body []byte) {
 
 // zncLobby answers web-<env>.znc.srv.nintendo.net: the voice-chat lobby page under
 // /lobby/, a recorded 404 for anything else on the host.
-func (s *server) zncLobby(w http.ResponseWriter, r *http.Request, body []byte) {
+func (s *Service) ZncLobby(w http.ResponseWriter, r *http.Request, body []byte) {
 	p := r.URL.Path
 	if p == "/_openpak/voice" {
 		s.lobbyVoice(w, r)
@@ -118,14 +118,14 @@ func (s *server) zncLobby(w http.ResponseWriter, r *http.Request, body []byte) {
 // then the website's answer for that account's game room, passed through unchanged
 // (200 room, 404 in no room). 401 when the console can't be named; 503 when the website
 // is not configured or unreachable.
-func (s *server) lobbyVoice(w http.ResponseWriter, r *http.Request) {
+func (s *Service) lobbyVoice(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	_, baasUser := s.shopPrincipal(r)
 	account := ""
 	if s.Store == nil || baasUser == "" {
 		// fall through to 401
-	} else if u := s.Store.User(baasUser); u != nil && s.locks().Src() != nil {
-		account = s.locks().Src().AccountFor(u.PID)
+	} else if u := s.Store.User(baasUser); u != nil && s.Locks.Src() != nil {
+		account = s.Locks.Src().AccountFor(u.PID)
 	}
 	if account == "" {
 		httpx.WriteJSON(w, 401, map[string]any{"status": 401, "title": "who is this console?"})
@@ -157,7 +157,7 @@ func (s *server) lobbyVoice(w http.ResponseWriter, r *http.Request) {
 
 // nsoMembership tells the page whose membership it is showing. The status itself is the
 // same for everyone; the name is what makes the page answer "am I covered?".
-func (s *server) nsoMembership(w http.ResponseWriter, r *http.Request) {
+func (s *Service) nsoMembership(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{"membership": "active", "plans": []string{"default", "ex"}}
 	if account, baasUser := s.shopPrincipal(r); account != "" {
 		out["signed_in"] = true
@@ -413,17 +413,17 @@ var lobbyPage string
 // shopPrincipal resolves the account acting on a shop request: a verified NA id token (or
 // our own BAAS-issued NSA id token) in Authorization or Nintendo-Nsa-Id-Token, corroborated
 // by the Nintendo-Account-Id header when present. A header id without a token is not trusted (principal binding).
-func (s *server) shopPrincipal(r *http.Request) (accountID, baasUserID string) {
+func (s *Service) shopPrincipal(r *http.Request) (accountID, baasUserID string) {
 	accountID, baasUserID = s.shopPrincipalUnchecked(r)
 	// A banned account is nobody to the store: no acquisition, no tasks, no ownership.
-	if accountID != "" && s.locks().NALock(accountID) != "" {
+	if accountID != "" && s.Locks.NALock(accountID) != "" {
 		log.Printf("[shop] principal: account %s is locked; refusing", redact.Tag(accountID))
 		return "", ""
 	}
 	return accountID, baasUserID
 }
 
-func (s *server) shopPrincipalUnchecked(r *http.Request) (accountID, baasUserID string) {
+func (s *Service) shopPrincipalUnchecked(r *http.Request) (accountID, baasUserID string) {
 	headerID := r.Header.Get("Nintendo-Account-Id")
 	for _, h := range []string{"Authorization", "Nintendo-Nsa-Id-Token"} {
 		claims := s.BearerHeader(r, h)
