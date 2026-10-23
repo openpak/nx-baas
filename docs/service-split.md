@@ -10,7 +10,7 @@ per-service convention, plus one small shared module:
 
 | repo | owns | data |
 |---|---|---|
-| **nx-baas** (this one) | identity core: dauth/dcert/aauth, BAAS, NA, friends, presence, invitations, bans, link pages, error reports, news/bcat, NSO/Lhub and znc pages, the vermillion gateway, capi, olsc/saves, acbaa, everything else | `baas.json`, `accounts.json`, `acbaa.json` |
+| **nx-baas** (this one) | identity core: dauth/dcert/aauth, BAAS, NA, friends, presence, invitations, bans, link pages, error reports, the news push, NSO/Lhub and znc pages, the vermillion gateway, capi, olsc/saves, acbaa, everything else | `baas.json`, `accounts.json`, `acbaa.json` |
 | **nx-shop** | the native eShop: savanna/bugyo pages and API, store admin, atum and the d4c family, beach, dragonst, tigers, the store rights routes of dragons, pushmo/tagaya/superfly/veer/aqua/sun, bundles, idbe, bvc, pearljam | `shop/` (catalog, state, packages), `idbe/`, `pearljam/` |
 | **nx-penne** | Penne: registrations (god), login tickets (val), the persistent frontline (fro-), delivery, topic and device messages | `penne.json` |
 | **nx-pctl** | parental controls: moon (`api-*.pctl`), the explainer movie, `/internal/pctl` for the website | `pctl.json` |
@@ -28,14 +28,17 @@ nx-common has no remote, so each service `replace`s it with `../nx-common` and c
 workflow stays the same as here. nx-baas does **not** import nx-common yet: it is the live
 monolith another session ships to every day, and changing its build in the same branch as
 the split buys nothing. Its internal routes implement the same JSON, and
-`internal_identity_test.go` pins the field names. Moving nx-baas onto nx-common is a
+`internal_identity_test.go` (package main) pins the field names. Moving nx-baas onto nx-common is a
 follow-up once the cut-overs are done.
 
-**nx-baas keeps serving everything until routing moves.** Its copies of the shop, Penne and
-moon code stay, and each family only leaves it when its `NX_*_URL` is set. So production is
-unchanged by deploying this branch, every cut-over is a quadlet/Traefik step, and every
-rollback is the same step backwards. Deleting nx-baas's copies is the last step, after the
-cut-overs have run for a while.
+**Status (2026-10-23): all four families have moved, and nx-baas's copies are gone.** The
+shop, Penne and parental controls run in nx-shop, nx-penne and nx-pctl, and the bcat hosts in
+nx-bcat. nx-baas keeps only the forwards (§3, §8): `NX_SHOP_URL`, `NX_PENNE_URL` and
+`NX_PCTL_URL` are required, and it exits at startup naming whichever is missing. `NX_BCAT_URL`
+stays optional because Traefik routes the bcat hosts to nx-bcat directly; without it a bcat
+request that still lands on nx-baas gets `404 {}` and one log line. The dependency map and
+runbooks below are the record of how the moves were made. A rollback to in-process serving is
+only possible with an nx-baas image from before that date.
 
 ## 1. Dependency map
 
@@ -235,7 +238,7 @@ it at once (the push through nx-penne), the parent's picture shows, unlink.
 
 ## 5. Shop cut-over runbook
 
-Nothing below is applied by this branch. Paths in `<…>` are the ones `openpak-nx-baas.container`
+Done (see the status above); kept as the record. Paths in `<…>` are the ones `openpak-nx-baas.container`
 already uses on the box; read it first (`systemctl --user cat openpak-nx-baas`).
 
 **Preconditions.** This branch merged and released (the nx-baas image carries the identity
@@ -278,16 +281,16 @@ published from nx-shop's first tag. `NX_INTERNAL_KEY` present in `~/openpak/depl
 Optional, any time later: move the store directory into nx-shop's own volume (stop nx-shop,
 `mv`, change its `Volume=`, start it). nx-baas is not involved.
 
-**Rollback** (any step): remove the `nx-shop` router from `dynamic.yml`;
+**Rollback** (only with an nx-baas image from before 2026-10-23; the current one has no shop
+of its own; any step): remove the `nx-shop` router from `dynamic.yml`;
 `systemctl --user stop openpak-nx-shop` (one writer at a time); remove `NX_SHOP_URL` from the
 `.env`; `systemctl --user restart openpak-nx-baas`, which loads `shop/` again with everything
 nx-shop wrote — the directory never moved. The website's admin URL goes back to nx-baas if it
 was changed.
 
-**After a few quiet weeks**: drop nx-baas's shop files (shop.go, shop_data.go,
-store_admin.go, atum.go, beach.go, eshop_*.go except the parts the core keeps) and its shop
-names from the fixed certificate. Until then, shop fixes land in nx-shop; nx-shop's README
-says how to port one that landed in nx-baas first.
+**Done 2026-10-23**: nx-baas's shop files are deleted; it keeps the NIM answers that need no
+catalog and the forwards (`internal/services/eshop_unserved.go`). The shop names are still on
+its fixed certificate, harmless while it forwards them. Shop fixes land in nx-shop.
 
 ## 6. Penne cut-over runbook
 
@@ -332,7 +335,8 @@ directory (`/app/data` in the container; `penne.json` is in it).
    (`systemctl --user restart openpak-nx-baas`) and watch the console's connection in
    nx-penne's journal stay open.
 
-**Rollback**: remove the `nx-penne` router; `systemctl --user stop openpak-nx-penne`; copy its
+**Rollback** (only with an nx-baas image from before 2026-10-23; the current one has no Penne
+of its own): remove the `nx-penne` router; `systemctl --user stop openpak-nx-penne`; copy its
 state back over nx-baas's — `podman cp openpak-nx-penne:/app/data/penne.json
 ~/openpak/penne-rollback.json` (works on a stopped container), then `podman unshare cp` it over
 `penne.json` in nx-baas's data directory and `podman unshare chown 65532:65532` it, as the
@@ -348,9 +352,9 @@ first push it takes again ends the outage. A 501, or nx-penne saying it has no i
 is a deployment fault and never retried.
 Restarting nx-baas costs consoles nothing on Penne.
 
-**Later**: drop nx-baas's Penne files except what the core keeps (the vermillion gateway,
-`penne_link.go`), its Penne names from the fixed certificate, and the `/import` mount from
-nx-penne's quadlet.
+**Done 2026-10-23**: nx-baas's Penne files are deleted; it keeps the vermillion gateway
+(`internal/services/vermillion.go`) and the core's client (`internal/penne`). Still open: its
+Penne names on the fixed certificate and the `/import` mount in nx-penne's quadlet.
 
 ## 7. Parental controls cut-over runbook
 
@@ -385,7 +389,8 @@ first is not required: without `NX_PENNE_URL` nx-pctl pushes through nx-baas
    website's parental-controls base URL at `http://openpak-nx-pctl:20070` when convenient.
 7. **Hardware**: §4's moon list.
 
-**Rollback**: remove the `nx-pctl` router; `systemctl --user stop openpak-nx-pctl`; copy its
+**Rollback** (only with an nx-baas image from before 2026-10-23, which still served parental
+controls and still read `pctl-rollback.json`; the current one does neither): remove the `nx-pctl` router; `systemctl --user stop openpak-nx-pctl`; copy its
 records back for nx-baas to take: `podman cp openpak-nx-pctl:/app/data/pctl.json
 ~/openpak/pctl-rollback.json`, then `podman unshare cp` it into nx-baas's data directory as
 `pctl-rollback.json` (`podman unshare chown 65532:65532`); remove `NX_PCTL_URL` from the `.env`;
@@ -395,18 +400,24 @@ apply it again. It applies only a file holding exactly a `pctlDevices` object (n
 `{}` there when it has no records); anything else is refused with a log line and left in
 place, and the records are untouched — check for `taken back from nx-pctl` in the journal.
 
-**Later**: drop `moon.go` and the `pctlDevices` key from nx-baas (a store written with the key
-still loads in an nx-baas that no longer has it), the pctl name from its fixed certificate,
-and the `/import` mount from nx-pctl's quadlet.
+**Done 2026-10-23**: `moon.go` is deleted. The `pctlDevices` key stays in `baas.json`, carried
+byte for byte as opaque JSON, because nx-pctl fingerprints that value on import; nx-baas never
+reads or changes it. Still open: the pctl name on nx-baas's fixed certificate and the `/import`
+mount in nx-pctl's quadlet.
 
-## 8. nx-baas after all three
+## 8. nx-baas after all four
 
 | env | effect |
 |---|---|
-| `NX_SHOP_URL` | eShop hosts, `/v1/apps/` catalog paths, superfly `dv` and acds search on kept hosts, dragons. store rights routes, `/internal/store/*` → nx-shop; `shop/` not opened |
-| `NX_PENNE_URL` | god/val → nx-penne, fro- → 421, `/internal/penne/*` → nx-penne, every core push through `penne_link.go`; `penne.json` not opened, no sweeper |
-| `NX_PCTL_URL` | pctl and movie hosts, `/internal/pctl/*` → nx-pctl |
-| (always) | `/internal/identity/*` for the services; `pctl-rollback.json` taken on start if present |
+| `NX_SHOP_URL` (required) | eShop hosts, `/v1/apps/` catalog paths, superfly `dv` and acds search on kept hosts, dragons. store rights routes, `/internal/store/*` → nx-shop |
+| `NX_PENNE_URL` (required) | god/val → nx-penne, fro- → 421, `/internal/penne/*` → nx-penne, every core push through `internal/penne` |
+| `NX_PCTL_URL` (required) | pctl and movie hosts, `/internal/pctl/*` → nx-pctl |
+| `NX_BCAT_URL` (optional) | bcat hosts → nx-bcat; unset, `404 {}` and a log line (Traefik normally sends them to nx-bcat) |
+| (always) | `/internal/identity/*` for the services; `/internal/news/push` for the news service |
+
+Within nx-baas the code sits in packages under `internal/` (README "Code layout"): the
+forwards are `split.go` in package main, the core's calls into Penne `internal/penne`, and the
+identity API `internal/gameapi/internal_identity.go`.
 
 The services find nx-baas with `NX_CORE_URL=http://openpak-nx-baas:20070`; put
 `NX_SHOP_URL`, `NX_PENNE_URL`, `NX_PCTL_URL` in the shared `.env` so every process sees one

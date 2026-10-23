@@ -16,13 +16,41 @@ Everything unknown is logged in full (`!! UNHANDLED`), which is how the undocume
 
 Env: `NX_ADDR`, `NX_DATA`, `ACCOUNT_API`, `OPENPAK_SECRET`, `OPENPAK_ADMIN_KEY`,
 `BAAS_SIGNING_KEY`, `BAAS_KID`, `NX_CA_DIR` (optional `ca.pem`/`ca.key` to sign the server cert),
-`PCTL_MOVIE` (optional mp4 served as the Parental Controls explainer clip; 404 while unset).
+`NX_INTERNAL_KEY` (the game API's `/internal` routes refuse everything without it).
 
-The eShop, Penne and parental controls are being split out into nx-shop, nx-penne and nx-pctl
-([`docs/service-split.md`](docs/service-split.md)). `NX_SHOP_URL`, `NX_PENNE_URL` and
-`NX_PCTL_URL` hand each family to its service; unset, this process serves it as before. The
-services ask this one about accounts on `/internal/identity` (game-API listener, strict
+The eShop, Penne, parental controls and BCAT live in their own services: nx-shop, nx-penne,
+nx-pctl and nx-bcat ([`docs/service-split.md`](docs/service-split.md)). nx-baas does not serve
+them, it only forwards what still reaches it, so **`NX_SHOP_URL`, `NX_PENNE_URL` and
+`NX_PCTL_URL` are required**: without one the process exits at startup naming the missing
+variable. `NX_BCAT_URL` is optional, because Traefik routes the bcat hosts straight to nx-bcat;
+unset, any bcat request that still lands here gets `404 {}` and one log line. The services
+ask this one about accounts on `/internal/identity` (game-API listener, strict
 `NX_INTERNAL_KEY`).
+
+## Code layout
+
+One binary, one `package main` that only wires and routes (`main.go`, `routes.go`, `split.go`
+for the forwarders, `proxy.go` for capture mode), and the surfaces under `internal/`:
+
+| package | what |
+| --- | --- |
+| `core` | the shared state every surface holds: the BAAS store, the account backend, the signing key, the Harbor registry, the nx-penne client and the forwarders, plus the bearer checks |
+| `dauth` | dauth, dcert and aauth: device, edge and application tokens, the latest-version gate |
+| `devices` | Harbor device enrolment (`harbor-devices.json`) |
+| `baas` | application token, login, users, federation, certificates, the avatar host |
+| `nxaccount` | the Nintendo Account link flow (authorize, session_token, token, users/me) and the link pages |
+| `friends` | friends, friend requests, relationships, blocks, and the BAAS user/friend objects |
+| `presence` | per-device presence, the aggregate friends see, the core's sessions, other platforms |
+| `invitations` | the five host and the invitation mailbox (`invitations.json`) |
+| `identity` | the account backends and the Switch projection: PID / BAAS id / friend code to core account (`accounts.json`) |
+| `bans` | the ban check and each surface's refusal |
+| `penne` | the core's client of nx-penne: the ordered push queue, notifications, the news push |
+| `events` | the account core's event follower: bans, deletions, friendships, presence elsewhere |
+| `gameapi` | the game-facing internal API (`NX_API_ADDR`) |
+| `services` | the other console services: NSO, the voice lobby, error and play reports, the connection test, play history, the vermillion gateway, the save cloud, PlayFab and Spelunky 2 |
+| `acbaa` | Animal Crossing's web API (`acbaa.json`) |
+| `store` | `baas.json` |
+| `httpx`, `token`, `msgpack` | shared HTTP helpers, JWTs and ids, msgpack |
 
 PlayFab is a separate service under `servers/playfab`. Set
 `NX_PLAYFAB_URL=http://openpak-playfab:22650` to forward Core Keeper's
@@ -125,14 +153,13 @@ the earlier account server.
 | --- | --- | --- |
 | `POST /internal/photon-room` `{identity,room,app_id}` | Photon | `identity` is `nex:<openpak token>` or `bsdid:<bs:did>`, straight from the client's id_token; this server resolves it. The room becomes the player's friend presence (`app_field` = the title's own application parameter). |
 | `POST /internal/mint-token` `{pid}` | rig tooling | A bearer for any PID the backend knows, no password. Dev convenience. |
-| `POST /internal/news/push` `{topic_id,revision[,wait_range,subscription]}` | news service | Writes `{"type":"news",…}` to every live Penne connection subscribed to the topic (raw subscribed string). Live only; see `news.go`. |
-| `POST /internal/pctl/pairing` `{account_id}` | parent surface (app, via the website) | Mints the parental-controls pairing code to type on the console, 15 min TTL, and the moon device record behind it (`moon.go`). |
-| `GET /internal/pctl/devices?account_id=` | parent surface (app, via the website) | The records that account manages: `moon_id`, `paired`, owners, and the pairing code only while it is still live. A paired record adds `nickname`, `setting` (as served), `players` `{id, nickname}`, `etag`, `synced_etag`, `synced_at`, `synced`, `wrong_pin_attempts` (unix seconds, newest first, at most 20), and `unlock_code` once the console has named its PIN or a parent has set one. |
-| `GET /internal/pctl/devices/{moon_id}/players/{id}/image?account_id=` | parent surface (app, via the website) | The player's JPEG as the console uploaded it; 404 unless that account manages the record. |
-| `PUT /internal/pctl/devices/{moon_id}/setting?account_id=` `{setting?, unlock_code?}` | parent surface; for now the hardware experiments | Stores a setting document (refused with 400 naming the path if the console's parse table would drop or change any of it; it must name `functionalRestrictionLevel`) and/or a parent-set PIN (4–8 digits). Answers `{etag, updated_at}`. 404 unless that account manages the record. |
+| `POST /internal/news/push` `{topic_id,revision[,wait_range,subscription]}` | news service | nx-penne writes `{"type":"news",…}` to every live Penne connection subscribed to the topic (raw subscribed string). Live only; see `internal/penne/news.go`. |
+| `/internal/store/*`, `/internal/pctl/*`, `/internal/penne/*` | website, split-out services | Forwarded to nx-shop, nx-pctl and nx-penne, which own them. |
 | `GET/POST /api/invitations` | emulator, console | Friend-invitation mailbox: opaque app-parameter bytes in, popped by the target. TTL 5 min, 8 queued per target, senders limited to their own friends. |
 
-`X-Internal-Key` must match `NX_INTERNAL_KEY` (or `OPENPAK_INTERNAL_KEY`) when set;
+`X-Internal-Key` must match `NX_INTERNAL_KEY` (or `OPENPAK_INTERNAL_KEY`); with no key
+configured every `/internal` route refuses (`NX_INTERNAL_INSECURE=1` opens them for isolated
+development only, never production);
 `/api/*` uses the `nx2.` openpak bearer. Any other `/api/*` path is forwarded to
 `ACCOUNT_API` until the OpenPak core serves friends/presence/saves itself.
 
@@ -141,35 +168,18 @@ the earlier account server.
 `*.nso.nintendo.net` serves the HOME Menu's Switch Online page (Lhub, any path, the paywall
 `launch?from=paywall…` included): membership is always active, Expansion Pack too, because
 OpenPak sells nothing. `fw-api.<env>.nso.nintendo.net/v1/events` answers an empty list and
-logs the request. With `NEWS_INTERNAL_URL` (plus `NEWS_INTERNAL_CA` and
-`NEWS_INTERNAL_SERVER_NAME` when the news service speaks TLS under its own CA) the bcat hosts
-forward `/api/nx/v1/list/openpak_*` and `/api/nx/v1/titles/<tid>/topics` to it verbatim;
-unset, bcat.go's own answers stay. `news.go` has the details.
-
-`BCAT_INTERNAL_URL` independently relays native per-title game BCAT lists
-(`nx_data_<title-id>`) and `/bcat/` signed file URLs to the shared game
-dataset service, e.g. `http://openpak-bcat:20044`. Harbor's website relay
-points to that same service through `BCAT_URL`. Native News routing keeps
-its existing service. See the [native game BCAT runbook](../news/docs/native-game-bcat.md)
-for the 23.0.1 verification-key patch, signing and outstanding console tests.
+logs the request. The News channel and native game BCAT are nx-bcat's: the bcat hosts reach
+it through Traefik (or `NX_BCAT_URL`). What stays here is the push that tells consoles a
+topic changed (`/internal/news/push`, through nx-penne).
 
 ## Native OpenPak store
 
-The shop applet's surface: the storefront and its API on `hac.lp1.savanna.srv.nintendo.net`
-(where 22.5.0's systemWeb opens the shop; `bugyo.hac.lp1.eshop.nintendo.net/ashigaru/` stays
-an alias), NIM's download and update hosts (pushmo, tagaya, superfly, veer),
-device links and rights on `beach.`/`dragons.`/`dragonst.`/`tigers.`, content delivery with
-edge-token authorization and resumable ranges on `atum.hac.lp1.d4c.nintendo.net`. Catalog,
-entitlements and download tasks persist under `$NX_DATA/shop/` (`catalog.json` you author,
-`state.json` the server writes). What is implemented, what is pending hardware, the wiring
-A needs, and the console-trust proposal for native install:
+The store is nx-shop's: the shop applet's hosts, NIM's download and update hosts, beach,
+dragonst, tigers, the d4c content hosts and the store admin API (`/internal/store/*`). nx-baas
+forwards whatever of it still reaches it, keeps dragons' licence answers every title needs
+(only its store rights routes move), and forwards the path-routed catalog questions (superfly
+`dv`, acds search, the friends module's app catalog). The design notes stay in
 [`docs/native-shop.md`](docs/native-shop.md).
-
-The website manages the catalog through the store admin API on the game-API port
-(`/internal/store/*`, `X-Internal-Key` required — these routes fail closed without
-`NX_INTERNAL_KEY`): title CRUD, publish, NSP upload of a base or update
-(`NX_SHOP_UPLOAD_MAX_BYTES`, default 8 GiB), per-account entitlements/tasks, stats.
-Contract: [`docs/store-admin-api.md`](docs/store-admin-api.md).
 
 ## Console error reports
 
@@ -178,7 +188,7 @@ eupld's uploads to `receive.hac.<env>.er.srv.nintendo.net/` are kept raw in
 decoded (msgpack fields, attachment) and forwarded to
 `${WEBSITE_INTERNAL_URL}/api/v1/internal/crash-reports` with `X-Internal-Key:
 ${WEBSITE_INTERNAL_KEY}`; unsent ones wait in `error-reports/spool/` and retry every
-minute. Body cap `NX_ERROR_REPORT_MAX_BYTES` (16 MiB). `errorreport.go`.
+minute. Body cap `NX_ERROR_REPORT_MAX_BYTES` (16 MiB). `internal/services/errorreport.go`.
 
 ## Bans
 
@@ -186,7 +196,7 @@ A core account that is banned (or deleted / pending deletion) is refused everywh
 adapter answers, in each client's own error shape: BaaS `403 banned_user` (2124-5110),
 NA `invalid_grant`/`user_banned`, game API `403 {"error":"account_banned"}` (never 401).
 The core's `GetAccount` status is cached `NX_BAN_CACHE_SECONDS` (default 30, max 60) and
-dropped on the core's ban/unban events. `bans.go` lists every surface.
+dropped on the core's ban/unban events. `internal/bans` lists every surface.
 
 ## Latest version only
 
@@ -196,7 +206,7 @@ forced: the version list is untouched. The table is blawar/titledb's `versions.j
 (`NX_VERSION_GATE_URL`), refetched every 24 h and cached in `$NX_DATA/title-versions.json`;
 a failed fetch keeps the last good table. Unknown titles and versions that are not 8 hex
 digits are allowed. `NX_VERSION_GATE=0` turns it off; `NX_VERSION_GATE_OVERRIDES` takes
-`<title id>=<%08x minimum>` or `<title id>=all`, comma-separated. `versiongate.go`.
+`<title id>=<%08x minimum>` or `<title id>=all`, comma-separated. `internal/dauth/versiongate.go`.
 
 Game servers ask the same table on the internal API, so their own refusals (NEX
 ApplicationVersionIsOld, NPLN FAILED_PRECONDITION, ...) match aauth's:
