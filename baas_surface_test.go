@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 	"strings"
 	"testing"
@@ -20,7 +21,7 @@ func TestEveryDocumentedBaasMethodIsAnswered(t *testing.T) {
 	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	u, _ := s.store.NewUser()
 	s.store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "tester" })
-	s.acct = fakeBackend{id: &Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
+	s.acct = fakeBackend{id: &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
 		FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did"}}
 	other := "1111222233334444"
 
@@ -79,7 +80,7 @@ func TestFriendCodeRegeneratesOncePerDay(t *testing.T) {
 	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	u, _ := s.store.NewUser()
 	s.store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "tester" })
-	s.acct = fakeBackend{id: &Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
+	s.acct = fakeBackend{id: &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
 		FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did"}}
 
 	call := func() *httptest.ResponseRecorder {
@@ -113,7 +114,7 @@ func TestFriendCodeAdvertisesTheEnforcedCooldown(t *testing.T) {
 	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	u, _ := s.store.NewUser()
 	s.store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "tester" })
-	s.acct = fakeBackend{id: &Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
+	s.acct = fakeBackend{id: &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
 		FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did"}}
 
 	r := httptest.NewRequest("POST", "https://"+baasHost+"/1.0.0/users/"+u.ID+"/generate_code",
@@ -188,10 +189,10 @@ func TestSendingAFriendRequestReachesTheHandler(t *testing.T) {
 	u, _ := s.store.NewUser()
 	s.store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "tester" })
 	s.acct = codeBackend{
-		fakeBackend: fakeBackend{id: &Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
+		fakeBackend: fakeBackend{id: &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
 			FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did"}},
 		code: "SW-1000-0000-0002",
-		friend: &Friend{PID: 2, BaasUserID: "aaaaaaaaaaaa0002", NaID: "bbbbbbbbbbbb0002",
+		friend: &identity.Friend{PID: 2, BaasUserID: "aaaaaaaaaaaa0002", NaID: "bbbbbbbbbbbb0002",
 			FriendCode: "SW-1000-0000-0002", Nickname: "Leia", Country: "IE", CreatedAt: 1788896080}}
 
 	body := `{"channels":["FRIEND_CODE"],"senderId":"` + u.ID +
@@ -248,10 +249,10 @@ func TestListsUseTheEnvelopeAConsoleReads(t *testing.T) {
 	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	u, _ := s.store.NewUser()
 	s.store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "tester" })
-	s.acct = fakeBackend{id: &Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
+	s.acct = fakeBackend{id: &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
 		FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did",
-		Friends:        []Friend{{PID: 2, BaasUserID: "aaaaaaaaaaaa0002", Nickname: "Leia", FriendCode: "SW-1000-0000-0002"}},
-		FriendRequests: []Friend{{PID: 3, BaasUserID: "2222333344445555", Nickname: "Asks", FriendCode: "SW-1111-2222-3333"}},
+		Friends:        []identity.Friend{{PID: 2, BaasUserID: "aaaaaaaaaaaa0002", Nickname: "Leia", FriendCode: "SW-1000-0000-0002"}},
+		FriendRequests: []identity.Friend{{PID: 3, BaasUserID: "2222333344445555", Nickname: "Asks", FriendCode: "SW-1111-2222-3333"}},
 	}}
 
 	for _, path := range []string{
@@ -318,7 +319,7 @@ func TestRelationshipShape(t *testing.T) {
 	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	u, _ := s.store.NewUser()
 	s.store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "tester" })
-	s.acct = fakeBackend{id: &Identity{PID: 1, Nickname: "tester", FriendCode: "SW-0000-0000-0000", BsDid: "did"}}
+	s.acct = fakeBackend{id: &identity.Identity{PID: 1, Nickname: "tester", FriendCode: "SW-0000-0000-0000", BsDid: "did"}}
 
 	r := httptest.NewRequest("GET", "https://"+baasHost+"/2.0.0/users/"+u.ID+"/relationships/aaaaaaaaaaaa0002", nil)
 	r.Host = baasHost
@@ -351,10 +352,10 @@ func TestAcceptingAFriendRequestAnswersInTheConsolesWords(t *testing.T) {
 	u, _ := s.store.NewUser()
 	s.store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "Leia" })
 	s.acct = codeBackend{
-		fakeBackend: fakeBackend{id: &Identity{PID: 1, NaID: "bbbbbbbbbbbb0002", Nickname: "Leia",
+		fakeBackend: fakeBackend{id: &identity.Identity{PID: 1, NaID: "bbbbbbbbbbbb0002", Nickname: "Leia",
 			FriendCode: "SW-1000-0000-0002", Country: "IE", BsDid: "did"}},
 		code: "SW-1000-0000-0001",
-		friend: &Friend{PID: 2, BaasUserID: "aaaaaaaaaaaa0001", NaID: "bbbbbbbbbbbb0001",
+		friend: &identity.Friend{PID: 2, BaasUserID: "aaaaaaaaaaaa0001", NaID: "bbbbbbbbbbbb0001",
 			FriendCode: "SW-1000-0000-0001", Nickname: "hansolo", Country: "IE", CreatedAt: 1788818380}}
 
 	r := httptest.NewRequest("PATCH", "https://"+baasHost+"/2.0.0/friend_requests/aaaaaaaaaaaa0001",
@@ -413,9 +414,9 @@ func TestBecomingFriendsMovesFriendsUpdatedAt(t *testing.T) {
 	s.store.Update(other, func(u *store.User) { u.PID, u.Nickname, u.FriendsUpdatedAt = 2, "hansolo", old })
 
 	s.acct = codeBackend{
-		fakeBackend: fakeBackend{id: &Identity{PID: 1, Nickname: "Leia", FriendCode: "SW-1000-0000-0002", BsDid: "did"}},
+		fakeBackend: fakeBackend{id: &identity.Identity{PID: 1, Nickname: "Leia", FriendCode: "SW-1000-0000-0002", BsDid: "did"}},
 		code:        "SW-1000-0000-0001",
-		friend: &Friend{PID: 2, BaasUserID: other.ID, FriendCode: "SW-1000-0000-0001",
+		friend: &identity.Friend{PID: 2, BaasUserID: other.ID, FriendCode: "SW-1000-0000-0001",
 			Nickname: "hansolo", CreatedAt: 1788818380}}
 
 	before := s.userObj(me, s.identity(me), "")["friendsUpdatedAt"].(int64)

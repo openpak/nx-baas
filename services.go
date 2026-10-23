@@ -148,8 +148,8 @@ func (s *server) savesProxy(w http.ResponseWriter, r *http.Request) {
 	if claims := s.bearer(r); claims != nil {
 		if uid := httpx.Str(claims, "sub"); uid != "" {
 			if u := s.store.User(uid); u != nil {
-				if b, ok := s.acct.(interface{ accountFor(uint64) string }); ok {
-					if acct := b.accountFor(u.PID); acct != "" {
+				if b, ok := s.acct.(interface{ AccountFor(uint64) string }); ok {
+					if acct := b.AccountFor(u.PID); acct != "" {
 						r.Header.Set("X-OpenPak-Account", acct)
 						r.Header.Set("X-OpenPak-NSA", uid)
 						r.Header.Set("X-OpenPak-Device", httpx.Str(claims, "bs:did"))

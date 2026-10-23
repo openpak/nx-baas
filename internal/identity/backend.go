@@ -1,26 +1,32 @@
-package main
+// Package identity is the Switch identity behind the BAAS surface: the account backends
+// (the OpenPak account core over gRPC, or the earlier account server over HTTP) and the
+// adapter-owned projection that gives a core account its PID, BAAS user id and friend code
+// ($NX_DATA/accounts.json).
+package identity
 
 import (
 	"errors"
+	"net/http"
 	"net/url"
+	"time"
 )
 
 // Errors the backends translate core failures into, so the HTTP layer maps
 // them without knowing which backend answered. The core remains canonical;
 // these only carry failure semantics across the interface (SOC-03).
 var (
-	errCoreInvalid             = errors.New("the core rejected the request")
-	errCoreNotFound            = errors.New("the core does not know that account or request")
-	errStateConflict           = errors.New("the relationship is not in the required state")
-	errCoreUnavailable         = errors.New("the core is unavailable")
-	errCoreInternal            = errors.New("internal core error")
-	errSecondFactorInvalid     = errors.New("invalid two-factor code")
-	errSecondFactorLocked      = errors.New("too many two-factor attempts; try again later")
-	errSecondFactorUnsupported = errors.New("second factor not supported by this backend")
+	ErrCoreInvalid             = errors.New("the core rejected the request")
+	ErrCoreNotFound            = errors.New("the core does not know that account or request")
+	ErrStateConflict           = errors.New("the relationship is not in the required state")
+	ErrCoreUnavailable         = errors.New("the core is unavailable")
+	ErrCoreInternal            = errors.New("internal core error")
+	ErrSecondFactorInvalid     = errors.New("invalid two-factor code")
+	ErrSecondFactorLocked      = errors.New("too many two-factor attempts; try again later")
+	ErrSecondFactorUnsupported = errors.New("second factor not supported by this backend")
 	// errSecondFactorRequired means the core answered "2FA required" to a
 	// caller that declared support: a version skew, never the normal Need2FA
 	// path (which arrives as a result, not an error).
-	errSecondFactorRequired = errors.New("two-factor authentication is required")
+	ErrSecondFactorRequired = errors.New("two-factor authentication is required")
 )
 
 // LoginResult is the outcome of a password check that declares second-factor
@@ -34,17 +40,17 @@ type LoginResult struct {
 	AccountID string
 }
 
-// accountBackend is the identity source behind the BAAS surface. Two
+// Backend is the identity source behind the BAAS surface. Two
 // implementations exist:
 //
-//   - accountClient (account.go): the historical OpenPak stack client
+//   - AccountClient (account.go): the historical OpenPak stack client
 //     (/internal/* HTTP + shared-secret nex tokens). Preserved unchanged so
 //     the proven deployment keeps running during the migration.
-//   - openpakBackend (openpak.go): the OpenPak account core (gRPC) with the
+//   - OpenpakBackend (openpak.go): the OpenPak account core (gRPC) with the
 //     Switch identifier projection owned locally (PRD SW-01/SW-04).
 //
 // Selection is deployment configuration (ACCOUNT_BACKEND), never per-request.
-type accountBackend interface {
+type Backend interface {
 	// Identity renders the full Switch-side identity for a PID: profile
 	// fields plus friend projections (friends, incoming, sent requests).
 	Identity(pid uint64) (*Identity, error)
@@ -73,19 +79,50 @@ type accountBackend interface {
 	Block(pid, other uint64) error
 	Unblock(pid, other uint64) error
 	// nexToken signs the "openpak" binding claim game servers verify.
-	nexToken(pid uint64, username string) string
+	NexToken(pid uint64, username string) string
 	// nexSigningKey is the key nexToken signs with, so the game API can verify a
 	// token it (or the account server) minted without a round trip.
-	nexSigningKey() []byte
+	NexSigningKey() []byte
 	// friendCodeForAccount answers the website, which mints no codes and holds
 	// none: the core knows an account is linked, not what its code is.
-	friendCodeForAccount(accountID string) (string, bool)
+	FriendCodeForAccount(accountID string) (string, bool)
 
 	// accountForFriendCode is the reverse, and the one the website needs to
 	// add a friend by code. The core's "switch" link subject is the BAAS user
 	// id, never the friend code, so a lookup against the core can only miss.
-	accountForFriendCode(code string) (string, bool)
+	AccountForFriendCode(code string) (string, bool)
 	// RegenerateFriendCode mints a new code for a user who asked for one from
 	// the console (POST /1.0.0/users/<id>/generate_code).
 	RegenerateFriendCode(pid uint64) error
+}
+
+var ErrAccountLocked = errors.New("account is banned or deleted")
+
+// errReversePending is the adapter's rendering of the core's one-request-per-
+// pair rule: the person we are asking has already asked us. The handler turns
+// it into a truthful description of the request that already exists, so the
+// console shows the pending incoming request instead of an error.
+var ErrReversePending = errors.New("a request from them is already pending")
+
+// WebsitePictureAt asks the website when the account's picture last changed.
+// A HEAD, so nothing downloads an image to answer a question about a date,
+// and short: if the website cannot say, the console keeps whatever it has.
+func WebsitePictureAt(url string) int64 {
+	req, err := http.NewRequest(http.MethodHead, url, nil)
+	if err != nil {
+		return 0
+	}
+	resp, err := (&http.Client{Timeout: 2 * time.Second}).Do(req)
+	if err != nil {
+		return 0
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0
+	}
+	t, err := http.ParseTime(resp.Header.Get("Last-Modified"))
+	if err != nil {
+		return 0
+	}
+	return t.Unix()
 }

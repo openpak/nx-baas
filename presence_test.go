@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	accountv1 "nx-baas/accountpb"
+	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 )
 
@@ -132,8 +133,8 @@ func presenceFixture(t *testing.T) (*server, *fakeSessions, *store.User, *store.
 	t.Helper()
 	s, _, users := socialServer(t)
 	sess := newFakeSessions()
-	if b, ok := s.acct.(*openpakBackend); ok {
-		b.sessions = sess
+	if b, ok := s.acct.(*identity.OpenpakBackend); ok {
+		b.Sessions = sess
 	}
 	return s, sess, users[0], users[1]
 }
@@ -327,8 +328,8 @@ func TestReconcilerAgreesWithTheCore(t *testing.T) {
 	lease := presenceLease()
 
 	bAcct := ""
-	if bb, ok := s.acct.(*openpakBackend); ok {
-		bAcct = bb.accountFor(b.PID)
+	if bb, ok := s.acct.(*identity.OpenpakBackend); ok {
+		bAcct = bb.AccountFor(b.PID)
 	}
 	if bAcct == "" {
 		t.Fatal("fixture: no core account for B")
@@ -465,10 +466,10 @@ func TestPresenceVisibleTreatsJunkPermissionAsSelf(t *testing.T) {
 func TestCoreSessionCarriesTheTitleBeingPlayed(t *testing.T) {
 	s, _, users := socialServer(t)
 	sess := newFakeSessions()
-	b := s.acct.(*openpakBackend)
-	b.sessions = sess
+	b := s.acct.(*identity.OpenpakBackend)
+	b.Sessions = sess
 	u := users[1]
-	account := b.accountFor(u.PID)
+	account := b.AccountFor(u.PID)
 	if account == "" {
 		t.Fatal("fixture: no core account")
 	}
@@ -509,11 +510,11 @@ func TestAFriendPlayingOnAnotherPlatformReadsAsOnline(t *testing.T) {
 	s, _, users := socialServer(t)
 	sess := newFakeSessions()
 	sess.namespace = "wiiu"
-	b := s.acct.(*openpakBackend)
-	b.sessions = sess
+	b := s.acct.(*identity.OpenpakBackend)
+	b.Sessions = sess
 	viewer, friend := users[0], users[1]
 
-	account := b.accountFor(friend.PID)
+	account := b.AccountFor(friend.PID)
 	if account == "" {
 		t.Fatal("fixture: no core account for the friend")
 	}
@@ -530,7 +531,7 @@ func TestAFriendPlayingOnAnotherPlatformReadsAsOnline(t *testing.T) {
 	if err != nil || id == nil || len(id.Friends) == 0 {
 		t.Fatalf("identity: %v", err)
 	}
-	var f Friend
+	var f identity.Friend
 	for _, cand := range id.Friends {
 		if cand.PID == friend.PID {
 			f = cand
@@ -552,11 +553,11 @@ func TestAFriendPlayingOnAnotherPlatformReadsAsOnline(t *testing.T) {
 	}
 
 	// And this platform's own session still names its title.
-	sess.namespace = b.namespace
+	sess.namespace = b.Namespace
 	s.coreSeen().byID = map[string]corePresence{}
 	s.coreSeen().at = map[string]time.Time{}
 	if _, err := sess.RegisterSession(ctx, &accountv1.RegisterSessionRequest{
-		AccountId: account, Namespace: b.namespace, TitleId: "0100a5a020d5e000",
+		AccountId: account, Namespace: b.Namespace, TitleId: "0100a5a020d5e000",
 		EndpointRef: "baas", LeaseSeconds: 300,
 	}); err != nil {
 		t.Fatalf("register: %v", err)
@@ -594,9 +595,9 @@ func TestABareSignInDoesNotTakeTheGameAway(t *testing.T) {
 func TestCorePresenceCacheIsPerAccount(t *testing.T) {
 	s, _, users := socialServer(t)
 	sess := newFakeSessions()
-	b := s.acct.(*openpakBackend)
-	b.sessions = sess
-	offline, live := b.accountFor(users[0].PID), b.accountFor(users[1].PID)
+	b := s.acct.(*identity.OpenpakBackend)
+	b.Sessions = sess
+	offline, live := b.AccountFor(users[0].PID), b.AccountFor(users[1].PID)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	if _, err := sess.RegisterSession(ctx, &accountv1.RegisterSessionRequest{

@@ -19,6 +19,7 @@ import (
 
 	accountv1 "nx-baas/accountpb"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 )
 
@@ -64,8 +65,8 @@ func (s *server) coreSeen() *corePresenceCache {
 // it knows nothing (which is the same fact as offline there). A core that is
 // unreachable answers "nothing", never a guess.
 func (s *server) corePresenceOf(accountID string) (corePresence, bool) {
-	b, ok := s.acct.(*openpakBackend)
-	if !ok || b == nil || b.sessions == nil || accountID == "" {
+	b, ok := s.acct.(*identity.OpenpakBackend)
+	if !ok || b == nil || b.Sessions == nil || accountID == "" {
 		return corePresence{}, false
 	}
 	cache := s.coreSeen()
@@ -79,9 +80,9 @@ func (s *server) corePresenceOf(accountID string) (corePresence, bool) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	resp, err := b.sessions.GetPresence(ctx, &accountv1.GetPresenceRequest{AccountIds: []string{accountID}})
+	resp, err := b.Sessions.GetPresence(ctx, &accountv1.GetPresenceRequest{AccountIds: []string{accountID}})
 	if err != nil {
-		logErr("core presence", err)
+		identity.LogErr("core presence", err)
 		return corePresence{}, false
 	}
 	next := map[string]corePresence{}

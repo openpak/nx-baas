@@ -21,6 +21,7 @@ import (
 	"errors"
 	"net/url"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 	"strings"
 )
@@ -66,7 +67,7 @@ func onlineNotificationOf(p *store.FriendPreference) bool {
 // the viewer's own relationship state, and the presence the viewer may see.
 // Every timestamp is state-derived, so rendering an unchanged list twice
 // produces identical entries — a stable etag (SOC-05).
-func (s *server) relationshipObj(viewer *store.User, f Friend, now int64) map[string]any {
+func (s *server) relationshipObj(viewer *store.User, f identity.Friend, now int64) map[string]any {
 	user := s.friendObj(f, now)
 	presence, on := s.visiblePresenceOn(viewer, f, now)
 	user["presence"] = presence
@@ -229,14 +230,14 @@ func (s *server) prefOf(viewer *store.User, friendBaasID string) *store.FriendPr
 // aggregate of their devices, flattened to a plain OFFLINE when the viewer
 // may not see it (PRE-03). It never invents recency: timestamps come from the
 // state changes that produced the entry, not from this render.
-func (s *server) visiblePresence(viewer *store.User, f Friend, now int64) map[string]any {
+func (s *server) visiblePresence(viewer *store.User, f identity.Friend, now int64) map[string]any {
 	p, _ := s.visiblePresenceOn(viewer, f, now)
 	return p
 }
 
 // visiblePresenceOn is visiblePresence plus where the friend is live, as a person reads it
 // ("Harbor", "Switch", "Pier"), or "" when they are not live or the viewer may not see them.
-func (s *server) visiblePresenceOn(viewer *store.User, f Friend, now int64) (map[string]any, string) {
+func (s *server) visiblePresenceOn(viewer *store.User, f identity.Friend, now int64) (map[string]any, string) {
 	lease := presenceLease()
 	subject := s.store.User(f.BaasUserID)
 	if subject == nil {
@@ -262,11 +263,11 @@ func (s *server) visiblePresenceOn(viewer *store.User, f Friend, now int64) (map
 		// Nothing of theirs is live on a Switch. The core knows where else
 		// they are, and a friend playing on another console is still somebody
 		// to say hello to.
-		if b, ok := s.acct.(*openpakBackend); ok {
-			if elsewhere, live := s.presenceFromCore(b.accountFor(f.PID), b.namespace, now); live {
+		if b, ok := s.acct.(*identity.OpenpakBackend); ok {
+			if elsewhere, live := s.presenceFromCore(b.AccountFor(f.PID), b.Namespace, now); live {
 				elsewhere.LogoutAt = agg.LogoutAt
 				on := ""
-				if cp, ok := s.corePresenceOf(b.accountFor(f.PID)); ok {
+				if cp, ok := s.corePresenceOf(b.AccountFor(f.PID)); ok {
 					on = clientLabel(cp.Namespace, cp.Client)
 				}
 				return presenceObj(elsewhere), on
@@ -296,12 +297,6 @@ func nameWithPlatform(name, platform string) string {
 
 // ---------- core mutations (SOC-03) ----------
 
-// errReversePending is the adapter's rendering of the core's one-request-per-
-// pair rule: the person we are asking has already asked us. The handler turns
-// it into a truthful description of the request that already exists, so the
-// console shows the pending incoming request instead of an error.
-var errReversePending = errors.New("a request from them is already pending")
-
 // errForbiddenMutation marks an authenticated caller acting on a request that
 // is not theirs to act on (cross-account denial).
 var errForbiddenMutation = errors.New("not this user's request to answer")
@@ -315,16 +310,16 @@ func baasFailure(err error) (int, string, string, string) {
 	switch {
 	case err == nil:
 		// unreachable except by misuse; fail closed
-	case errors.Is(err, errCoreInvalid):
+	case errors.Is(err, identity.ErrCoreInvalid):
 		return 400, "invalid_params", "Invalid Params", "the request was rejected"
-	case errors.Is(err, errCoreNotFound):
+	case errors.Is(err, identity.ErrCoreNotFound):
 		return 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found"
-	case errors.Is(err, errStateConflict):
+	case errors.Is(err, identity.ErrStateConflict):
 		// Blocked, not-pending, reverse-pending: the relationship is not in
 		// the state the console believes. A 404 sends it back to re-sync its
 		// boxes, which is the recovery the state needs.
 		return 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found"
-	case errors.Is(err, errCoreUnavailable):
+	case errors.Is(err, identity.ErrCoreUnavailable):
 		return 503, "internal_server_error", "Internal Server Error", "the account service is unavailable"
 	case errors.Is(err, errForbiddenMutation):
 		return 403, "insufficient_scope", "Token is insufficient", "not your request to answer"
@@ -340,9 +335,9 @@ func baasFailure(err error) (int, string, string, string) {
 // so. The console expects exactly that: a send answered with state
 // AUTHORIZED is the case "the receiver had already asked the sender", and it
 // syncs its friend list at once [friends-contract-22.5.0 §A.4.1, C4].
-func (s *server) commitFriendRequest(me *store.User, target *Friend) (created, authorized bool, reqID string, err error) {
+func (s *server) commitFriendRequest(me *store.User, target *identity.Friend) (created, authorized bool, reqID string, err error) {
 	if err := s.acct.FriendRequest(me.PID, target.PID); err != nil {
-		if errors.Is(err, errReversePending) {
+		if errors.Is(err, identity.ErrReversePending) {
 			id, _ := s.store.EnsureRequest(target.PID, me.PID)
 			if err := s.acct.FriendAccept(me.PID, target.PID, true); err != nil {
 				return false, false, "", err
@@ -359,7 +354,7 @@ func (s *server) commitFriendRequest(me *store.User, target *Friend) (created, a
 // friendRequestReply renders the request the console should believe in, after
 // the core call has committed or matched it. When incoming, sender/receiver
 // are the truth of the existing request, not what the caller asked for.
-func (s *server) friendRequestReply(me *store.User, id *Identity, target *Friend, reqID string, incoming bool, body []byte, now int64) map[string]any {
+func (s *server) friendRequestReply(me *store.User, id *identity.Identity, target *identity.Friend, reqID string, incoming bool, body []byte, now int64) map[string]any {
 	record := s.store.RequestByID(reqID)
 	createdAt, updatedAt := now, now
 	if record != nil {
@@ -440,7 +435,7 @@ func (s *server) cancelRequest(me *store.User, record *store.FriendRequestRecord
 // removeFriend commits a removal through the core and marks both lists.
 // Never a silent no-op: the console's remove button must either commit or
 // say so.
-func (s *server) removeFriend(me *store.User, other *Friend) error {
+func (s *server) removeFriend(me *store.User, other *identity.Friend) error {
 	if err := s.acct.RemoveFriend(me.PID, other.PID); err != nil {
 		return err
 	}
@@ -451,7 +446,7 @@ func (s *server) removeFriend(me *store.User, other *Friend) error {
 // setBlock commits a block or unblock through the core (which owns
 // enforcement) and mirrors it locally for the surfaces that read this store's
 // block list.
-func (s *server) setBlock(me *store.User, other *Friend, block bool) error {
+func (s *server) setBlock(me *store.User, other *identity.Friend, block bool) error {
 	var err error
 	if block {
 		err = s.acct.Block(me.PID, other.PID)
@@ -508,7 +503,7 @@ func (s *server) blockObj(u *store.User, target string, now int64) map[string]an
 
 // resolveFriend looks a target up by BAAS user id, for the mutation handlers
 // that receive one.
-func (s *server) resolveFriend(baasID string) *Friend {
+func (s *server) resolveFriend(baasID string) *identity.Friend {
 	f, err := s.acct.Resolve(url.Values{"baas": {baasID}})
 	if err != nil || f == nil {
 		return nil
@@ -519,12 +514,12 @@ func (s *server) resolveFriend(baasID string) *Friend {
 // friendByPID renders what this network knows about a PID, for the replies
 // that name the other side of a mutation by id (an accepted request naming
 // its sender, for example). nil when the account has no readable identity.
-func (s *server) friendByPID(pid uint64) *Friend {
+func (s *server) friendByPID(pid uint64) *identity.Friend {
 	id, err := s.acct.Identity(pid)
 	if err != nil || id == nil {
 		return nil
 	}
-	return &Friend{PID: pid, BaasUserID: id.BaasUserID, NaID: id.NaID, FriendCode: id.FriendCode,
+	return &identity.Friend{PID: pid, BaasUserID: id.BaasUserID, NaID: id.NaID, FriendCode: id.FriendCode,
 		Nickname: id.Nickname, Country: id.Country}
 }
 
@@ -532,7 +527,7 @@ func (s *server) friendByPID(pid uint64) *Friend {
 // id from this server, or a bare user id from an inbox rendered by an older
 // build — onto its record and the friend it is about. Exactly one of the two
 // results is non-nil.
-func (s *server) friendRequestByRef(ref string) (*store.FriendRequestRecord, *Friend) {
+func (s *server) friendRequestByRef(ref string) (*store.FriendRequestRecord, *identity.Friend) {
 	if record := s.store.RequestByID(ref); record != nil {
 		return record, nil
 	}

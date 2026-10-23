@@ -23,11 +23,11 @@ package main
 
 import (
 	"context"
-	"errors"
 	"log"
 	"net/http"
 	"net/url"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 	"nx-baas/internal/token"
 	"nx-baas/redact"
@@ -44,22 +44,12 @@ const (
 	lockDeleted = "deleted"
 )
 
-var errAccountLocked = errors.New("account is banned or deleted")
-
 // banSource is what the ban check needs from the identity backend: the core account behind
-// a pid, and that account's status. openpakBackend implements it; the OpenPak backend has
+// a pid, and that account's status. identity.OpenpakBackend implements it; the OpenPak backend has
 // no bans and does not.
 type banSource interface {
-	accountFor(pid uint64) string
-	accountStatus(ctx context.Context, accountID string) (accountv1.AccountStatus, error)
-}
-
-func (b *openpakBackend) accountStatus(ctx context.Context, accountID string) (accountv1.AccountStatus, error) {
-	res, err := b.identity.GetAccount(ctx, &accountv1.GetAccountRequest{AccountId: accountID})
-	if err != nil {
-		return accountv1.AccountStatus_ACCOUNT_STATUS_UNSPECIFIED, err
-	}
-	return res.GetStatus(), nil
+	AccountFor(pid uint64) string
+	AccountStatus(ctx context.Context, accountID string) (accountv1.AccountStatus, error)
 }
 
 type banEntry struct {
@@ -121,7 +111,7 @@ func (s *server) accountLock(accountID string) string {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	st, err := src.accountStatus(ctx, accountID)
+	st, err := src.AccountStatus(ctx, accountID)
 	if err != nil {
 		log.Printf("[bans] status of %s unavailable (%v); allowing, last known %q", redact.Tag(accountID), redact.Err(err), e.lock)
 		return e.lock // a stale answer beats none; none is "allowed"
@@ -147,7 +137,7 @@ func (s *server) pidLock(pid uint64) string {
 	if src == nil || pid == 0 {
 		return ""
 	}
-	return s.accountLock(src.accountFor(pid))
+	return s.accountLock(src.AccountFor(pid))
 }
 
 func (s *server) userLock(u *store.User) string {
@@ -225,10 +215,10 @@ func (s *server) naLockOfToken(idTok string) string {
 
 // closeAccountSessions ends every live Penne connection of a core account; the console's
 // reconnect then meets the frontline's ban check.
-func (s *server) closeAccountSessions(b *openpakBackend, accountID string) {
-	b.proj.mu.Lock()
-	pr := b.proj.ByAccount[accountID]
-	b.proj.mu.Unlock()
+func (s *server) closeAccountSessions(b *identity.OpenpakBackend, accountID string) {
+	b.Proj.Mu.Lock()
+	pr := b.Proj.ByAccount[accountID]
+	b.Proj.Mu.Unlock()
 	if pr == nil {
 		return
 	}

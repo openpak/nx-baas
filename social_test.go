@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 	"nx-baas/internal/token"
 	"strings"
@@ -40,7 +41,7 @@ func socialServer(t *testing.T) (*server, *fakeCore, []*store.User) {
 			t.Fatal(err)
 		}
 		u, _ := s.store.NewUser()
-		baas := b.proj.ByAccount[acc.id].BaasUserID
+		baas := b.Proj.ByAccount[acc.id].BaasUserID
 		s.store.Mu.Lock()
 		delete(s.store.Users, u.ID)
 		u.ID = baas
@@ -866,9 +867,11 @@ func TestFriendNotePersistsAndProjects(t *testing.T) {
 // unresolvedBackend answers Identity — so the friendship is known — but
 // cannot look anybody up by id, which is what a core lookup outage looks
 // like from this server.
-type unresolvedBackend struct{ accountBackend }
+type unresolvedBackend struct{ identity.Backend }
 
-func (unresolvedBackend) Resolve(url.Values) (*Friend, error) { return nil, errCoreUnavailable }
+func (unresolvedBackend) Resolve(url.Values) (*identity.Friend, error) {
+	return nil, identity.ErrCoreUnavailable
+}
 
 // Every PATCH on a friend is answered with the full relationship object: the
 // console replaces its cached entry with the reply, and one missing required
@@ -1169,13 +1172,13 @@ func codeOf(s *server, u *store.User) string {
 // newUserFor links a fresh store user to a core account's projection.
 func newUserFor(t *testing.T, s *server, accountID, pw string) *store.User {
 	t.Helper()
-	b := s.acct.(*openpakBackend)
+	b := s.acct.(*identity.OpenpakBackend)
 	res, err := b.LoginPID(accountID, pw)
 	if err != nil {
 		t.Fatal(err)
 	}
 	u, _ := s.store.NewUser()
-	baas := b.proj.ByAccount[accountID].BaasUserID
+	baas := b.Proj.ByAccount[accountID].BaasUserID
 	s.store.Mu.Lock()
 	delete(s.store.Users, u.ID)
 	u.ID = baas

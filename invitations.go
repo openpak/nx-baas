@@ -42,6 +42,7 @@ import (
 	"net/http"
 	"net/url"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 	"nx-baas/redact"
 	"os"
@@ -51,8 +52,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	accountv1 "nx-baas/accountpb"
 )
 
 // ---------- bounds (all documented in docs/invitations.md) ----------
@@ -338,40 +337,6 @@ type invitationCore interface {
 	AccountForBaas(baasUID string) (accountID string, ok bool)
 }
 
-// CheckInteraction on the openpak backend consults the core's Social service.
-func (b *openpakBackend) CheckInteraction(ctx context.Context, actorAccountID, targetAccountID string) (bool, string, error) {
-	res, err := b.social.CheckInteraction(ctx, &accountv1.CheckInteractionRequest{
-		ActorId: actorAccountID, TargetId: targetAccountID, Kind: accountv1.InteractionKind_INTERACTION_KIND_INVITE,
-	})
-	if err != nil {
-		return false, "", err
-	}
-	if !res.GetAllowed() {
-		return false, res.GetReason().String(), nil
-	}
-	return true, "", nil
-}
-
-// ResolveSession on the openpak backend consults the core's session registry.
-// A session registered without a title matches any title for this purpose:
-// the core's title field is optional metadata, and its absence must not read
-// as "the sender is gone".
-func (b *openpakBackend) ResolveSession(ctx context.Context, accountID, titleID string) (bool, error) {
-	res, err := b.sessions.ResolveSession(ctx, &accountv1.ResolveSessionRequest{AccountId: accountID, TitleId: titleID})
-	if err != nil {
-		return false, err
-	}
-	return res.GetSessionId() != "", nil
-}
-
-// AccountForBaas resolves the core account behind a BAAS user id.
-func (b *openpakBackend) AccountForBaas(baasUID string) (string, bool) {
-	b.proj.mu.Lock()
-	defer b.proj.mu.Unlock()
-	id, ok := b.proj.ByBaas[baasUID]
-	return id, ok
-}
-
 // ---------- semantic event seam (workstream B delivers it) ----------
 
 // InvitationEvent is the idempotent semantic event the friends module's
@@ -625,7 +590,7 @@ func (s *server) invitationGroupCreate(w http.ResponseWriter, r *http.Request, b
 			if err != nil {
 				// A core outage must not read as policy: fail the call, the
 				// console retries and nothing is committed.
-				logErr("invitation check-interaction", err)
+				identity.LogErr("invitation check-interaction", err)
 				fiveError(w, r, http.StatusBadGateway, "0001", "internal_server_error")
 				return
 			}
@@ -720,7 +685,7 @@ func (s *server) invitationCoreFor() invitationCore {
 	if invCoreOverride != nil {
 		return invCoreOverride
 	}
-	if b, ok := s.acct.(*openpakBackend); ok && b.social != nil {
+	if b, ok := s.acct.(*identity.OpenpakBackend); ok && b.Social != nil {
 		return b
 	}
 	return nil

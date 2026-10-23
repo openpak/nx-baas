@@ -34,6 +34,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 	"nx-baas/internal/token"
 	"nx-baas/redact"
@@ -62,7 +63,7 @@ var defaultAvatar []byte
 
 type server struct {
 	store      *store.Store
-	acct       accountBackend
+	acct       identity.Backend
 	key        *rsa.PrivateKey
 	idKid      string // kid of id_tokens (openpak-baas-key-1: what Photon/NPLN/S2 already trust)
 	accKid     string // kid of BAAS access tokens (/1.0.0/internal_certificates)
@@ -298,7 +299,7 @@ func (s *server) accessToken(sub string, grant int, bsDid, di, sn string) string
 	return token.SignJWT(map[string]any{"alg": "RS256", "jku": baasJku + "/1.0.0/internal_certificates", "kid": s.accKid, "typ": "JWT"}, claims, s.key)
 }
 
-func (s *server) idToken(u *store.User, id *Identity, username string, app map[string]any) string {
+func (s *server) idToken(u *store.User, id *identity.Identity, username string, app map[string]any) string {
 	now := time.Now().Unix()
 	// VPS parity: the id_token carries an APPLICATION block (ai/at/av/edi/tbh/tbn), taken from
 	// the appAuthNToken when the console sends one, else the VPS defaults.
@@ -318,7 +319,7 @@ func (s *server) idToken(u *store.User, id *Identity, username string, app map[s
 	}
 	if id != nil {
 		claims["bs:did"] = id.BsDid
-		if t := s.acct.nexToken(id.PID, username); t != "" {
+		if t := s.acct.NexToken(id.PID, username); t != "" {
 			claims["openpak"] = t
 		}
 	}
@@ -382,7 +383,7 @@ func (s *server) bindNotificationChannel(deviceAuthenticationToken, baasUserID s
 // with scope "user.links user.links[].id" and claims
 // {"links.nintendoNetwork.id":{"essential":true}} — the real linking flow. If
 // something in System Settings starts reaching for that, this is why.
-func naLinks(id *Identity) map[string]any {
+func naLinks(id *identity.Identity) map[string]any {
 	if id == nil || id.PID == 0 {
 		return map[string]any{}
 	}
@@ -435,12 +436,12 @@ func (s *server) naIDToken(c naCode, accessToken, code string) string {
 
 // ---------- user objects ----------
 
-func (s *server) identity(u *store.User) *Identity {
+func (s *server) identity(u *store.User) *identity.Identity {
 	if u == nil || u.PID == 0 {
 		return nil
 	}
 	id, err := s.acct.Identity(u.PID)
-	logErr("identity", err)
+	identity.LogErr("identity", err)
 	// Remember the account's bs:did: it is what a console's id_token carries and what the
 	// Photon server reports back on /internal/photon-room, which has no PID of its own.
 	if id != nil && id.BsDid != "" && u.BsDid != id.BsDid {
@@ -522,7 +523,7 @@ func testPF(client string) (int, bool) {
 	return 0, false
 }
 
-func (s *server) userObj(u *store.User, id *Identity, devicePassword string) map[string]any {
+func (s *server) userObj(u *store.User, id *identity.Identity, devicePassword string) map[string]any {
 	devs := []map[string]any{}
 	for _, d := range u.DeviceAccounts {
 		m := map[string]any{"id": d}
@@ -650,7 +651,7 @@ func (s *server) userObj(u *store.User, id *Identity, devicePassword string) map
 // Every timestamp is derived from state we hold, never from the render, so
 // rendering the same person twice yields the same object and a stable list
 // etag (SOC-05).
-func (s *server) friendObj(f Friend, now int64) map[string]any {
+func (s *server) friendObj(f identity.Friend, now int64) map[string]any {
 	// The same object the console accepts for itself, about somebody else.
 	// A search result carrying only id/nickname/links parses into a user the
 	// console then refuses to use: it answered "unable to find user" to a
@@ -766,7 +767,7 @@ func (s *server) friendObj(f Friend, now int64) map[string]any {
 // search result that carried them, the same way it refused a login reply
 // that carried an extra "summary"; the exact-match test
 // TestSearchReplyMatchesTheAcceptedShape keeps it that way.
-func (s *server) searchUserObj(f Friend, now int64) map[string]any {
+func (s *server) searchUserObj(f identity.Friend, now int64) map[string]any {
 	return s.friendObj(f, now)
 }
 
@@ -790,7 +791,7 @@ func (s *server) reportOnline(ctx context.Context, u *store.User, client, client
 		agg := aggregatePresence(u, time.Now().Unix(), presenceLease())
 		client, clientOS = agg.Client, agg.OS
 	}
-	if b, ok := s.acct.(*openpakBackend); ok {
+	if b, ok := s.acct.(*identity.OpenpakBackend); ok {
 		b.Online(ctx, u.PID, client, clientOS)
 	}
 }
@@ -801,7 +802,7 @@ func (s *server) reportOffline(ctx context.Context, u *store.User) {
 	if u == nil || u.PID == 0 {
 		return
 	}
-	if b, ok := s.acct.(*openpakBackend); ok {
+	if b, ok := s.acct.(*identity.OpenpakBackend); ok {
 		b.Offline(ctx, u.PID)
 	}
 }
@@ -988,7 +989,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		if p == "/1.0.0/federation" {
 			var err error
 			if u, err = s.link(u, form.Get("idToken")); err != nil {
-				if errors.Is(err, errAccountLocked) {
+				if errors.Is(err, identity.ErrAccountLocked) {
 					baasLocked(w, r, s.naLockOfToken(form.Get("idToken")))
 					return
 				}
@@ -1396,7 +1397,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				friendOf[f.BaasUserID] = true
 			}
 		}
-		found := func(f Friend) any {
+		found := func(f identity.Friend) any {
 			obj := s.searchUserObj(f, now)
 			group, pl := s.visiblePlayLog(viewer, s.store.User(f.BaasUserID), friendOf[f.BaasUserID])
 			setPlayLog(obj, group, pl)
@@ -1404,7 +1405,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		users := []any{}
 		for _, code := range queryList(q, "filter.links.friendCode.id.$in", "friendCode") {
-			if f, err := s.acct.Resolve(url.Values{"code": {normaliseFriendCode(code)}}); err == nil && f != nil {
+			if f, err := s.acct.Resolve(url.Values{"code": {identity.NormaliseFriendCode(code)}}); err == nil && f != nil {
 				users = append(users, found(*f))
 			}
 		}
@@ -1488,7 +1489,7 @@ func (s *server) link(u *store.User, idTok string) (*store.User, error) {
 		return nil, fmt.Errorf("unknown Nintendo-Account sub %q", naID)
 	}
 	if lock := s.pidLock(pid); lock != "" {
-		return nil, fmt.Errorf("link pid %d: %w (%s)", pid, errAccountLocked, lock)
+		return nil, fmt.Errorf("link pid %d: %w (%s)", pid, identity.ErrAccountLocked, lock)
 	}
 	id, err := s.acct.Identity(pid)
 	if err != nil {
@@ -1625,7 +1626,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			// The person may be unresolvable right now; the preference change
 			// is still committed (losing a star the person just set is worse
 			// than a plainer reply), so render what we know.
-			target = &Friend{BaasUserID: seg[3]}
+			target = &identity.Friend{BaasUserID: seg[3]}
 		}
 		httpx.WriteJSON(w, 200, s.relationshipObj(me, *target, now))
 		return
@@ -1750,10 +1751,10 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			httpx.BaasErr(w, r, 403, "insufficient_scope", "Token is insufficient", "not linked")
 			return
 		}
-		var target *Friend
+		var target *identity.Friend
 		var err error
 		if c := field("friendCode"); c != "" {
-			target, err = s.acct.Resolve(url.Values{"code": {normaliseFriendCode(c)}})
+			target, err = s.acct.Resolve(url.Values{"code": {identity.NormaliseFriendCode(c)}})
 		} else if t := field("receiverId"); t != "" {
 			target, err = s.acct.Resolve(url.Values{"baas": {t}})
 		} else if t := field("userId"); t != "" {
@@ -1817,7 +1818,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		record, other := s.friendRequestByRef(seg[1])
 		if state == "" {
 			// Marked read, not answered: the request stays open.
-			var target *Friend
+			var target *identity.Friend
 			incoming := true
 			switch {
 			case record != nil:
@@ -1912,7 +1913,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			return
 		}
 		// The other side of the request, for the reply the console expects.
-		var otherFriend *Friend
+		var otherFriend *identity.Friend
 		if other != nil {
 			otherFriend = other
 		} else {
@@ -1923,7 +1924,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			otherFriend = s.friendByPID(otherPID)
 		}
 		if otherFriend == nil {
-			otherFriend = &Friend{BaasUserID: seg[1]}
+			otherFriend = &identity.Friend{BaasUserID: seg[1]}
 		}
 		otherBaas := otherFriend.BaasUserID
 		s.friendGraphChanged(me, otherBaas)
@@ -2122,7 +2123,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			}
 			res, err := s.acct.LoginPID(form.Get("email"), form.Get("password"))
 			lock := s.pidLock(res.PID)
-			if errors.Is(err, errAccountLocked) && lock == "" {
+			if errors.Is(err, identity.ErrAccountLocked) && lock == "" {
 				lock = lockBanned
 			}
 			if lock != "" {
@@ -2130,7 +2131,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 				s.authorizePage(w, r, q, `<p class="err">`+lockedPageMessage(lock)+`</p>`)
 				return
 			}
-			if errors.Is(err, errSecondFactorRequired) {
+			if errors.Is(err, identity.ErrSecondFactorRequired) {
 				s.authorizePage(w, r, q, `<p class="err">This account has two-factor authentication: finish signing in on the website, then link.</p>`)
 				return
 			}
@@ -2179,7 +2180,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			return
 		}
 		if err := s.acct.VerifySecondFactor(p.AccountID, strings.TrimSpace(form.Get("code")), strings.TrimSpace(form.Get("recovery_code"))); err != nil {
-			if errors.Is(err, errSecondFactorLocked) {
+			if errors.Is(err, identity.ErrSecondFactorLocked) {
 				s.authorize2FAPage(w, r, form.Get("token"), `<p class="err">Too many wrong codes. Wait a few minutes and try again.</p>`)
 				return
 			}
@@ -2761,9 +2762,9 @@ func selfSigned(hosts []string, caDir string) tls.Certificate {
 // newBackend selects the identity source: the historical OpenPak HTTP
 // client (default, keeps the proven deployment running) or the OpenPak
 // account core (ACCOUNT_BACKEND=openpak).
-func newBackend() accountBackend {
+func newBackend() identity.Backend {
 	if os.Getenv("ACCOUNT_BACKEND") == "openpak" {
-		b, err := newOpenpakBackend(context.Background(), httpx.Getenv("NX_DATA", "/data"))
+		b, err := identity.NewOpenpakBackend(context.Background(), httpx.Getenv("NX_DATA", "/data"))
 		if err != nil {
 			log.Fatalf("[nx-baas] openpak backend: %v", redact.Err(err))
 		}
@@ -2771,9 +2772,9 @@ func newBackend() accountBackend {
 		return b
 	}
 	log.Printf("[nx-baas] identity backend: earlier account server (no console two-factor step-up; alpha requires ACCOUNT_BACKEND=openpak)")
-	return &accountClient{
-		base: strings.TrimRight(httpx.Getenv("ACCOUNT_API", "http://account:8080"), "/"), adminKey: os.Getenv("OPENPAK_ADMIN_KEY"),
-		secret: []byte(os.Getenv("OPENPAK_SECRET")), http: &http.Client{Timeout: 10 * time.Second},
+	return &identity.AccountClient{
+		Base: strings.TrimRight(httpx.Getenv("ACCOUNT_API", "http://account:8080"), "/"), AdminKey: os.Getenv("OPENPAK_ADMIN_KEY"),
+		Secret: []byte(os.Getenv("OPENPAK_SECRET")), HTTP: &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
@@ -2800,7 +2801,7 @@ func main() {
 	s.initHarborDevices()
 	s.acbaaPath = httpx.Getenv("NX_DATA", "/data") + "/acbaa.json"
 	s.acbaaLoad()
-	if b, ok := s.acct.(*openpakBackend); ok {
+	if b, ok := s.acct.(*identity.OpenpakBackend); ok {
 		go s.followCoreEvents(b)
 		// One presence reconciler beside the one core-event poller: leases,
 		// heartbeats and expiries on the adapter's clock (PRE-02).
@@ -2995,7 +2996,7 @@ func naAddress(address string) (email, screenName string) {
 	return address, string(nameRunes[:min(2, len(nameRunes))]) + "•••@" + string(domainRunes[:1]) + "••••"
 }
 
-func naProfile(id *Identity) (country, birthday string) {
+func naProfile(id *identity.Identity) (country, birthday string) {
 	country, birthday = id.Country, id.Birthday
 	if country == "" {
 		country = httpx.Getenv("NA_FALLBACK_COUNTRY", "GB")

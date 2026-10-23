@@ -27,6 +27,7 @@ import (
 	"context"
 	"log"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 	"nx-baas/redact"
 	"os"
@@ -465,7 +466,7 @@ func (s *server) reconcilePresenceLoop() {
 }
 
 func (s *server) reconcilePresenceOnce(now time.Time, lease time.Duration) {
-	b, ok := s.acct.(*openpakBackend)
+	b, ok := s.acct.(*identity.OpenpakBackend)
 	if !ok {
 		return // the earlier account backend keeps presence to itself
 	}
@@ -530,19 +531,19 @@ func (s *server) expireLocalPresence(u *store.User, now int64, lease time.Durati
 // it from there -- the website, the app, another console's emulator -- so a
 // title left empty is the difference between "Leia is online" and "Leia is
 // playing Kirby on a Switch" everywhere at once (2026-09-20).
-func (s *server) registerCoreSession(b *openpakBackend, u *store.User, titleID, client, clientOS string) {
-	accountID := b.accountFor(u.PID)
+func (s *server) registerCoreSession(b *identity.OpenpakBackend, u *store.User, titleID, client, clientOS string) {
+	accountID := b.AccountFor(u.PID)
 	if accountID == "" {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	resp, err := b.sessions.RegisterSession(ctx, &accountv1.RegisterSessionRequest{
-		AccountId: accountID, Namespace: b.namespace, TitleId: titleID,
-		EndpointRef: "baas", LeaseSeconds: int32(onlineLease.Seconds()), Client: client, Os: clientOS,
+	resp, err := b.Sessions.RegisterSession(ctx, &accountv1.RegisterSessionRequest{
+		AccountId: accountID, Namespace: b.Namespace, TitleId: titleID,
+		EndpointRef: "baas", LeaseSeconds: int32(identity.OnlineLease.Seconds()), Client: client, Os: clientOS,
 	})
 	if err != nil {
-		logErr("presence register", err)
+		identity.LogErr("presence register", err)
 		return
 	}
 	if s.liveSessions == nil {
@@ -561,18 +562,18 @@ func (s *server) registerCoreSession(b *openpakBackend, u *store.User, titleID, 
 	}
 	s.liveSessionClient[u.ID] = client
 	s.liveSessionOS[u.ID] = clientOS
-	log.Printf("[nx-baas] presence: core session for %s namespace=%s title=%q client=%q os=%q", redact.Tag(accountID), b.namespace, titleID, client, clientOS)
+	log.Printf("[nx-baas] presence: core session for %s namespace=%s title=%q client=%q os=%q", redact.Tag(accountID), b.Namespace, titleID, client, clientOS)
 }
 
 // renewCoreSession heartbeats the account's session so the core's shorter
 // lease does not outlive a console that is merely quiet. A session the core
 // no longer knows (expired, core restarted) is re-registered — the recovery
 // path, not a second source of truth.
-func (s *server) renewCoreSession(b *openpakBackend, u *store.User) {
+func (s *server) renewCoreSession(b *identity.OpenpakBackend, u *store.User) {
 	id := s.liveSessions[u.ID]
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := b.sessions.Heartbeat(ctx, &accountv1.HeartbeatRequest{SessionId: id}); err == nil {
+	if _, err := b.Sessions.Heartbeat(ctx, &accountv1.HeartbeatRequest{SessionId: id}); err == nil {
 		return
 	}
 	delete(s.liveSessions, u.ID)
@@ -580,7 +581,7 @@ func (s *server) renewCoreSession(b *openpakBackend, u *store.User) {
 }
 
 // expireCoreSession ends the core session for an account that is offline.
-func (s *server) expireCoreSession(b *openpakBackend, u *store.User) {
+func (s *server) expireCoreSession(b *identity.OpenpakBackend, u *store.User) {
 	id := s.liveSessions[u.ID]
 	if id == "" {
 		return
@@ -591,7 +592,7 @@ func (s *server) expireCoreSession(b *openpakBackend, u *store.User) {
 	delete(s.liveSessionOS, u.ID)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := b.sessions.ExpireSession(ctx, &accountv1.ExpireSessionRequest{SessionId: id}); err != nil {
-		logErr("presence expire", err)
+	if _, err := b.Sessions.ExpireSession(ctx, &accountv1.ExpireSessionRequest{SessionId: id}); err != nil {
+		identity.LogErr("presence expire", err)
 	}
 }

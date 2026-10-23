@@ -8,6 +8,7 @@ import (
 	"image/jpeg"
 	"net/http"
 	"net/http/httptest"
+	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 	"testing"
 )
@@ -32,7 +33,7 @@ func TestThumbnailIsServedAtTheRequestedSize(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.store.Update(u, func(u *store.User) { u.PID = 1 })
-	s.acct = fakeBackend{id: &Identity{PID: 1, Avatar: base64.StdEncoding.EncodeToString(stored.Bytes())}}
+	s.acct = fakeBackend{id: &identity.Identity{PID: 1, Avatar: base64.StdEncoding.EncodeToString(stored.Bytes())}}
 
 	get := func(path string) []byte {
 		t.Helper()

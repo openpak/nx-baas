@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 	"nx-baas/redact"
 	"time"
@@ -82,7 +83,7 @@ func fetchAvatar(url string) ([]byte, error) {
 // change" across the two places one can be set: the console's own upload and
 // the account's avatar on the website. Zero means neither, which is the only
 // case where a console should be sent to /1/default.
-func newerPicture(u *store.User, id *Identity) int64 {
+func newerPicture(u *store.User, id *identity.Identity) int64 {
 	at := u.AvatarAt
 	if u.Avatar != "" && at == 0 {
 		at = u.UpdatedAt // uploaded before this field existed
@@ -94,27 +95,4 @@ func newerPicture(u *store.User, id *Identity) int64 {
 		return id.ImageUpdatedAt
 	}
 	return at
-}
-
-// websitePictureAt asks the website when the account's picture last changed.
-// A HEAD, so nothing downloads an image to answer a question about a date,
-// and short: if the website cannot say, the console keeps whatever it has.
-func websitePictureAt(url string) int64 {
-	req, err := http.NewRequest(http.MethodHead, url, nil)
-	if err != nil {
-		return 0
-	}
-	resp, err := (&http.Client{Timeout: 2 * time.Second}).Do(req)
-	if err != nil {
-		return 0
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return 0
-	}
-	t, err := http.ParseTime(resp.Header.Get("Last-Modified"))
-	if err != nil {
-		return 0
-	}
-	return t.Unix()
 }

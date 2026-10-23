@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"nx-baas/internal/identity"
+	"testing"
+)
 
 // The Add Friend applet never asks FRS for type=nintendo_3ds or
 // nintendo_network_id, and an empty links object on users/me is the only
@@ -8,7 +11,7 @@ import "testing"
 // $.links.nintendoNetwork.{id,createdAt}, so both have to be there and the id
 // has to be a string like every other links.*.id we serve.
 func TestNALinksAdvertisesANintendoNetworkLink(t *testing.T) {
-	links := naLinks(&Identity{PID: 42, NaID: "aabbccdd11223344"})
+	links := naLinks(&identity.Identity{PID: 42, NaID: "aabbccdd11223344"})
 	nn, ok := links["nintendoNetwork"].(map[string]any)
 	if !ok {
 		t.Fatalf("no nintendoNetwork link: %v", links)
@@ -24,7 +27,7 @@ func TestNALinksAdvertisesANintendoNetworkLink(t *testing.T) {
 // An account we know nothing about must not be told it has a linked NNID: the
 // id would be "0", and a link to nothing is worse than no link.
 func TestNALinksIsEmptyWithoutAnIdentity(t *testing.T) {
-	for name, id := range map[string]*Identity{"nil": nil, "zero PID": {}} {
+	for name, id := range map[string]*identity.Identity{"nil": nil, "zero PID": {}} {
 		if got := naLinks(id); len(got) != 0 {
 			t.Errorf("%s identity got %v, want no links", name, got)
 		}

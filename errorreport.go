@@ -141,7 +141,7 @@ func (s *server) reportIdentity(r *http.Request) (device, account string) {
 			}
 			if u != nil {
 				if src := s.banSrc(); src != nil {
-					account = src.accountFor(u.PID)
+					account = src.AccountFor(u.PID)
 				}
 			} else if device == "" {
 				device = sub

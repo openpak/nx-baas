@@ -26,14 +26,14 @@ type fakeBans struct {
 	down    bool
 }
 
-func (f *fakeBans) accountFor(pid uint64) string {
+func (f *fakeBans) AccountFor(pid uint64) string {
 	if pid == 0 {
 		return ""
 	}
 	return fmt.Sprintf("acc-%d", pid%10)
 }
 
-func (f *fakeBans) accountStatus(_ context.Context, id string) (accountv1.AccountStatus, error) {
+func (f *fakeBans) AccountStatus(_ context.Context, id string) (accountv1.AccountStatus, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.lookups++
@@ -49,7 +49,7 @@ func (f *fakeBans) accountStatus(_ context.Context, id string) (accountv1.Accoun
 func (f *fakeBans) set(pid uint64, st accountv1.AccountStatus) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.status[f.accountFor(pid)] = st
+	f.status[f.AccountFor(pid)] = st
 }
 
 // banServer is the game-API test server with an RSA key, so BaaS and NA surfaces work too,
@@ -115,13 +115,13 @@ func TestBannedAccountCannotSignInOnTheConsole(t *testing.T) {
 	}
 
 	f.set(hostPID, accountv1.AccountStatus_ACCOUNT_STATUS_ACTIVE)
-	s.forgetBan(f.accountFor(hostPID)) // what the core's account_unbanned event does
+	s.forgetBan(f.AccountFor(hostPID)) // what the core's account_unbanned event does
 	if w := baasReq(s, "POST", "/1.0.0/login", "", form); w.Code != 200 {
 		t.Fatalf("unbanned login = %d %s", w.Code, w.Body)
 	}
 
 	f.set(hostPID, accountv1.AccountStatus_ACCOUNT_STATUS_DELETION_PENDING)
-	s.forgetBan(f.accountFor(hostPID))
+	s.forgetBan(f.AccountFor(hostPID))
 	if w := baasReq(s, "POST", "/1.0.0/login", "", form); w.Code != 404 || errorCodeOf(t, w) != "deleted_user" {
 		t.Fatalf("deleted login = %d %s, want 404 deleted_user", w.Code, w.Body)
 	}
@@ -181,12 +181,12 @@ func TestBannedAccountIsRefusedByTheGameAPI(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"account_id":"acc-4"`) {
 		t.Fatalf("unbanned identity = %d %s (want account_id)", w.Code, w.Body)
 	}
-	host := s.acct.nexToken(hostPID, "OutboundHost")
+	host := s.acct.NexToken(hostPID, "OutboundHost")
 	if w := do(t, s, "GET", "/api/invitations", host, ""); w.Code != 403 {
 		t.Fatalf("invitations for a banned caller = %d", w.Code)
 	}
 	// Nobody can invite a banned player either.
-	joiner := s.acct.nexToken(joinerPID, "OutboundJoiner")
+	joiner := s.acct.NexToken(joinerPID, "OutboundJoiner")
 	w = do(t, s, "POST", "/api/invitations", joiner, `{"target_pids":[1800000003],"app_param_base64":"AQ=="}`)
 	if !strings.Contains(w.Body.String(), `"sent":0`) {
 		t.Fatalf("invitation to a banned player: %s", w.Body)
@@ -211,7 +211,7 @@ func TestBanCacheAndFailOpen(t *testing.T) {
 	if f.lookups != 1 {
 		t.Fatalf("%d core lookups for 5 checks, want 1", f.lookups)
 	}
-	s.forgetBan(f.accountFor(hostPID))
+	s.forgetBan(f.AccountFor(hostPID))
 	s.pidLock(hostPID)
 	if f.lookups != 2 {
 		t.Fatalf("forget did not force a re-read (%d lookups)", f.lookups)

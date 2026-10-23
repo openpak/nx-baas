@@ -8,6 +8,7 @@ import (
 	"crypto/rsa"
 	"net/http/httptest"
 	"net/url"
+	"nx-baas/internal/identity"
 	"regexp"
 	"strings"
 	"testing"
@@ -19,7 +20,7 @@ func twoFAServer(t *testing.T) (*server, *fakeCore) {
 	f := newFakeCore()
 	f.addAccount("plain@example.com", "Plain", "correct horse battery")
 	f.add2FAAccount("2fa@example.com", "TwoFA", "correct horse battery", "123456")
-	b := newOpenpakBackendWithClients(t.TempDir(), fakeIdentity{f: f}, fakeLinks{f: f}, fakeSocial{f: f}, []byte(strings.Repeat("k", 32)))
+	b := identity.NewOpenpakBackendWithClients(t.TempDir(), fakeIdentity{f: f}, fakeLinks{f: f}, fakeSocial{f: f}, []byte(strings.Repeat("k", 32)))
 	s.acct = b
 	s.links = newLinkStore()
 	s.guesses = newGuesses()

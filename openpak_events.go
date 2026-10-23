@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 	"nx-baas/redact"
 	"os"
@@ -19,9 +20,9 @@ import (
 // friend_removed; the two projections named by the event get their
 // FriendsUpdatedAt bumped, which is what makes the console re-fetch its list
 // (the same path a change made on this adapter takes).
-func (s *server) followCoreEvents(b *openpakBackend) {
-	events := accountv1.NewEventsClient(b.conn)
-	cursorPath := filepath.Join(filepath.Dir(b.proj.path), "core-events.cursor")
+func (s *server) followCoreEvents(b *identity.OpenpakBackend) {
+	events := accountv1.NewEventsClient(b.Conn)
+	cursorPath := filepath.Join(filepath.Dir(b.Proj.FilePath), "core-events.cursor")
 	version, known := readCursor(cursorPath)
 	if !known {
 		// Start from the beginning, deliberately.
@@ -64,7 +65,7 @@ func (s *server) followCoreEvents(b *openpakBackend) {
 				s.notifyCoreFriendEvent(b, e.GetType(), e.GetAccountId(), e.GetSubjectId(), e.GetVersion())
 			case "presence_changed":
 				// account = a friend online on this network, subject = whose presence moved.
-				if e.GetNamespace() == b.namespace { // addressed to a friend on another network: not ours
+				if e.GetNamespace() == b.Namespace { // addressed to a friend on another network: not ours
 					s.notifyCorePresence(b, e.GetAccountId(), e.GetSubjectId())
 				}
 			case "account_unbanned":
@@ -80,7 +81,7 @@ func (s *server) followCoreEvents(b *openpakBackend) {
 					// Final destruction only: bans, pending deletion, revoked
 					// credentials and unlinked devices all keep the projection
 					// (those accounts may come back; a deleted one cannot).
-					b.dropProjection(e.GetAccountId())
+					b.DropProjection(e.GetAccountId())
 				}
 				// An account that can no longer sign in has no live presence:
 				// end its claims here, and let its friends' consoles re-fetch
@@ -102,10 +103,10 @@ func (s *server) followCoreEvents(b *openpakBackend) {
 // revokeAccountPresence ends every device claim of one core account: a
 // banned, deleted or unlinked account is offline everywhere, now, instead of
 // whenever its leases happen to lapse.
-func (s *server) revokeAccountPresence(b *openpakBackend, accountID string) {
-	b.proj.mu.Lock()
-	pr := b.proj.ByAccount[accountID]
-	b.proj.mu.Unlock()
+func (s *server) revokeAccountPresence(b *identity.OpenpakBackend, accountID string) {
+	b.Proj.Mu.Lock()
+	pr := b.Proj.ByAccount[accountID]
+	b.Proj.Mu.Unlock()
 	if pr == nil {
 		return
 	}
@@ -117,10 +118,10 @@ func (s *server) revokeAccountPresence(b *openpakBackend, accountID string) {
 	}
 }
 
-func (s *server) projectionFriendsChanged(b *openpakBackend, accountID, otherID string) {
-	b.proj.mu.Lock()
-	p, other := b.proj.ByAccount[accountID], b.proj.ByAccount[otherID]
-	b.proj.mu.Unlock()
+func (s *server) projectionFriendsChanged(b *identity.OpenpakBackend, accountID, otherID string) {
+	b.Proj.Mu.Lock()
+	p, other := b.Proj.ByAccount[accountID], b.Proj.ByAccount[otherID]
+	b.Proj.Mu.Unlock()
 	if p == nil {
 		return // no Switch identity on this side; nothing to refresh
 	}

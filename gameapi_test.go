@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 	"path/filepath"
 	"strings"
@@ -23,29 +24,31 @@ type stubBackend struct {
 	names   map[uint64]string
 }
 
-func (b *stubBackend) Identity(pid uint64) (*Identity, error) {
+func (b *stubBackend) Identity(pid uint64) (*identity.Identity, error) {
 	name, ok := b.names[pid]
 	if !ok {
 		return nil, fmt.Errorf("unknown pid %d", pid)
 	}
-	id := &Identity{PID: pid, Nickname: name, FriendCode: "SW-0000-0000-0000", Country: "AU"}
+	id := &identity.Identity{PID: pid, Nickname: name, FriendCode: "SW-0000-0000-0000", Country: "AU"}
 	for _, f := range b.friends[pid] {
-		id.Friends = append(id.Friends, Friend{PID: f})
+		id.Friends = append(id.Friends, identity.Friend{PID: f})
 	}
 	return id, nil
 }
-func (b *stubBackend) Resolve(url.Values) (*Friend, error)             { return nil, nil }
-func (b *stubBackend) LoginPID(string, string) (LoginResult, error)    { return LoginResult{}, nil }
+func (b *stubBackend) Resolve(url.Values) (*identity.Friend, error) { return nil, nil }
+func (b *stubBackend) LoginPID(string, string) (identity.LoginResult, error) {
+	return identity.LoginResult{}, nil
+}
 func (b *stubBackend) VerifySecondFactor(string, string, string) error { return nil }
 func (b *stubBackend) FriendRequest(uint64, uint64) error              { return nil }
 func (b *stubBackend) FriendAccept(uint64, uint64, bool) error         { return nil }
 func (b *stubBackend) RemoveFriend(uint64, uint64) error               { return nil }
 func (b *stubBackend) Block(uint64, uint64) error                      { return nil }
 func (b *stubBackend) Unblock(uint64, uint64) error                    { return nil }
-func (b *stubBackend) nexSigningKey() []byte                           { return b.key }
-func (b *stubBackend) friendCodeForAccount(string) (string, bool)      { return "SW-0000-0000-0000", true }
-func (b *stubBackend) accountForFriendCode(string) (string, bool)      { return "", false }
-func (b *stubBackend) nexToken(pid uint64, username string) string {
+func (b *stubBackend) NexSigningKey() []byte                           { return b.key }
+func (b *stubBackend) FriendCodeForAccount(string) (string, bool)      { return "SW-0000-0000-0000", true }
+func (b *stubBackend) AccountForFriendCode(string) (string, bool)      { return "", false }
+func (b *stubBackend) NexToken(pid uint64, username string) string {
 	payload := fmt.Sprintf("%d.%s.%d", pid, username, time.Now().Add(time.Hour).Unix())
 	mac := hmac.New(sha256.New, b.key)
 	mac.Write([]byte("nex:" + payload))
@@ -90,12 +93,12 @@ func do(t *testing.T, s *server, method, path, token, body string) *httptest.Res
 
 func TestNexTokenRoundTripAndTamper(t *testing.T) {
 	s := testServer(t)
-	tok := s.acct.nexToken(hostPID, "OutboundHost")
-	pid, name, ok := verifyNexToken(s.acct.nexSigningKey(), tok)
+	tok := s.acct.NexToken(hostPID, "OutboundHost")
+	pid, name, ok := verifyNexToken(s.acct.NexSigningKey(), tok)
 	if !ok || pid != hostPID || name != "OutboundHost" {
 		t.Fatalf("round trip: pid=%d name=%q ok=%v", pid, name, ok)
 	}
-	if _, _, ok := verifyNexToken(s.acct.nexSigningKey(), tok[:len(tok)-2]+"xx"); ok {
+	if _, _, ok := verifyNexToken(s.acct.NexSigningKey(), tok[:len(tok)-2]+"xx"); ok {
 		t.Fatal("a tampered signature verified")
 	}
 	if _, _, ok := verifyNexToken([]byte("another key another key another!"), tok); ok {
@@ -105,7 +108,7 @@ func TestNexTokenRoundTripAndTamper(t *testing.T) {
 
 func TestInvitationMailbox(t *testing.T) {
 	s := testServer(t)
-	tok := s.acct.nexToken(hostPID, "OutboundHost")
+	tok := s.acct.NexToken(hostPID, "OutboundHost")
 	appParam := base64.StdEncoding.EncodeToString([]byte{1, 0, 0, 0, 6, 'Q', '3', '5', 'V', '9', 'E'})
 
 	if w := do(t, s, "POST", "/api/invitations", "", `{"target_pids":[1800000004]}`); w.Code != 401 {
@@ -124,14 +127,14 @@ func TestInvitationMailbox(t *testing.T) {
 			AppParam string `json:"app_param_base64"`
 		} `json:"invitations"`
 	}
-	w = do(t, s, "GET", "/api/invitations", s.acct.nexToken(joinerPID, "OutboundJoiner"), "")
+	w = do(t, s, "GET", "/api/invitations", s.acct.NexToken(joinerPID, "OutboundJoiner"), "")
 	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil || len(out.Invitations) != 1 {
 		t.Fatalf("poll: %d %s err=%v", w.Code, w.Body, err)
 	}
 	if out.Invitations[0].FromPID != hostPID || out.Invitations[0].AppParam != appParam {
 		t.Fatalf("wrong invitation delivered: %+v", out.Invitations[0])
 	}
-	w = do(t, s, "GET", "/api/invitations", s.acct.nexToken(joinerPID, "OutboundJoiner"), "")
+	w = do(t, s, "GET", "/api/invitations", s.acct.NexToken(joinerPID, "OutboundJoiner"), "")
 	if !strings.Contains(w.Body.String(), `"invitations":[]`) {
 		t.Fatalf("poll must consume: %s", w.Body)
 	}
@@ -141,7 +144,7 @@ func TestInvitationMailbox(t *testing.T) {
 // learns the country. Same identity shapes as photon-room, same refusal of a stranger.
 func TestPhotonIdentityAnswersCountry(t *testing.T) {
 	s := testServer(t)
-	for _, identity := range []string{"nex:" + s.acct.nexToken(hostPID, "OutboundHost"), "bsdid:hostbsdid"} {
+	for _, identity := range []string{"nex:" + s.acct.NexToken(hostPID, "OutboundHost"), "bsdid:hostbsdid"} {
 		w := do(t, s, "POST", "/internal/photon-identity", "", fmt.Sprintf(`{"identity":%q}`, identity))
 		if w.Code != 200 || !strings.Contains(w.Body.String(), `"country":"AU"`) {
 			t.Fatalf("%s: %d %s", identity, w.Code, w.Body)
@@ -161,7 +164,7 @@ func TestPhotonRoomSetsJoinablePresence(t *testing.T) {
 	s := testServer(t)
 	want := base64.StdEncoding.EncodeToString([]byte{1, 0, 0, 0, 6, 'Q', '3', '5', 'V', '9', 'E'})
 
-	for _, identity := range []string{"nex:" + s.acct.nexToken(hostPID, "OutboundHost"), "bsdid:hostbsdid"} {
+	for _, identity := range []string{"nex:" + s.acct.NexToken(hostPID, "OutboundHost"), "bsdid:hostbsdid"} {
 		s.store.Update(s.store.User("aaaa"), func(u *store.User) { u.Presence = store.Presence{State: "ONLINE"} })
 		body := fmt.Sprintf(`{"identity":%q,"room":"Q35V9E","app_id":"0100ED9024EB8000"}`, identity)
 		if w := do(t, s, "POST", "/internal/photon-room", "", body); w.Code != 200 {
@@ -192,7 +195,7 @@ func TestMintTokenIsUsableAsBearer(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil || out.Username != "OutboundHost" {
 		t.Fatalf("mint: %d %s err=%v", w.Code, w.Body, err)
 	}
-	if pid, _, ok := verifyNexToken(s.acct.nexSigningKey(), out.Token); !ok || pid != hostPID {
+	if pid, _, ok := verifyNexToken(s.acct.NexSigningKey(), out.Token); !ok || pid != hostPID {
 		t.Fatalf("minted token does not authenticate its pid: %v %d", ok, pid)
 	}
 }

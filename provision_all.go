@@ -12,45 +12,46 @@ import (
 	"time"
 
 	accountv1 "nx-baas/accountpb"
+	"nx-baas/internal/identity"
 )
 
 const provisionEvery = time.Minute
 
-func (s *server) provisionAllAccounts(b *openpakBackend) {
+func (s *server) provisionAllAccounts(b *identity.OpenpakBackend) {
 	for ; ; time.Sleep(provisionEvery) {
 		made, failed := 0, 0
 		after := ""
 		for {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			page, err := b.identity.ListAccounts(ctx, &accountv1.ListAccountsRequest{AfterAccountId: after, Limit: 200})
+			page, err := b.IdentityClient.ListAccounts(ctx, &accountv1.ListAccountsRequest{AfterAccountId: after, Limit: 200})
 			cancel()
 			if err != nil {
-				logErr("provision all: list accounts", err)
+				identity.LogErr("provision all: list accounts", err)
 				break
 			}
 			for _, a := range page.GetAccounts() {
-				b.proj.mu.Lock()
-				_, have := b.proj.ByAccount[a.GetAccountId()]
-				b.proj.mu.Unlock()
+				b.Proj.Mu.Lock()
+				_, have := b.Proj.ByAccount[a.GetAccountId()]
+				b.Proj.Mu.Unlock()
 				if have {
 					continue
 				}
 				ectx, ecancel := context.WithTimeout(context.Background(), 10*time.Second)
-				pr, err := b.ensure(ectx, a.GetAccountId())
+				pr, err := b.Ensure(ectx, a.GetAccountId())
 				ecancel()
 				if err != nil {
 					failed++
-					logErr("provision all: ensure", err)
+					identity.LogErr("provision all: ensure", err)
 					continue
 				}
 				made++
 				if n := a.GetDisplayName(); n != "" { // the projection's own copy, so friends render it without a core call
-					b.proj.mu.Lock()
+					b.Proj.Mu.Lock()
 					if pr.Nickname == "" {
 						pr.Nickname = n
-						b.proj.saveLocked()
+						b.Proj.SaveLocked()
 					}
-					b.proj.mu.Unlock()
+					b.Proj.Mu.Unlock()
 				}
 			}
 			if after = page.GetNextAfterAccountId(); after == "" {

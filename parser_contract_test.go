@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 	"os"
 	"strings"
@@ -75,7 +76,7 @@ func renderGaps(entry map[string]any, required map[string]string) []string {
 func TestRelationshipEntrySatisfiesTheNativeFixture(t *testing.T) {
 	s := dauthServer(t)
 	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
-	entry := s.relationshipObj(nil, Friend{
+	entry := s.relationshipObj(nil, identity.Friend{
 		PID: 2, BaasUserID: "0123456789abcdef", Nickname: "OpenPak Test",
 		FriendCode: "SW-0000-0000-0001", Country: "IE", CreatedAt: 1788818380,
 	}, 1788899654)
@@ -94,7 +95,7 @@ func TestRelationshipEntrySatisfiesTheNativeFixture(t *testing.T) {
 func TestOldFlatEntryFailsTheNativeGate(t *testing.T) {
 	s := dauthServer(t)
 	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
-	flat := s.friendObj(Friend{
+	flat := s.friendObj(identity.Friend{
 		PID: 2, BaasUserID: "0123456789abcdef", Nickname: "OpenPak Test",
 		Country: "IE", CreatedAt: 1788818380,
 	}, 1788899654)
@@ -108,7 +109,7 @@ func TestOldFlatEntryFailsTheNativeGate(t *testing.T) {
 func TestEachRequiredFieldOmissionIsDetected(t *testing.T) {
 	s := dauthServer(t)
 	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
-	entry := s.relationshipObj(nil, Friend{BaasUserID: "0123456789abcdef", CreatedAt: 1}, 1788899654)
+	entry := s.relationshipObj(nil, identity.Friend{BaasUserID: "0123456789abcdef", CreatedAt: 1}, 1788899654)
 
 	for _, drop := range []struct {
 		path  string
@@ -139,9 +140,9 @@ func dropPathKey(path string) string {
 func TestFriendListBoundsAndEmptyCase(t *testing.T) {
 	s := dauthServer(t)
 	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
-	friends := []Friend{}
+	friends := []identity.Friend{}
 	for i := 0; i < 310; i++ {
-		friends = append(friends, Friend{PID: uint64(i + 2), BaasUserID: strings.Repeat("a", 15) + string(rune('a'+i%26)) + itoa(i),
+		friends = append(friends, identity.Friend{PID: uint64(i + 2), BaasUserID: strings.Repeat("a", 15) + string(rune('a'+i%26)) + itoa(i),
 			Nickname: "F", FriendCode: "SW-0000-0000-0001", Country: "IE", CreatedAt: 1788818380})
 	}
 	// exactly 300 through the wire: the renderer caps before the envelope.
@@ -162,7 +163,7 @@ func TestFriendListBoundsAndEmptyCase(t *testing.T) {
 	if empty["count"] != 0 || empty["etag"] != `""` {
 		t.Errorf("empty envelope: %v", empty)
 	}
-	one := listEnvelopeWith([]any{s.relationshipObj(nil, Friend{BaasUserID: "0123456789abcdef", Nickname: "x", CreatedAt: 5}, 1788899654)}, `""`, 100)
+	one := listEnvelopeWith([]any{s.relationshipObj(nil, identity.Friend{BaasUserID: "0123456789abcdef", Nickname: "x", CreatedAt: 5}, 1788899654)}, `""`, 100)
 	if one["count"] != 1 || one["etag"] == `""` {
 		t.Errorf("one-entry envelope: count %v etag %v", one["count"], one["etag"])
 	}
@@ -173,7 +174,7 @@ func TestFriendListBoundsAndEmptyCase(t *testing.T) {
 func TestFriendAvatarIsReachable(t *testing.T) {
 	t.Setenv("NX_DATA", t.TempDir())
 	s := dauthServer(t)
-	s.acct = fakeBackend{id: &Identity{PID: 0, Nickname: "x", FriendCode: "SW-0000-0000-0000"}} // identity lookups, no picture
+	s.acct = fakeBackend{id: &identity.Identity{PID: 0, Nickname: "x", FriendCode: "SW-0000-0000-0000"}} // identity lookups, no picture
 	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	fid := "0123456789abcdef"
 	now := time.Now().Unix()

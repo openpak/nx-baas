@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc"
 
 	accountv1 "nx-baas/accountpb"
+	"nx-baas/internal/identity"
 )
 
 // markingBackend is the stub backend that also records which logins marked a player online.
@@ -20,7 +21,7 @@ type markingBackend struct {
 	marked []uint64
 }
 
-func (m *markingBackend) markOnline(pid uint64) {
+func (m *markingBackend) MarkOnline(pid uint64) {
 	m.mu.Lock()
 	m.marked = append(m.marked, pid)
 	m.mu.Unlock()
@@ -66,18 +67,18 @@ func (x *markSessions) MarkOnline(_ context.Context, r *accountv1.MarkOnlineRequ
 }
 
 func TestBackendMarkOnlineSendsTheAccount(t *testing.T) {
-	orig := goAsync
-	goAsync = func(f func()) { f() }
-	t.Cleanup(func() { goAsync = orig })
+	orig := identity.GoAsync
+	identity.GoAsync = func(f func()) { f() }
+	t.Cleanup(func() { identity.GoAsync = orig })
 
 	const acct = "11111111-1111-1111-1111-111111111111"
 	sess := &markSessions{}
-	b := &openpakBackend{namespace: "switch", sessions: sess, proj: &projectionStore{
-		ByAccount: map[string]*projection{acct: {AccountID: acct}},
+	b := &identity.OpenpakBackend{Namespace: "switch", Sessions: sess, Proj: &identity.ProjectionStore{
+		ByAccount: map[string]*identity.Projection{acct: {AccountID: acct}},
 		ByPID:     map[uint64]string{1800000001: acct},
 	}}
-	b.markOnline(1800000001)
-	b.markOnline(42) // no account: nothing sent
+	b.MarkOnline(1800000001)
+	b.MarkOnline(42) // no account: nothing sent
 	if len(sess.calls) != 1 {
 		t.Fatalf("core calls = %v", sess.calls)
 	}
@@ -86,8 +87,8 @@ func TestBackendMarkOnlineSendsTheAccount(t *testing.T) {
 	}
 	// A failing core is swallowed; no core configured is a no-op.
 	sess.err = errors.New("down")
-	b.markOnline(1800000001)
-	(&openpakBackend{proj: b.proj}).markOnline(1800000001)
+	b.MarkOnline(1800000001)
+	(&identity.OpenpakBackend{Proj: b.Proj}).MarkOnline(1800000001)
 }
 
 // blockingSessions is a core that hangs until released.
@@ -108,12 +109,12 @@ func (x *blockingSessions) MarkOnline(ctx context.Context, _ *accountv1.MarkOnli
 func TestBackendMarkOnlineDoesNotWaitForTheCore(t *testing.T) {
 	const acct = "11111111-1111-1111-1111-111111111111"
 	sess := &blockingSessions{release: make(chan struct{}), called: make(chan struct{})}
-	b := &openpakBackend{namespace: "switch", sessions: sess, proj: &projectionStore{
-		ByAccount: map[string]*projection{acct: {AccountID: acct}},
+	b := &identity.OpenpakBackend{Namespace: "switch", Sessions: sess, Proj: &identity.ProjectionStore{
+		ByAccount: map[string]*identity.Projection{acct: {AccountID: acct}},
 		ByPID:     map[uint64]string{1800000001: acct},
 	}}
 	start := time.Now()
-	b.markOnline(1800000001)
+	b.MarkOnline(1800000001)
 	if d := time.Since(start); d > 100*time.Millisecond {
 		t.Fatalf("markOnline blocked for %v", d)
 	}

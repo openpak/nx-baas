@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 	"os"
 	"sort"
@@ -14,16 +15,16 @@ import (
 
 // fakeBackend is an account source with one account in it, so the login
 // endpoint can be driven without a core.
-type fakeBackend struct{ id *Identity }
+type fakeBackend struct{ id *identity.Identity }
 
-func (f fakeBackend) Identity(uint64) (*Identity, error) { return f.id, nil }
-func (f fakeBackend) friendCodeForAccount(string) (string, bool) {
+func (f fakeBackend) Identity(uint64) (*identity.Identity, error) { return f.id, nil }
+func (f fakeBackend) FriendCodeForAccount(string) (string, bool) {
 	if f.id == nil || f.id.FriendCode == "" {
 		return "", false
 	}
 	return f.id.FriendCode, true
 }
-func (f fakeBackend) accountForFriendCode(string) (string, bool) { return "", false }
+func (f fakeBackend) AccountForFriendCode(string) (string, bool) { return "", false }
 
 func (f fakeBackend) RegenerateFriendCode(uint64) error { return nil }
 
@@ -31,14 +32,14 @@ func (f fakeBackend) RegenerateFriendCode(uint64) error { return nil }
 // handlers' target resolution succeeds for whatever id a test names. Code
 // lookups stay unresolvable: search tests use codeBackend, which owns that
 // behaviour.
-func (f fakeBackend) Resolve(q url.Values) (*Friend, error) {
+func (f fakeBackend) Resolve(q url.Values) (*identity.Friend, error) {
 	if id := q.Get("baas"); id != "" {
-		return &Friend{BaasUserID: id, Nickname: "Someone", FriendCode: "SW-0000-0000-0001", Country: "IE"}, nil
+		return &identity.Friend{BaasUserID: id, Nickname: "Someone", FriendCode: "SW-0000-0000-0001", Country: "IE"}, nil
 	}
 	return nil, http.ErrNoLocation
 }
-func (f fakeBackend) LoginPID(string, string) (LoginResult, error) {
-	return LoginResult{PID: f.id.PID, Username: f.id.Nickname}, nil
+func (f fakeBackend) LoginPID(string, string) (identity.LoginResult, error) {
+	return identity.LoginResult{PID: f.id.PID, Username: f.id.Nickname}, nil
 }
 func (f fakeBackend) VerifySecondFactor(string, string, string) error { return nil }
 func (f fakeBackend) FriendRequest(uint64, uint64) error              { return nil }
@@ -46,8 +47,8 @@ func (f fakeBackend) FriendAccept(uint64, uint64, bool) error         { return n
 func (f fakeBackend) RemoveFriend(uint64, uint64) error               { return nil }
 func (f fakeBackend) Block(uint64, uint64) error                      { return nil }
 func (f fakeBackend) Unblock(uint64, uint64) error                    { return nil }
-func (f fakeBackend) nexToken(uint64, string) string                  { return "nx2.test" }
-func (f fakeBackend) nexSigningKey() []byte                           { return []byte("test") }
+func (f fakeBackend) NexToken(uint64, string) string                  { return "nx2.test" }
+func (f fakeBackend) NexSigningKey() []byte                           { return []byte("test") }
 
 // The login reply is the object the console parses to decide whether an account
 // was added, and when it dislikes one it says 2124-3121 and nothing else. There
@@ -83,7 +84,7 @@ func TestLoginReplyMatchesTheShapeAConsoleAccepts(t *testing.T) {
 		u.Avatar = "/9j/4AAQ"
 		u.Nickname = "tester"
 	})
-	id := &Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
+	id := &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
 		FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did"}
 
 	// Through the real endpoint, not by building the object here: the first
@@ -163,7 +164,7 @@ func TestProfileUploadCompletesTheWayTheSysmoduleChecksIt(t *testing.T) {
 	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	u, _ := s.store.NewUser()
 	s.store.Update(u, func(u *store.User) { u.PID = 1; u.Nickname = "tester" })
-	s.acct = fakeBackend{id: &Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "website name",
+	s.acct = fakeBackend{id: &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "website name",
 		FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did"}}
 	bearer := "Bearer " + s.accessToken(u.ID, 2, "did", "device", "serial")
 	call := func(method, path, body string) map[string]any {
@@ -229,7 +230,7 @@ func TestExtrasSelfIsNeverBareForALinkedUser(t *testing.T) {
 	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	u, d := s.store.NewUser()
 	s.store.Update(u, func(u *store.User) { u.PID = 1; u.Nickname = "tester" }) // no blob: the console never uploaded one
-	s.acct = fakeBackend{id: &Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
+	s.acct = fakeBackend{id: &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
 		FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did"}}
 
 	r := httptest.NewRequest("POST", "https://"+baasHost+"/1.0.0/login", nil)

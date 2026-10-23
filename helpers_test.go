@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http/httptest"
+	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 	"strings"
 	"sync"
@@ -25,7 +26,7 @@ func linkedServer(t *testing.T) *server {
 	u, _ := s.store.NewUser()
 	s.store.Update(u, func(u *store.User) { u.PID = 7; u.Nickname = "tester" })
 	s.store.RememberNA(testNAID, 7)
-	s.acct = fakeBackend{id: &Identity{PID: 7, NaID: testNAID, Nickname: "tester"}}
+	s.acct = fakeBackend{id: &identity.Identity{PID: 7, NaID: testNAID, Nickname: "tester"}}
 	return s
 }
 

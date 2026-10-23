@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	accountv1 "nx-baas/accountpb"
+	"nx-baas/internal/identity"
 )
 
 // fakeCore implements the core client surfaces the OpenPak backend
@@ -307,11 +308,11 @@ func removeID(list []string, id string) []string {
 	return out
 }
 
-func newTestBackend(t *testing.T) (*openpakBackend, *fakeCore) {
+func newTestBackend(t *testing.T) (*identity.OpenpakBackend, *fakeCore) {
 	t.Helper()
 	f := newFakeCore()
 	// Tests drive the fake core through the backend's client surfaces.
-	return newOpenpakBackendWithClients(t.TempDir(), fakeIdentity{f: f}, fakeLinks{f: f}, fakeSocial{f: f}, []byte(strings.Repeat("k", 32))), f
+	return identity.NewOpenpakBackendWithClients(t.TempDir(), fakeIdentity{f: f}, fakeLinks{f: f}, fakeSocial{f: f}, []byte(strings.Repeat("k", 32))), f
 }
 
 func TestOpenpakLoginMintsStableProjection(t *testing.T) {
@@ -331,8 +332,8 @@ func TestOpenpakLoginMintsStableProjection(t *testing.T) {
 		t.Fatalf("retry mismatch: pid %d/%d name %q/%q err %v", res.PID, res2.PID, res.Username, res2.Username, err)
 	}
 	// The core link was established once, for the minted BAAS subject.
-	pr := b.proj.ByAccount["acc-1"]
-	if got := f.activeLink[b.namespace+"\x00"+"acc-1"]; got != pr.BaasUserID {
+	pr := b.Proj.ByAccount["acc-1"]
+	if got := f.activeLink[b.Namespace+"\x00"+"acc-1"]; got != pr.BaasUserID {
 		t.Fatalf("core link subject %q != projection baas id %q", got, pr.BaasUserID)
 	}
 	if len(pr.BaasUserID) != 16 {
@@ -385,7 +386,7 @@ func TestOpenpakIdentityRendersFriends(t *testing.T) {
 	}
 
 	// Resolve by friend code and by BAAS user id.
-	pr2 := b.proj.ByAccount["acc-2"]
+	pr2 := b.Proj.ByAccount["acc-2"]
 	byCode, err := b.Resolve(url.Values(strMap("code", pr2.FriendCode)))
 	if err != nil || byCode.PID != r2.PID {
 		t.Fatalf("resolve code: %+v %v", byCode, err)
@@ -398,13 +399,13 @@ func TestOpenpakIdentityRendersFriends(t *testing.T) {
 
 func TestOpenpakNexTokenShape(t *testing.T) {
 	b, _ := newTestBackend(t)
-	tok := b.nexToken(1800000001, "Host")
+	tok := b.NexToken(1800000001, "Host")
 	parts := strings.Split(tok, ".")
 	if len(parts) != 3 || parts[0] != "nx2" {
 		t.Fatalf("token shape: %q", tok)
 	}
 	// Byte-identical verification path with account.go's format.
-	ref := (&accountClient{secret: b.nexKey}).nexToken(1800000001, "Host")
+	ref := (&identity.AccountClient{Secret: b.NexKey}).NexToken(1800000001, "Host")
 	if ref == "" || strings.Split(ref, ".")[0] != "nx2" {
 		t.Fatalf("reference token shape: %q", ref)
 	}
@@ -454,7 +455,7 @@ func TestInternalSwitchIdentity(t *testing.T) {
 		_ = json.NewDecoder(resp.Body).Decode(&out)
 		return resp.StatusCode, out
 	}
-	code, id := post(`{"openpak":"`+b.nexToken(hostRes.PID, "Host")+`"}`, key)
+	code, id := post(`{"openpak":"`+b.NexToken(hostRes.PID, "Host")+`"}`, key)
 	if code != 200 || id.PID != hostRes.PID || id.BaasUserID == "" || len(id.Friends) != 1 || id.Friends[0].Nickname != "Friend" {
 		t.Fatalf("openpak path: code=%d id=%+v", code, id)
 	}
@@ -536,11 +537,11 @@ func TestVerifySecondFactorMappings(t *testing.T) {
 	if err := b.VerifySecondFactor("2fa@example.com", "", "recovery-2fa@example.com"); err != nil {
 		t.Fatalf("recovery code: %v", err)
 	}
-	if err := b.VerifySecondFactor("2fa@example.com", "000000", ""); !errors.Is(err, errSecondFactorInvalid) {
+	if err := b.VerifySecondFactor("2fa@example.com", "000000", ""); !errors.Is(err, identity.ErrSecondFactorInvalid) {
 		t.Fatalf("wrong code = %v, want invalid", err)
 	}
 	f.totpLocked["2fa@example.com"] = true
-	if err := b.VerifySecondFactor("2fa@example.com", "123456", ""); !errors.Is(err, errSecondFactorLocked) {
+	if err := b.VerifySecondFactor("2fa@example.com", "123456", ""); !errors.Is(err, identity.ErrSecondFactorLocked) {
 		t.Fatalf("locked = %v, want locked", err)
 	}
 }
@@ -548,8 +549,8 @@ func TestVerifySecondFactorMappings(t *testing.T) {
 // TestEarlierBackendStepUpUnsupported: the earlier account server speaks no second
 // factor, so its step-up refuses instead of pretending.
 func TestEarlierBackendStepUpUnsupported(t *testing.T) {
-	a := &accountClient{http: http.DefaultClient}
-	if err := a.VerifySecondFactor("acc-1", "123456", ""); !errors.Is(err, errSecondFactorUnsupported) {
+	a := &identity.AccountClient{HTTP: http.DefaultClient}
+	if err := a.VerifySecondFactor("acc-1", "123456", ""); !errors.Is(err, identity.ErrSecondFactorUnsupported) {
 		t.Fatalf("earlier-backend step-up = %v, want unsupported", err)
 	}
 }
@@ -569,25 +570,25 @@ func TestDropProjectionForgetsADeletedAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b.dropProjection("gone@example.com")
-	if _, ok := b.proj.ByAccount["gone@example.com"]; ok {
+	b.DropProjection("gone@example.com")
+	if _, ok := b.Proj.ByAccount["gone@example.com"]; ok {
 		t.Error("ByAccount keeps the deleted account")
 	}
-	if _, ok := b.proj.ByPID[gone.PID]; ok {
+	if _, ok := b.Proj.ByPID[gone.PID]; ok {
 		t.Error("ByPID keeps the deleted account")
 	}
-	for _, m := range []map[string]string{b.proj.ByBaas, b.proj.ByCode} {
+	for _, m := range []map[string]string{b.Proj.ByBaas, b.Proj.ByCode} {
 		for _, v := range m {
 			if v == "gone@example.com" {
 				t.Error("secondary index keeps the deleted account")
 			}
 		}
 	}
-	if _, ok := b.proj.ByAccount["stays@example.com"]; !ok {
+	if _, ok := b.Proj.ByAccount["stays@example.com"]; !ok {
 		t.Error("a live account lost its projection")
 	}
-	if _, ok := b.proj.ByPID[stays.PID]; !ok {
+	if _, ok := b.Proj.ByPID[stays.PID]; !ok {
 		t.Error("a live account lost its PID index")
 	}
-	b.dropProjection("nobody@example.com") // unknown: no-op, no panic
+	b.DropProjection("nobody@example.com") // unknown: no-op, no panic
 }

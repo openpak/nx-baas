@@ -123,7 +123,7 @@ func (s *server) lobbyVoice(w http.ResponseWriter, r *http.Request) {
 	if s.store == nil || baasUser == "" {
 		// fall through to 401
 	} else if u := s.store.User(baasUser); u != nil && s.banSrc() != nil {
-		account = s.banSrc().accountFor(u.PID)
+		account = s.banSrc().AccountFor(u.PID)
 	}
 	if account == "" {
 		httpx.WriteJSON(w, 401, map[string]any{"status": 401, "title": "who is this console?"})

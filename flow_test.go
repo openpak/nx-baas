@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 	"os"
 	"regexp"
@@ -40,7 +41,7 @@ func TestEveryURLTheConsoleIsHandedIsServed(t *testing.T) {
 			u, d := s.store.NewUser()
 			if tc.linked {
 				s.store.Update(u, func(u *store.User) { u.PID = 1; u.Nickname = "tester"; u.Avatar = tc.avatar })
-				s.acct = fakeBackend{id: &Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
+				s.acct = fakeBackend{id: &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
 					FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did"}}
 			} else {
 				s.acct = fakeBackend{}
@@ -116,7 +117,7 @@ func TestTheConsoleIsShownTheAccountsOwnPicture(t *testing.T) {
 	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	u, _ := s.store.NewUser()
 	s.store.Update(u, func(u *store.User) { u.PID = 1; u.Nickname = "tester" }) // no console upload
-	s.acct = fakeBackend{id: &Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
+	s.acct = fakeBackend{id: &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
 		FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did",
 		AvatarURL: site.URL + "/media/avatars/acct-1/console.jpg"}}
 
@@ -158,7 +159,7 @@ func TestTheNewerPictureWins(t *testing.T) {
 			u.PID, u.Nickname = 1, "tester"
 			u.Avatar, u.AvatarAt = "/9j/4AAQSkZJRg==", consoleUpload // the console's own
 		})
-		s.acct = fakeBackend{id: &Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
+		s.acct = fakeBackend{id: &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "tester",
 			FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did",
 			AvatarURL: site.URL + "/console.jpg", ImageUpdatedAt: siteAt}}
 		return s, u
@@ -203,7 +204,7 @@ func TestFriendCodeLookupUsesTheQueryTheConsoleSends(t *testing.T) {
 	s := dauthServer(t)
 	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	u, _ := s.store.NewUser() // the signed-in console doing the looking up
-	s.acct = codeBackend{code: "SW-1000-0000-0002", friend: &Friend{
+	s.acct = codeBackend{code: "SW-1000-0000-0002", friend: &identity.Friend{
 		PID: 1900000002, BaasUserID: "aaaaaaaaaaaa0002", NaID: "bbbbbbbbbbbb0002",
 		FriendCode: "SW-1000-0000-0002", Nickname: "Leia"}}
 
@@ -256,10 +257,10 @@ func TestFriendCodeLookupUsesTheQueryTheConsoleSends(t *testing.T) {
 type codeBackend struct {
 	fakeBackend
 	code   string
-	friend *Friend
+	friend *identity.Friend
 }
 
-func (b codeBackend) Resolve(q url.Values) (*Friend, error) {
+func (b codeBackend) Resolve(q url.Values) (*identity.Friend, error) {
 	if q.Get("code") == b.code || (b.friend != nil && q.Get("baas") == b.friend.BaasUserID) {
 		return b.friend, nil
 	}
@@ -289,7 +290,7 @@ func TestFriendObjectCarriesWhatAUserObjectCarries(t *testing.T) {
 
 	s := dauthServer(t)
 	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
-	obj := s.friendObj(Friend{
+	obj := s.friendObj(identity.Friend{
 		PID: 1900000002, BaasUserID: "aaaaaaaaaaaa0002", NaID: "bbbbbbbbbbbb0002",
 		FriendCode: "SW-1000-0000-0002", Nickname: "Leia", Country: "GB", CreatedAt: 1788896080,
 	}, 1788899654)
@@ -328,7 +329,7 @@ func TestSearchReplyMatchesTheAcceptedShape(t *testing.T) {
 	s := dauthServer(t)
 	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	u, _ := s.store.NewUser() // the signed-in console doing the looking up
-	s.acct = codeBackend{code: "SW-1000-0000-0002", friend: &Friend{
+	s.acct = codeBackend{code: "SW-1000-0000-0002", friend: &identity.Friend{
 		PID: 1900000002, BaasUserID: "aaaaaaaaaaaa0002", NaID: "bbbbbbbbbbbb0002",
 		FriendCode: "SW-1000-0000-0002", Nickname: "Leia", Country: "IE", CreatedAt: 1788896080}}
 
@@ -399,8 +400,8 @@ func TestFriendListEntriesCarryACountry(t *testing.T) {
 	s.store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	u, _ := s.store.NewUser()
 	s.store.Update(u, func(u *store.User) { u.PID, u.Nickname = 1, "Leia" })
-	s.acct = fakeBackend{id: &Identity{PID: 1, Nickname: "Leia", FriendCode: "SW-1000-0000-0002", BsDid: "did",
-		Friends: []Friend{{PID: 2, BaasUserID: "aaaaaaaaaaaa0001", Nickname: "hansolo",
+	s.acct = fakeBackend{id: &identity.Identity{PID: 1, Nickname: "Leia", FriendCode: "SW-1000-0000-0002", BsDid: "did",
+		Friends: []identity.Friend{{PID: 2, BaasUserID: "aaaaaaaaaaaa0001", Nickname: "hansolo",
 			FriendCode: "SW-1000-0000-0001", Country: "IE", CreatedAt: 1788818380}}}}
 
 	r := httptest.NewRequest("GET", "https://"+baasHost+"/2.0.0/users/"+u.ID+"/friends?count=300", nil)

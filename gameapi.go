@@ -26,6 +26,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/identity"
 	"nx-baas/redact"
 	"os"
 	"strconv"
@@ -89,7 +90,7 @@ func verifyNexToken(key []byte, tok string) (uint64, string, bool) {
 // returned only for a token that is actually bad.
 func (s *server) callerPID(r *http.Request) (uint64, string, bool) {
 	tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer"))
-	return verifyNexToken(s.acct.nexSigningKey(), tok)
+	return verifyNexToken(s.acct.NexSigningKey(), tok)
 }
 
 // ---------- room presence ----------
@@ -99,7 +100,7 @@ func (s *server) callerPID(r *http.Request) (uint64, string, bool) {
 // "bsdid:<bs:did>" (consoles) -- see AccountIdentityRegistry.ExtractToken.
 func (s *server) pidForIdentity(identity string) uint64 {
 	if tok, ok := strings.CutPrefix(identity, "nex:"); ok {
-		pid, _, valid := verifyNexToken(s.acct.nexSigningKey(), tok)
+		pid, _, valid := verifyNexToken(s.acct.NexSigningKey(), tok)
 		if !valid {
 			return 0
 		}
@@ -280,7 +281,7 @@ func (s *server) sendInvitation(w http.ResponseWriter, r *http.Request, from uin
 	}
 	id, err := s.acct.Identity(from)
 	if err != nil {
-		logErr("identity", err)
+		identity.LogErr("identity", err)
 		httpx.APIErr(w, http.StatusBadGateway, "account lookup failed")
 		return
 	}
@@ -324,7 +325,7 @@ func (s *server) sendInvitation(w http.ResponseWriter, r *http.Request, from uin
 	httpx.WriteJSON(w, 200, map[string]any{"ok": true, "sent": sent})
 }
 
-func isFriend(id *Identity, pid uint64) bool {
+func isFriend(id *identity.Identity, pid uint64) bool {
 	for _, f := range id.Friends {
 		if f.PID == pid {
 			return true
@@ -369,11 +370,11 @@ func (s *server) mintToken(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := s.acct.Identity(in.PID)
 	if err != nil {
-		logErr("identity", err)
+		identity.LogErr("identity", err)
 		httpx.APIErr(w, http.StatusNotFound, "unknown pid")
 		return
 	}
-	tok := s.acct.nexToken(in.PID, id.Nickname)
+	tok := s.acct.NexToken(in.PID, id.Nickname)
 	if tok == "" {
 		httpx.APIErr(w, http.StatusServiceUnavailable, "no signing key")
 		return

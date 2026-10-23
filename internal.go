@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 	"nx-baas/internal/token"
 	"os"
@@ -42,7 +43,7 @@ func (s *server) switchIdentity(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case in.OpenPak != "":
 		var ok bool
-		if pid, _, ok = verifyNexToken(s.acct.nexSigningKey(), in.OpenPak); !ok {
+		if pid, _, ok = verifyNexToken(s.acct.NexSigningKey(), in.OpenPak); !ok {
 			httpx.APIErr(w, http.StatusUnauthorized, "openpak not proven")
 			return
 		}
@@ -70,13 +71,13 @@ func (s *server) switchIdentity(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := s.acct.Identity(pid)
 	if err != nil {
-		logErr("identity", err)
+		identity.LogErr("identity", err)
 		httpx.APIErr(w, http.StatusNotFound, "unknown pid")
 		return
 	}
 	accountID := ""
 	if src := s.banSrc(); src != nil {
-		accountID = src.accountFor(pid)
+		accountID = src.AccountFor(pid)
 	}
 	// A game server just proved who this player is: they are on it (playtime starts here).
 	s.markLoginOnline(pid)
@@ -142,7 +143,7 @@ func (s *server) switchFriendCode(w http.ResponseWriter, r *http.Request) {
 		httpx.APIErr(w, http.StatusBadRequest, "account_id required")
 		return
 	}
-	code, ok := s.acct.friendCodeForAccount(accountID)
+	code, ok := s.acct.FriendCodeForAccount(accountID)
 	if !ok {
 		httpx.APIErr(w, http.StatusNotFound, "no console linked to that account")
 		return
@@ -165,7 +166,7 @@ func (s *server) switchAccountByFriendCode(w http.ResponseWriter, r *http.Reques
 		httpx.APIErr(w, http.StatusBadRequest, "friend_code required")
 		return
 	}
-	accountID, ok := s.acct.accountForFriendCode(code)
+	accountID, ok := s.acct.AccountForFriendCode(code)
 	if !ok {
 		httpx.APIErr(w, http.StatusNotFound, "no account for that friend code")
 		return
@@ -196,21 +197,21 @@ func (s *server) switchEmulator(w http.ResponseWriter, r *http.Request) {
 		internalLocked(w, lock)
 		return
 	}
-	b, ok := s.acct.(*openpakBackend)
+	b, ok := s.acct.(*identity.OpenpakBackend)
 	if !ok {
 		httpx.APIErr(w, http.StatusNotImplemented, "openpak backend only")
 		return
 	}
 	// First sight of an account mints its Switch identity, exactly as linking a console does.
-	pr, err := b.ensure(r.Context(), accountID)
+	pr, err := b.Ensure(r.Context(), accountID)
 	if err != nil {
-		logErr("emulator ensure", err)
+		identity.LogErr("emulator ensure", err)
 		httpx.APIErr(w, http.StatusBadGateway, "identity unavailable")
 		return
 	}
 	id, err := s.acct.Identity(pr.PID)
 	if err != nil {
-		logErr("emulator identity", err)
+		identity.LogErr("emulator identity", err)
 		httpx.APIErr(w, http.StatusNotFound, "unknown account")
 		return
 	}
@@ -222,7 +223,7 @@ func (s *server) switchEmulator(w http.ResponseWriter, r *http.Request) {
 	viewer := s.store.User(pr.BaasUserID)
 	now := time.Now().Unix()
 	lease := presenceLease()
-	friend := func(f Friend) map[string]any {
+	friend := func(f identity.Friend) map[string]any {
 		status, appID, appField := f.PresenceStatus, f.PresenceAppID, f.PresenceAppField
 		// namespace says which platform they are on, so a client can say "on a
 		// Wii U" for a friend whose title it could never draw.
@@ -234,14 +235,14 @@ func (s *server) switchEmulator(w http.ResponseWriter, r *http.Request) {
 			}
 			if p.State == "OFFLINE" {
 				// Nothing live here: the core knows where else they are.
-				if elsewhere, live := s.presenceFromCore(b.accountFor(f.PID), b.namespace, now); live {
+				if elsewhere, live := s.presenceFromCore(b.AccountFor(f.PID), b.Namespace, now); live {
 					p = elsewhere
-					if cp, ok := s.corePresenceOf(b.accountFor(f.PID)); ok {
+					if cp, ok := s.corePresenceOf(b.AccountFor(f.PID)); ok {
 						namespace, since, client = cp.Namespace, cp.Since, cp.Client
 					}
 				}
 			} else {
-				namespace, since, client = b.namespace, p.UpdatedAt, p.Client
+				namespace, since, client = b.Namespace, p.UpdatedAt, p.Client
 			}
 			switch p.State {
 			case "PLAYING":
@@ -254,7 +255,7 @@ func (s *server) switchEmulator(w http.ResponseWriter, r *http.Request) {
 			appID, appField = p.AppID, p.AppField
 		}
 		return map[string]any{
-			"pid": f.PID, "account_id": b.accountFor(f.PID), "name": f.Nickname, "friend_code": f.FriendCode,
+			"pid": f.PID, "account_id": b.AccountFor(f.PID), "name": f.Nickname, "friend_code": f.FriendCode,
 			"friends_since": f.CreatedAt,
 			"presence": map[string]any{
 				"status": status, "app_field": appField, "app_id": appID,
@@ -279,7 +280,7 @@ func (s *server) switchEmulator(w http.ResponseWriter, r *http.Request) {
 		// beside the player, an emulator had none to give (2026-09-20).
 		"country": id.Country,
 		"pid":     pr.PID, "username": id.Nickname, "friend_code": pr.FriendCode, "baas_user_id": pr.BaasUserID,
-		"token": s.acct.nexToken(pr.PID, id.Nickname), "friends": friends, "requests": requests,
+		"token": s.acct.NexToken(pr.PID, id.Nickname), "friends": friends, "requests": requests,
 	})
 }
 
@@ -302,20 +303,20 @@ func (s *server) switchEmulatorLinkToken(w http.ResponseWriter, r *http.Request)
 		internalLocked(w, lock)
 		return
 	}
-	b, ok := s.acct.(*openpakBackend)
+	b, ok := s.acct.(*identity.OpenpakBackend)
 	if !ok {
 		httpx.APIErr(w, http.StatusNotImplemented, "openpak backend only")
 		return
 	}
-	pr, err := b.ensure(r.Context(), accountID)
+	pr, err := b.Ensure(r.Context(), accountID)
 	if err != nil {
-		logErr("emulator link ensure", err)
+		identity.LogErr("emulator link ensure", err)
 		httpx.APIErr(w, http.StatusBadGateway, "identity unavailable")
 		return
 	}
 	id, err := s.acct.Identity(pr.PID)
 	if err != nil {
-		logErr("emulator link identity", err)
+		identity.LogErr("emulator link identity", err)
 		httpx.APIErr(w, http.StatusNotFound, "unknown account")
 		return
 	}
@@ -346,12 +347,12 @@ func (s *server) switchEmulatorFriend(w http.ResponseWriter, r *http.Request) {
 		internalLocked(w, lock)
 		return
 	}
-	b, ok := s.acct.(*openpakBackend)
+	b, ok := s.acct.(*identity.OpenpakBackend)
 	if !ok {
 		httpx.APIErr(w, http.StatusNotImplemented, "openpak backend only")
 		return
 	}
-	pr, err := b.ensure(r.Context(), in.AccountID)
+	pr, err := b.Ensure(r.Context(), in.AccountID)
 	if err != nil {
 		httpx.APIErr(w, http.StatusBadGateway, "identity unavailable")
 		return
@@ -362,7 +363,7 @@ func (s *server) switchEmulatorFriend(w http.ResponseWriter, r *http.Request) {
 		// "friend_code" was silently matched by nothing, so every emulator
 		// add-by-code failed with "no account for that friend code" while the
 		// code itself was perfectly good (SOC-04).
-		f, err := s.acct.Resolve(url.Values{"code": {normaliseFriendCode(in.FriendCode)}})
+		f, err := s.acct.Resolve(url.Values{"code": {identity.NormaliseFriendCode(in.FriendCode)}})
 		if err != nil || f == nil {
 			httpx.APIErr(w, http.StatusNotFound, "no account for that friend code")
 			return

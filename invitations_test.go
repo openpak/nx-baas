@@ -483,7 +483,7 @@ func TestMailboxIsDurableAndNativelyVisible(t *testing.T) {
 	// The emulator sends exactly what it always sent.
 	r := httptest.NewRequest("POST", "/api/invitations", strings.NewReader(
 		fmt.Sprintf(`{"target_pids":[%d],"app_param_base64":%q}`, joiner.PID, validAppData)))
-	r.Header.Set("Authorization", "Bearer "+s.acct.nexToken(host.PID, "host"))
+	r.Header.Set("Authorization", "Bearer "+s.acct.NexToken(host.PID, "host"))
 	w := httptest.NewRecorder()
 	s.gameAPI().ServeHTTP(w, r)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"sent":1`) {
@@ -500,7 +500,7 @@ func TestMailboxIsDurableAndNativelyVisible(t *testing.T) {
 	// instance on the same file) must not resurrect a joined room.
 	w = httptest.NewRecorder()
 	r2 := httptest.NewRequest("GET", "/api/invitations", nil)
-	r2.Header.Set("Authorization", "Bearer "+s.acct.nexToken(joiner.PID, "joiner"))
+	r2.Header.Set("Authorization", "Bearer "+s.acct.NexToken(joiner.PID, "joiner"))
 	s.gameAPI().ServeHTTP(w, r2)
 	if !strings.Contains(w.Body.String(), `"from_pid":`) {
 		t.Fatalf("pop = %d %s", w.Code, w.Body)

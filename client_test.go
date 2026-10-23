@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http/httptest"
+	"nx-baas/internal/identity"
 	"testing"
 	"time"
 )
@@ -71,8 +72,8 @@ func TestClientLabels(t *testing.T) {
 // reconciler's.
 func TestClientHeaderReachesTheCore(t *testing.T) {
 	s, sess, _, u := presenceFixture(t)
-	b := s.acct.(*openpakBackend)
-	account := b.accountFor(u.PID)
+	b := s.acct.(*identity.OpenpakBackend)
+	account := b.AccountFor(u.PID)
 	r := authed("PATCH", "/1.0.0/users/"+u.ID+"/device_accounts/dev-emu",
 		`[{"op":"replace","path":"/presence/state","value":"PLAYING"},
 		  {"op":"add","path":"/presence/extras/friends/appInfo:appId","value":"01004d300c5ae000"}]`, u, s)
@@ -114,8 +115,8 @@ func TestClientHeaderReachesTheCore(t *testing.T) {
 func TestForeignFriendDescriptionNamesTheTitle(t *testing.T) {
 	s, sess, viewer, friend := presenceFixture(t)
 	sess.namespace = "3ds"
-	b := s.acct.(*openpakBackend)
-	account := b.accountFor(friend.PID)
+	b := s.acct.(*identity.OpenpakBackend)
+	account := b.AccountFor(friend.PID)
 	prev := siteTitleNames
 	siteTitleNames = &titleNames{byKey: map[string]*titleNameEntry{}, fetch: func(ns, id string) (string, bool) {
 		if ns == "3ds" && id == "0004000000030800" {

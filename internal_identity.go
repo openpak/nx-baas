@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/identity"
 	"strings"
 )
 
@@ -90,17 +91,17 @@ func (s *server) identityAccounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := strings.TrimPrefix(r.URL.Path, "/internal/identity/accounts/")
-	b, ok := s.acct.(*openpakBackend)
+	b, ok := s.acct.(*identity.OpenpakBackend)
 	if !ok || id == "" || r.Method != http.MethodGet {
 		httpx.APIErr(w, http.StatusNotFound, "account lookup needs the openpak backend")
 		return
 	}
 	naID := ""
-	b.proj.mu.Lock()
-	if pr := b.proj.ByAccount[id]; pr != nil {
+	b.Proj.Mu.Lock()
+	if pr := b.Proj.ByAccount[id]; pr != nil {
 		naID = pr.NaID
 	}
-	b.proj.mu.Unlock()
+	b.Proj.Mu.Unlock()
 	if naID == "" {
 		httpx.APIErr(w, http.StatusNotFound, "no Switch identity for this account")
 		return

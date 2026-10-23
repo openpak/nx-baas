@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"net/url"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/identity"
 	"nx-baas/internal/token"
 	"nx-baas/redact"
 	"strconv"
@@ -451,14 +452,14 @@ func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) b
 		}
 		res, err := s.acct.LoginPID(form.Get("email"), form.Get("password"))
 		lock := s.pidLock(res.PID)
-		if errors.Is(err, errAccountLocked) && lock == "" {
+		if errors.Is(err, identity.ErrAccountLocked) && lock == "" {
 			lock = lockBanned
 		}
 		if lock != "" {
 			s.phoneLoginPage(w, pair, lockedPageMessage(lock))
 			return true
 		}
-		if errors.Is(err, errSecondFactorRequired) {
+		if errors.Is(err, identity.ErrSecondFactorRequired) {
 			s.phoneLoginPage(w, pair, "This account has two-factor authentication: finish signing in on the website, then link.")
 			return true
 		}
@@ -495,7 +496,7 @@ func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) b
 			return true
 		}
 		if err := s.acct.VerifySecondFactor(p.AccountID, strings.TrimSpace(form.Get("code")), strings.TrimSpace(form.Get("recovery_code"))); err != nil {
-			if errors.Is(err, errSecondFactorLocked) {
+			if errors.Is(err, identity.ErrSecondFactorLocked) {
 				s.phone2FAPage(w, pair, form.Get("token"), "Too many wrong codes. Wait a few minutes and try again.")
 				return true
 			}

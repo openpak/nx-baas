@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"encoding/json"
 	"net/http/httptest"
+	"nx-baas/internal/identity"
 	"nx-baas/internal/token"
 	"strings"
 	"testing"
@@ -117,8 +118,8 @@ func TestSwitchIdentityExposesOnlyVerifiedApplication(t *testing.T) {
 // subject is the BAAS user id, so every code answered "no account found". This
 // is the lookup that actually holds the mapping.
 func TestAccountByFriendCodeFindsTheAccountHoweverItIsTyped(t *testing.T) {
-	b := &openpakBackend{proj: &projectionStore{
-		ByAccount: map[string]*projection{},
+	b := &identity.OpenpakBackend{Proj: &identity.ProjectionStore{
+		ByAccount: map[string]*identity.Projection{},
 		ByPID:     map[uint64]string{},
 		ByBaas:    map[string]string{},
 		ByCode:    map[string]string{"SW-1000-0000-0001": "e4a030bf-b4a9-4592-8891-d3a9fc58f4be"},
@@ -128,14 +129,14 @@ func TestAccountByFriendCodeFindsTheAccountHoweverItIsTyped(t *testing.T) {
 		"SW-1000-0000-0001", "sw-1000-0000-0001", "SW100000000001",
 		"1000-0000-0001", "100000000001", "SW 1000 0000 0001",
 	} {
-		got, ok := b.accountForFriendCode(typed)
+		got, ok := b.AccountForFriendCode(typed)
 		if !ok || got != "e4a030bf-b4a9-4592-8891-d3a9fc58f4be" {
 			t.Errorf("%q -> %q/%v, want the account", typed, got, ok)
 		}
 	}
 
 	for _, bad := range []string{"", "SW-0000-0000-0000", "12345", "not a code"} {
-		if _, ok := b.accountForFriendCode(bad); ok {
+		if _, ok := b.AccountForFriendCode(bad); ok {
 			t.Errorf("%q matched an account", bad)
 		}
 	}
@@ -143,8 +144,8 @@ func TestAccountByFriendCodeFindsTheAccountHoweverItIsTyped(t *testing.T) {
 
 // The internal route the website calls, end to end.
 func TestSwitchAccountByFriendCodeRoute(t *testing.T) {
-	s := &server{acct: &openpakBackend{proj: &projectionStore{
-		ByAccount: map[string]*projection{},
+	s := &server{acct: &identity.OpenpakBackend{Proj: &identity.ProjectionStore{
+		ByAccount: map[string]*identity.Projection{},
 		ByPID:     map[uint64]string{},
 		ByBaas:    map[string]string{},
 		ByCode:    map[string]string{"SW-1000-0000-0002": "5011153a-6621-451e-a299-082bc56fea50"},

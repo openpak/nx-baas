@@ -31,11 +31,11 @@ func TestSetNicknameGoesToTheCore(t *testing.T) {
 		t.Fatal("no registration client: want an error, not a silent drop")
 	}
 	reg := &fakeRegistration{}
-	b.register = reg
+	b.Register = reg
 	if err := b.SetNickname(res.PID, "After"); err != nil {
 		t.Fatal(err)
 	}
-	if reg.got.GetAccountId() != "acc-1" || reg.got.GetDisplayName() != "After" || reg.got.GetCallerNamespace() != b.namespace {
+	if reg.got.GetAccountId() != "acc-1" || reg.got.GetDisplayName() != "After" || reg.got.GetCallerNamespace() != b.Namespace {
 		t.Fatalf("core was sent %+v", reg.got)
 	}
 	if err := b.SetNickname(res.PID+1, "Nobody"); err == nil {

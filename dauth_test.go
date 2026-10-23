@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 	"nx-baas/internal/token"
 	"reflect"
@@ -147,7 +148,7 @@ func TestUserObjectInventsNothing(t *testing.T) {
 	t.Setenv("NX_DEFAULT_COUNTRY", "GB")
 	t.Setenv("NX_DEFAULT_BIRTHDAY", "1990-01-01")
 	u := &store.User{ID: "user-1", Birthday: "0000-00-00"}
-	obj := s.userObj(u, &Identity{PID: 1, Nickname: "someone", FriendCode: "SW-0000-0000-0000"}, "")
+	obj := s.userObj(u, &identity.Identity{PID: 1, Nickname: "someone", FriendCode: "SW-0000-0000-0000"}, "")
 
 	self := obj["extras"].(map[string]any)["self"].(map[string]any)
 	if _, ok := self["nxAccount"]; ok {
@@ -171,7 +172,7 @@ func TestUserObjectInventsNothing(t *testing.T) {
 func TestNintendoAccountFollowsTheAccountsOwnProfile(t *testing.T) {
 	s := dauthServer(t)
 	s.store = &store.Store{}
-	id := &Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "someone", Country: "IE", Birthday: "1984-03-02"}
+	id := &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "someone", Country: "IE", Birthday: "1984-03-02"}
 
 	country, birthday := naProfile(id)
 	if country != "IE" || birthday != "1984-03-02" {
@@ -185,7 +186,7 @@ func TestNintendoAccountFollowsTheAccountsOwnProfile(t *testing.T) {
 	// With nothing on the account the fallback stands, because a Nintendo Account cannot have
 	// an empty country — but it is the only place in the stack still allowed to substitute.
 	t.Setenv("NA_FALLBACK_COUNTRY", "GB")
-	if c, _ := naProfile(&Identity{NaID: "x"}); c != "GB" {
+	if c, _ := naProfile(&identity.Identity{NaID: "x"}); c != "GB" {
 		t.Errorf("fallback country = %q, want GB", c)
 	}
 }

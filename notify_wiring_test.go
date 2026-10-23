@@ -7,6 +7,7 @@ package main
 // console parsed anything; nx-penne's own tests cover the outbox and the wire.
 
 import (
+	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 	"testing"
 	"time"
@@ -17,7 +18,7 @@ import (
 // backwards would alert the wrong console, which no later test would catch.
 func TestCoreFriendEventsNotifyTheAccountTheCoreAddressed(t *testing.T) {
 	s, _, users := socialServer(t)
-	b := s.acct.(*openpakBackend)
+	b := s.acct.(*identity.OpenpakBackend)
 	a, other := users[0], users[1]
 
 	for _, tc := range []struct {
@@ -52,7 +53,7 @@ func TestCoreFriendEventsNotifyTheAccountTheCoreAddressed(t *testing.T) {
 // [friends-notifications-firmware-2026-09-19.md §2.2].
 func TestRequestReceivedPushCarriesTheChannel(t *testing.T) {
 	s, _, users := socialServer(t)
-	b := s.acct.(*openpakBackend)
+	b := s.acct.(*identity.OpenpakBackend)
 	a, other := users[0], users[1]
 
 	id, _ := s.store.EnsureRequest(other.PID, a.PID)
@@ -70,7 +71,7 @@ func TestRequestReceivedPushCarriesTheChannel(t *testing.T) {
 
 	// A request this server never saw still parses: FRIEND_CODE.
 	s2, _, users2 := socialServer(t)
-	b2 := s2.acct.(*openpakBackend)
+	b2 := s2.acct.(*identity.OpenpakBackend)
 	s2.notifyCoreFriendEvent(b2, "friend_requested", "acc-a@example.com", "acc-b@example.com", 22)
 	queue2 := outboxOf(s2, users2[0].ID)
 	if len(queue2) != 1 {
@@ -87,7 +88,7 @@ func TestRequestReceivedPushCarriesTheChannel(t *testing.T) {
 // the version, so nx-penne (which dedups on it) alerts the recipient once.
 func TestReplayedCoreEventsKeepTheirEventID(t *testing.T) {
 	s, _, users := socialServer(t)
-	b := s.acct.(*openpakBackend)
+	b := s.acct.(*identity.OpenpakBackend)
 
 	s.notifyCoreFriendEvent(b, "friend_requested", "acc-a@example.com", "acc-b@example.com", 77)
 	s.notifyCoreFriendEvent(b, "friend_requested", "acc-a@example.com", "acc-b@example.com", 77)
@@ -102,7 +103,7 @@ func TestReplayedCoreEventsKeepTheirEventID(t *testing.T) {
 // to be told; the wiring must not invent a recipient.
 func TestCoreEventForAnUnprojectedAccountIsDropped(t *testing.T) {
 	s, _, users := socialServer(t)
-	b := s.acct.(*openpakBackend)
+	b := s.acct.(*identity.OpenpakBackend)
 
 	s.notifyCoreFriendEvent(b, "friend_requested", "acc-nobody@example.com", "acc-b@example.com", 5)
 

@@ -18,6 +18,7 @@ package main
 
 import (
 	"fmt"
+	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 	"sync"
 	"time"
@@ -47,14 +48,14 @@ var coreEventKind = map[string]string{
 // identity. A poll page reprocessed after a crash resubmits the same ids and
 // B's outbox recognizes them, which is what keeps A's at-least-once cursor
 // safe against duplicate user-visible alerts (NTF-05).
-func (s *server) notifyCoreFriendEvent(b *openpakBackend, evType, accountID, subjectID string, version uint64) {
+func (s *server) notifyCoreFriendEvent(b *identity.OpenpakBackend, evType, accountID, subjectID string, version uint64) {
 	kind := coreEventKind[evType]
-	if kind == "" || b == nil || b.proj == nil {
+	if kind == "" || b == nil || b.Proj == nil {
 		return
 	}
-	b.proj.mu.Lock()
-	me, other := b.proj.ByAccount[accountID], b.proj.ByAccount[subjectID]
-	b.proj.mu.Unlock()
+	b.Proj.Mu.Lock()
+	me, other := b.Proj.ByAccount[accountID], b.Proj.ByAccount[subjectID]
+	b.Proj.Mu.Unlock()
 	if me == nil {
 		return // no Switch identity on the receiving side: nothing native to tell
 	}

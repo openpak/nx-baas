@@ -12,6 +12,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 	"strings"
 	"time"
@@ -19,10 +20,10 @@ import (
 
 // notifyCorePresence sends one viewer (a Switch user, by core account) the presence of subject
 // (the core account whose presence moved).
-func (s *server) notifyCorePresence(b *openpakBackend, viewerAccount, subjectAccount string) {
-	b.proj.mu.Lock()
-	vpr, spr := b.proj.ByAccount[viewerAccount], b.proj.ByAccount[subjectAccount]
-	b.proj.mu.Unlock()
+func (s *server) notifyCorePresence(b *identity.OpenpakBackend, viewerAccount, subjectAccount string) {
+	b.Proj.Mu.Lock()
+	vpr, spr := b.Proj.ByAccount[viewerAccount], b.Proj.ByAccount[subjectAccount]
+	b.Proj.Mu.Unlock()
 	if vpr == nil {
 		return // not a Switch user here
 	}
@@ -30,8 +31,8 @@ func (s *server) notifyCorePresence(b *openpakBackend, viewerAccount, subjectAcc
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		var err error
-		if spr, err = b.ensure(ctx, subjectAccount); err != nil {
-			logErr("presence push ensure", err)
+		if spr, err = b.Ensure(ctx, subjectAccount); err != nil {
+			identity.LogErr("presence push ensure", err)
 			return
 		}
 	}
@@ -45,10 +46,10 @@ func (s *server) notifyCorePresence(b *openpakBackend, viewerAccount, subjectAcc
 		return
 	}
 	s.coreSeen().forget(subjectAccount) // the event is the news; the 10 s cache would answer with the old state
-	if p, ok := s.corePresenceOf(subjectAccount); ok && strings.EqualFold(p.Namespace, b.namespace) {
+	if p, ok := s.corePresenceOf(subjectAccount); ok && strings.EqualFold(p.Namespace, b.Namespace) {
 		return
 	}
-	agg, live := s.presenceFromCore(subjectAccount, b.namespace, now)
+	agg, live := s.presenceFromCore(subjectAccount, b.Namespace, now)
 	if !live {
 		agg = store.Presence{State: "OFFLINE", UpdatedAt: now, LogoutAt: now, ACDIndex: -1}
 	}
