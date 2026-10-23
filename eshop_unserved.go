@@ -105,15 +105,15 @@ func (s *server) nimUnserved(w http.ResponseWriter, r *http.Request, body []byte
 	// "What versions of this application exist?" — NIM's update check on
 	// superfly [nim: /v1/a/%016llx/dv, built at 0x1ecbe0; the reply is read by
 	// the SAX handler at 0x3280e0]. Answered from the catalog in nx-shop.
-	case strings.HasPrefix(p, "/v1/a/") && strings.HasSuffix(p, "/dv") && s.shopFwd != nil:
-		httpx.ForwardRead(s.shopFwd, w, r, body) // the catalog lives in nx-shop (split.go)
+	case strings.HasPrefix(p, "/v1/a/") && strings.HasSuffix(p, "/dv") && s.ShopFwd != nil:
+		httpx.ForwardRead(s.ShopFwd, w, r, body) // the catalog lives in nx-shop (split.go)
 		return true
 
 	// The eShop's own catalogue search [nim: /v1/acds/search]. Answered from
 	// the shop catalog in nx-shop rather than with an empty list: the console is
 	// asking what this store has, and the store knows.
-	case strings.HasPrefix(p, "/v1/acds/search") && s.shopFwd != nil:
-		httpx.ForwardRead(s.shopFwd, w, r, body)
+	case strings.HasPrefix(p, "/v1/acds/search") && s.ShopFwd != nil:
+		httpx.ForwardRead(s.ShopFwd, w, r, body)
 		return true
 	}
 	return false
@@ -137,8 +137,8 @@ func (s *server) friendsAppCatalog(w http.ResponseWriter, r *http.Request) bool 
 	if !ok || appID == "" {
 		return false
 	}
-	if s.shopFwd != nil && (file == "catalog.json" || strings.HasSuffix(file, ".jpg") || strings.HasSuffix(file, ".png")) {
-		s.shopFwd.ServeHTTP(w, r) // the catalog lives in nx-shop (split.go)
+	if s.ShopFwd != nil && (file == "catalog.json" || strings.HasSuffix(file, ".jpg") || strings.HasSuffix(file, ".png")) {
+		s.ShopFwd.ServeHTTP(w, r) // the catalog lives in nx-shop (split.go)
 		return true
 	}
 	return false

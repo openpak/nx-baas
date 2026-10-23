@@ -99,8 +99,8 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if isPlayFab(host) {
 		// Before the body read: login bodies carry identity tokens (playfab.go).
-		if s.playfabFwd != nil && strings.EqualFold(host, "94845.playfabapi.com") {
-			s.playfabFwd.ServeHTTP(w, r)
+		if s.PlayfabFwd != nil && strings.EqualFold(host, "94845.playfabapi.com") {
+			s.PlayfabFwd.ServeHTTP(w, r)
 			return
 		}
 		playfabUnavailable(w, r)

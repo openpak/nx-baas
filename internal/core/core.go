@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/http/httputil"
 	"nx-baas/internal/devices"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
@@ -33,6 +34,18 @@ type Core struct {
 	Harbor *devices.Registry
 	// Penne is nx-penne, where every push the core decides on goes (internal/penne).
 	Penne *penne.Remote
+	// The forwarders to the split-out services (nx-baas split.go fills them from the
+	// environment): every surface that hands a request on reads them here.
+	// ShopFwd forwards the eShop to nx-shop (nx-baas split.go).
+	ShopFwd *httputil.ReverseProxy
+	// PenneFwd forwards the Penne hosts and /internal/penne to nx-penne (nx-baas split.go).
+	PenneFwd *httputil.ReverseProxy
+	// PctlFwd forwards parental controls to nx-pctl (nx-baas split.go).
+	PctlFwd *httputil.ReverseProxy
+	// BcatFwd is nx-bcat once the bcat hosts have moved (NX_BCAT_URL).
+	BcatFwd *httputil.ReverseProxy
+	// PlayfabFwd serves only explicitly supported PlayFab titles (the PlayFab host).
+	PlayfabFwd *httputil.ReverseProxy
 }
 
 const (

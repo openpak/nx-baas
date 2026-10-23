@@ -483,6 +483,4 @@ type Service struct {
 	Friends     *friends.Service
 	// Submit hands a checked notification to Penne; wait asks for nx-penne's outcome.
 	Submit func(d penne.Delivery, wait bool) penne.Submission
-	// The forwarders to the split-out services whose admin routes the website still calls here.
-	ShopFwd, PctlFwd, PenneFwd *httputil.ReverseProxy
 }

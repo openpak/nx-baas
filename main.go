@@ -49,18 +49,8 @@ type server struct {
 	// console's proven account attached. nil answers the empty-cloud fallback instead.
 	saves    *httputil.ReverseProxy
 	savesKey string
-	// shopFwd forwards the eShop to nx-shop (split.go).
-	shopFwd *httputil.ReverseProxy
-	// penneFwd forwards the Penne hosts and /internal/penne to nx-penne (split.go).
-	penneFwd *httputil.ReverseProxy
 	// notifier is where checked notifications go (internal/penne): Core.Penne.
 	notifier penne.Notifier
-	// pctlFwd forwards parental controls to nx-pctl (split.go).
-	pctlFwd *httputil.ReverseProxy
-	// bcatFwd is nx-bcat once the bcat hosts have moved (NX_BCAT_URL, split.go).
-	bcatFwd *httputil.ReverseProxy
-	// playfabFwd serves only explicitly supported PlayFab titles (playfab.go).
-	playfabFwd *httputil.ReverseProxy
 	// bansChecker answers whether an account may use the network (internal/bans); locks()
 	// creates it on first use so test servers built as literals work unchanged.
 	bansChecker *bans.Checker
@@ -354,7 +344,7 @@ func (s *server) baasSvc() *baas.Service {
 func (s *server) gameAPISvc() *gameapi.Service {
 	return &gameapi.Service{Core: s.Core, Locks: s.locks(), Dauth: s.dauthSvc(), Invitations: s.invitationsSvc(),
 		Presence: s.presenceSvc(), NA: s.naSvc(), BAAS: s.baasSvc(), Friends: s.friendsSvc(),
-		Submit: s.submitNotification, ShopFwd: s.shopFwd, PctlFwd: s.pctlFwd, PenneFwd: s.penneFwd}
+		Submit: s.submitNotification}
 }
 
 // gameAPI is the game-facing internal API's mux (NX_API_ADDR).

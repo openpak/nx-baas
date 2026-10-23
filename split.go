@@ -48,29 +48,29 @@ func missingForward() (env, service string) {
 // forwardersFromEnv installs the forwarders whose URLs are set.
 func (s *server) forwardersFromEnv() {
 	if u := os.Getenv("NX_PLAYFAB_URL"); u != "" {
-		s.playfabFwd = httpx.NewForwarder("playfab", u)
+		s.PlayfabFwd = httpx.NewForwarder("playfab", u)
 		// Preserve the SDK error envelope even when the upstream is unavailable.
-		s.playfabFwd.ErrorHandler = func(w http.ResponseWriter, r *http.Request, _ error) {
+		s.PlayfabFwd.ErrorHandler = func(w http.ResponseWriter, r *http.Request, _ error) {
 			playfabUnavailable(w, r)
 		}
 		log.Printf("[nx-baas] Core Keeper PlayFab forwarding enabled")
 	}
 	if u := os.Getenv("NX_SHOP_URL"); u != "" {
-		s.shopFwd = httpx.NewForwarder("nx-shop", u)
+		s.ShopFwd = httpx.NewForwarder("nx-shop", u)
 		log.Printf("[nx-baas] eShop moved: forwarding its hosts and /internal/store to %s", u)
 	}
 	if u := os.Getenv("NX_PENNE_URL"); u != "" {
-		s.penneFwd = httpx.NewForwarder("nx-penne", u)
+		s.PenneFwd = httpx.NewForwarder("nx-penne", u)
 		s.Penne = penne.NewRemote(u)
 		s.notifier = s.Penne
 		log.Printf("[nx-baas] Penne moved: registrations, tickets, /internal/penne and every push go to %s", u)
 	}
 	if u := os.Getenv("NX_PCTL_URL"); u != "" {
-		s.pctlFwd = httpx.NewForwarder("nx-pctl", u)
+		s.PctlFwd = httpx.NewForwarder("nx-pctl", u)
 		log.Printf("[nx-baas] parental controls moved: forwarding the pctl hosts and /internal/pctl to %s", u)
 	}
 	if u := os.Getenv("NX_BCAT_URL"); u != "" {
-		s.bcatFwd = httpx.NewForwarder("nx-bcat", u)
+		s.BcatFwd = httpx.NewForwarder("nx-bcat", u)
 		log.Printf("[nx-baas] BCAT moved: forwarding the bcat hosts (News lists, game data) to %s", u)
 	}
 }
@@ -116,11 +116,11 @@ func (s *server) forwardMoved(w http.ResponseWriter, r *http.Request) bool {
 		http.NotFound(w, r)
 		return true
 	}
-	if s.shopFwd != nil && (isShopHost(host) || strings.HasPrefix(host, "dragons.") && shopRightsRoute(r.URL.Path)) {
-		s.shopFwd.ServeHTTP(w, r)
+	if s.ShopFwd != nil && (isShopHost(host) || strings.HasPrefix(host, "dragons.") && shopRightsRoute(r.URL.Path)) {
+		s.ShopFwd.ServeHTTP(w, r)
 		return true
 	}
-	if s.penneFwd != nil && isPenneHost(host) {
+	if s.PenneFwd != nil && isPenneHost(host) {
 		if isPenneFrontline(host) {
 			// A full-duplex stream this process cannot proxy (net/http drains the request
 			// body on the first flush). Traefik must send the
@@ -129,15 +129,15 @@ func (s *server) forwardMoved(w http.ResponseWriter, r *http.Request) bool {
 			httpx.WriteJSON(w, http.StatusMisdirectedRequest, map[string]any{"status": 421, "title": "misdirected request"})
 			return true
 		}
-		s.penneFwd.ServeHTTP(w, r)
+		s.PenneFwd.ServeHTTP(w, r)
 		return true
 	}
-	if s.pctlFwd != nil && isPctlHost(host) {
-		s.pctlFwd.ServeHTTP(w, r)
+	if s.PctlFwd != nil && isPctlHost(host) {
+		s.PctlFwd.ServeHTTP(w, r)
 		return true
 	}
-	if s.bcatFwd != nil && isBcatHost(host) {
-		s.bcatFwd.ServeHTTP(w, r)
+	if s.BcatFwd != nil && isBcatHost(host) {
+		s.BcatFwd.ServeHTTP(w, r)
 		return true
 	}
 	return false
@@ -145,9 +145,9 @@ func (s *server) forwardMoved(w http.ResponseWriter, r *http.Request) bool {
 
 // movedFamily reports whether host belongs to a family this process forwards.
 func (s *server) movedFamily(host string) bool {
-	return s.shopFwd != nil && (isShopHost(host) || strings.HasPrefix(host, "dragons.")) ||
-		s.penneFwd != nil && isPenneHost(host) || s.pctlFwd != nil && isPctlHost(host) ||
-		s.bcatFwd != nil && isBcatHost(host)
+	return s.ShopFwd != nil && (isShopHost(host) || strings.HasPrefix(host, "dragons.")) ||
+		s.PenneFwd != nil && isPenneHost(host) || s.PctlFwd != nil && isPctlHost(host) ||
+		s.BcatFwd != nil && isBcatHost(host)
 }
 
 // shopRightsRoute: the dragons rights routes the store workstream owns. Everything else on
