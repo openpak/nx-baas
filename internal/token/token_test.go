@@ -1,4 +1,4 @@
-package main
+package token
 
 import (
 	"strings"
@@ -11,7 +11,7 @@ import (
 // presence or take a notification again.
 func TestDeviceAccountPasswordIsFortyHexDigits(t *testing.T) {
 	for i := 0; i < 32; i++ {
-		p := randPassword()
+		p := RandPassword()
 		if len(p) != 40 {
 			t.Fatalf("password %q is %d characters, want 40", p, len(p))
 		}

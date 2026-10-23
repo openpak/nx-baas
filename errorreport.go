@@ -35,6 +35,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/token"
 	"nx-baas/redact"
 	"os"
 	"path/filepath"
@@ -89,7 +90,7 @@ func (s *server) errorReport(w http.ResponseWriter, r *http.Request) {
 	rep := decodeErrorReport(r.Header.Get("Content-Type"), body)
 	id := rep.id
 	if id == "" {
-		id = randHex(16)
+		id = token.RandHex(16)
 	}
 	if err := sp.keepRaw(id, r.Header.Get("Content-Type"), body); err != nil {
 		// Not accepted if not kept: the console will upload it again.

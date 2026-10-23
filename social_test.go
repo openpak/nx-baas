@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"nx-baas/internal/token"
 	"strings"
 	"testing"
 	"time"
@@ -1121,7 +1122,7 @@ func TestExpiredAndForeignTokensAreRefused(t *testing.T) {
 		"aud": baasAudience, "bs:did": "did", "bs:grt": 2, "exp": time.Now().Unix() - 10,
 		"iat": time.Now().Unix() - 100, "iss": baasIssuer, "sub": a.ID, "typ": "token",
 	}
-	tok := signJWT(map[string]any{"alg": "RS256", "kid": "test-kid", "typ": "JWT"}, claims, s.key)
+	tok := token.SignJWT(map[string]any{"alg": "RS256", "kid": "test-kid", "typ": "JWT"}, claims, s.key)
 
 	call := func(bearer string) int {
 		r := httptest.NewRequest("GET", "https://"+baasHost+path, nil)

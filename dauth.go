@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/token"
 	"nx-baas/redact"
 	"strings"
 	"time"
@@ -78,8 +79,8 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 	case p == "/v8/challenge" && r.Method == "POST":
 		// The console mixes this into the MAC it sends back with the token request.
 		httpx.WriteJSON(w, 200, map[string]any{
-			"challenge": randB64(33),
-			"data":      randB64(16),
+			"challenge": token.RandB64(33),
+			"data":      token.RandB64(16),
 		})
 
 	case p == "/v8/device_auth_tokens" && r.Method == "POST":
@@ -183,7 +184,7 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 		httpx.WriteJSON(w, 200, map[string]any{"state": "COMPLETED", "migration_state": "NONE"})
 
 	case strings.HasPrefix(host, "dragons") && strings.HasSuffix(p, "/penne_id"):
-		httpx.WriteJSON(w, 200, map[string]any{"id": "opk" + randHex(16), "password": randB64(24)})
+		httpx.WriteJSON(w, 200, map[string]any{"id": "opk" + token.RandHex(16), "password": token.RandB64(24)})
 
 	default:
 		log.Printf("[dauth] !! UNHANDLED %s %s%s", r.Method, host, redact.Path(p))
@@ -199,7 +200,7 @@ func edgeDToken(exp int64, device string) string {
 
 func edgeDTokenFor(exp int64, device, serial string) string {
 	return fmt.Sprintf("exp=%d~acl=%%2F%%2A~data=sub=%s.sn=%s.pc=HAC.id=%s~hmac=%s",
-		exp, device, serial, uuid4(), randHex(32))
+		exp, device, serial, token.UUID4(), token.RandHex(32))
 }
 
 // applicationToken is what aauth hands back for a title. Its jku is acert, not dcert: the
@@ -208,11 +209,11 @@ func (s *server) applicationToken(appID, appVersion string) string {
 	now := time.Now().Unix()
 	device := "openpak-device"
 	serial := consoleSerial(device)
-	return signJWT(
+	return token.SignJWT(
 		map[string]any{"alg": "RS256", "jku": "https://acert-lp1.ndas.srv.nintendo.net/keys", "kid": s.idKid, "typ": "JWT"},
 		map[string]any{
 			"iss": "aauth-lp1.ndas.srv.nintendo.net",
-			"jti": uuid4(),
+			"jti": token.UUID4(),
 			"iat": now - 600,
 			"exp": now + 86400,
 			"sub": appID,
@@ -220,10 +221,10 @@ func (s *server) applicationToken(appID, appVersion string) string {
 			"dvc": map[string]any{"di": device, "sn": serial},
 			"nintendo": map[string]any{
 				"ai": appID, "av": appVersion, "at": now,
-				"edi": randB64(60), "tbn": randB64(16), "tbh": randB64(32),
+				"edi": token.RandB64(60), "tbn": token.RandB64(16), "tbh": token.RandB64(32),
 				"opp": "MEMBERSHIP_REQUIRED", "ph": "SYSTEM",
 				"di": device, "sn": serial, "pc": "HAC", "dt": "NX Prod 1",
-				"ist": false, "esv": randB64(33),
+				"ist": false, "esv": token.RandB64(33),
 			},
 		}, s.key)
 }
@@ -252,18 +253,18 @@ func (s *server) deviceToken(deviceID, clientID string) string {
 // off its enrolment as the real service reads a console's off its certificate.
 func (s *server) deviceTokenFor(deviceID, serial, clientID string) string {
 	now := time.Now().Unix()
-	return signJWT(
+	return token.SignJWT(
 		map[string]any{"alg": "RS256", "jku": "https://dcert-lp1.ndas.srv.nintendo.net/keys", "kid": s.idKid, "typ": "JWT"},
 		map[string]any{
 			"iss": "dauth-lp1.ndas.srv.nintendo.net",
-			"jti": uuid4(),
+			"jti": token.UUID4(),
 			"iat": now - 600,
 			"exp": now + 86400,
 			"sub": deviceID,
 			"aud": clientID,
 			"nintendo": map[string]any{
 				"sn": serial, "did": deviceID, "pc": "HAC", "dt": "NX Prod 1",
-				"ist": false, "esv": randB64(33), "x5t#S256": deviceThumbprint,
+				"ist": false, "esv": token.RandB64(33), "x5t#S256": deviceThumbprint,
 			},
 			"client_id": clientID,
 		}, s.key)

@@ -7,6 +7,7 @@ package main
 
 import (
 	"log"
+	"nx-baas/internal/token"
 	"nx-baas/redact"
 	"time"
 )
@@ -75,7 +76,7 @@ func (s *server) submitNotification(d PenneDelivery, wait bool) PenneSubmission 
 		return PenneSubmission{Outcome: penneRejectUser}
 	}
 	if d.ID == "" {
-		d.ID = "ev" + randHex(8)
+		d.ID = "ev" + token.RandHex(8)
 	}
 	n := s.notifier
 	if n == nil {

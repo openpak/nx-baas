@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/token"
 	"os"
 	"time"
 )
@@ -52,7 +53,7 @@ func (s *server) switchIdentity(w http.ResponseWriter, r *http.Request) {
 		}
 		// Only expose an application claim after proving the whole token. Title
 		// servers (PlayFab) bind their login to this value, never an unsigned JWT.
-		claims, _ := parseJWT(in.IDToken, &s.key.PublicKey)
+		claims, _ := token.ParseJWT(in.IDToken, &s.key.PublicKey)
 		application, _ := claims["nintendo"].(map[string]any)
 		applicationID = httpx.Str(application, "ai")
 		// pid can be 0 here, and that is deliberately not a 401: the token is genuine and we
@@ -104,7 +105,7 @@ func (s *server) switchIdentity(w http.ResponseWriter, r *http.Request) {
 // we do not know returns (0, true), because the two cases are answered with different status
 // codes and a caller that conflates them makes a console retry forever.
 func (s *server) pidForIDToken(tok string) (uint64, bool) {
-	c, err := parseJWT(tok, &s.key.PublicKey)
+	c, err := token.ParseJWT(tok, &s.key.PublicKey)
 	if err != nil {
 		return 0, false
 	}

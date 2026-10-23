@@ -34,6 +34,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/token"
 	"nx-baas/redact"
 	"os"
 	"regexp"
@@ -196,7 +197,7 @@ func (s *server) bearer(r *http.Request) map[string]any {
 	if !strings.HasPrefix(a, "Bearer ") {
 		return nil
 	}
-	c, err := parseJWT(strings.TrimPrefix(a, "Bearer "), &s.key.PublicKey)
+	c, err := token.ParseJWT(strings.TrimPrefix(a, "Bearer "), &s.key.PublicKey)
 	if err != nil {
 		return nil
 	}
@@ -284,16 +285,16 @@ func (s *server) accessToken(sub string, grant int, bsDid, di, sn string) string
 	now := time.Now().Unix()
 	claims := map[string]any{
 		"aud": baasAudience, "bs:did": bsDid, "bs:grt": grant, "exp": now + 10800, "iat": now,
-		"iss": baasIssuer, "jti": uuid4(), "sub": sub, "typ": "token",
+		"iss": baasIssuer, "jti": token.UUID4(), "sub": sub, "typ": "token",
 	}
 	if grant == 1 {
-		claims["bs:pid"] = "pz" + randHex(15)
+		claims["bs:pid"] = "pz" + token.RandHex(15)
 		claims["bs:sts"] = []int64{1188950301625811329}
 		claims["nintendo"] = map[string]any{"di": di, "dt": "NX Prod 1", "ist": false, "pc": "HAC", "sn": sn, "x5t#S256": deviceThumbprint}
 	} else {
 		claims["bs:sts"] = []int64{10415858080830506, 272640, 9, 0, 0, 19316357715722240, 16}
 	}
-	return signJWT(map[string]any{"alg": "RS256", "jku": baasJku + "/1.0.0/internal_certificates", "kid": s.accKid, "typ": "JWT"}, claims, s.key)
+	return token.SignJWT(map[string]any{"alg": "RS256", "jku": baasJku + "/1.0.0/internal_certificates", "kid": s.accKid, "typ": "JWT"}, claims, s.key)
 }
 
 func (s *server) idToken(u *User, id *Identity, username string, app map[string]any) string {
@@ -310,8 +311,8 @@ func (s *server) idToken(u *User, id *Identity, username string, app map[string]
 		}
 	}
 	claims := map[string]any{
-		"aud": baasAudience, "bs:did": u.ID, "exp": now + 10800, "iat": now, "iss": baasIssuer, "jti": uuid4(),
-		"nintendo": map[string]any{"ai": ai, "at": now, "av": av, "edi": randB64(60), "tbh": randB64(32), "tbn": randB64(16)},
+		"aud": baasAudience, "bs:did": u.ID, "exp": now + 10800, "iat": now, "iss": baasIssuer, "jti": token.UUID4(),
+		"nintendo": map[string]any{"ai": ai, "at": now, "av": av, "edi": token.RandB64(60), "tbh": token.RandB64(32), "tbn": token.RandB64(16)},
 		"sub":      u.ID, "typ": "id_token",
 	}
 	if id != nil {
@@ -320,7 +321,7 @@ func (s *server) idToken(u *User, id *Identity, username string, app map[string]
 			claims["openpak"] = t
 		}
 	}
-	return signJWT(map[string]any{"alg": "RS256", "jku": baasJku + "/1.0.0/certificates", "kid": s.idKid, "typ": "JWT"}, claims, s.key)
+	return token.SignJWT(map[string]any{"alg": "RS256", "jku": baasJku + "/1.0.0/certificates", "kid": s.idKid, "typ": "JWT"}, claims, s.key)
 }
 
 func (s *server) naHeader() map[string]any {
@@ -329,14 +330,14 @@ func (s *server) naHeader() map[string]any {
 
 func (s *server) naRefreshToken(c naCode) string {
 	now := time.Now().Unix()
-	return signJWT(s.naHeader(), map[string]any{"aud": c.ClientID, "exp": now + 365*86400, "iat": now, "iss": naIssuer, "jti": uuid4(), "sub": c.NaID, "typ": "refresh"}, s.key)
+	return token.SignJWT(s.naHeader(), map[string]any{"aud": c.ClientID, "exp": now + 365*86400, "iat": now, "iss": naIssuer, "jti": token.UUID4(), "sub": c.NaID, "typ": "refresh"}, s.key)
 }
 
 func (s *server) naAccessToken(c naCode) string {
 	now := time.Now().Unix()
-	return signJWT(s.naHeader(), map[string]any{
+	return token.SignJWT(s.naHeader(), map[string]any{
 		"ac:grt": 4, "ac:scp": []int{0, 1, 4, 5, 8, 9, 10, 11, 12, 13, 23, 28},
-		"aud": c.ClientID, "exp": now + 900, "iat": now, "iss": naIssuer, "jti": uuid4(), "sub": c.NaID, "typ": "token",
+		"aud": c.ClientID, "exp": now + 900, "iat": now, "iss": naIssuer, "jti": token.UUID4(), "sub": c.NaID, "typ": "token",
 	}, s.key)
 }
 
@@ -350,7 +351,7 @@ func (s *server) bindNotificationChannel(deviceAuthenticationToken, baasUserID s
 	if baasUserID == "" {
 		return
 	}
-	if dt, err := parseJWT(deviceAuthenticationToken, &s.key.PublicKey); err == nil {
+	if dt, err := token.ParseJWT(deviceAuthenticationToken, &s.key.PublicKey); err == nil {
 		s.penneBindConsole(httpx.Str(dt, "sub"), baasUserID)
 	}
 }
@@ -415,20 +416,20 @@ func naLinks(id *Identity) map[string]any {
 func (s *server) naIDToken(c naCode, accessToken, code string) string {
 	now := time.Now().Unix()
 	claims := map[string]any{
-		"aud": c.ClientID, "exp": now + 900, "iat": now, "iss": naIssuer, "jti": uuid4(), "sub": c.NaID,
+		"aud": c.ClientID, "exp": now + 900, "iat": now, "iss": naIssuer, "jti": token.UUID4(), "sub": c.NaID,
 	}
 	if c.Nonce != "" {
 		claims["nonce"] = c.Nonce
 	}
 	if accessToken != "" {
 		sum := sha256.Sum256([]byte(accessToken))
-		claims["at_hash"] = b64url(sum[:16])
+		claims["at_hash"] = token.B64URL(sum[:16])
 	}
 	if code != "" {
 		sum := sha256.Sum256([]byte(code))
-		claims["c_hash"] = b64url(sum[:16])
+		claims["c_hash"] = token.B64URL(sum[:16])
 	}
-	return signJWT(s.naHeader(), claims, s.key)
+	return token.SignJWT(s.naHeader(), claims, s.key)
 }
 
 // ---------- user objects ----------
@@ -555,7 +556,7 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 	friendsEx := map[string]any{"isChatActivated": true, "isChatInvitable": true, "playLog": ""}
 	everyone := map[string]any{"playLog": ""}
 	thumb1, thumb2, thumbAt := cdnHost+"/1/default", cdnHost+"/2/default", int64(0) // VPS parity for unlinked users
-	etag := randHex(8)
+	etag := token.RandHex(8)
 	if id != nil {
 		etag = id.BsDid // VPS parity: user.etag == the token bs:did for a linked user
 		nickname = id.Nickname
@@ -902,7 +903,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 
 	case p == "/1.0.0/application/token" && r.Method == "POST":
 		// The assertion is nx-dauth's device token; we trust it as-is (dauth already gated).
-		claims, _ := parseJWT(form.Get("assertion"), nil)
+		claims, _ := token.ParseJWT(form.Get("assertion"), nil)
 		di := httpx.Str(claims, "sub")
 		sn := ""
 		if n, ok := claims["nintendo"].(map[string]any); ok {
@@ -915,7 +916,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		s.mu.Lock()
 		s.device[di] = sn
 		s.mu.Unlock()
-		httpx.WriteJSON(w, 200, map[string]any{"accessToken": s.accessToken(di, 1, randHex(8), di, sn), "tokenType": "Bearer", "expiresIn": 10800})
+		httpx.WriteJSON(w, 200, map[string]any{"accessToken": s.accessToken(di, 1, token.RandHex(8), di, sn), "tokenType": "Bearer", "expiresIn": 10800})
 		return
 
 	case p == "/1.0.0/image_upload" && r.Method == "POST":
@@ -1002,7 +1003,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			baasLocked(w, r, lock)
 			return
 		}
-		app, _ := parseJWT(form.Get("appAuthNToken"), nil)
+		app, _ := token.ParseJWT(form.Get("appAuthNToken"), nil)
 		id := s.identity(u)
 		username := u.Nickname
 		if id != nil {
@@ -1041,7 +1042,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				if id != nil {
 					return id.BsDid
 				}
-				return randHex(8)
+				return token.RandHex(8)
 			}(), di, sn), "tokenType": "Bearer",
 		}
 		// No "summary": the login reply a console accepted carries exactly
@@ -1476,7 +1477,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 
 // link binds a BAAS user to the OpenPak account behind a Nintendo-Account id_token we issued.
 func (s *server) link(u *User, idTok string) (*User, error) {
-	claims, err := parseJWT(idTok, &s.key.PublicKey)
+	claims, err := token.ParseJWT(idTok, &s.key.PublicKey)
 	if err != nil {
 		return nil, err
 	}
@@ -2018,7 +2019,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		naID := strings.TrimSuffix(strings.TrimPrefix(p, "/api/1.0.0/users/"), "/qrcode_param")
 		now := time.Now().Unix()
 		exp := now + 7*86400
-		param := fmt.Sprintf("https://accounts.nintendo.com/qr_verify?sig=%s&iat=%d&aud=6ffd70c434d303c8&sub=%s&exp=%d", randB64(32), now, naID, exp)
+		param := fmt.Sprintf("https://accounts.nintendo.com/qr_verify?sig=%s&iat=%d&aud=6ffd70c434d303c8&sub=%s&exp=%d", token.RandB64(32), now, naID, exp)
 		httpx.WriteJSON(w, 200, map[string]any{"exp": exp, "param": param, "userId": naID})
 		return
 
@@ -2054,7 +2055,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 
 	case p == "/connect/1.0.0/authorize" && r.Method == "POST" && form.Get("prompt") == "none":
 		// SSO for system applets (e-license etc.): identified by our NA access token, no UI.
-		cl, err := parseJWT(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), &s.key.PublicKey)
+		cl, err := token.ParseJWT(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), &s.key.PublicKey)
 		pid := uint64(0)
 		if err == nil {
 			pid = s.store.PIDForNA(httpx.Str(cl, "sub"))
@@ -2074,11 +2075,11 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			return
 		}
 		c := naCode{PID: pid, Username: id.Nickname, ClientID: form.Get("client_id"), NaID: id.NaID, Nonce: form.Get("nonce"), Created: time.Now()}
-		code := randHex(16)
+		code := token.RandHex(16)
 		s.mu.Lock()
 		s.codes[code] = c
 		s.mu.Unlock()
-		frag := url.Values{"state": {form.Get("state")}, "session_state": {randHex(11)}, "code": {code}}
+		frag := url.Values{"state": {form.Get("state")}, "session_state": {token.RandHex(11)}, "code": {code}}
 		if strings.Contains(form.Get("response_type"), "id_token") {
 			frag.Set("id_token", s.naIDToken(c, "", code))
 		}
@@ -2151,7 +2152,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 				s.authorizePage(w, r, q, `<p class="err">Account lookup failed.</p>`)
 				return
 			}
-			code := randHex(16)
+			code := token.RandHex(16)
 			s.mu.Lock()
 			s.codes[code] = naCode{PID: res.PID, Username: res.Username, ClientID: q.Get("client_id"), NaID: id.NaID, Created: time.Now()}
 			s.mu.Unlock()
@@ -2194,7 +2195,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			s.authorizePage(w, r, q, `<p class="err">Account lookup failed.</p>`)
 			return
 		}
-		code := randHex(16)
+		code := token.RandHex(16)
 		s.mu.Lock()
 		s.codes[code] = naCode{PID: p.PID, Username: p.Username, ClientID: q.Get("client_id"), NaID: id.NaID, Created: time.Now()}
 		s.mu.Unlock()
@@ -2220,7 +2221,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		if !ok && form.Get("refresh_token") != "" {
 			// Later boots: the console refreshes with the token we issued (a signed JWT whose sub
 			// is the NA id); the NA id -> PID map is persisted, so this survives restarts.
-			if cl, err := parseJWT(form.Get("refresh_token"), &s.key.PublicKey); err == nil && httpx.Str(cl, "typ") == "refresh" {
+			if cl, err := token.ParseJWT(form.Get("refresh_token"), &s.key.PublicKey); err == nil && httpx.Str(cl, "typ") == "refresh" {
 				if pid := s.store.PIDForNA(httpx.Str(cl, "sub")); pid != 0 {
 					if id, err := s.acct.Identity(pid); err == nil {
 						c, ok = naCode{PID: pid, Username: id.Nickname, ClientID: form.Get("client_id"), NaID: id.NaID}, true
@@ -2251,7 +2252,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		httpx.WriteJSON(w, 200, map[string]any{
 			"access_token": at, "expires_in": 900, "id_token": s.naIDToken(c, at, ""), "refresh_token": s.naRefreshToken(c),
 			"scope":         strings.Fields(strings.ReplaceAll(form.Get("scope"), "+", " ")),
-			"session_token": randHex(24), "token_type": "Bearer",
+			"session_token": token.RandHex(24), "token_type": "Bearer",
 		})
 		return
 
@@ -2264,7 +2265,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		return
 
 	case p == "/2.0.0/users/me":
-		c, err := parseJWT(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), &s.key.PublicKey)
+		c, err := token.ParseJWT(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), &s.key.PublicKey)
 		if err != nil {
 			httpx.WriteJSON(w, 401, map[string]any{"error": "invalid_token"})
 			return
@@ -2779,7 +2780,7 @@ func main() {
 	if env, service := missingForward(); env != "" {
 		log.Fatalf("[nx-baas] %s is required: %s serves that family now and nx-baas only forwards to it (docs/service-split.md)", env, service)
 	}
-	key := loadRSAKey(httpx.Getenv("BAAS_SIGNING_KEY", "/keys/baas_signing_key.pem"))
+	key := token.LoadRSAKey(httpx.Getenv("BAAS_SIGNING_KEY", "/keys/baas_signing_key.pem"))
 	s := &server{
 		store:      loadStore(httpx.Getenv("NX_DATA", "/data") + "/baas.json"),
 		key:        key,
@@ -2823,7 +2824,7 @@ func main() {
 		s.saves, s.savesKey = newSavesProxy(u), os.Getenv("SAVES_INTERNAL_KEY")
 		log.Printf("[nx-baas] save-data cloud: forwarding scsi hosts to %s", u)
 	}
-	s.jwks = jwksFor(&key.PublicKey, s.idKid, httpx.Getenv("BAAS_ID_KID", "00000000-0000-0000-0000-000000000002"), s.accKid, s.naKid)
+	s.jwks = token.JWKSFor(&key.PublicKey, s.idKid, httpx.Getenv("BAAS_ID_KID", "00000000-0000-0000-0000-000000000002"), s.accKid, s.naKid)
 	cert := selfSigned([]string{baasHost, "m-lp1.baas.nintendo.com", "cdn-image-e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com",
 		"accounts.nintendo.com", "api.accounts.nintendo.com", "cdn.accounts.nintendo.com",
 		"god.hac.lp1.penne.srv.nintendo.net", "val.hac.penne.srv.nintendo.net", "val.hac.lp1.penne.srv.nintendo.net",
@@ -3011,7 +3012,7 @@ func (s *server) bearerHeader(r *http.Request, header string) map[string]any {
 	if !strings.HasPrefix(v, "Bearer ") {
 		return nil
 	}
-	c, err := parseJWT(strings.TrimPrefix(v, "Bearer "), &s.key.PublicKey)
+	c, err := token.ParseJWT(strings.TrimPrefix(v, "Bearer "), &s.key.PublicKey)
 	if err != nil {
 		return nil
 	}

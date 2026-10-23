@@ -1,4 +1,6 @@
-package main
+// Package token mints and checks the tokens nx-baas signs (RS256 JWTs, the JWKS that
+// publishes their key) and the random ids and passwords it hands out.
+package token
 
 import (
 	"crypto"
@@ -17,15 +19,15 @@ import (
 	"strings"
 )
 
-func b64url(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
+func B64URL(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
 
-func randHex(n int) string {
+func RandHex(n int) string {
 	b := make([]byte, n)
 	rand.Read(b)
 	return fmt.Sprintf("%x", b)
 }
 
-func uuid4() string {
+func UUID4() string {
 	b := make([]byte, 16)
 	rand.Read(b)
 	b[6] = b[6]&0x0f | 0x40
@@ -34,18 +36,18 @@ func uuid4() string {
 }
 
 // 40 alphanumerics, like a real BAAS device-account password.
-// randPassword mints a device-account password. The account module checks all
+// RandPassword mints a device-account password. The account module checks all
 // forty characters are hex digits before it writes the profile's local record,
 // and writes nothing at all otherwise -- and that record is create-only, so a
 // profile that links with a non-hex password can never publish presence or
 // receive notifications until it is unlinked (2026-09-20,
 // docs/switch/presence-publish-gate-2026-09-20.md). Alphanumeric passwords
 // passed that check with probability about 1e-18.
-func randPassword() string {
-	return randHex(20)
+func RandPassword() string {
+	return RandHex(20)
 }
 
-func loadRSAKey(path string) *rsa.PrivateKey {
+func LoadRSAKey(path string) *rsa.PrivateKey {
 	pemBytes, err := os.ReadFile(path)
 	if err != nil {
 		log.Fatalf("[nx-baas] read signing key %s: %v", path, err)
@@ -66,8 +68,8 @@ func loadRSAKey(path string) *rsa.PrivateKey {
 	return nil
 }
 
-func jwksFor(pub *rsa.PublicKey, kids ...string) []byte {
-	n, e := b64url(pub.N.Bytes()), b64url(big.NewInt(int64(pub.E)).Bytes())
+func JWKSFor(pub *rsa.PublicKey, kids ...string) []byte {
+	n, e := B64URL(pub.N.Bytes()), B64URL(big.NewInt(int64(pub.E)).Bytes())
 	keys := []map[string]any{}
 	for _, kid := range kids {
 		keys = append(keys, map[string]any{"kty": "RSA", "use": "sig", "alg": "RS256", "kid": kid, "n": n, "e": e})
@@ -76,18 +78,18 @@ func jwksFor(pub *rsa.PublicKey, kids ...string) []byte {
 	return out
 }
 
-func signJWT(header, claims map[string]any, key *rsa.PrivateKey) string {
+func SignJWT(header, claims map[string]any, key *rsa.PrivateKey) string {
 	h, _ := json.Marshal(header)
 	c, _ := json.Marshal(claims)
-	input := b64url(h) + "." + b64url(c)
+	input := B64URL(h) + "." + B64URL(c)
 	sum := sha256.Sum256([]byte(input))
 	sig, _ := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, sum[:])
-	return input + "." + b64url(sig)
+	return input + "." + B64URL(sig)
 }
 
-// parseJWT returns the claims of a compact JWT. With key != nil the RS256 signature must verify
+// ParseJWT returns the claims of a compact JWT. With key != nil the RS256 signature must verify
 // (our own tokens); with nil it only decodes (a dauth device token we did not issue).
-func parseJWT(tok string, key *rsa.PublicKey) (map[string]any, error) {
+func ParseJWT(tok string, key *rsa.PublicKey) (map[string]any, error) {
 	parts := strings.Split(tok, ".")
 	if len(parts) != 3 {
 		return nil, errors.New("not a jwt")
@@ -110,7 +112,7 @@ func parseJWT(tok string, key *rsa.PublicKey) (map[string]any, error) {
 	return claims, json.Unmarshal(raw, &claims)
 }
 
-func randB64(n int) string {
+func RandB64(n int) string {
 	b := make([]byte, n)
 	rand.Read(b)
 	return base64.RawURLEncoding.EncodeToString(b)

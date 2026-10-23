@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"encoding/json"
 	"net/http/httptest"
+	"nx-baas/internal/token"
 	"strings"
 	"testing"
 	"time"
@@ -81,7 +82,7 @@ func TestSwitchIdentityExposesOnlyVerifiedApplication(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"application_id":"010070201D1BA000"`) || !strings.Contains(w.Body.String(), `"account_id":"acc-4"`) {
 		t.Fatalf("missing verified application/account: %d %s", w.Code, w.Body)
 	}
-	claims, err := parseJWT(tok, &key.PublicKey)
+	claims, err := token.ParseJWT(tok, &key.PublicKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +97,7 @@ func TestSwitchIdentityExposesOnlyVerifiedApplication(t *testing.T) {
 				c[k] = v
 			}
 			change(c)
-			bad := signJWT(map[string]any{"alg": "RS256"}, c, key)
+			bad := token.SignJWT(map[string]any{"alg": "RS256"}, c, key)
 			if w := do(t, s, "POST", "/internal/switch/identity", "", `{"id_token":"`+bad+`"}`); w.Code != 401 {
 				t.Fatalf("invalid token exposed identity: %d", w.Code)
 			}

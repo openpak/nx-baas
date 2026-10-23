@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"net/url"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/token"
 	"nx-baas/redact"
 	"strconv"
 	"sync"
@@ -211,7 +212,7 @@ func lockedPageMessage(lock string) string {
 
 // naLockOfToken reads the lock of the account a Nintendo Account id token names.
 func (s *server) naLockOfToken(idTok string) string {
-	c, err := parseJWT(idTok, &s.key.PublicKey)
+	c, err := token.ParseJWT(idTok, &s.key.PublicKey)
 	if err != nil {
 		return lockBanned
 	}

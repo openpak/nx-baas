@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/token"
 	"reflect"
 	"strings"
 	"testing"
@@ -19,14 +20,14 @@ func dauthServer(t *testing.T) *server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &server{key: key, idKid: "test-kid", jwks: jwksFor(&key.PublicKey, "test-kid")}
+	return &server{key: key, idKid: "test-kid", jwks: token.JWKSFor(&key.PublicKey, "test-kid")}
 }
 
 // The device token is the contract between dauth and /1.0.0/application/token, which reads
 // "sub" as the device id. If that field moves, the login breaks with no error anywhere.
 func TestDeviceTokenCarriesDeviceID(t *testing.T) {
 	s := dauthServer(t)
-	claims, err := parseJWT(s.deviceToken("dev-123", "client-abc"), nil)
+	claims, err := token.ParseJWT(s.deviceToken("dev-123", "client-abc"), nil)
 	if err != nil {
 		t.Fatalf("device token does not decode: %v", err)
 	}
@@ -86,7 +87,7 @@ func TestDeviceTokensFromRealConsoleBody(t *testing.T) {
 	if out.Tokens[0].ClientID != "8f849b5d34778d8e" {
 		t.Errorf("first client_id = %q", out.Tokens[0].ClientID)
 	}
-	claims, err := parseJWT(out.Tokens[1].Token, nil)
+	claims, err := token.ParseJWT(out.Tokens[1].Token, nil)
 	if err != nil || httpx.Str(claims, "aud") != "dc656ea03b63cf68" {
 		t.Errorf("second token does not carry its client_id (%v)", err)
 	}
@@ -123,7 +124,7 @@ func TestAccountSetupPathsAllAnswer(t *testing.T) {
 // it there. It has to be non-empty and the same on every request from one console.
 func TestDeviceTokenCarriesAStableSerial(t *testing.T) {
 	s := dauthServer(t)
-	claims, _ := parseJWT(s.deviceToken("dev-123", "client-abc"), nil)
+	claims, _ := token.ParseJWT(s.deviceToken("dev-123", "client-abc"), nil)
 	n, _ := claims["nintendo"].(map[string]any)
 	sn := httpx.Str(n, "sn")
 	if sn == "" || sn != consoleSerial("dev-123") {

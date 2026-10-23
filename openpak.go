@@ -19,6 +19,7 @@ import (
 	"math/big"
 	"net/url"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/token"
 	"nx-baas/redact"
 	"os"
 	"path/filepath"
@@ -142,10 +143,10 @@ func loadProjections(path string) *projectionStore {
 			continue
 		}
 		if pr.NaID == "" {
-			pr.NaID = randHex(8)
+			pr.NaID = token.RandHex(8)
 		}
 		if pr.BsDid == "" {
-			pr.BsDid = randHex(8)
+			pr.BsDid = token.RandHex(8)
 		}
 		dirty = true
 	}
@@ -206,7 +207,7 @@ func (b *openpakBackend) ensure(ctx context.Context, accountID string) (*project
 	case err == nil:
 		subject = got.GetSubjectId()
 	case status.Code(err) == codes.NotFound:
-		subject = randHex(8) // 16 hex, the BAAS user id convention
+		subject = token.RandHex(8) // 16 hex, the BAAS user id convention
 		res, err := b.links.ReserveLink(ctx, &accountv1.ReserveLinkRequest{
 			AccountId: accountID, Namespace: b.namespace, SubjectId: subject,
 			IdempotencyKey: "ensure:" + subject})
@@ -234,8 +235,8 @@ func (b *openpakBackend) ensure(ctx context.Context, accountID string) (*project
 		AccountID:  accountID,
 		PID:        pid,
 		BaasUserID: subject,
-		NaID:       randHex(8),
-		BsDid:      randHex(8),
+		NaID:       token.RandHex(8),
+		BsDid:      token.RandHex(8),
 		FriendCode: code,
 		CreatedAt:  time.Now().Unix(),
 	}

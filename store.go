@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"nx-baas/internal/token"
 	"os"
 	"sync"
 	"time"
@@ -235,8 +236,8 @@ func (s *Store) NewUser() (*User, *DeviceAccount) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now().Unix()
-	u := &User{ID: randHex(8), Birthday: "0000-00-00", CreatedAt: now, UpdatedAt: now, Presence: Presence{State: "OFFLINE", UpdatedAt: now}}
-	d := &DeviceAccount{ID: randHex(8), Password: randPassword(), UserID: u.ID}
+	u := &User{ID: token.RandHex(8), Birthday: "0000-00-00", CreatedAt: now, UpdatedAt: now, Presence: Presence{State: "OFFLINE", UpdatedAt: now}}
+	d := &DeviceAccount{ID: token.RandHex(8), Password: token.RandPassword(), UserID: u.ID}
 	u.DeviceAccounts = []string{d.ID}
 	s.Users[u.ID] = u
 	s.Devices[d.ID] = d
@@ -253,7 +254,7 @@ func (s *Store) Login(id, password string) *User {
 		// another OpenPak deployment (the VPS) presents credentials we never issued; on a
 		// private LAN we adopt them instead of forcing a console reset.
 		now := time.Now().Unix()
-		u := &User{ID: randHex(8), Birthday: "0000-00-00", CreatedAt: now, UpdatedAt: now, Presence: Presence{State: "OFFLINE", UpdatedAt: now}, DeviceAccounts: []string{id}}
+		u := &User{ID: token.RandHex(8), Birthday: "0000-00-00", CreatedAt: now, UpdatedAt: now, Presence: Presence{State: "OFFLINE", UpdatedAt: now}, DeviceAccounts: []string{id}}
 		d = &DeviceAccount{ID: id, Password: password, UserID: u.ID}
 		s.Users[u.ID] = u
 		s.Devices[id] = d
@@ -403,9 +404,9 @@ func (s *Store) EnsureRequest(fromPID, toPID uint64) (string, bool) {
 			return r.ID, false
 		}
 	}
-	id := randHex(8)
+	id := token.RandHex(8)
 	for s.Requests[id] != nil { // collision with a historic id
-		id = randHex(8)
+		id = token.RandHex(8)
 	}
 	s.Requests[id] = &FriendRequestRecord{ID: id, FromPID: fromPID, ToPID: toPID, CreatedAt: now, UpdatedAt: now}
 	s.save()

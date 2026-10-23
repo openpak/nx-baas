@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"net/url"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/token"
 	"nx-baas/redact"
 	"strconv"
 	"strings"
@@ -93,7 +94,7 @@ type phoneStore struct {
 func newPhoneStore() *phoneStore { return &phoneStore{by: map[string]phoneSession{}} }
 
 func (p *phoneStore) new(pid uint64, username string) string {
-	token := randHex(32)
+	token := token.RandHex(32)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for t, s := range p.by {
@@ -148,7 +149,7 @@ type pending2FAStore struct {
 func newPending2FAStore() *pending2FAStore { return &pending2FAStore{by: map[string]*pending2FA{}} }
 
 func (s *pending2FAStore) new(p *pending2FA) string {
-	token := randHex(32)
+	token := token.RandHex(32)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for t, q := range s.by {
@@ -196,7 +197,7 @@ func (l *linkStore) new(q url.Values) (code, pair string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.expireLocked()
-	code, pair = randCode(), randHex(16)
+	code, pair = randCode(), token.RandHex(16)
 	l.by[code] = &pendingLink{State: linkWaiting, Pair: pair, Query: q, Created: time.Now()}
 	return code, pair
 }
@@ -573,7 +574,7 @@ func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) b
 // finishLink mints the same code the password form does and builds the console's redirect, so
 // both paths end identically.
 func (s *server) finishLink(p *pendingLink) string {
-	code := randHex(16)
+	code := token.RandHex(16)
 	s.mu.Lock()
 	s.codes[code] = naCode{PID: p.PID, Username: p.Username, ClientID: p.Query.Get("client_id"), NaID: p.NaID, Created: time.Now()}
 	s.mu.Unlock()

@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"nx-baas/internal/token"
 	"os"
 	"path/filepath"
 	"strings"
@@ -121,16 +122,16 @@ func TestFiveAuthRejectsForeignTokens(t *testing.T) {
 	}{
 		{"no token", ""},
 		{"garbage", "not.a.jwt"},
-		{"wrong issuer", signJWT(map[string]any{"alg": "RS256", "kid": "x"}, map[string]any{
+		{"wrong issuer", token.SignJWT(map[string]any{"alg": "RS256", "kid": "x"}, map[string]any{
 			"aud": baasAudience, "exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(),
 			"iss": "https://elsewhere.example", "sub": invSenderUID, "typ": "token", "bs:grt": 2}, s.key)},
-		{"expired", signJWT(map[string]any{"alg": "RS256", "kid": "x"}, map[string]any{
+		{"expired", token.SignJWT(map[string]any{"alg": "RS256", "kid": "x"}, map[string]any{
 			"aud": baasAudience, "exp": time.Now().Add(-time.Hour).Unix(), "iat": time.Now().Add(-2 * time.Hour).Unix(),
 			"iss": baasIssuer, "sub": invSenderUID, "typ": "token", "bs:grt": 2}, s.key)},
-		{"wrong type", signJWT(map[string]any{"alg": "RS256", "kid": "x"}, map[string]any{
+		{"wrong type", token.SignJWT(map[string]any{"alg": "RS256", "kid": "x"}, map[string]any{
 			"aud": baasAudience, "exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(),
 			"iss": baasIssuer, "sub": invSenderUID, "typ": "id_token", "bs:grt": 2}, s.key)},
-		{"anonymous device grant", signJWT(map[string]any{"alg": "RS256", "kid": "x"}, map[string]any{
+		{"anonymous device grant", token.SignJWT(map[string]any{"alg": "RS256", "kid": "x"}, map[string]any{
 			"aud": baasAudience, "exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(),
 			"iss": baasIssuer, "sub": "pz00000000000000", "typ": "token", "bs:grt": 1}, s.key)},
 	}

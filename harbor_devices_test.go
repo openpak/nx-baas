@@ -27,6 +27,7 @@ import (
 
 	"nx-baas/internal/b233"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/token"
 )
 
 // A throwaway device CA, made per test: the real keys are the owner's.
@@ -219,7 +220,7 @@ func tokenSub(t *testing.T, w *httptest.ResponseRecorder) (sub, sn string) {
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &out) != nil || len(out.Results) == 0 {
 		t.Fatalf("device_auth_tokens = %d %s", w.Code, w.Body.String())
 	}
-	claims, _ := parseJWT(out.Results[0].Token, nil)
+	claims, _ := token.ParseJWT(out.Results[0].Token, nil)
 	n, _ := claims["nintendo"].(map[string]any)
 	return httpx.Str(claims, "sub"), httpx.Str(n, "sn")
 }
