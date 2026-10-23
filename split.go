@@ -51,6 +51,26 @@ func newForwarder(name, base string) *httputil.ReverseProxy {
 	}
 }
 
+// requiredForwards are the families nx-baas no longer serves itself: without the URL of the
+// service that owns one, its consoles would get nothing, so the process refuses to start.
+// BCAT is not among them: Traefik routes the bcat hosts straight to nx-bcat, and
+// NX_BCAT_URL is only the safety net.
+var requiredForwards = []struct{ env, service string }{
+	{"NX_SHOP_URL", "nx-shop"},
+	{"NX_PENNE_URL", "nx-penne"},
+	{"NX_PCTL_URL", "nx-pctl"},
+}
+
+// missingForward names the first required forward URL that is not set, or "".
+func missingForward() (env, service string) {
+	for _, f := range requiredForwards {
+		if os.Getenv(f.env) == "" {
+			return f.env, f.service
+		}
+	}
+	return "", ""
+}
+
 // forwardersFromEnv installs the forwarders whose URLs are set.
 func (s *server) forwardersFromEnv() {
 	if u := os.Getenv("NX_PLAYFAB_URL"); u != "" {

@@ -2906,6 +2906,9 @@ func newBackend() accountBackend {
 }
 
 func main() {
+	if env, service := missingForward(); env != "" {
+		log.Fatalf("[nx-baas] %s is required: %s serves that family now and nx-baas only forwards to it (docs/service-split.md)", env, service)
+	}
 	key := loadRSAKey(getenv("BAAS_SIGNING_KEY", "/keys/baas_signing_key.pem"))
 	s := &server{
 		store:      loadStore(getenv("NX_DATA", "/data") + "/baas.json"),
