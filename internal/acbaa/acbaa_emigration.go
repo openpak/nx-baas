@@ -1,4 +1,4 @@
-package main
+package acbaa
 
 import (
 	"log"
@@ -13,7 +13,7 @@ import (
 // Recovered from matching ACNH main FF1D1C05670DB6021C85B624A710B963:
 // request 006a9800, response 006a9ca0, user parser 006a9e50 (Ghidra VA).
 // This exchanges existing island/resident credentials; it does not move saves.
-func (s *server) acbaaEmigration(w http.ResponseWriter, r *http.Request, body []byte) {
+func (s *Service) acbaaEmigration(w http.ResponseWriter, r *http.Request, body []byte) {
 	caller, valid := acbaaVerifyToken(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 	if !valid && s.Key != nil {
 		claims := s.Bearer(r)

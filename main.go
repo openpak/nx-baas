@@ -18,6 +18,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httputil"
+	"nx-baas/internal/acbaa"
 	"nx-baas/internal/baas"
 	"nx-baas/internal/bans"
 	"nx-baas/internal/core"
@@ -47,30 +48,6 @@ type server struct {
 	// console's proven account attached. nil answers the empty-cloud fallback instead.
 	saves    *httputil.ReverseProxy
 	savesKey string
-	// acbaaProfiles remembers uploaded ACNH player profiles by ACNH user id
-	// so profile_status reflects them after a PUT, and acbaaResources the
-	// per-user web_service_resources uploads. Both file-backed (acbaaPath)
-	// because a restart must not blank them: a warm client that already
-	// registered checks status without re-uploading, and blanks read as a
-	// failure (2219-0021). Lazily created so direct handler tests work.
-	acbaaProfiles  map[uint64]acbaaProfile
-	acbaaResources map[uint64]map[string][]byte
-	acbaaNames     map[uint64]acbaaNames
-	// acbaaLandProfiles remembers uploaded island profiles by land
-	// in_app_id, and acbaaUserLand links each user to their land (set at
-	// bind time). profile_status reports "ok" per side exactly when that
-	// side was uploaded — the game byte-compares for "ok"/"ng".
-	acbaaLandProfiles map[uint64]acbaaProfile
-	acbaaUserLand     map[uint64]uint64
-	// acbaaUIDMap records earlier ACNH id -> NEX PID moves, so path uids
-	// minted before the single-identity change keep addressing the same
-	// account on warm clients.
-	acbaaUIDMap map[uint64]uint64
-	// ACNH best friends: pending requests by id, and each user's confirmed
-	// best-friend list (symmetric). Persisted with the rest.
-	acbaaFriendReqs map[uint64]acbaaFriendReq
-	acbaaFriendList map[uint64][]uint64
-	acbaaPath       string
 	// shopFwd forwards the eShop to nx-shop (split.go).
 	shopFwd *httputil.ReverseProxy
 	// penneFwd forwards the Penne hosts and /internal/penne to nx-penne (split.go).
@@ -103,6 +80,9 @@ type server struct {
 	// avatar host (internal/baas).
 	baasService *baas.Service
 	baasOnce    sync.Once
+	// acbaaService is Animal Crossing's web API (internal/acbaa).
+	acbaaService *acbaa.Service
+	acbaaOnce    sync.Once
 	// dauthService is device and application authentication (internal/dauth).
 	dauthService *dauth.Service
 	dauthOnce    sync.Once
@@ -147,8 +127,7 @@ func main() {
 	}
 	s.forwardersFromEnv()
 	s.Harbor = devices.FromEnv()
-	s.acbaaPath = httpx.Getenv("NX_DATA", "/data") + "/acbaa.json"
-	s.acbaaLoad()
+	s.acbaaSvc().Open(httpx.Getenv("NX_DATA", "/data") + "/acbaa.json")
 	if b, ok := s.Acct.(*identity.OpenpakBackend); ok {
 		go s.followCoreEvents(b)
 		// One presence reconciler beside the one core-event poller: leases,
@@ -379,3 +358,9 @@ func (s *server) gameAPISvc() *gameapi.Service {
 
 // gameAPI is the game-facing internal API's mux (NX_API_ADDR).
 func (s *server) gameAPI() http.Handler { return s.gameAPISvc().Handler() }
+
+// acbaaSvc is Animal Crossing's web API, created on first use like locks.
+func (s *server) acbaaSvc() *acbaa.Service {
+	s.acbaaOnce.Do(func() { s.acbaaService = &acbaa.Service{Core: s.Core} })
+	return s.acbaaService
+}

@@ -197,7 +197,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Animal Crossing web API (acbaa.go): island registration. Before
 		// this it fell into the catch-all 404 and ACNH errored (2219-xxxx)
 		// before ever reaching NEX.
-		s.acbaa(w, r, body)
+		s.acbaaSvc().Handle(w, r, body)
 	case strings.Contains(host, ".tabiji.srv.nintendo.net"):
 		// Firmware 23's play-history upload (tabiji.go).
 		s.tabiji(w, r, body)

@@ -1,6 +1,4 @@
-package main
-
-// Animal Crossing web API (acbaa), as ACNH 3.0.3 actually speaks it.
+// Package acbaa is the Animal Crossing web API (acbaa), as ACNH 3.0.3 actually speaks it.
 //
 // Observed on the wire 2026-09-21 (Ryujinx against OpenPak, island "lovely "):
 //
@@ -31,6 +29,7 @@ package main
 // the HTTP status naming the failure (404/3004 unmapped route, 401/4001 bad
 // authorization). Unmapped routes stay loud so each new call the game makes
 // surfaces in the log with its path.
+package acbaa
 
 import (
 	"bytes"
@@ -45,11 +44,13 @@ import (
 	"hash/fnv"
 	"log"
 	"net/http"
+	"nx-baas/internal/core"
 	"nx-baas/internal/msgpack"
 	"nx-baas/redact"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -57,7 +58,7 @@ import (
 // mapped route is a 404 that names itself in the log, not a plausible-looking
 // empty object: an unmapped acbaa route that returns 200 is indistinguishable
 // from one that works.
-func (s *server) acbaa(w http.ResponseWriter, r *http.Request, body []byte) {
+func (s *Service) Handle(w http.ResponseWriter, r *http.Request, body []byte) {
 	if r.Method == http.MethodPost && r.URL.Path == "/api/v1/emigrations" {
 		s.acbaaEmigration(w, r, body)
 		return
@@ -145,7 +146,7 @@ func acbaaError(w http.ResponseWriter, status int, code string) {
 // Stateless by design: the answer is a deterministic function of the request
 // (echo plus id), so there is nothing a restart can lose. A registry belongs
 // here the day a second endpoint needs to look a land up (Dodo-code visits).
-func (s *server) acbaaRegisterLand(w http.ResponseWriter, r *http.Request, body []byte) {
+func (s *Service) acbaaRegisterLand(w http.ResponseWriter, r *http.Request, body []byte) {
 	v, err := msgpack.Decode(body)
 	if err != nil {
 		log.Printf("[acbaa] POST /api/v1/lands: bad msgpack (%dB): %v", len(body), redact.Err(err))
@@ -209,7 +210,7 @@ func acbaaLandPassword(inAppID uint64) string {
 // (Minting the BAAS-sub number instead gave every account two identities
 // and every island visit answered empty.) The password is derived like the
 // land's, under its own domain separator.
-func (s *server) acbaaRegisterUser(w http.ResponseWriter, r *http.Request, body []byte) {
+func (s *Service) acbaaRegisterUser(w http.ResponseWriter, r *http.Request, body []byte) {
 	v, err := msgpack.Decode(body)
 	if err != nil {
 		log.Printf("[acbaa] POST /api/v1/users: bad msgpack (%dB): %v", len(body), redact.Err(err))
@@ -256,7 +257,7 @@ func (s *server) acbaaRegisterUser(w http.ResponseWriter, r *http.Request, body 
 // sight, so one account never holds two islands. A token without a usable
 // sub falls back to a name hash rather than refusing: refusing here would
 // lock the player out of online entirely on a token-shape surprise.
-func acbaaUserID(s *server, auth, name string) uint64 {
+func acbaaUserID(s *Service, auth, name string) uint64 {
 	nsa := acbaaSubID(auth, name)
 	tok := strings.TrimPrefix(auth, "Bearer ")
 	if s != nil && s.Key != nil && s.Store != nil {
@@ -289,7 +290,7 @@ func acbaaSubID(auth, name string) uint64 {
 // game re-registers (POST /users) on every online entry, so the move
 // happens before anything reads the new id, and the old key is left empty
 // rather than deleted so a rollback build finds nothing contradictory.
-func (s *server) acbaaMigrateUID(oldUID, newPID uint64) {
+func (s *Service) acbaaMigrateUID(oldUID, newPID uint64) {
 	s.mu.Lock()
 	if s.migrateUIDLocked(oldUID, newPID) {
 		log.Printf("[acbaa] migrated uid=%s to NEX pid=%s", redact.Tag(oldUID), redact.Tag(newPID))
@@ -302,7 +303,7 @@ func (s *server) acbaaMigrateUID(oldUID, newPID uint64) {
 // records the mapping so path uids from warm clients (still carrying the
 // old id their token was minted for) resolve forward. True when anything
 // moved.
-func (s *server) migrateUIDLocked(oldUID, newPID uint64) bool {
+func (s *Service) migrateUIDLocked(oldUID, newPID uint64) bool {
 	moved := false
 	if p, ok := s.acbaaProfiles[oldUID]; ok {
 		if s.acbaaProfiles == nil {
@@ -391,7 +392,7 @@ func (s *server) migrateUIDLocked(oldUID, newPID uint64) bool {
 // account's profile_status answers ng/ng for records that are on file
 // (observed 2026-09-21: profile under the NEX PID, status asked by earlier
 // uid).
-func (s *server) acbaaResolveUID(uid uint64) uint64 {
+func (s *Service) acbaaResolveUID(uid uint64) uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if next, ok := s.acbaaUIDMap[uid]; ok && next != 0 {
@@ -417,7 +418,7 @@ func acbaaUserPassword(id uint64) string {
 // authorization), which is also what the game shows when its stored
 // credentials go stale. The token is self-verifying (id plus an
 // authenticator), so later endpoints resolve the caller with no store.
-func (s *server) acbaaAuthToken(w http.ResponseWriter, r *http.Request, body []byte) {
+func (s *Service) acbaaAuthToken(w http.ResponseWriter, r *http.Request, body []byte) {
 	v, err := msgpack.Decode(body)
 	if err != nil {
 		log.Printf("[acbaa] POST /api/v1/auth_token: bad msgpack (%dB): %v", len(body), redact.Err(err))
@@ -483,7 +484,7 @@ func acbaaVerifyToken(token string) (uint64, bool) {
 // the derivation, and the caller must own the path's user id (either via our
 // v1 token or the BAAS sub it was minted from). Anything else is the
 // documented 401/4001.
-func (s *server) acbaaBindUserLand(w http.ResponseWriter, r *http.Request, body []byte) {
+func (s *Service) acbaaBindUserLand(w http.ResponseWriter, r *http.Request, body []byte) {
 	seg := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	if len(seg) != 5 {
 		acbaaError(w, 404, "3004")
@@ -539,7 +540,7 @@ func (s *server) acbaaBindUserLand(w http.ResponseWriter, r *http.Request, body 
 // hex-decodes to it (the same account both ways). Both sides resolve through
 // the uid map, so an earlier token against a migrated path (or the reverse)
 // still matches the one account.
-func (s *server) acbaaCallerOwns(auth string, uid uint64) bool {
+func (s *Service) acbaaCallerOwns(auth string, uid uint64) bool {
 	tok := strings.TrimPrefix(auth, "Bearer ")
 	if id, ok := acbaaVerifyToken(tok); ok {
 		return s.acbaaResolveUID(id) == uid
@@ -560,7 +561,7 @@ func (s *server) acbaaCallerOwns(auth string, uid uint64) bool {
 // "nothing changed", which is true for a server holding no directory.
 // (The game's online-setup function calls this before validating profiles;
 // an unanswered here aborts the whole flow.)
-func (s *server) acbaaUpdatedAddresses(w http.ResponseWriter, r *http.Request, body []byte) {
+func (s *Service) acbaaUpdatedAddresses(w http.ResponseWriter, r *http.Request, body []byte) {
 	v, err := msgpack.Decode(body)
 	if err != nil {
 		log.Printf("[acbaa] POST /api/v1/lands/updated_addresses: bad msgpack (%dB): %v", len(body), redact.Err(err))
@@ -588,7 +589,7 @@ func (s *server) acbaaUpdatedAddresses(w http.ResponseWriter, r *http.Request, b
 // stub zero-fills and the game reads a C string). Answered with a bare 200;
 // no response body is documented. Logged per user for the day a push
 // backend wants to know whom a token belongs to; nothing is delivered.
-func (s *server) acbaaNotificationToken(w http.ResponseWriter, r *http.Request, body []byte) {
+func (s *Service) acbaaNotificationToken(w http.ResponseWriter, r *http.Request, body []byte) {
 	v, err := msgpack.Decode(body)
 	if err != nil {
 		log.Printf("[acbaa] POST /api/v1/notification_tokens: bad msgpack (%dB): %v", len(body), redact.Err(err))
@@ -612,7 +613,7 @@ func (s *server) acbaaNotificationToken(w http.ResponseWriter, r *http.Request, 
 // Undocumented shape; answered like the other list endpoints
 // ({total, count, headers}, empty) — the game sails past it either way, and
 // a wrong guess here would be the next 2219-xxxx with the game's thanks.
-func (s *server) acbaaRewards(w http.ResponseWriter, r *http.Request) {
+func (s *Service) acbaaRewards(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-msgpack")
 	w.WriteHeader(200)
 	w.Write(msgpack.Encode(map[string]any{"total": 0, "count": 0, "headers": []any{}}))
@@ -624,7 +625,7 @@ func (s *server) acbaaRewards(w http.ResponseWriter, r *http.Request) {
 // land_memory (2026-09-21). Fire-and-forget island/app state for the NookLink
 // side; answered with a bare 200 and remembered per user for the day a GET
 // for them appears.
-func (s *server) acbaaWebResource(w http.ResponseWriter, r *http.Request, body []byte) {
+func (s *Service) acbaaWebResource(w http.ResponseWriter, r *http.Request, body []byte) {
 	name := strings.TrimPrefix(r.URL.Path, "/api/v1/web_service_resources/")
 	if name == "" || strings.Contains(name, "/") {
 		acbaaError(w, 404, "3004")
@@ -713,7 +714,7 @@ type acbaaNames struct {
 
 // acbaaLoad reads the store file if there is one; a missing file is a fresh
 // account, not an error. Called once at startup, before serving.
-func (s *server) acbaaLoad() {
+func (s *Service) acbaaLoad() {
 	if s.acbaaPath == "" {
 		return
 	}
@@ -756,7 +757,7 @@ func (s *server) acbaaLoad() {
 // acbaaSaveLocked writes the store atomically (tmp + rename, like the main
 // store). The caller holds s.mu. Skipped when no path is configured, which
 // is how direct handler tests run.
-func (s *server) acbaaSaveLocked() {
+func (s *Service) acbaaSaveLocked() {
 	if s.acbaaPath == "" {
 		return
 	}
@@ -781,7 +782,7 @@ type acbaaProfile struct {
 	Size int    `json:"size"`
 }
 
-func (s *server) acbaaRememberProfile(uid uint64, body []byte) string {
+func (s *Service) acbaaRememberProfile(uid uint64, body []byte) string {
 	sum := sha256.Sum256(body)
 	p := acbaaProfile{SHA: hex.EncodeToString(sum[:]), Size: len(body)}
 	s.mu.Lock()
@@ -794,7 +795,7 @@ func (s *server) acbaaRememberProfile(uid uint64, body []byte) string {
 	return p.SHA
 }
 
-func (s *server) acbaaProfileSHA(uid uint64) string {
+func (s *Service) acbaaProfileSHA(uid uint64) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.acbaaProfiles[uid].SHA
@@ -812,7 +813,7 @@ func (s *server) acbaaProfileSHA(uid uint64) string {
 // A request from someone who already asked the caller is approved on the
 // spot, which is what "approved" is for. Meta is opaque here: whatever the
 // phone attached is what the other phone gets.
-func (s *server) acbaaSendFriendRequest(w http.ResponseWriter, r *http.Request, body []byte) {
+func (s *Service) acbaaSendFriendRequest(w http.ResponseWriter, r *http.Request, body []byte) {
 	from := s.acbaaResolveUID(acbaaBearerID(r.Header.Get("Authorization")))
 	to, err := strconv.ParseUint(r.URL.Query().Get("target_user_id"), 10, 64)
 	if from == 0 || err != nil || to == 0 || to == from {
@@ -853,7 +854,7 @@ func (s *server) acbaaSendFriendRequest(w http.ResponseWriter, r *http.Request, 
 	w.Write(msgpack.Ordered("id", id, "approved", approved))
 }
 
-func (s *server) acbaaAreFriendsLocked(a, b uint64) bool {
+func (s *Service) acbaaAreFriendsLocked(a, b uint64) bool {
 	for _, f := range s.acbaaFriendList[a] {
 		if f == b {
 			return true
@@ -862,7 +863,7 @@ func (s *server) acbaaAreFriendsLocked(a, b uint64) bool {
 	return false
 }
 
-func (s *server) acbaaBefriendLocked(a, b uint64) {
+func (s *Service) acbaaBefriendLocked(a, b uint64) {
 	if s.acbaaFriendList == nil {
 		s.acbaaFriendList = map[uint64][]uint64{}
 	}
@@ -877,7 +878,7 @@ func (s *server) acbaaBefriendLocked(a, b uint64) {
 // acbaaAnswerFriendRequest: PUT /api/v1/friend_requests/<id> {action}.
 // "accept" (any action that is not a refusal) befriends both sides; the
 // request is dropped either way. Only the receiver may answer.
-func (s *server) acbaaAnswerFriendRequest(w http.ResponseWriter, r *http.Request, body []byte) {
+func (s *Service) acbaaAnswerFriendRequest(w http.ResponseWriter, r *http.Request, body []byte) {
 	me := s.acbaaResolveUID(acbaaBearerID(r.Header.Get("Authorization")))
 	id, err := strconv.ParseUint(strings.TrimPrefix(r.URL.Path, "/api/v1/friend_requests/"), 10, 64)
 	if err != nil {
@@ -912,7 +913,7 @@ func (s *server) acbaaAnswerFriendRequest(w http.ResponseWriter, r *http.Request
 }
 
 // acbaaFriends: GET /api/v1/friends -> {count, friends:[{user_id}]}.
-func (s *server) acbaaFriends(w http.ResponseWriter, r *http.Request) {
+func (s *Service) acbaaFriends(w http.ResponseWriter, r *http.Request) {
 	me := s.acbaaResolveUID(acbaaBearerID(r.Header.Get("Authorization")))
 	s.mu.Lock()
 	list := append([]uint64(nil), s.acbaaFriendList[me]...)
@@ -930,7 +931,7 @@ func (s *server) acbaaFriends(w http.ResponseWriter, r *http.Request) {
 // acbaaFriendRequests: GET /api/v1/friend_requests?type=send|receive ->
 // {count, friend_requests:[{id, user_id, sent_at, meta}]}, user_id being
 // the other party.
-func (s *server) acbaaFriendRequests(w http.ResponseWriter, r *http.Request) {
+func (s *Service) acbaaFriendRequests(w http.ResponseWriter, r *http.Request) {
 	me := s.acbaaResolveUID(acbaaBearerID(r.Header.Get("Authorization")))
 	typ := r.URL.Query().Get("type")
 	s.mu.Lock()
@@ -975,7 +976,7 @@ func acbaaUserOf(path string) (uint64, bool) {
 // /api/v1/message_cards?offset=&limit= answers {total, count, headers}
 // per the documented shape. OpenPak delivers no cards, so the list is
 // empty — a true statement (no saved cards), not a placeholder.
-func (s *server) acbaaMessageCards(w http.ResponseWriter, r *http.Request) {
+func (s *Service) acbaaMessageCards(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-msgpack")
 	w.WriteHeader(200)
 	w.Write(msgpack.Encode(map[string]any{"total": 0, "count": 0, "headers": []any{}}))
@@ -996,7 +997,7 @@ func (s *server) acbaaMessageCards(w http.ResponseWriter, r *http.Request) {
 // moderates passports here, so it is "ok"/"ok" for everyone, always — a
 // fresh account's first status check runs BEFORE its first upload, and an
 // "ng" there would latch a brand-new player.
-func (s *server) acbaaProfileStatus(w http.ResponseWriter, r *http.Request) {
+func (s *Service) acbaaProfileStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-msgpack")
 	w.WriteHeader(200)
 	// kinnay's field order (user_profile first): the shared encoder sorts
@@ -1014,7 +1015,7 @@ func (s *server) acbaaProfileStatus(w http.ResponseWriter, r *http.Request) {
 // fails the whole online setup (2219-0021) on an empty answer. The digest
 // buffer is 0x29 bytes, i.e. a 40-hex digest (SHA1); the bytes are
 // remembered by SHA256 for profile_status, which only needs presence.
-func (s *server) acbaaUploadProfile(w http.ResponseWriter, r *http.Request, body []byte) {
+func (s *Service) acbaaUploadProfile(w http.ResponseWriter, r *http.Request, body []byte) {
 	uid, ok := acbaaUserOf(r.URL.Path)
 	if !ok {
 		acbaaError(w, 404, "3004")
@@ -1045,7 +1046,7 @@ func (s *server) acbaaUploadProfile(w http.ResponseWriter, r *http.Request, body
 // profile_status). Unobserved as of 2026-09-21 — the game has never called
 // it in any captured flow — but profile_status reads its side, so the
 // endpoint exists for the day hosting asks for it.
-func (s *server) acbaaUploadLandProfile(w http.ResponseWriter, r *http.Request, body []byte) {
+func (s *Service) acbaaUploadLandProfile(w http.ResponseWriter, r *http.Request, body []byte) {
 	seg := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	if len(seg) != 5 {
 		acbaaError(w, 404, "3004")
@@ -1135,4 +1136,40 @@ func bearerSummary(auth string) string {
 		sub = redact.Tag(sub)
 	}
 	return fmt.Sprintf("kid=%s iss=%s sub=%s", kid, iss, sub)
+}
+
+// Service is Animal Crossing: New Horizons' web API over the shared state.
+type Service struct {
+	*core.Core
+	mu sync.Mutex
+	// acbaaProfiles remembers uploaded ACNH player profiles by ACNH user id
+	// so profile_status reflects them after a PUT, and acbaaResources the
+	// per-user web_service_resources uploads. Both file-backed (acbaaPath)
+	// because a restart must not blank them: a warm client that already
+	// registered checks status without re-uploading, and blanks read as a
+	// failure (2219-0021). Lazily created so direct handler tests work.
+	acbaaProfiles  map[uint64]acbaaProfile
+	acbaaResources map[uint64]map[string][]byte
+	acbaaNames     map[uint64]acbaaNames
+	// acbaaLandProfiles remembers uploaded island profiles by land
+	// in_app_id, and acbaaUserLand links each user to their land (set at
+	// bind time). profile_status reports "ok" per side exactly when that
+	// side was uploaded — the game byte-compares for "ok"/"ng".
+	acbaaLandProfiles map[uint64]acbaaProfile
+	acbaaUserLand     map[uint64]uint64
+	// acbaaUIDMap records earlier ACNH id -> NEX PID moves, so path uids
+	// minted before the single-identity change keep addressing the same
+	// account on warm clients.
+	acbaaUIDMap map[uint64]uint64
+	// ACNH best friends: pending requests by id, and each user's confirmed
+	// best-friend list (symmetric). Persisted with the rest.
+	acbaaFriendReqs map[uint64]acbaaFriendReq
+	acbaaFriendList map[uint64][]uint64
+	acbaaPath       string
+}
+
+// Open loads the ACNH store from path and keeps saving there.
+func (s *Service) Open(path string) {
+	s.acbaaPath = path
+	s.acbaaLoad()
 }

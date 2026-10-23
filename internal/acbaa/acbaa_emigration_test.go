@@ -1,4 +1,4 @@
-package main
+package acbaa
 
 import (
 	"net/http/httptest"
@@ -13,7 +13,7 @@ func TestAcbaaEmigrationRecoveredContract(t *testing.T) {
 	r := httptest.NewRequest("POST", "https://api.hac.lp1.acbaa.srv.nintendo.net/api/v1/emigrations", nil)
 	r.Header.Set("Authorization", "Bearer "+acbaaMintToken(42))
 	w := httptest.NewRecorder()
-	s.acbaa(w, r, msgpack.Encode(request))
+	s.Handle(w, r, msgpack.Encode(request))
 	if w.Code != 200 {
 		t.Fatalf("status %d", w.Code)
 	}
@@ -57,7 +57,7 @@ func TestAcbaaEmigrationRejectsInvalidOwnershipAndShapes(t *testing.T) {
 			r := httptest.NewRequest("POST", "/api/v1/emigrations", nil)
 			r.Header.Set("Authorization", "Bearer "+acbaaMintToken(42))
 			w := httptest.NewRecorder()
-			s.acbaa(w, r, msgpack.Encode(tc.body))
+			s.Handle(w, r, msgpack.Encode(tc.body))
 			if w.Code != tc.status {
 				t.Fatalf("status %d, want %d", w.Code, tc.status)
 			}
@@ -71,7 +71,7 @@ func TestAcbaaDepartureMigratedPlayerWithoutIslandBinding(t *testing.T) {
 	r := httptest.NewRequest("POST", "/api/v1/emigrations", nil)
 	r.Header.Set("Authorization", "Bearer "+acbaaMintToken(42))
 	w := httptest.NewRecorder()
-	s.acbaa(w, r, msgpack.Encode(map[string]any{"land_id": uint64(99), "my_user_id": uint64(43), "user_ids": []any{uint64(43)}}))
+	s.Handle(w, r, msgpack.Encode(map[string]any{"land_id": uint64(99), "my_user_id": uint64(43), "user_ids": []any{uint64(43)}}))
 	if w.Code != 200 {
 		t.Fatalf("migrated player with no cached binding refused: %d", w.Code)
 	}
