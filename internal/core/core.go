@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"log"
 	"net/http"
+	"nx-baas/internal/devices"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
@@ -25,6 +26,9 @@ type Core struct {
 	AccKid string // kid of BAAS access tokens (/1.0.0/internal_certificates)
 	NAKid  string // kid of Nintendo-Account tokens: the console binds kid<->issuer and rejects a kid shared with BAAS (2124-3121)
 	JWKS   []byte
+	// Harbor is the Harbor device enrolment; nil while no device CA is configured, which
+	// leaves dauth and BaaS as they were.
+	Harbor *devices.Registry
 }
 
 const (

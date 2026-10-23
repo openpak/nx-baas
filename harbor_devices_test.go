@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"nx-baas/internal/b233"
+	"nx-baas/internal/dauth"
 	"nx-baas/internal/devices"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/store"
@@ -156,9 +157,9 @@ func enrolServer(t *testing.T) (*server, *fakeClock) {
 	t.Helper()
 	s := dauthServer(t)
 	s.Store = &store.Store{FilePath: filepath.Join(t.TempDir(), "baas.json"), Users: map[string]*store.User{}, Devices: map[string]*store.DeviceAccount{}}
-	s.harbor = devices.NewRegistry(testDeviceCA(t), filepath.Join(t.TempDir(), "harbor-devices.json"))
+	s.Harbor = devices.NewRegistry(testDeviceCA(t), filepath.Join(t.TempDir(), "harbor-devices.json"))
 	clock := &fakeClock{t: time.Now()}
-	s.harbor.Now = clock.now
+	s.Harbor.Now = clock.now
 	return s, clock
 }
 
@@ -181,7 +182,7 @@ func post(s *server, path string, body any, cert []byte, session string) *httpte
 		r.Header.Set(devices.ConsoleSessionHeader, session)
 	}
 	w := httptest.NewRecorder()
-	s.dauth(w, r, raw)
+	s.dauthSvc().Handle(w, r, raw)
 	return w
 }
 
@@ -248,10 +249,10 @@ func TestHarborEnrolmentInertWithoutKeys(t *testing.T) {
 	c := newTestConsole(t, 0x7E00112233445566, "1234567890")
 	cert, _ := x509.ParseCertificate(c.tlsCert)
 	sub, sn := tokenSub(t, post(s, "/v8/device_auth_tokens", tokenBody, c.tlsCert, "a"))
-	if sub != devices.CertDauthID(cert) || sn != consoleSerial(sub) {
+	if sub != devices.CertDauthID(cert) || sn != dauth.ConsoleSerial(sub) {
 		t.Fatalf("sub/sn = %q %q, want the certificate's id as before", sub, sn)
 	}
-	if !s.harbor.BindDeviceAccount(s.Store, "any", sub) {
+	if !s.Harbor.BindDeviceAccount(s.Store, "any", sub) {
 		t.Fatal("a login was refused without a device CA")
 	}
 }
@@ -268,7 +269,7 @@ func TestHarborEnrolSignsAndBinds(t *testing.T) {
 		if !bytes.Equal(sent[devices.CertSigned:], got[devices.CertSigned:]) || !bytes.Equal(sent[:4], got[:4]) {
 			t.Fatal("a certificate body changed")
 		}
-		if !b233.Verify(&s.harbor.CA.ECC.PublicKey, got[devices.CertSigned:], got[devices.CertSignature:devices.CertSignature+60]) {
+		if !b233.Verify(&s.Harbor.CA.ECC.PublicKey, got[devices.CertSigned:], got[devices.CertSignature:devices.CertSignature+60]) {
 			t.Fatal("a certificate's signature does not verify against HD00000001")
 		}
 	}
@@ -280,7 +281,7 @@ func TestHarborEnrolSignsAndBinds(t *testing.T) {
 	if !devices.PublicKeysEqual(tlsCert.PublicKey, &c.tls.PublicKey) {
 		t.Fatal("the TLS certificate carries another key")
 	}
-	if _, err := tlsCert.Verify(x509.VerifyOptions{Roots: s.harbor.CA.Pool, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err != nil {
+	if _, err := tlsCert.Verify(x509.VerifyOptions{Roots: s.Harbor.CA.Pool, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err != nil {
 		t.Fatalf("the TLS certificate does not chain: %v", err)
 	}
 
@@ -292,20 +293,20 @@ func TestHarborEnrolSignsAndBinds(t *testing.T) {
 
 	// BaaS: the device account belongs to this console from its first login.
 	s.Store.Devices["acct1"] = &store.DeviceAccount{ID: "acct1", Password: "p"}
-	if !s.harbor.BindDeviceAccount(s.Store, "acct1", sub) || s.Store.Devices["acct1"].BoundDevice != sub {
+	if !s.Harbor.BindDeviceAccount(s.Store, "acct1", sub) || s.Store.Devices["acct1"].BoundDevice != sub {
 		t.Fatal("the device account was not bound")
 	}
-	if s.harbor.BindDeviceAccount(s.Store, "acct1", "cert-0000000000000000") {
+	if s.Harbor.BindDeviceAccount(s.Store, "acct1", "cert-0000000000000000") {
 		t.Fatal("another device used a bound device account")
 	}
 	// An account first used by a console that is not enrolled stays unbound.
 	s.Store.Devices["acct2"] = &store.DeviceAccount{ID: "acct2", Password: "p"}
-	if !s.harbor.BindDeviceAccount(s.Store, "acct2", "cert-1111111111111111") || s.Store.Devices["acct2"].BoundDevice != "" {
+	if !s.Harbor.BindDeviceAccount(s.Store, "acct2", "cert-1111111111111111") || s.Store.Devices["acct2"].BoundDevice != "" {
 		t.Fatal("an unenrolled device bound an account")
 	}
 
 	// The store survives a restart.
-	again := devices.NewRegistry(s.harbor.CA, s.harbor.FilePath)
+	again := devices.NewRegistry(s.Harbor.CA, s.Harbor.FilePath)
 	if len(again.Devices) != 1 || !again.EnrolledDauthID(sub) {
 		t.Fatal("the enrolment was not kept")
 	}

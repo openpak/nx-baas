@@ -1,4 +1,6 @@
-package main
+// Package dauth is device and application authentication: dauth (device and edge tokens),
+// dcert (the key set) and aauth (application tokens, behind the latest-version gate).
+package dauth
 
 import (
 	"crypto/sha256"
@@ -9,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"nx-baas/internal/core"
 	"nx-baas/internal/devices"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/token"
@@ -53,7 +56,7 @@ type deviceTokenRequest struct {
 //
 // ponytail: challenge data is random and unverified. Add real MAC verification only if a
 // title is ever found that depends on it.
-func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
+func (s *Service) Handle(w http.ResponseWriter, r *http.Request, body []byte) {
 	host, p := httpx.HostOf(r), r.URL.Path
 
 	// aauth shares this handler: it is the next step of the same chain.
@@ -71,7 +74,7 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 	// Harbor device enrolment (harbor_devices.go), on this host because it is where a console
 	// presents its TLS client certificate.
 	if strings.HasPrefix(host, "dauth") && strings.HasPrefix(p, "/harbor/v1/devices") {
-		s.harbor.Handler(w, r, body)
+		s.Harbor.Handler(w, r, body)
 		return
 	}
 
@@ -139,7 +142,7 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 		// aauth: the console asks for a per-title token once dauth has vouched for the device.
 		appID, appVer := form.Get("application_id"), form.Get("application_version")
 		log.Printf("[aauth] application %s version %s", appID, appVer)
-		if s.versions.refuse(appID, appVer) {
+		if s.Versions.refuse(appID, appVer) {
 			// 0111 -> 2124-3001 "A software update is required" (Restart / Later).
 			httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
 				"errors": []any{map[string]any{"code": "0111", "message": "Application update is required."}},
@@ -149,7 +152,7 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 		httpx.WriteJSON(w, 200, map[string]any{
 			"application_auth_token": s.applicationToken(appID, appVer),
 			"expires_in":             86400,
-			"settings":               aauthSettings(appID),
+			"settings":               AAuthSettings(appID),
 			// Every account on this network has a membership; nothing here sells one.
 			"online_play_policy": "MEMBERSHIP_REQUIRED",
 			"policy_handler":     "SYSTEM",
@@ -196,7 +199,7 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 // edgeDToken builds the CDN's token format: fields joined by ~, with an HMAC the CDN would
 // check. Nothing of ours verifies it, so the digest is random rather than pretend-signed.
 func edgeDToken(exp int64, device string) string {
-	return edgeDTokenFor(exp, device, consoleSerial(device))
+	return edgeDTokenFor(exp, device, ConsoleSerial(device))
 }
 
 func edgeDTokenFor(exp int64, device, serial string) string {
@@ -206,10 +209,10 @@ func edgeDTokenFor(exp int64, device, serial string) string {
 
 // applicationToken is what aauth hands back for a title. Its jku is acert, not dcert: the
 // console fetches the application key from there, and both hosts serve our one JWKS.
-func (s *server) applicationToken(appID, appVersion string) string {
+func (s *Service) applicationToken(appID, appVersion string) string {
 	now := time.Now().Unix()
 	device := "openpak-device"
-	serial := consoleSerial(device)
+	serial := ConsoleSerial(device)
 	return token.SignJWT(
 		map[string]any{"alg": "RS256", "jku": "https://acert-lp1.ndas.srv.nintendo.net/keys", "kid": s.IDKid, "typ": "JWT"},
 		map[string]any{
@@ -246,13 +249,13 @@ func deviceID(r *http.Request, req deviceTokenRequest) string {
 
 // deviceToken is what /1.0.0/application/token consumes: it reads "sub" as the device id and
 // nintendo.sn as the serial, so those two fields are the contract between the services.
-func (s *server) deviceToken(deviceID, clientID string) string {
-	return s.deviceTokenFor(deviceID, consoleSerial(deviceID), clientID)
+func (s *Service) DeviceToken(deviceID, clientID string) string {
+	return s.deviceTokenFor(deviceID, ConsoleSerial(deviceID), clientID)
 }
 
 // deviceTokenFor is deviceToken with the serial given: an enrolled Harbor console's own, read
 // off its enrolment as the real service reads a console's off its certificate.
-func (s *server) deviceTokenFor(deviceID, serial, clientID string) string {
+func (s *Service) deviceTokenFor(deviceID, serial, clientID string) string {
 	now := time.Now().Unix()
 	return token.SignJWT(
 		map[string]any{"alg": "RS256", "jku": "https://dcert-lp1.ndas.srv.nintendo.net/keys", "kid": s.IDKid, "typ": "JWT"},
@@ -265,7 +268,7 @@ func (s *server) deviceTokenFor(deviceID, serial, clientID string) string {
 			"aud": clientID,
 			"nintendo": map[string]any{
 				"sn": serial, "did": deviceID, "pc": "HAC", "dt": "NX Prod 1",
-				"ist": false, "esv": token.RandB64(33), "x5t#S256": deviceThumbprint,
+				"ist": false, "esv": token.RandB64(33), "x5t#S256": DeviceThumbprint,
 			},
 			"client_id": clientID,
 		}, s.Key)
@@ -273,13 +276,13 @@ func (s *server) deviceTokenFor(deviceID, serial, clientID string) string {
 
 // deviceThumbprint is the x5t#S256 the console's own tokens carry; BAAS relays it into the
 // anonymous access token, so dauth and BAAS must agree on one value.
-const deviceThumbprint = "lkYHqHf2uXjNZ2UeDnW83GT_wa3-dH1KtPLVgxao3Rs"
+const DeviceThumbprint = "lkYHqHf2uXjNZ2UeDnW83GT_wa3-dH1KtPLVgxao3Rs"
 
 // consoleSerial: the real service reads the serial off the console's certificate. We have no
 // PRODINFO to read, so it is derived from the device id — stable per console, and shaped like
 // the serial the console puts in its own headers (three letters, eleven digits). An empty
 // serial travels into the BAAS access token and the console rejects the result.
-func consoleSerial(deviceID string) string {
+func ConsoleSerial(deviceID string) string {
 	sum := sha256.Sum256([]byte("serial:" + deviceID))
 	n := binary.BigEndian.Uint64(sum[:8]) % 100000000000
 	return fmt.Sprintf("XKJ%011d", n)
@@ -291,7 +294,7 @@ func consoleSerial(deviceID string) string {
 // client id it refuses the title's authorization request before any network request
 // (0x1fb270: client id 0 -> 2124-0041). Nintendo assigns these per title; here the title id
 // is the client id, so an id_token's aud names the title it was issued to.
-func aauthSettings(appID string) []any {
+func AAuthSettings(appID string) []any {
 	id := strings.ToLower(appID)
 	// System titles (0100000000000xxx/1xxx) have their client ids compiled in.
 	if len(id) != 16 || strings.HasPrefix(id, "01000000000") {
@@ -302,9 +305,9 @@ func aauthSettings(appID string) []any {
 
 // dauthIdentity is the device id and serial dauth issues tokens to. Without a device CA it is
 // exactly what it always was; an enrolled console gets its own (and the one-live-console check).
-func (s *server) dauthIdentity(r *http.Request, req deviceTokenRequest) (id, serial string, err error) {
-	if s.harbor != nil && r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
-		dev, err := s.harbor.ForCertificate(r.TLS.PeerCertificates[0], r.Header.Get(devices.ConsoleSessionHeader))
+func (s *Service) dauthIdentity(r *http.Request, req deviceTokenRequest) (id, serial string, err error) {
+	if s.Harbor != nil && r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+		dev, err := s.Harbor.ForCertificate(r.TLS.PeerCertificates[0], r.Header.Get(devices.ConsoleSessionHeader))
 		if err != nil {
 			return "", "", err
 		}
@@ -313,5 +316,13 @@ func (s *server) dauthIdentity(r *http.Request, req deviceTokenRequest) (id, ser
 		}
 	}
 	id = deviceID(r, req)
-	return id, consoleSerial(id), nil
+	return id, ConsoleSerial(id), nil
+}
+
+// Service is dauth, dcert and aauth over the shared state, with the version gate aauth
+// applies.
+type Service struct {
+	*core.Core
+	// Versions refuses an outdated title at aauth; nil lets every version in.
+	Versions *VersionGate
 }

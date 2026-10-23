@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"nx-baas/internal/dauth"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,14 +18,14 @@ const versionsFixture = `{
  "010090100e334000": {"1966080": "2026-05-20", "2031616": "2026-08-16"}
 }`
 
-func gateFromFixture(t *testing.T, overrides string) *versionGate {
+func gateFromFixture(t *testing.T, overrides string) *dauth.VersionGate {
 	t.Helper()
-	o, err := parseVersionOverrides(overrides)
+	o, err := dauth.ParseVersionOverrides(overrides)
 	if err != nil {
 		t.Fatal(err)
 	}
-	g := &versionGate{on: true, overrides: o, fetch: func(string) ([]byte, error) { return []byte(versionsFixture), nil }}
-	if err := g.refresh(); err != nil {
+	g := &dauth.VersionGate{On: true, Overrides: o, Fetch: func(string) ([]byte, error) { return []byte(versionsFixture), nil }}
+	if err := g.Refresh(); err != nil {
 		t.Fatal(err)
 	}
 	return g
@@ -36,7 +37,7 @@ func aauthRequest(t *testing.T, s *server, appID, appVer string) *httptest.Respo
 	r := httptest.NewRequest(http.MethodPost, "/v5/application_auth_token", strings.NewReader(form))
 	r.Host = "aauth-lp1.ndas.srv.nintendo.net"
 	w := httptest.NewRecorder()
-	s.dauth(w, r, []byte(form))
+	s.dauthSvc().Handle(w, r, []byte(form))
 	return w
 }
 
@@ -57,7 +58,7 @@ func wantToken(t *testing.T, w *httptest.ResponseRecorder) {
 
 func TestVersionGateAauth(t *testing.T) {
 	s := dauthServer(t)
-	s.versions = gateFromFixture(t, "")
+	s.dauthSvc().Versions = gateFromFixture(t, "")
 
 	wantUpdateRequired(t, aauthRequest(t, s, "0100152000022000", "00000000")) // MK8D 1.0.0
 	wantUpdateRequired(t, aauthRequest(t, s, "0100152000022000", "00150000")) // one behind
@@ -71,16 +72,16 @@ func TestVersionGateAauth(t *testing.T) {
 
 func TestVersionGateOff(t *testing.T) {
 	s := dauthServer(t)
-	s.versions = gateFromFixture(t, "")
-	s.versions.on = false
+	s.dauthSvc().Versions = gateFromFixture(t, "")
+	s.dauthSvc().Versions.On = false
 	wantToken(t, aauthRequest(t, s, "0100152000022000", "00000000"))
-	s.versions = nil
+	s.dauthSvc().Versions = nil
 	wantToken(t, aauthRequest(t, s, "0100152000022000", "00000000"))
 }
 
 func TestVersionGateOverrides(t *testing.T) {
 	s := dauthServer(t)
-	s.versions = gateFromFixture(t, "0100152000022000=00150000, 010090100E334000=all,0100000000abc000=00010000")
+	s.dauthSvc().Versions = gateFromFixture(t, "0100152000022000=00150000, 010090100E334000=all,0100000000abc000=00010000")
 
 	wantToken(t, aauthRequest(t, s, "0100152000022000", "00150000")) // pinned below the table's latest
 	wantUpdateRequired(t, aauthRequest(t, s, "0100152000022000", "00130000"))
@@ -88,7 +89,7 @@ func TestVersionGateOverrides(t *testing.T) {
 	wantUpdateRequired(t, aauthRequest(t, s, "0100000000ABC000", "00000000")) // pinned, not in the table
 
 	for _, bad := range []string{"0100152000022000", "0100152000022000=3.0.5", "123=00010000"} {
-		if _, err := parseVersionOverrides(bad); err == nil {
+		if _, err := dauth.ParseVersionOverrides(bad); err == nil {
 			t.Errorf("override %q accepted", bad)
 		}
 	}
@@ -97,12 +98,12 @@ func TestVersionGateOverrides(t *testing.T) {
 func TestVersionGateKeepsLastGoodTable(t *testing.T) {
 	dir := t.TempDir()
 	cache := filepath.Join(dir, "title-versions.json")
-	g := &versionGate{on: true, cachePath: cache, fetch: func(string) ([]byte, error) { return []byte(versionsFixture), nil }}
-	if err := g.refresh(); err != nil {
+	g := &dauth.VersionGate{On: true, CachePath: cache, Fetch: func(string) ([]byte, error) { return []byte(versionsFixture), nil }}
+	if err := g.Refresh(); err != nil {
 		t.Fatal(err)
 	}
-	if g.size() != 2 {
-		t.Fatalf("table has %d titles, want 2", g.size())
+	if g.Size() != 2 {
+		t.Fatalf("table has %d titles, want 2", g.Size())
 	}
 
 	for _, fail := range []func(string) ([]byte, error){
@@ -110,12 +111,12 @@ func TestVersionGateKeepsLastGoodTable(t *testing.T) {
 		func(string) ([]byte, error) { return []byte("<html>rate limited</html>"), nil },
 		func(string) ([]byte, error) { return []byte("{}"), nil },
 	} {
-		g.fetch = fail
-		if err := g.refresh(); err == nil {
+		g.Fetch = fail
+		if err := g.Refresh(); err == nil {
 			t.Fatal("a bad fetch was accepted")
 		}
-		if need, ok := g.required(0x0100152000022000); !ok || need != 0x00160000 || g.size() != 2 {
-			t.Fatalf("table lost after a failed refresh: %08x %v size %d", need, ok, g.size())
+		if need, ok := g.Required(0x0100152000022000); !ok || need != 0x00160000 || g.Size() != 2 {
+			t.Fatalf("table lost after a failed refresh: %08x %v size %d", need, ok, g.Size())
 		}
 	}
 	if b, _ := os.ReadFile(cache); string(b) != versionsFixture {
@@ -123,9 +124,9 @@ func TestVersionGateKeepsLastGoodTable(t *testing.T) {
 	}
 
 	// A restart with no network starts from the cache.
-	g2 := &versionGate{on: true, cachePath: cache}
-	g2.loadCache()
-	if need, ok := g2.required(0x0100152000022000); !ok || need != 0x00160000 {
+	g2 := &dauth.VersionGate{On: true, CachePath: cache}
+	g2.LoadCache()
+	if need, ok := g2.Required(0x0100152000022000); !ok || need != 0x00160000 {
 		t.Fatalf("cache load: %08x %v", need, ok)
 	}
 }
@@ -134,7 +135,7 @@ func TestVersionGateKeepsLastGoodTable(t *testing.T) {
 func TestTitleVersionAPI(t *testing.T) {
 	t.Setenv("NX_INTERNAL_KEY", "k")
 	s := dauthServer(t)
-	s.versions = gateFromFixture(t, "010090100E334000=all")
+	s.dauthSvc().Versions = gateFromFixture(t, "010090100E334000=all")
 
 	ask := func(key, query string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodGet, "/internal/title-version?"+query, nil)
@@ -163,11 +164,11 @@ func TestTitleVersionAPI(t *testing.T) {
 	if w := ask("wrong", "title=0100152000022000&version=00150000"); w.Code != http.StatusUnauthorized {
 		t.Errorf("wrong key: got %d", w.Code)
 	}
-	s.versions.on = false
+	s.dauthSvc().Versions.On = false
 	if w := ask("k", "title=0100152000022000&version=00000000"); !strings.Contains(w.Body.String(), `"latest":"","title":"0100152000022000","update_required":false`) {
 		t.Errorf("gate off: %s", w.Body.String())
 	}
-	s.versions = nil
+	s.dauthSvc().Versions = nil
 	if w := ask("k", "title=0100152000022000&version=00000000"); !strings.Contains(w.Body.String(), `"update_required":false`) {
 		t.Errorf("no gate: %s", w.Body.String())
 	}

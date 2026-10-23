@@ -35,6 +35,7 @@ import (
 	"net/url"
 	"nx-baas/internal/bans"
 	"nx-baas/internal/core"
+	"nx-baas/internal/dauth"
 	"nx-baas/internal/devices"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
@@ -66,16 +67,11 @@ type server struct {
 	// console's proven account attached. nil answers the empty-cloud fallback instead.
 	saves    *httputil.ReverseProxy
 	savesKey string
-	// versions refuses an outdated title at aauth (versiongate.go); nil lets every version in.
-	versions *versionGate
 	// liveSessions maps BAAS user id -> the core session the adapter registered
 	// for it, so the presence reconciler can renew and expire what it created.
 	// In-memory by design: a restart re-derives truth from the core (and local
 	// leases), never from this map.
 	liveSessions map[string]string
-	// harbor is the Harbor device enrolment (harbor_devices.go); nil while no device CA is
-	// configured, which leaves dauth and BaaS as they were.
-	harbor *devices.Registry
 	// liveSessionTitle is the title each of those sessions was registered
 	// with, so a console changing game re-registers rather than leaving the
 	// core reporting the game it started on.
@@ -128,7 +124,10 @@ type server struct {
 	// bansChecker answers whether an account may use the network (internal/bans); locks()
 	// creates it on first use so test servers built as literals work unchanged.
 	bansChecker *bans.Checker
-	bansOnce    sync.Once
+	// dauthService is device and application authentication (internal/dauth).
+	dauthService *dauth.Service
+	dauthOnce    sync.Once
+	bansOnce     sync.Once
 	// reports is the console error-report spool (errorreport.go).
 	reports *reportSpool
 }
@@ -193,7 +192,7 @@ func (s *server) accessToken(sub string, grant int, bsDid, di, sn string) string
 	if grant == 1 {
 		claims["bs:pid"] = "pz" + token.RandHex(15)
 		claims["bs:sts"] = []int64{1188950301625811329}
-		claims["nintendo"] = map[string]any{"di": di, "dt": "NX Prod 1", "ist": false, "pc": "HAC", "sn": sn, "x5t#S256": deviceThumbprint}
+		claims["nintendo"] = map[string]any{"di": di, "dt": "NX Prod 1", "ist": false, "pc": "HAC", "sn": sn, "x5t#S256": dauth.DeviceThumbprint}
 	} else {
 		claims["bs:sts"] = []int64{10415858080830506, 272640, 9, 0, 0, 19316357715722240, 16}
 	}
@@ -881,7 +880,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		if n, ok := tok["nintendo"].(map[string]any); ok {
 			sn = httpx.Str(n, "sn")
 		}
-		if !s.harbor.BindDeviceAccount(s.Store, form.Get("id"), di) {
+		if !s.Harbor.BindDeviceAccount(s.Store, form.Get("id"), di) {
 			// A device account another enrolled console signed in with first.
 			log.Printf("[nx-baas] %s refused: the device account belongs to another console", seg[1])
 			httpx.BaasErr(w, r, 400, "invalid_device_account", "Invalid Device Account", "Device Account's id or password is invalid")
@@ -2552,7 +2551,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		strings.HasPrefix(host, "dragons"):
 		// dragons hosts that are not store rights routes keep the dauth handler's
 		// setup-critical answers (elicense archives, exercise, migration state, penne id).
-		s.dauth(w, r, body)
+		s.dauthSvc().Handle(w, r, body)
 	case strings.Contains(host, "penne.") || strings.Contains(host, "vermillion."):
 		// Penne's own hosts are nx-penne's, forwarded above; this is the vermillion gateway.
 		s.vermillion(w, r, body)
@@ -2701,7 +2700,7 @@ func main() {
 		pending2FA: newPending2FAStore(),
 	}
 	s.forwardersFromEnv()
-	s.harbor = devices.FromEnv()
+	s.Harbor = devices.FromEnv()
 	s.acbaaPath = httpx.Getenv("NX_DATA", "/data") + "/acbaa.json"
 	s.acbaaLoad()
 	if b, ok := s.Acct.(*identity.OpenpakBackend); ok {
@@ -2718,10 +2717,10 @@ func main() {
 	// Console error reports: kept raw, forwarded to the website, retried (errorreport.go).
 	go s.errorReports().run()
 	// Latest version only: outdated titles get 2124-3001 at aauth (versiongate.go).
-	s.versions = newVersionGateFromEnv()
-	if s.versions.on {
-		log.Printf("[version-gate] on (%d override(s))", len(s.versions.overrides))
-		go s.versions.run()
+	s.dauthSvc().Versions = dauth.NewVersionGateFromEnv()
+	if s.dauthSvc().Versions.On {
+		log.Printf("[version-gate] on (%d override(s))", len(s.dauthSvc().Versions.Overrides))
+		go s.dauthSvc().Versions.Run()
 	} else {
 		log.Printf("[version-gate] off (NX_VERSION_GATE)")
 	}
@@ -2915,4 +2914,10 @@ func naProfile(id *identity.Identity) (country, birthday string) {
 func (s *server) locks() *bans.Checker {
 	s.bansOnce.Do(func() { s.bansChecker = bans.New(s.Core) })
 	return s.bansChecker
+}
+
+// dauthSvc is dauth, dcert and aauth, created on first use like locks.
+func (s *server) dauthSvc() *dauth.Service {
+	s.dauthOnce.Do(func() { s.dauthService = &dauth.Service{Core: s.Core} })
+	return s.dauthService
 }

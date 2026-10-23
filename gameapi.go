@@ -431,7 +431,7 @@ func (s *server) gameAPI() http.Handler {
 	mux.HandleFunc("/internal/switch/emulator/friend", s.switchEmulatorFriend)
 	mux.HandleFunc("/internal/switch/emulator/link-token", s.switchEmulatorLinkToken)
 	mux.HandleFunc("/internal/switch/ca", s.switchCA)
-	mux.HandleFunc("/internal/title-version", s.titleVersion)
+	mux.HandleFunc("/internal/title-version", s.dauthSvc().TitleVersion)
 	mux.HandleFunc("/api/invitations", s.invitations)
 	mux.HandleFunc("/internal/notifications/test", s.penneTestNotification)
 	mux.HandleFunc("/internal/news/push", s.newsPush)

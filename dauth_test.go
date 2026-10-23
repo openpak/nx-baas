@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"nx-baas/internal/core"
+	"nx-baas/internal/dauth"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
@@ -30,7 +31,7 @@ func dauthServer(t *testing.T) *server {
 // "sub" as the device id. If that field moves, the login breaks with no error anywhere.
 func TestDeviceTokenCarriesDeviceID(t *testing.T) {
 	s := dauthServer(t)
-	claims, err := token.ParseJWT(s.deviceToken("dev-123", "client-abc"), nil)
+	claims, err := token.ParseJWT(s.dauthSvc().DeviceToken("dev-123", "client-abc"), nil)
 	if err != nil {
 		t.Fatalf("device token does not decode: %v", err)
 	}
@@ -49,7 +50,7 @@ func TestDcertServesTheSigningKey(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/keys", nil)
 	r.Host = "dcert-lp1.ndas.srv.nintendo.net"
 	w := httptest.NewRecorder()
-	s.dauth(w, r, nil)
+	s.dauthSvc().Handle(w, r, nil)
 
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "test-kid") {
 		t.Fatalf("dcert /keys = %d %s", w.Code, w.Body.String())
@@ -68,7 +69,7 @@ func TestDeviceTokensFromRealConsoleBody(t *testing.T) {
 	r.Host = "dauth-lp1.ndas.srv.nintendo.net"
 	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	s.dauth(w, r, body)
+	s.dauthSvc().Handle(w, r, body)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
@@ -127,13 +128,13 @@ func TestAccountSetupPathsAllAnswer(t *testing.T) {
 // it there. It has to be non-empty and the same on every request from one console.
 func TestDeviceTokenCarriesAStableSerial(t *testing.T) {
 	s := dauthServer(t)
-	claims, _ := token.ParseJWT(s.deviceToken("dev-123", "client-abc"), nil)
+	claims, _ := token.ParseJWT(s.dauthSvc().DeviceToken("dev-123", "client-abc"), nil)
 	n, _ := claims["nintendo"].(map[string]any)
 	sn := httpx.Str(n, "sn")
-	if sn == "" || sn != consoleSerial("dev-123") {
+	if sn == "" || sn != dauth.ConsoleSerial("dev-123") {
 		t.Fatalf("serial = %q, want the stable one for dev-123", sn)
 	}
-	if consoleSerial("dev-123") == consoleSerial("dev-456") {
+	if dauth.ConsoleSerial("dev-123") == dauth.ConsoleSerial("dev-456") {
 		t.Error("two consoles share a serial")
 	}
 }
@@ -222,12 +223,12 @@ func TestProfileImageUploadIsAccepted(t *testing.T) {
 // A title with no nas:client_id in its aauth settings cannot ask for a Nintendo Account
 // authorization token at all: the console fails it with 2124-0041 without a request.
 func TestAauthNamesTheTitlesNintendoAccountClient(t *testing.T) {
-	got := aauthSettings("010090100E334000")
+	got := dauth.AAuthSettings("010090100E334000")
 	want := map[string]any{"nas:client_id": "010090100e334000", "nas:redirect_uri": "npf010090100e334000://auth"}
 	if len(got) != 1 || !reflect.DeepEqual(got[0], want) {
 		t.Fatalf("settings = %v, want [%v]", got, want)
 	}
-	if got := aauthSettings("010000000000003e"); len(got) != 0 {
+	if got := dauth.AAuthSettings("010000000000003e"); len(got) != 0 {
 		t.Fatalf("system title got a client: %v", got)
 	}
 }

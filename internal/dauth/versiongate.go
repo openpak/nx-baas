@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-package main
+package dauth
 
 // Latest version only: every Switch title OpenPak serves goes online on its newest update.
 //
@@ -51,26 +51,26 @@ type versionOverride struct {
 	min uint32
 }
 
-type versionGate struct {
-	on        bool
+type VersionGate struct {
+	On        bool
 	url       string
-	cachePath string
-	overrides map[uint64]versionOverride
-	fetch     func(url string) ([]byte, error) // swapped in tests
+	CachePath string
+	Overrides map[uint64]versionOverride
+	Fetch     func(url string) ([]byte, error) // swapped in tests
 
 	mu     sync.RWMutex
 	latest map[uint64]uint32
 }
 
-func newVersionGateFromEnv() *versionGate {
-	g := &versionGate{
-		on:        !isOff(httpx.Getenv("NX_VERSION_GATE", "1")),
+func NewVersionGateFromEnv() *VersionGate {
+	g := &VersionGate{
+		On:        !isOff(httpx.Getenv("NX_VERSION_GATE", "1")),
 		url:       httpx.Getenv("NX_VERSION_GATE_URL", versionGateDefaultURL),
-		cachePath: filepath.Join(httpx.Getenv("NX_DATA", "/data"), "title-versions.json"),
-		fetch:     httpFetch,
+		CachePath: filepath.Join(httpx.Getenv("NX_DATA", "/data"), "title-versions.json"),
+		Fetch:     httpFetch,
 	}
 	var err error
-	if g.overrides, err = parseVersionOverrides(os.Getenv("NX_VERSION_GATE_OVERRIDES")); err != nil {
+	if g.Overrides, err = ParseVersionOverrides(os.Getenv("NX_VERSION_GATE_OVERRIDES")); err != nil {
 		log.Fatalf("[version-gate] NX_VERSION_GATE_OVERRIDES: %v", redact.Err(err))
 	}
 	return g
@@ -85,7 +85,7 @@ func isOff(v string) bool {
 }
 
 // parseVersionOverrides reads "0100152000022000=00150000,010090100e334000=all".
-func parseVersionOverrides(s string) (map[uint64]versionOverride, error) {
+func ParseVersionOverrides(s string) (map[uint64]versionOverride, error) {
 	out := map[uint64]versionOverride{}
 	for _, item := range strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' || r == ';' }) {
 		id, val, ok := strings.Cut(item, "=")
@@ -167,24 +167,24 @@ func parseTitleVersions(body []byte) (map[uint64]uint32, error) {
 	return out, nil
 }
 
-func (g *versionGate) size() int {
+func (g *VersionGate) Size() int {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	return len(g.latest)
 }
 
 // loadCache starts from the last good table on disk, so a restart without network still gates.
-func (g *versionGate) loadCache() {
-	body, err := os.ReadFile(g.cachePath)
+func (g *VersionGate) LoadCache() {
+	body, err := os.ReadFile(g.CachePath)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			log.Printf("[version-gate] cache %s: %v", g.cachePath, redact.Err(err))
+			log.Printf("[version-gate] cache %s: %v", g.CachePath, redact.Err(err))
 		}
 		return
 	}
 	t, err := parseTitleVersions(body)
 	if err != nil {
-		log.Printf("[version-gate] cache %s unreadable: %v", g.cachePath, redact.Err(err))
+		log.Printf("[version-gate] cache %s unreadable: %v", g.CachePath, redact.Err(err))
 		return
 	}
 	g.mu.Lock()
@@ -194,8 +194,8 @@ func (g *versionGate) loadCache() {
 }
 
 // refresh fetches the table. On any failure the current table stays as it is.
-func (g *versionGate) refresh() error {
-	body, err := g.fetch(g.url)
+func (g *VersionGate) Refresh() error {
+	body, err := g.Fetch(g.url)
 	if err != nil {
 		return err
 	}
@@ -206,10 +206,10 @@ func (g *versionGate) refresh() error {
 	g.mu.Lock()
 	g.latest = t
 	g.mu.Unlock()
-	if g.cachePath != "" {
-		tmp := g.cachePath + ".tmp"
+	if g.CachePath != "" {
+		tmp := g.CachePath + ".tmp"
 		if err := os.WriteFile(tmp, body, 0o644); err == nil {
-			err = os.Rename(tmp, g.cachePath)
+			err = os.Rename(tmp, g.CachePath)
 		}
 		if err != nil {
 			log.Printf("[version-gate] cache write: %v", redact.Err(err))
@@ -219,12 +219,12 @@ func (g *versionGate) refresh() error {
 	return nil
 }
 
-func (g *versionGate) run() {
-	g.loadCache()
+func (g *VersionGate) Run() {
+	g.LoadCache()
 	for {
 		wait := versionGateRefresh
-		if err := g.refresh(); err != nil {
-			log.Printf("[version-gate] refresh failed, keeping %d titles: %v", g.size(), redact.Err(err))
+		if err := g.Refresh(); err != nil {
+			log.Printf("[version-gate] refresh failed, keeping %d titles: %v", g.Size(), redact.Err(err))
 			wait = versionGateRetry
 		}
 		time.Sleep(wait)
@@ -245,9 +245,9 @@ func httpFetch(url string) ([]byte, error) {
 }
 
 // required answers the minimum version for a title and whether one applies.
-func (g *versionGate) required(title uint64) (uint32, bool) {
+func (g *VersionGate) Required(title uint64) (uint32, bool) {
 	title = baseTitle(title)
-	if o, ok := g.overrides[title]; ok {
+	if o, ok := g.Overrides[title]; ok {
 		return o.min, !o.all
 	}
 	g.mu.RLock()
@@ -267,7 +267,7 @@ type versionVerdict struct {
 }
 
 // verdict measures a title version. Anything unreadable, unknown or ungated is not outdated.
-func (g *versionGate) verdict(appID, appVer string) versionVerdict {
+func (g *VersionGate) verdict(appID, appVer string) versionVerdict {
 	var v versionVerdict
 	tid, err := parseTitleID(appID)
 	if err != nil {
@@ -275,17 +275,17 @@ func (g *versionGate) verdict(appID, appVer string) versionVerdict {
 	}
 	v.title = tid
 	v.have, v.readable = parseAppVersion(appVer)
-	if g == nil || !g.on {
+	if g == nil || !g.On {
 		return v
 	}
-	v.latest, v.applies = g.required(tid)
+	v.latest, v.applies = g.Required(tid)
 	v.outdated = v.applies && v.readable && v.have < v.latest
 	return v
 }
 
 // refuse decides an aauth request. It logs one line per refusal and per unreadable version,
 // with the title and versions only.
-func (g *versionGate) refuse(appID, appVer string) bool {
+func (g *VersionGate) refuse(appID, appVer string) bool {
 	v := g.verdict(appID, appVer)
 	if !v.applies {
 		return false
@@ -312,7 +312,7 @@ func (g *versionGate) refuse(appID, appVer string) bool {
 //
 // latest is "" when no minimum applies (unknown title, an "all" override, the gate off), and
 // update_required is false then and for any version that is not 8 hex digits.
-func (s *server) titleVersion(w http.ResponseWriter, r *http.Request) {
+func (s *Service) TitleVersion(w http.ResponseWriter, r *http.Request) {
 	if !httpx.InternalOK(r) {
 		httpx.APIErr(w, http.StatusUnauthorized, "internal")
 		return
@@ -323,7 +323,7 @@ func (s *server) titleVersion(w http.ResponseWriter, r *http.Request) {
 		httpx.APIErr(w, http.StatusBadRequest, "title must be 16 hex digits")
 		return
 	}
-	v := s.versions.verdict(title, version)
+	v := s.Versions.verdict(title, version)
 	latest := ""
 	if v.applies {
 		latest = fmt.Sprintf("%08x", v.latest)
