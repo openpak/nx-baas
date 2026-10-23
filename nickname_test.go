@@ -23,22 +23,22 @@ func (r *fakeRegistration) SetDisplayName(_ context.Context, in *accountv1.SetDi
 func TestSetNicknameGoesToTheCore(t *testing.T) {
 	b, f := newTestBackend(t)
 	f.addAccount("acc-1", "Before", "correct horse battery")
-	pid, _, err := b.LoginPID("acc-1", "correct horse battery")
+	res, err := b.LoginPID("acc-1", "correct horse battery")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := b.SetNickname(pid, "After"); err == nil {
+	if err := b.SetNickname(res.PID, "After"); err == nil {
 		t.Fatal("no registration client: want an error, not a silent drop")
 	}
 	reg := &fakeRegistration{}
 	b.register = reg
-	if err := b.SetNickname(pid, "After"); err != nil {
+	if err := b.SetNickname(res.PID, "After"); err != nil {
 		t.Fatal(err)
 	}
 	if reg.got.GetAccountId() != "acc-1" || reg.got.GetDisplayName() != "After" || reg.got.GetCallerNamespace() != b.namespace {
 		t.Fatalf("core was sent %+v", reg.got)
 	}
-	if err := b.SetNickname(pid+1, "Nobody"); err == nil {
+	if err := b.SetNickname(res.PID+1, "Nobody"); err == nil {
 		t.Fatal("unknown PID must fail")
 	}
 }

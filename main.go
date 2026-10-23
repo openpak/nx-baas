@@ -65,19 +65,20 @@ func getenv(k, d string) string {
 }
 
 type server struct {
-	store   *Store
-	acct    accountBackend
-	key     *rsa.PrivateKey
-	idKid   string // kid of id_tokens (openpak-baas-key-1: what Photon/NPLN/S2 already trust)
-	accKid  string // kid of BAAS access tokens (/1.0.0/internal_certificates)
-	naKid   string // kid of Nintendo-Account tokens: the console binds kid<->issuer and rejects a kid shared with BAAS (2124-3121)
-	jwks    []byte
-	mu      sync.Mutex
-	codes   map[string]naCode // NA authorization codes / session tokens -> who logged in
-	device  map[string]string // device id -> serial, from the dauth assertion
-	links   *linkStore        // pending QR console links, by code
-	guesses *guesses          // wrong-code attempts, per account
-	phones  *phoneStore       // signed-in phones entering a code
+	store      *Store
+	acct       accountBackend
+	key        *rsa.PrivateKey
+	idKid      string // kid of id_tokens (openpak-baas-key-1: what Photon/NPLN/S2 already trust)
+	accKid     string // kid of BAAS access tokens (/1.0.0/internal_certificates)
+	naKid      string // kid of Nintendo-Account tokens: the console binds kid<->issuer and rejects a kid shared with BAAS (2124-3121)
+	jwks       []byte
+	mu         sync.Mutex
+	codes      map[string]naCode // NA authorization codes / session tokens -> who logged in
+	device     map[string]string // device id -> serial, from the dauth assertion
+	links      *linkStore        // pending QR console links, by code
+	guesses    *guesses          // wrong-code/password attempts, per account
+	phones     *phoneStore       // signed-in phones entering a code
+	pending2FA *pending2FAStore  // password-proved logins awaiting a second factor
 	// saves forwards the scsi hosts (save-data cloud) to the saves service, with the
 	// console's proven account attached. nil answers the empty-cloud fallback instead.
 	saves    *httputil.ReverseProxy
@@ -2191,8 +2192,15 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 					q[k] = form[k]
 				}
 			}
-			pid, username, err := s.acct.LoginPID(form.Get("email"), form.Get("password"))
-			lock := s.pidLock(pid)
+			// Password guesses are capped per account like link codes are.
+			pwKey := "pw:" + strings.ToLower(strings.TrimSpace(form.Get("email")))
+			if blocked, _ := s.guesses.blocked(pwKey); blocked {
+				log.Printf("[nx-baas] NA login throttled for %s", redact.Tag(form.Get("email")))
+				s.authorizePage(w, r, q, `<p class="err">Too many attempts. Wait a few minutes and try again.</p>`)
+				return
+			}
+			res, err := s.acct.LoginPID(form.Get("email"), form.Get("password"))
+			lock := s.pidLock(res.PID)
 			if errors.Is(err, errAccountLocked) && lock == "" {
 				lock = lockBanned
 			}
@@ -2201,30 +2209,80 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 				s.authorizePage(w, r, q, `<p class="err">`+lockedPageMessage(lock)+`</p>`)
 				return
 			}
+			if errors.Is(err, errSecondFactorRequired) {
+				s.authorizePage(w, r, q, `<p class="err">This account has two-factor authentication: finish signing in on the website, then link.</p>`)
+				return
+			}
 			if err != nil {
+				s.guesses.wrong(pwKey)
 				log.Printf("[nx-baas] NA login failed for %s: %v", redact.Tag(form.Get("email")), redact.Err(err))
 				s.authorizePage(w, r, q, `<p class="err">Wrong e-mail or password.</p>`)
 				return
 			}
-			id, err := s.acct.Identity(pid)
+			s.guesses.right(pwKey)
+			if res.Need2FA {
+				// Password proved on the television; the code is typed here
+				// too — six digits, no authenticator round-trip to a phone.
+				tok := s.pending2FA.new(&pending2FA{AccountID: res.AccountID, PID: res.PID, Username: res.Username, Query: q, Mode: pending2FAModeAuthorize})
+				s.authorize2FAPage(w, r, tok, "")
+				return
+			}
+			id, err := s.acct.Identity(res.PID)
 			if err != nil {
 				s.authorizePage(w, r, q, `<p class="err">Account lookup failed.</p>`)
 				return
 			}
 			code := randHex(16)
 			s.mu.Lock()
-			s.codes[code] = naCode{PID: pid, Username: username, ClientID: q.Get("client_id"), NaID: id.NaID, Created: time.Now()}
+			s.codes[code] = naCode{PID: res.PID, Username: res.Username, ClientID: q.Get("client_id"), NaID: id.NaID, Created: time.Now()}
 			s.mu.Unlock()
-			s.store.RememberNA(id.NaID, pid)
+			s.store.RememberNA(id.NaID, res.PID)
 			// ponytail: the redirect shape is inferred from the response_type the console sends;
 			// both the query (code) and fragment (session_token_code / id_token) forms are covered.
 			dest := s.authorizeRedirect(q, code)
-			log.Printf("[nx-baas] NA authorize ok pid=%s response_type=%q -> %s", redact.Tag(pid), q.Get("response_type"), redact.Link(dest))
+			log.Printf("[nx-baas] NA authorize ok pid=%s response_type=%q -> %s", redact.Tag(res.PID), q.Get("response_type"), redact.Link(dest))
 			http.Redirect(w, r, dest, http.StatusFound)
 			return
 		}
 		dump(r, body, "NA authorize")
 		s.authorizePage(w, r, q, "")
+		return
+
+	case p == "/connect/1.0.0/authorize/2fa" && r.Method == "POST":
+		// Second step of the console authorize form: the code (or a recovery
+		// code) for a password-proved login. Same single-use pending record
+		// as the phone flow; the core counts failures per account on top.
+		p, ok := s.pending2FA.peek(form.Get("token"))
+		if !ok || p.Mode != pending2FAModeAuthorize {
+			s.authorizePage(w, r, r.URL.Query(), `<p class="err">That took too long — sign in again.</p>`)
+			return
+		}
+		if err := s.acct.VerifySecondFactor(p.AccountID, strings.TrimSpace(form.Get("code")), strings.TrimSpace(form.Get("recovery_code"))); err != nil {
+			if errors.Is(err, errSecondFactorLocked) {
+				s.authorize2FAPage(w, r, form.Get("token"), `<p class="err">Too many wrong codes. Wait a few minutes and try again.</p>`)
+				return
+			}
+			s.authorize2FAPage(w, r, form.Get("token"), `<p class="err">That code did not work. Check your authenticator and try again.</p>`)
+			return
+		}
+		if _, ok := s.pending2FA.take(form.Get("token")); !ok {
+			s.authorizePage(w, r, r.URL.Query(), `<p class="err">That took too long — sign in again.</p>`)
+			return
+		}
+		q := p.Query
+		id, err := s.acct.Identity(p.PID)
+		if err != nil {
+			s.authorizePage(w, r, q, `<p class="err">Account lookup failed.</p>`)
+			return
+		}
+		code := randHex(16)
+		s.mu.Lock()
+		s.codes[code] = naCode{PID: p.PID, Username: p.Username, ClientID: q.Get("client_id"), NaID: id.NaID, Created: time.Now()}
+		s.mu.Unlock()
+		s.store.RememberNA(id.NaID, p.PID)
+		dest := s.authorizeRedirect(q, code)
+		log.Printf("[nx-baas] NA authorize ok pid=%s (second factor) response_type=%q -> %s", redact.Tag(p.PID), q.Get("response_type"), redact.Link(dest))
+		http.Redirect(w, r, dest, http.StatusFound)
 		return
 
 	case p == "/connect/1.0.0/api/session_token" || p == "/connect/1.0.0/api/token":
@@ -2424,6 +2482,25 @@ func phoneAddress(ok bool, base string) string {
 // controller is miserable, so the QR path leads: a code and an image to scan, the page polls
 // for a phone to claim it, and the person at the console approves. The password form is still
 // there, one fold down, for anyone without a phone to hand.
+// authorize2FAPage: the password proved on the television and the account
+// wants its second factor. Same six digits (or a recovery code) as the phone
+// flow, styled for the sofa.
+func (s *server) authorize2FAPage(w http.ResponseWriter, r *http.Request, token, msg string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, pageHeadFor("Two-factor check", "console")+`
+<h1>Check your authenticator</h1>
+<p>This account has two-factor authentication. Enter the 6-digit code, or a recovery code.</p>
+<div class="card">`+msg+`<form method="post" action="/connect/1.0.0/authorize/2fa">
+<input type="hidden" name="token" value="`+html.EscapeString(token)+`">
+<label for="code">6-digit code</label>
+<input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" spellcheck="false"
+       maxlength="6" minlength="6" pattern="[0-9]{6}" autofocus>
+<label for="recovery_code">Or a recovery code</label>
+<input id="recovery_code" name="recovery_code" autocomplete="off" spellcheck="false">
+<button type="submit">Verify</button>
+</form></div></main></body></html>`)
+}
+
 func (s *server) authorizePage(w http.ResponseWriter, r *http.Request, q url.Values, msg string) {
 	var hidden strings.Builder
 	for k, v := range q {
@@ -2821,6 +2898,7 @@ func newBackend() accountBackend {
 		log.Printf("[nx-baas] identity backend: openpak account core (%s)", getenv("ACCOUNT_GRPC_ADDR", "127.0.0.1:7000"))
 		return b
 	}
+	log.Printf("[nx-baas] identity backend: earlier account server (no console two-factor step-up; alpha requires ACCOUNT_BACKEND=openpak)")
 	return &accountClient{
 		base: strings.TrimRight(getenv("ACCOUNT_API", "http://account:8080"), "/"), adminKey: os.Getenv("OPENPAK_ADMIN_KEY"),
 		secret: []byte(os.Getenv("OPENPAK_SECRET")), http: &http.Client{Timeout: 10 * time.Second},
@@ -2830,17 +2908,18 @@ func newBackend() accountBackend {
 func main() {
 	key := loadRSAKey(getenv("BAAS_SIGNING_KEY", "/keys/baas_signing_key.pem"))
 	s := &server{
-		store:   loadStore(getenv("NX_DATA", "/data") + "/baas.json"),
-		key:     key,
-		idKid:   getenv("BAAS_KID", "openpak-baas-key-1"),
-		accKid:  getenv("BAAS_ACCESS_KID", "00000000-0000-0000-0000-000000000003"),
-		naKid:   getenv("BAAS_NA_KID", "00000000-0000-0000-0000-000000000001"),
-		codes:   map[string]naCode{},
-		device:  map[string]string{},
-		links:   newLinkStore(),
-		guesses: newGuesses(),
-		phones:  newPhoneStore(),
-		acct:    newBackend(),
+		store:      loadStore(getenv("NX_DATA", "/data") + "/baas.json"),
+		key:        key,
+		idKid:      getenv("BAAS_KID", "openpak-baas-key-1"),
+		accKid:     getenv("BAAS_ACCESS_KID", "00000000-0000-0000-0000-000000000003"),
+		naKid:      getenv("BAAS_NA_KID", "00000000-0000-0000-0000-000000000001"),
+		codes:      map[string]naCode{},
+		device:     map[string]string{},
+		links:      newLinkStore(),
+		guesses:    newGuesses(),
+		phones:     newPhoneStore(),
+		pending2FA: newPending2FAStore(),
+		acct:       newBackend(),
 	}
 	s.forwardersFromEnv()
 	s.initHarborDevices()

@@ -34,7 +34,8 @@ func (b *stubBackend) Identity(pid uint64) (*Identity, error) {
 	return id, nil
 }
 func (b *stubBackend) Resolve(url.Values) (*Friend, error)             { return nil, nil }
-func (b *stubBackend) LoginPID(string, string) (uint64, string, error) { return 0, "", nil }
+func (b *stubBackend) LoginPID(string, string) (LoginResult, error)    { return LoginResult{}, nil }
+func (b *stubBackend) VerifySecondFactor(string, string, string) error { return nil }
 func (b *stubBackend) FriendRequest(uint64, uint64) error              { return nil }
 func (b *stubBackend) FriendAccept(uint64, uint64, bool) error         { return nil }
 func (b *stubBackend) RemoveFriend(uint64, uint64) error               { return nil }

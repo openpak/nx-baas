@@ -36,16 +36,17 @@ func (f fakeBackend) Resolve(q url.Values) (*Friend, error) {
 	}
 	return nil, http.ErrNoLocation
 }
-func (f fakeBackend) LoginPID(string, string) (uint64, string, error) {
-	return f.id.PID, f.id.Nickname, nil
+func (f fakeBackend) LoginPID(string, string) (LoginResult, error) {
+	return LoginResult{PID: f.id.PID, Username: f.id.Nickname}, nil
 }
-func (f fakeBackend) FriendRequest(uint64, uint64) error      { return nil }
-func (f fakeBackend) FriendAccept(uint64, uint64, bool) error { return nil }
-func (f fakeBackend) RemoveFriend(uint64, uint64) error       { return nil }
-func (f fakeBackend) Block(uint64, uint64) error              { return nil }
-func (f fakeBackend) Unblock(uint64, uint64) error            { return nil }
-func (f fakeBackend) nexToken(uint64, string) string          { return "nx2.test" }
-func (f fakeBackend) nexSigningKey() []byte                   { return []byte("test") }
+func (f fakeBackend) VerifySecondFactor(string, string, string) error { return nil }
+func (f fakeBackend) FriendRequest(uint64, uint64) error              { return nil }
+func (f fakeBackend) FriendAccept(uint64, uint64, bool) error         { return nil }
+func (f fakeBackend) RemoveFriend(uint64, uint64) error               { return nil }
+func (f fakeBackend) Block(uint64, uint64) error                      { return nil }
+func (f fakeBackend) Unblock(uint64, uint64) error                    { return nil }
+func (f fakeBackend) nexToken(uint64, string) string                  { return "nx2.test" }
+func (f fakeBackend) nexSigningKey() []byte                           { return []byte("test") }
 
 // The login reply is the object the console parses to decide whether an account
 // was added, and when it dislikes one it says 2124-3121 and nothing else. There

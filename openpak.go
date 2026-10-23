@@ -325,11 +325,16 @@ func (b *openpakBackend) RegenerateFriendCode(pid uint64) error {
 	return nil
 }
 
-func (b *openpakBackend) LoginPID(email, password string) (uint64, string, error) {
+func (b *openpakBackend) LoginPID(email, password string) (LoginResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	req := &accountv1.VerifyPasswordRequest{
-		CallerNamespace: b.namespace, Purpose: "console_login", Email: email, Password: password}
+		CallerNamespace: b.namespace, Purpose: "console_login", Email: email, Password: password,
+		// Declared: a 2FA account comes back Need2FA instead of failing
+		// closed, so the caller can run the second step. Leaving this false
+		// would turn every 2FA account into a dead end here.
+		SecondFactorSupported: true,
+	}
 	res, err := b.identity.VerifyPassword(ctx, req)
 	if isTransient(err) {
 		// One retry: a dead connection must not read as a wrong password on a television.
@@ -337,19 +342,24 @@ func (b *openpakBackend) LoginPID(email, password string) (uint64, string, error
 		res, err = b.identity.VerifyPassword(ctx, req)
 	}
 	if err != nil {
-		return 0, "", err
+		// Unreachable against a current core (support is always declared),
+		// but a skew must read as "2FA owed", never as "wrong password".
+		if status.Code(err) == codes.FailedPrecondition {
+			return LoginResult{}, errSecondFactorRequired
+		}
+		return LoginResult{}, err
 	}
 	switch res.GetStatus() {
 	case accountv1.AccountStatus_ACCOUNT_STATUS_BANNED, accountv1.AccountStatus_ACCOUNT_STATUS_DELETION_PENDING,
 		accountv1.AccountStatus_ACCOUNT_STATUS_DELETED:
-		return 0, "", fmt.Errorf("console login: %w (%s)", errAccountLocked, res.GetStatus())
+		return LoginResult{}, fmt.Errorf("console login: %w (%s)", errAccountLocked, res.GetStatus())
 	}
 	if res.GetStatus() != accountv1.AccountStatus_ACCOUNT_STATUS_ACTIVE || !res.GetEmailVerified() {
-		return 0, "", errors.New("account is not active/verified for console linking")
+		return LoginResult{}, errors.New("account is not active/verified for console linking")
 	}
 	pr, err := b.ensure(ctx, res.GetAccountId())
 	if err != nil {
-		return 0, "", err
+		return LoginResult{}, err
 	}
 	// Display name is the core's only exposed profile field; sync the
 	// projection's copy so friends render it without a core round-trip.
@@ -366,7 +376,35 @@ func (b *openpakBackend) LoginPID(email, password string) (uint64, string, error
 	} else {
 		logErr("login get-account", err)
 	}
-	return pr.PID, pr.nicknameOr(nickname), nil
+	out := LoginResult{PID: pr.PID, Username: pr.nicknameOr(nickname),
+		Need2FA: res.GetTwoFactorRequired(), AccountID: res.GetAccountId()}
+	if out.Need2FA {
+		// Password proved, nothing signed in: the projection row exists but
+		// no session, link or approval may use it until VerifySecondFactor.
+		log.Printf("[openpak] login pid=%s needs its second factor", redact.Tag(out.PID))
+	}
+	return out, nil
+}
+
+// VerifySecondFactor completes a Need2FA login. The password is not re-asked
+// (and was never stored); the pending record carries only the account id.
+func (b *openpakBackend) VerifySecondFactor(accountID, code, recoveryCode string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err := b.identity.VerifySecondFactor(ctx, &accountv1.VerifySecondFactorRequest{
+		AccountId: accountID, Code: code, RecoveryCode: recoveryCode})
+	switch status.Code(err) {
+	case codes.OK:
+		return nil
+	case codes.Unauthenticated:
+		return errSecondFactorInvalid
+	case codes.ResourceExhausted:
+		return errSecondFactorLocked
+	case codes.FailedPrecondition:
+		return errSecondFactorUnsupported
+	default:
+		return err
+	}
 }
 
 func (b *openpakBackend) Identity(pid uint64) (*Identity, error) {

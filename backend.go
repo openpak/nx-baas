@@ -9,12 +9,30 @@ import (
 // them without knowing which backend answered. The core remains canonical;
 // these only carry failure semantics across the interface (SOC-03).
 var (
-	errCoreInvalid     = errors.New("the core rejected the request")
-	errCoreNotFound    = errors.New("the core does not know that account or request")
-	errStateConflict   = errors.New("the relationship is not in the required state")
-	errCoreUnavailable = errors.New("the core is unavailable")
-	errCoreInternal    = errors.New("internal core error")
+	errCoreInvalid             = errors.New("the core rejected the request")
+	errCoreNotFound            = errors.New("the core does not know that account or request")
+	errStateConflict           = errors.New("the relationship is not in the required state")
+	errCoreUnavailable         = errors.New("the core is unavailable")
+	errCoreInternal            = errors.New("internal core error")
+	errSecondFactorInvalid     = errors.New("invalid two-factor code")
+	errSecondFactorLocked      = errors.New("too many two-factor attempts; try again later")
+	errSecondFactorUnsupported = errors.New("second factor not supported by this backend")
+	// errSecondFactorRequired means the core answered "2FA required" to a
+	// caller that declared support: a version skew, never the normal Need2FA
+	// path (which arrives as a result, not an error).
+	errSecondFactorRequired = errors.New("two-factor authentication is required")
 )
+
+// LoginResult is the outcome of a password check that declares second-factor
+// support. When Need2FA is true the password proved but a second factor is
+// still owed: PID/Username/AccountID are set, but nothing is signed in,
+// linked, or approved until VerifySecondFactor succeeds.
+type LoginResult struct {
+	PID       uint64
+	Username  string
+	Need2FA   bool
+	AccountID string
+}
 
 // accountBackend is the identity source behind the BAAS surface. Two
 // implementations exist:
@@ -33,8 +51,15 @@ type accountBackend interface {
 	// Resolve looks up any account by friend code or BAAS user id.
 	Resolve(q url.Values) (*Friend, error)
 	// LoginPID verifies email + password for the "Link Nintendo Account"
-	// flow and returns the canonical PID + username.
-	LoginPID(email, password string) (uint64, string, error)
+	// flow and returns the canonical PID + username. It declares
+	// second-factor support: a 2FA account comes back as Need2FA (password
+	// proved, nothing signed in) instead of an error, and the caller MUST
+	// complete VerifySecondFactor before treating the person as signed in.
+	LoginPID(email, password string) (LoginResult, error)
+	// VerifySecondFactor completes a Need2FA login with a TOTP code or a
+	// recovery code. Wrong codes fail; too many lock the account's factor
+	// temporarily (core-enforced, 5 per 15 minutes).
+	VerifySecondFactor(accountID, code, recoveryCode string) error
 	// FriendRequest sends a request from one PID to another. A pending
 	// request in the other direction is reported as errReversePending.
 	FriendRequest(from, to uint64) error

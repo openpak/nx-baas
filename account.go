@@ -132,7 +132,12 @@ func (a *accountClient) Resolve(q url.Values) (*Friend, error) {
 }
 
 // LoginPID checks a OpenPak e-mail + password (the "Link Nintendo Account" web page).
-func (a *accountClient) LoginPID(email, password string) (uint64, string, error) {
+// The earlier account server speaks no second factor, so this never returns
+// Need2FA: a 2FA account's posture here is whatever that server enforces, and
+// alpha operation requires ACCOUNT_BACKEND=openpak (the openpakBackend path
+// declares support and runs the second step). VerifySecondFactor on this
+// backend always refuses rather than pretending.
+func (a *accountClient) LoginPID(email, password string) (LoginResult, error) {
 	var out struct {
 		Account struct {
 			PID      uint64 `json:"pid"`
@@ -140,9 +145,15 @@ func (a *accountClient) LoginPID(email, password string) (uint64, string, error)
 		} `json:"account"`
 	}
 	if err := a.postJSON("/api/login", map[string]string{"Login": email, "Password": password}, &out); err != nil {
-		return 0, "", err
+		return LoginResult{}, err
 	}
-	return out.Account.PID, out.Account.Username, nil
+	return LoginResult{PID: out.Account.PID, Username: out.Account.Username}, nil
+}
+
+// VerifySecondFactor has nothing to complete on the earlier account backend: fail
+// closed instead of inventing a code check the account server never sees.
+func (a *accountClient) VerifySecondFactor(string, string, string) error {
+	return errSecondFactorUnsupported
 }
 
 func (a *accountClient) FriendRequest(from, to uint64) error {

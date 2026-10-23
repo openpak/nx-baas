@@ -32,7 +32,7 @@ func socialServer(t *testing.T) (*server, *fakeCore, []*User) {
 		{"acc-b@example.com", "PlayerB", "pw-b-bbbbbbbbbbb"},
 	} {
 		f.addAccount(acc.id, acc.name, acc.pw)
-		pid, _, err := b.LoginPID(acc.id, acc.pw)
+		res, err := b.LoginPID(acc.id, acc.pw)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -48,7 +48,7 @@ func socialServer(t *testing.T) (*server, *fakeCore, []*User) {
 			}
 		}
 		s.store.mu.Unlock()
-		s.store.Update(u, func(u *User) { u.PID, u.Nickname = pid, acc.name })
+		s.store.Update(u, func(u *User) { u.PID, u.Nickname = res.PID, acc.name })
 		users = append(users, s.store.User(baas))
 	}
 	f.befriend("acc-a@example.com", "acc-b@example.com")
@@ -1167,7 +1167,7 @@ func codeOf(s *server, u *User) string {
 func newUserFor(t *testing.T, s *server, accountID, pw string) *User {
 	t.Helper()
 	b := s.acct.(*openpakBackend)
-	pid, _, err := b.LoginPID(accountID, pw)
+	res, err := b.LoginPID(accountID, pw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1183,6 +1183,6 @@ func newUserFor(t *testing.T, s *server, accountID, pw string) *User {
 		}
 	}
 	s.store.mu.Unlock()
-	s.store.Update(u, func(u *User) { u.PID = pid })
+	s.store.Update(u, func(u *User) { u.PID = res.PID })
 	return s.store.User(baas)
 }

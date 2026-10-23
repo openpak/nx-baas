@@ -23,9 +23,13 @@ func TestDumpLinkPages(t *testing.T) {
 		"confirm": func(w *httptest.ResponseRecorder) { s.phoneConfirmPage(w, "hansolo", "pair-1", "") },
 		"done":    func(w *httptest.ResponseRecorder) { s.phoneDonePage(w, "hansolo") },
 		"signin":  func(w *httptest.ResponseRecorder) { s.phoneLoginPage(w, "pair-1", "") },
+		"2fa":     func(w *httptest.ResponseRecorder) { s.phone2FAPage(w, "pair-1", "pending-token", "") },
 		// The console page: a television, not a phone.
 		"console": func(w *httptest.ResponseRecorder) {
 			s.authorizePage(w, httptest.NewRequest("GET", "https://accounts.nintendo.com/connect/1.0.0/authorize", nil), nil, "")
+		},
+		"console-2fa": func(w *httptest.ResponseRecorder) {
+			s.authorize2FAPage(w, httptest.NewRequest("GET", "https://accounts.nintendo.com/connect/1.0.0/authorize", nil), "pending-token", "")
 		},
 	} {
 		w := httptest.NewRecorder()

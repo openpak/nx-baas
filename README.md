@@ -63,7 +63,15 @@ rejection sampling because 256 is not a multiple of 10.
 
 Six digits is one in a million, so **guesses are capped**: ten wrong codes per account buys a
 ten-minute wait, keyed by the account rather than the session cookie. A code alone still cannot
-finish a link — the person at the console approves.
+finish a link — the person at the console approves. Password guesses on the sign-in forms are
+capped the same way (ten per account per ten minutes).
+
+Two-factor accounts do not dead-end here: a correct password returns the account as
+second-factor-owed, and the next page asks for the authenticator code (or a recovery code) —
+on the phone flow (`/link/2fa`) and on the console authorize form
+(`/connect/1.0.0/authorize/2fa`) alike. The pending record holds only the account id and
+where to continue, never the password; it is single-use and ten minutes. This needs
+`ACCOUNT_BACKEND=openpak`: the earlier account server speaks no second factor.
 
 The console page and the phone pages share one stylesheet split by a body class: a television
 read from a sofa and driven by a stick is not a phone held at arm's length. Both carry their CSS

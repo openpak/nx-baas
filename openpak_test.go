@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -32,6 +33,12 @@ type fakeCore struct {
 	blocks     map[string]bool // "blocker\x00blocked"
 	// friendsSince is when the core says each account became somebody's friend.
 	friendsSince map[string]int64
+	// twoFA marks accounts with an enabled second factor; totp is the code
+	// the fake accepts for them; totpLocked simulates the core lockout.
+	twoFA        map[string]bool
+	totp         map[string]string
+	totpLocked   map[string]bool
+	sawSupported bool // whether any caller declared second-factor support
 }
 
 func newFakeCore() *fakeCore {
@@ -43,7 +50,16 @@ func newFakeCore() *fakeCore {
 		incoming:   map[string][]string{},
 		outgoing:   map[string][]string{},
 		blocks:     map[string]bool{},
+		twoFA:      map[string]bool{},
+		totp:       map[string]string{},
+		totpLocked: map[string]bool{},
 	}
+}
+
+func (f *fakeCore) add2FAAccount(id, display, password, code string) {
+	f.addAccount(id, display, password)
+	f.twoFA[id] = true
+	f.totp[id] = code
 }
 
 func (f *fakeCore) addAccount(id, display, password string) {
@@ -88,13 +104,33 @@ type fakeIdentity struct {
 func (x fakeIdentity) VerifyPassword(ctx context.Context, r *accountv1.VerifyPasswordRequest, _ ...grpc.CallOption,
 ) (*accountv1.VerifyPasswordResponse, error) {
 	// The core authenticates by email and returns the account id.
+	x.f.sawSupported = x.f.sawSupported || r.GetSecondFactorSupported()
 	for id, pw := range x.f.passwords {
 		if id != "" && strings.EqualFold(id, r.GetEmail()) && pw == r.GetPassword() {
-			return &accountv1.VerifyPasswordResponse{AccountId: id,
-				Status: x.f.accounts[id].GetStatus(), EmailVerified: true}, nil
+			resp := &accountv1.VerifyPasswordResponse{AccountId: id,
+				Status: x.f.accounts[id].GetStatus(), EmailVerified: true}
+			if x.f.twoFA[id] {
+				if !r.GetSecondFactorSupported() {
+					return nil, status.Error(codes.FailedPrecondition, "two-factor authentication required")
+				}
+				resp.TwoFactorRequired = true
+			}
+			return resp, nil
 		}
 	}
 	return nil, status.Error(codes.Unauthenticated, "invalid credentials")
+}
+
+func (x fakeIdentity) VerifySecondFactor(ctx context.Context, r *accountv1.VerifySecondFactorRequest, _ ...grpc.CallOption,
+) (*accountv1.VerifySecondFactorResponse, error) {
+	id := r.GetAccountId()
+	if x.f.totpLocked[id] {
+		return nil, status.Error(codes.ResourceExhausted, "too many two-factor attempts")
+	}
+	if x.f.twoFA[id] && (r.GetCode() == x.f.totp[id] || r.GetRecoveryCode() == "recovery-"+id) {
+		return &accountv1.VerifySecondFactorResponse{}, nil
+	}
+	return nil, status.Error(codes.Unauthenticated, "invalid code")
 }
 
 func (x fakeIdentity) GetAccount(ctx context.Context, r *accountv1.GetAccountRequest, _ ...grpc.CallOption,
@@ -282,17 +318,17 @@ func TestOpenpakLoginMintsStableProjection(t *testing.T) {
 	b, f := newTestBackend(t)
 	f.addAccount("acc-1", "StardewHost", "correct horse battery")
 
-	pid, username, err := b.LoginPID("acc-1", "correct horse battery")
+	res, err := b.LoginPID("acc-1", "correct horse battery")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if username != "StardewHost" || pid == 0 {
-		t.Fatalf("login: pid=%d username=%q", pid, username)
+	if res.Username != "StardewHost" || res.PID == 0 || res.Need2FA {
+		t.Fatalf("login: pid=%d username=%q need2fa=%v", res.PID, res.Username, res.Need2FA)
 	}
 	// Retry returns the same identifiers (SW-01: no duplicate subjects).
-	pid2, username2, err := b.LoginPID("acc-1", "correct horse battery")
-	if err != nil || pid2 != pid || username2 != username {
-		t.Fatalf("retry mismatch: pid %d/%d name %q/%q err %v", pid, pid2, username, username2, err)
+	res2, err := b.LoginPID("acc-1", "correct horse battery")
+	if err != nil || res2.PID != res.PID || res2.Username != res.Username {
+		t.Fatalf("retry mismatch: pid %d/%d name %q/%q err %v", res.PID, res2.PID, res.Username, res2.Username, err)
 	}
 	// The core link was established once, for the minted BAAS subject.
 	pr := b.proj.ByAccount["acc-1"]
@@ -308,7 +344,7 @@ func TestOpenpakLoginMintsStableProjection(t *testing.T) {
 	if len(pr.NaID) != 16 || len(pr.BsDid) != 16 {
 		t.Fatalf("na_id/bs_did must be 16 hex: %q %q", pr.NaID, pr.BsDid)
 	}
-	if id, err := b.Identity(pid); err != nil || id.NaID != pr.NaID {
+	if id, err := b.Identity(res.PID); err != nil || id.NaID != pr.NaID {
 		t.Fatalf("identity NaID: %+v %v", id, err)
 	}
 }
@@ -318,40 +354,40 @@ func TestOpenpakIdentityRendersFriends(t *testing.T) {
 	f.addAccount("acc-1", "Host", "pw-1-xxxxxxxxxxx")
 	f.addAccount("acc-2", "Guest", "pw-2-xxxxxxxxxxx")
 
-	p1, _, err := b.LoginPID("acc-1", "pw-1-xxxxxxxxxxx")
+	r1, err := b.LoginPID("acc-1", "pw-1-xxxxxxxxxxx")
 	if err != nil {
 		t.Fatal(err)
 	}
-	p2, _, err := b.LoginPID("acc-2", "pw-2-xxxxxxxxxxx")
+	r2, err := b.LoginPID("acc-2", "pw-2-xxxxxxxxxxx")
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Host sends a request to Guest; Guest accepts.
-	if err := b.FriendRequest(p1, p2); err != nil {
+	if err := b.FriendRequest(r1.PID, r2.PID); err != nil {
 		t.Fatal(err)
 	}
-	id, err := b.Identity(p2)
+	id, err := b.Identity(r2.PID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(id.FriendRequests) != 1 || id.FriendRequests[0].PID != p1 {
+	if len(id.FriendRequests) != 1 || id.FriendRequests[0].PID != r1.PID {
 		t.Fatalf("incoming request: %+v", id.FriendRequests)
 	}
-	if err := b.FriendAccept(p2, p1, true); err != nil {
+	if err := b.FriendAccept(r2.PID, r1.PID, true); err != nil {
 		t.Fatal(err)
 	}
-	id, err = b.Identity(p1)
+	id, err = b.Identity(r1.PID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(id.Friends) != 1 || id.Friends[0].PID != p2 || id.Friends[0].Nickname != "Guest" {
+	if len(id.Friends) != 1 || id.Friends[0].PID != r2.PID || id.Friends[0].Nickname != "Guest" {
 		t.Fatalf("friends: %+v", id.Friends)
 	}
 
 	// Resolve by friend code and by BAAS user id.
 	pr2 := b.proj.ByAccount["acc-2"]
 	byCode, err := b.Resolve(url.Values(strMap("code", pr2.FriendCode)))
-	if err != nil || byCode.PID != p2 {
+	if err != nil || byCode.PID != r2.PID {
 		t.Fatalf("resolve code: %+v %v", byCode, err)
 	}
 	byBaas, err := b.Resolve(url.Values(strMap("baas", pr2.BaasUserID)))
@@ -389,11 +425,11 @@ func TestInternalSwitchIdentity(t *testing.T) {
 	f.addAccount("host@example.com", "Host", "pw")
 	f.addAccount("friend@example.com", "Friend", "pw")
 	f.befriend("host@example.com", "friend@example.com")
-	hostPID, _, err := b.LoginPID("host@example.com", "pw")
+	hostRes, err := b.LoginPID("host@example.com", "pw")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := b.LoginPID("friend@example.com", "pw"); err != nil {
+	if _, err := b.LoginPID("friend@example.com", "pw"); err != nil {
 		t.Fatal(err)
 	}
 	key := strings.Repeat("i", 32)
@@ -418,11 +454,11 @@ func TestInternalSwitchIdentity(t *testing.T) {
 		_ = json.NewDecoder(resp.Body).Decode(&out)
 		return resp.StatusCode, out
 	}
-	code, id := post(`{"openpak":"`+b.nexToken(hostPID, "Host")+`"}`, key)
-	if code != 200 || id.PID != hostPID || id.BaasUserID == "" || len(id.Friends) != 1 || id.Friends[0].Nickname != "Friend" {
+	code, id := post(`{"openpak":"`+b.nexToken(hostRes.PID, "Host")+`"}`, key)
+	if code != 200 || id.PID != hostRes.PID || id.BaasUserID == "" || len(id.Friends) != 1 || id.Friends[0].Nickname != "Friend" {
 		t.Fatalf("openpak path: code=%d id=%+v", code, id)
 	}
-	if code, _ := post(`{"pid":`+strconv.FormatUint(hostPID, 10)+`}`, key); code != 200 {
+	if code, _ := post(`{"pid":`+strconv.FormatUint(hostRes.PID, 10)+`}`, key); code != 200 {
 		t.Fatalf("pid path: code=%d", code)
 	}
 	if code, _ := post(`{"openpak":"nx2.a.b"}`, key); code != 401 {
@@ -460,5 +496,60 @@ func TestCursorNeverAdvancesPastARealEvent(t *testing.T) {
 	writeCursor(path, 41)
 	if got, known := readCursor(path); !known || got != 41 {
 		t.Fatalf("readCursor = %d/%v, want 41", got, known)
+	}
+}
+
+// TestLoginDeclaresSecondFactorSupport: the adapter must tell the core it can
+// run the second step, or every 2FA account fails closed into a dead end.
+func TestLoginDeclaresSecondFactorSupport(t *testing.T) {
+	b, f := newTestBackend(t)
+	f.addAccount("acc-1", "Plain", "correct horse battery")
+	if _, err := b.LoginPID("acc-1", "correct horse battery"); err != nil {
+		t.Fatal(err)
+	}
+	if !f.sawSupported {
+		t.Error("LoginPID did not declare second-factor support to the core")
+	}
+}
+
+// TestLoginReturnsNeed2FA: a correct password on a 2FA account proves the
+// password and owes the code — PID minted, nothing signed in.
+func TestLoginReturnsNeed2FA(t *testing.T) {
+	b, f := newTestBackend(t)
+	f.add2FAAccount("2fa@example.com", "TwoFA", "correct horse battery", "123456")
+	res, err := b.LoginPID("2fa@example.com", "correct horse battery")
+	if err != nil {
+		t.Fatalf("2FA password step: %v", err)
+	}
+	if !res.Need2FA || res.AccountID != "2fa@example.com" || res.PID == 0 {
+		t.Fatalf("need2fa=%v account=%q pid=%d, want the pending shape", res.Need2FA, res.AccountID, res.PID)
+	}
+}
+
+// TestVerifySecondFactorMappings: code, recovery code, wrong code, lockout.
+func TestVerifySecondFactorMappings(t *testing.T) {
+	b, f := newTestBackend(t)
+	f.add2FAAccount("2fa@example.com", "TwoFA", "correct horse battery", "123456")
+	if err := b.VerifySecondFactor("2fa@example.com", "123456", ""); err != nil {
+		t.Fatalf("good code: %v", err)
+	}
+	if err := b.VerifySecondFactor("2fa@example.com", "", "recovery-2fa@example.com"); err != nil {
+		t.Fatalf("recovery code: %v", err)
+	}
+	if err := b.VerifySecondFactor("2fa@example.com", "000000", ""); !errors.Is(err, errSecondFactorInvalid) {
+		t.Fatalf("wrong code = %v, want invalid", err)
+	}
+	f.totpLocked["2fa@example.com"] = true
+	if err := b.VerifySecondFactor("2fa@example.com", "123456", ""); !errors.Is(err, errSecondFactorLocked) {
+		t.Fatalf("locked = %v, want locked", err)
+	}
+}
+
+// TestEarlierBackendStepUpUnsupported: the earlier account server speaks no second
+// factor, so its step-up refuses instead of pretending.
+func TestEarlierBackendStepUpUnsupported(t *testing.T) {
+	a := &accountClient{http: http.DefaultClient}
+	if err := a.VerifySecondFactor("acc-1", "123456", ""); !errors.Is(err, errSecondFactorUnsupported) {
+		t.Fatalf("earlier-backend step-up = %v, want unsupported", err)
 	}
 }

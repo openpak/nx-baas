@@ -121,6 +121,69 @@ func (p *phoneStore) drop(token string) {
 	delete(p.by, token)
 }
 
+// pending2FA holds a password-proved login whose second factor is still
+// owed. It carries the account id and where to continue — never the
+// password, which is not stored past the login call. Short-lived and
+// single-use: dropped when the code verifies (or when it expires).
+type pending2FA struct {
+	AccountID string
+	PID       uint64 // projection minted at password time; usable only after the code verifies
+	Username  string
+	Pair      string     // link flow: the console pairing ("" for authorize flow)
+	Query     url.Values // authorize flow: the console's original parameters
+	Mode      string     // "link" or "authorize"
+	Created   time.Time
+}
+
+const pending2FAModesLink, pending2FAModeAuthorize = "link", "authorize"
+
+const pending2FATTL = 10 * time.Minute
+
+type pending2FAStore struct {
+	mu sync.Mutex
+	by map[string]*pending2FA
+}
+
+func newPending2FAStore() *pending2FAStore { return &pending2FAStore{by: map[string]*pending2FA{}} }
+
+func (s *pending2FAStore) new(p *pending2FA) string {
+	token := randHex(32)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for t, q := range s.by {
+		if time.Since(q.Created) > pending2FATTL {
+			delete(s.by, t)
+		}
+	}
+	p.Created = time.Now()
+	s.by[token] = p
+	return token
+}
+
+func (s *pending2FAStore) take(token string) (*pending2FA, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.by[token]
+	if !ok || time.Since(p.Created) > pending2FATTL {
+		delete(s.by, token)
+		return nil, false
+	}
+	delete(s.by, token)
+	return p, true
+}
+
+func (s *pending2FAStore) peek(token string) (*pending2FA, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.by[token]
+	if !ok || time.Since(p.Created) > pending2FATTL {
+		delete(s.by, token)
+		return nil, false
+	}
+	cp := *p
+	return &cp, true
+}
+
 type linkStore struct {
 	mu sync.Mutex
 	by map[string]*pendingLink
@@ -376,10 +439,16 @@ func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) b
 
 	case r.URL.Path == "/link" && r.Method == "POST":
 		// Sign-in step: credentials only. No code is accepted here, so a stolen link cannot
-		// approve anything on its own.
+		// approve anything on its own. Password guesses are capped per account like link
+		// codes are: the television writes nothing down, but the endpoint is still HTTP.
 		pair := form.Get("pair")
-		pid, username, err := s.acct.LoginPID(form.Get("email"), form.Get("password"))
-		lock := s.pidLock(pid)
+		pwKey := "pw:" + strings.ToLower(strings.TrimSpace(form.Get("email")))
+		if blocked, _ := s.guesses.blocked(pwKey); blocked {
+			s.phoneLoginPage(w, pair, "Too many attempts. Wait a few minutes and try again.")
+			return true
+		}
+		res, err := s.acct.LoginPID(form.Get("email"), form.Get("password"))
+		lock := s.pidLock(res.PID)
 		if errors.Is(err, errAccountLocked) && lock == "" {
 			lock = lockBanned
 		}
@@ -387,19 +456,59 @@ func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) b
 			s.phoneLoginPage(w, pair, lockedPageMessage(lock))
 			return true
 		}
+		if errors.Is(err, errSecondFactorRequired) {
+			s.phoneLoginPage(w, pair, "This account has two-factor authentication: finish signing in on the website, then link.")
+			return true
+		}
 		if err != nil {
+			s.guesses.wrong(pwKey)
 			s.phoneLoginPage(w, pair, "Wrong e-mail or password.")
 			return true
 		}
-		if _, err := s.acct.Identity(pid); err != nil {
+		s.guesses.right(pwKey)
+		if res.Need2FA {
+			// Password proved, second factor owed: hold only the account id
+			// and where to continue, then ask for the authenticator code (or
+			// a recovery code) on the next page.
+			tok := s.pending2FA.new(&pending2FA{AccountID: res.AccountID, PID: res.PID, Username: res.Username, Pair: pair, Mode: pending2FAModesLink})
+			s.phone2FAPage(w, pair, tok, "")
+			return true
+		}
+		if _, err := s.acct.Identity(res.PID); err != nil {
 			s.phoneLoginPage(w, pair, "Account lookup failed.")
 			return true
 		}
-		sess := phoneSession{PID: pid, Username: username}
-		s.setPhoneCookie(w, r, s.phones.new(pid, username))
-		// Only now does the console reveal its code.
-		s.markSignedIn(pair, sess)
-		s.phoneConfirmPage(w, username, pair, "")
+		s.finishPhoneSignIn(w, r, pair, res.PID, res.Username)
+		return true
+
+	case r.URL.Path == "/link/2fa" && r.Method == "POST":
+		// Second step: the code (or a recovery code) for a password-proved
+		// login. The pending record is consumed only by a correct code; wrong
+		// ones leave it for retry inside its ten minutes, and the core counts
+		// failures per account (5 per 15 minutes) on top.
+		pair := form.Get("pair")
+		p, ok := s.pending2FA.peek(form.Get("token"))
+		if !ok || p.Mode != pending2FAModesLink {
+			s.phoneLoginPage(w, pair, "That took too long — sign in again.")
+			return true
+		}
+		if err := s.acct.VerifySecondFactor(p.AccountID, strings.TrimSpace(form.Get("code")), strings.TrimSpace(form.Get("recovery_code"))); err != nil {
+			if errors.Is(err, errSecondFactorLocked) {
+				s.phone2FAPage(w, pair, form.Get("token"), "Too many wrong codes. Wait a few minutes and try again.")
+				return true
+			}
+			s.phone2FAPage(w, pair, form.Get("token"), "That code did not work. Check your authenticator and try again.")
+			return true
+		}
+		if _, ok := s.pending2FA.take(form.Get("token")); !ok {
+			s.phoneLoginPage(w, pair, "That took too long — sign in again.")
+			return true
+		}
+		if _, err := s.acct.Identity(p.PID); err != nil {
+			s.phoneLoginPage(w, pair, "Account lookup failed.")
+			return true
+		}
+		s.finishPhoneSignIn(w, r, pair, p.PID, p.Username)
 		return true
 
 	case r.URL.Path == "/link/signout" && r.Method == "GET":
@@ -689,6 +798,34 @@ func pairField(pair string) string {
 		return ""
 	}
 	return `<input type="hidden" name="pair" value="` + html.EscapeString(pair) + `">`
+}
+
+// finishPhoneSignIn runs the post-login continuation both the password step
+// and the second-factor step share: cookie session, console reveal, confirm.
+func (s *server) finishPhoneSignIn(w http.ResponseWriter, r *http.Request, pair string, pid uint64, username string) {
+	sess := phoneSession{PID: pid, Username: username}
+	s.setPhoneCookie(w, r, s.phones.new(pid, username))
+	// Only now does the console reveal its code.
+	s.markSignedIn(pair, sess)
+	s.phoneConfirmPage(w, username, pair, "")
+}
+
+// phone2FAPage: password proved, second factor owed. Six digits from the
+// authenticator, or one of the recovery codes shown once at enrolment.
+func (s *server) phone2FAPage(w http.ResponseWriter, pair, token, errMsg string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, pageHead("Two-factor check")+`
+<h1>Check your authenticator</h1>
+<p>This account has two-factor authentication. Enter the 6-digit code, or a recovery code.</p>
+<div class="card">`+errBlock(errMsg)+`<form method="post" action="/link/2fa">
+`+pairField(pair)+`<input type="hidden" name="token" value="`+html.EscapeString(token)+`">
+<label for="code">6-digit code</label>
+<input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" spellcheck="false"
+       maxlength="6" minlength="6" pattern="[0-9]{6}" autofocus>
+<label for="recovery_code">Or a recovery code</label>
+<input id="recovery_code" name="recovery_code" autocomplete="off" spellcheck="false">
+<button type="submit">Verify</button>
+</form></div></main></body></html>`)
 }
 
 // markSignedIn tells the console session that a phone has signed in, which is what makes the
