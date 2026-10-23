@@ -177,31 +177,6 @@ func TestTheOtherConsoleServicesAnswer(t *testing.T) {
 	}
 }
 
-// The captured BCAT topics request, exactly as hardware sent it on 2026-09-08:
-// `?l=<language>&c[]=<country>` on the bcat-topics host. It must reach the
-// msgpack handler -- the JSON object this used to answer with is not a document
-// the module can parse.
-func TestBcatTopicsRequestFromHardwareIsAnsweredAsMsgpack(t *testing.T) {
-	s := dauthServer(t)
-	s.store = &Store{Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
-
-	const host = "bcat-topics-lp1.cdn.nintendo.net"
-	r := httptest.NewRequest("GET", "https://"+host+"/api/nx/v1/titles/0100b6001e6d6000/topics?l=en-GB&c%5b%5d=GB", nil)
-	r.Host = host
-	w := httptest.NewRecorder()
-	s.ServeHTTP(w, r)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("%d: %s", w.Code, w.Body.String())
-	}
-	if ct := w.Header().Get("Content-Type"); ct != "application/x-msgpack" {
-		t.Fatalf("content-type %q, want application/x-msgpack", ct)
-	}
-	if b := w.Body.Bytes(); len(b) == 0 || b[0]&0xf0 != 0x80 {
-		t.Fatalf("body is not a msgpack map: %x", b)
-	}
-}
-
 // POST /2.0.0/friend_requests is two segments. The 2.0.0 dispatch required
 // three, so sending a friend request fell through to the catch-all 404 and the
 // console said "please try again later" (2121-2031) -- with the exact body

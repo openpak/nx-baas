@@ -83,11 +83,6 @@ type server struct {
 	// console's proven account attached. nil answers the empty-cloud fallback instead.
 	saves    *httputil.ReverseProxy
 	savesKey string
-	// news forwards the News list and topic routes to the news service
-	// (NEWS_INTERNAL_URL, news.go). nil keeps bcat.go's own answers.
-	news *newsForwarder
-	// bcatFiles relays native game BCAT to the shared dataset service.
-	bcatFiles *newsForwarder
 	// versions refuses an outdated title at aauth (versiongate.go); nil lets every version in.
 	versions *versionGate
 	// liveSessions maps BAAS user id -> the core session the adapter registered
@@ -2808,9 +2803,11 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.nso(w, r, body)
 	case strings.Contains(host, "frs.srv.nintendo.net"):
 		s.frs(w, r, body)
-	case strings.HasPrefix(host, "bcat-"):
-		// BCAT and the News channel: msgpack, two routes (bcat.go).
-		s.bcat(w, r, body)
+	case isBcatHost(host):
+		// BCAT and the News channel are nx-bcat's: Traefik routes these hosts there, and
+		// NX_BCAT_URL forwards whatever still lands here (split.go). Without it, nothing.
+		log.Printf("[nx-baas] bcat host %s%s -> 404: BCAT is served by nx-bcat (NX_BCAT_URL unset)", host, redact.Path(r.URL.Path))
+		writeJSON(w, 404, map[string]any{})
 	case strings.Contains(host, ".acbaa.srv.nintendo.net"):
 		// Animal Crossing web API (acbaa.go): island registration. Before
 		// this it fell into the catch-all 404 and ACNH errored (2219-xxxx)
@@ -2971,22 +2968,6 @@ func main() {
 	if u := os.Getenv("SAVES_URL"); u != "" {
 		s.saves, s.savesKey = newSavesProxy(u), os.Getenv("SAVES_INTERNAL_KEY")
 		log.Printf("[nx-baas] save-data cloud: forwarding scsi hosts to %s", u)
-	}
-	if u := os.Getenv("NEWS_INTERNAL_URL"); u != "" {
-		f, err := newNewsForwarder(u, os.Getenv("NEWS_INTERNAL_CA"), os.Getenv("NEWS_INTERNAL_SERVER_NAME"))
-		if err != nil {
-			log.Fatalf("[nx-baas] NEWS_INTERNAL_URL: %v", redact.Err(err))
-		}
-		s.news = f
-		log.Printf("[nx-baas] news: forwarding openpak_* lists and title topics to %s", u)
-	}
-	if u := os.Getenv("BCAT_INTERNAL_URL"); u != "" {
-		f, err := newNewsForwarder(u, "", "")
-		if err != nil {
-			log.Fatalf("[nx-baas] BCAT_INTERNAL_URL: %v", redact.Err(err))
-		}
-		s.bcatFiles = f
-		log.Printf("[nx-baas] game BCAT: shared dataset relay configured")
 	}
 	s.jwks = jwksFor(&key.PublicKey, s.idKid, getenv("BAAS_ID_KID", "00000000-0000-0000-0000-000000000002"), s.accKid, s.naKid)
 	cert := selfSigned([]string{baasHost, "m-lp1.baas.nintendo.com", "cdn-image-e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com",
