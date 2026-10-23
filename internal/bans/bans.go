@@ -1,23 +1,5 @@
-package bans
-
-import (
-	"context"
-	"log"
-	"net/http"
-	"net/url"
-	accountv1 "nx-baas/accountpb"
-	"nx-baas/internal/core"
-	"nx-baas/internal/httpx"
-	"nx-baas/internal/store"
-	"nx-baas/internal/token"
-	"nx-baas/redact"
-	"strconv"
-	"sync"
-	"time"
-)
-
-// Bans everywhere: an account the core has banned (or is deleting) is refused on every
-// surface this adapter serves, each in the error shape its client displays.
+// Package bans refuses an account the core has banned (or is deleting) on every surface this
+// adapter serves, each in the error shape its client displays.
 //
 // The core owns ban state (identity status; set by Moderation.SetAccountBanned, which the
 // website's admin pages call). Identity.GetAccount returns it, one indexed read, so that is
@@ -36,6 +18,23 @@ import (
 //	BaaS  404 errorCode deleted_user  -> 2124-5111
 //	NA token  error=invalid_grant, error_detail=user_banned|user_deleted
 //	NA authorize  error=interaction_required, error_detail=user_banned (redirect)
+package bans
+
+import (
+	"context"
+	"log"
+	"net/http"
+	"net/url"
+	accountv1 "nx-baas/accountpb"
+	"nx-baas/internal/core"
+	"nx-baas/internal/httpx"
+	"nx-baas/internal/store"
+	"nx-baas/internal/token"
+	"nx-baas/redact"
+	"strconv"
+	"sync"
+	"time"
+)
 
 // Lock states. "" is an account in good standing (or one this adapter cannot judge).
 const (
@@ -43,7 +42,7 @@ const (
 	Deleted = "deleted"
 )
 
-// banSource is what the ban check needs from the identity backend: the core account behind
+// Source is what the ban check needs from the identity backend: the core account behind
 // a pid, and that account's status. identity.OpenpakBackend implements it; the OpenPak backend has
 // no bans and does not.
 type Source interface {
@@ -62,6 +61,7 @@ type cache struct {
 	by  map[string]entry
 }
 
+// TTL is how long an answer is cached: NX_BAN_CACHE_SECONDS, default 30, at most 60.
 func TTL() time.Duration {
 	n, err := strconv.Atoi(httpx.Getenv("NX_BAN_CACHE_SECONDS", "30"))
 	if err != nil || n < 0 {
