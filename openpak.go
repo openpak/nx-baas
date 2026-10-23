@@ -18,6 +18,7 @@ import (
 	"log"
 	"math/big"
 	"net/url"
+	"nx-baas/internal/httpx"
 	"nx-baas/redact"
 	"os"
 	"path/filepath"
@@ -61,7 +62,7 @@ func newOpenpakBackend(ctx context.Context, dataDir string) (*openpakBackend, er
 	if len(nexKey) < 32 {
 		return nil, errors.New("NEX_SIGNING_KEY must be set (>=32 bytes); game servers verify openpak against it")
 	}
-	conn, err := grpc.NewClient(getenv("ACCOUNT_GRPC_ADDR", "127.0.0.1:7000"),
+	conn, err := grpc.NewClient(httpx.Getenv("ACCOUNT_GRPC_ADDR", "127.0.0.1:7000"),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		// Console logins are rare and bursty: without keepalive the connection goes idle, the
 		// first call after a quiet spell dies with RST_STREAM CANCEL, and the person at the
@@ -96,7 +97,7 @@ func newOpenpakBackendWithClients(dataDir string,
 		links:     links,
 		social:    social,
 		proj:      loadProjections(filepath.Join(dataDir, "accounts.json")),
-		namespace: getenv("SWITCH_NAMESPACE", "switch"),
+		namespace: httpx.Getenv("SWITCH_NAMESPACE", "switch"),
 		nexKey:    nexKey,
 	}
 }
@@ -446,7 +447,7 @@ func (b *openpakBackend) Identity(pid uint64) (*Identity, error) {
 	// The account already has a picture -- its own upload or the preset its id
 	// picks -- and until this line the console was shown the generic default
 	// for every account that had not uploaded one from a console.
-	if site := getenv("WEBSITE_INTERNAL_URL", ""); site != "" {
+	if site := httpx.Getenv("WEBSITE_INTERNAL_URL", ""); site != "" {
 		id.AvatarURL = site + "/media/avatars/" + accountID + "/console.jpg"
 		// When it changed, not the picture itself: a console refetches on the
 		// timestamp alone, so without this a picture changed on the website
@@ -537,7 +538,7 @@ func (b *openpakBackend) friendView(accountID, displayName string, since int64) 
 	} else {
 		logErr("friendView get-account", err)
 	}
-	if site := getenv("WEBSITE_INTERNAL_URL", ""); site != "" {
+	if site := httpx.Getenv("WEBSITE_INTERNAL_URL", ""); site != "" {
 		f.PictureAt = websitePictureAt(site + "/media/avatars/" + accountID + "/console.jpg")
 	}
 	return f

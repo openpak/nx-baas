@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"nx-baas/internal/httpx"
 	"strings"
 	"sync"
 	"time"
@@ -78,7 +79,7 @@ func (t *titleNames) name(namespace, titleID string) string {
 }
 
 func fetchTitleName(namespace, titleID string) (string, bool) {
-	site, key := getenv("WEBSITE_INTERNAL_URL", ""), getenv("WEBSITE_INTERNAL_KEY", "")
+	site, key := httpx.Getenv("WEBSITE_INTERNAL_URL", ""), httpx.Getenv("WEBSITE_INTERNAL_KEY", "")
 	if site == "" || key == "" {
 		return "", false
 	}

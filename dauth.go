@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"nx-baas/internal/httpx"
 	"nx-baas/redact"
 	"strings"
 	"time"
@@ -51,7 +52,7 @@ type deviceTokenRequest struct {
 // ponytail: challenge data is random and unverified. Add real MAC verification only if a
 // title is ever found that depends on it.
 func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
-	host, p := hostOf(r), r.URL.Path
+	host, p := httpx.HostOf(r), r.URL.Path
 
 	// aauth shares this handler: it is the next step of the same chain.
 	// dcert: the verification keys for everything signed below.
@@ -76,7 +77,7 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 	switch {
 	case p == "/v8/challenge" && r.Method == "POST":
 		// The console mixes this into the MAC it sends back with the token request.
-		writeJSON(w, 200, map[string]any{
+		httpx.WriteJSON(w, 200, map[string]any{
 			"challenge": randB64(33),
 			"data":      randB64(16),
 		})
@@ -108,7 +109,7 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 		log.Printf("[dauth] fw %s -> %d token(s)", req.SystemVersion, len(out))
 		// The console reads "results"; anything else and it fails the link with 2124-4798
 		// after retrying the whole chain.
-		writeJSON(w, 200, map[string]any{"results": out})
+		httpx.WriteJSON(w, 200, map[string]any{"results": out})
 
 	case p == "/v8/edge_tokens" && r.Method == "POST":
 		// Edge tokens gate the CDN, not our services: the console wants an Akamai-style
@@ -130,7 +131,7 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 				"expires_in": 86400,
 			})
 		}
-		writeJSON(w, 200, map[string]any{"results": out})
+		httpx.WriteJSON(w, 200, map[string]any{"results": out})
 
 	case p == "/v5/application_auth_token" && r.Method == "POST":
 		// aauth: the console asks for a per-title token once dauth has vouched for the device.
@@ -138,12 +139,12 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 		log.Printf("[aauth] application %s version %s", appID, appVer)
 		if s.versions.refuse(appID, appVer) {
 			// 0111 -> 2124-3001 "A software update is required" (Restart / Later).
-			writeJSON(w, http.StatusBadRequest, map[string]any{
+			httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
 				"errors": []any{map[string]any{"code": "0111", "message": "Application update is required."}},
 			})
 			return
 		}
-		writeJSON(w, 200, map[string]any{
+		httpx.WriteJSON(w, 200, map[string]any{
 			"application_auth_token": s.applicationToken(appID, appVer),
 			"expires_in":             86400,
 			"settings":               aauthSettings(appID),
@@ -162,16 +163,16 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 			appID = "0100f8f0000a2000"
 		}
 		log.Printf("[dragons] contents authorization token for %q", appID)
-		writeJSON(w, 200, map[string]any{"contents_authorization_token": s.applicationToken(appID, "")})
+		httpx.WriteJSON(w, 200, map[string]any{"contents_authorization_token": s.applicationToken(appID, "")})
 
 	case strings.HasPrefix(host, "dragons") && strings.HasSuffix(p, "/elicense_archives/publish"),
 		strings.HasPrefix(host, "dragons") && strings.HasSuffix(p, "/rights/publish_device_linked_elicenses"):
 		// Nothing is waiting to be published: an empty list is the "all done" answer.
 		log.Printf("[dragons] %s -> no archives", redact.Path(p))
-		writeJSON(w, 200, map[string]any{"elicense_archives": []any{}})
+		httpx.WriteJSON(w, 200, map[string]any{"elicense_archives": []any{}})
 
 	case strings.HasPrefix(host, "dragons") && strings.HasSuffix(p, "/report"):
-		writeJSON(w, 200, map[string]any{})
+		httpx.WriteJSON(w, 200, map[string]any{})
 
 	// Exercising a licence is how the console asks "may this user play online?". The real
 	// service answers 200 with no body; a 404 reads as "no entitlement".
@@ -179,10 +180,10 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 		w.WriteHeader(http.StatusOK)
 
 	case strings.HasPrefix(host, "dragons") && strings.HasSuffix(p, "/elicenses/migration_state"):
-		writeJSON(w, 200, map[string]any{"state": "COMPLETED", "migration_state": "NONE"})
+		httpx.WriteJSON(w, 200, map[string]any{"state": "COMPLETED", "migration_state": "NONE"})
 
 	case strings.HasPrefix(host, "dragons") && strings.HasSuffix(p, "/penne_id"):
-		writeJSON(w, 200, map[string]any{"id": "opk" + randHex(16), "password": randB64(24)})
+		httpx.WriteJSON(w, 200, map[string]any{"id": "opk" + randHex(16), "password": randB64(24)})
 
 	default:
 		log.Printf("[dauth] !! UNHANDLED %s %s%s", r.Method, host, redact.Path(p))

@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"nx-baas/internal/b233"
+	"nx-baas/internal/httpx"
 )
 
 // A throwaway device CA, made per test: the real keys are the owner's.
@@ -220,7 +221,7 @@ func tokenSub(t *testing.T, w *httptest.ResponseRecorder) (sub, sn string) {
 	}
 	claims, _ := parseJWT(out.Results[0].Token, nil)
 	n, _ := claims["nintendo"].(map[string]any)
-	return str(claims, "sub"), str(n, "sn")
+	return httpx.Str(claims, "sub"), httpx.Str(n, "sn")
 }
 
 var tokenBody = map[string]any{"token_requests": []any{map[string]any{"client_id": "8f849b5d34778d8e"}}}

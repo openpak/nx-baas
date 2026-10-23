@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"nx-baas/internal/httpx"
 	"nx-baas/redact"
 	"os"
 	"strconv"
@@ -44,10 +45,6 @@ const maxAppParam = 1024
 
 // Superseded by the durable invitation store (invitations.go); the five-minute
 // staleness bound is kept there (invitationMailboxTTL).
-
-func apiErr(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]any{"error": msg})
-}
 
 // ---------- bearer ----------
 
@@ -95,18 +92,6 @@ func (s *server) callerPID(r *http.Request) (uint64, string, bool) {
 	return verifyNexToken(s.acct.nexSigningKey(), tok)
 }
 
-// internalOK guards the /internal endpoints. The API port is internal (compose network or
-// loopback) and the key is the second lock. Fail closed: with no key configured there is
-// nothing to compare, so every /internal route refuses. Isolated development opts out
-// explicitly (and loudly) with NX_INTERNAL_INSECURE=1, which production must never set.
-func (s *server) internalOK(r *http.Request) bool {
-	k := getenv("NX_INTERNAL_KEY", getenv("OPENPAK_INTERNAL_KEY", ""))
-	if k == "" {
-		return os.Getenv("NX_INTERNAL_INSECURE") == "1"
-	}
-	return hmac.Equal([]byte(k), []byte(r.Header.Get("X-Internal-Key")))
-}
-
 // ---------- room presence ----------
 
 // pidForIdentity resolves what the Photon server extracted from a client's id_token:
@@ -132,8 +117,8 @@ func (s *server) pidForIdentity(identity string) uint64 {
 // parameter the title expects (Outbound: u32_le(1) || u8(len) || ascii(code)), so a friend
 // joins the same way whether a console or an emulator hosts.
 func (s *server) photonRoom(w http.ResponseWriter, r *http.Request) {
-	if !s.internalOK(r) {
-		apiErr(w, http.StatusUnauthorized, "internal")
+	if !httpx.InternalOK(r) {
+		httpx.APIErr(w, http.StatusUnauthorized, "internal")
 		return
 	}
 	var in struct {
@@ -142,17 +127,17 @@ func (s *server) photonRoom(w http.ResponseWriter, r *http.Request) {
 		AppID    string `json:"app_id"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in); err != nil {
-		apiErr(w, http.StatusBadRequest, "invalid JSON")
+		httpx.APIErr(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 	if in.AppID == "" || !validRoomCode(in.Room) {
-		apiErr(w, http.StatusBadRequest, "invalid session")
+		httpx.APIErr(w, http.StatusBadRequest, "invalid session")
 		return
 	}
 	pid := s.pidForIdentity(in.Identity)
 	u := s.store.UserByPID(pid)
 	if pid == 0 || u == nil {
-		apiErr(w, http.StatusBadRequest, "unknown identity")
+		httpx.APIErr(w, http.StatusBadRequest, "unknown identity")
 		return
 	}
 	if lock := s.pidLock(pid); lock != "" {
@@ -167,7 +152,7 @@ func (s *server) photonRoom(w http.ResponseWriter, r *http.Request) {
 	s.noteDevicePresence(u, "photon:"+in.Identity, "PLAYING", in.AppID,
 		base64.StdEncoding.EncodeToString(appParam), in.AppID, -1)
 	log.Printf("[nx-baas] photon-room pid=%s app=%s room=%s", redact.Tag(pid), in.AppID, redact.Tag(in.Room))
-	writeJSON(w, 200, map[string]any{"ok": true})
+	httpx.WriteJSON(w, 200, map[string]any{"ok": true})
 }
 
 // POST /internal/photon-room-leave {"identity":"nex:...|bsdid:..."}
@@ -175,46 +160,46 @@ func (s *server) photonRoom(w http.ResponseWriter, r *http.Request) {
 // claim outlived the game and a friend's list offered a join into nothing
 // (PRE-02, room leave).
 func (s *server) photonRoomLeave(w http.ResponseWriter, r *http.Request) {
-	if !s.internalOK(r) {
-		apiErr(w, http.StatusUnauthorized, "internal")
+	if !httpx.InternalOK(r) {
+		httpx.APIErr(w, http.StatusUnauthorized, "internal")
 		return
 	}
 	var in struct {
 		Identity string `json:"identity"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in); err != nil || in.Identity == "" {
-		apiErr(w, http.StatusBadRequest, "invalid JSON")
+		httpx.APIErr(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 	pid := s.pidForIdentity(in.Identity)
 	u := s.store.UserByPID(pid)
 	if pid == 0 || u == nil {
-		apiErr(w, http.StatusBadRequest, "unknown identity")
+		httpx.APIErr(w, http.StatusBadRequest, "unknown identity")
 		return
 	}
 	s.noteDevicePresence(u, "photon:"+in.Identity, "OFFLINE", "", "", "", -1)
 	log.Printf("[nx-baas] photon-room-leave pid=%s", redact.Tag(pid))
-	writeJSON(w, 200, map[string]any{"ok": true})
+	httpx.WriteJSON(w, 200, map[string]any{"ok": true})
 }
 
 // POST /internal/photon-identity {"identity":"nex:...|bsdid:..."} -> {"pid":..,"country":"AU"}
 // The Photon master asks this when a player authenticates, so a room they create can be placed
 // on the region node for their country. Same identity shapes as photon-room.
 func (s *server) photonIdentity(w http.ResponseWriter, r *http.Request) {
-	if !s.internalOK(r) {
-		apiErr(w, http.StatusUnauthorized, "internal")
+	if !httpx.InternalOK(r) {
+		httpx.APIErr(w, http.StatusUnauthorized, "internal")
 		return
 	}
 	var in struct {
 		Identity string `json:"identity"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in); err != nil {
-		apiErr(w, http.StatusBadRequest, "invalid JSON")
+		httpx.APIErr(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 	pid := s.pidForIdentity(in.Identity)
 	if pid == 0 {
-		apiErr(w, http.StatusBadRequest, "unknown identity")
+		httpx.APIErr(w, http.StatusBadRequest, "unknown identity")
 		return
 	}
 	if lock := s.pidLock(pid); lock != "" {
@@ -223,11 +208,11 @@ func (s *server) photonIdentity(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := s.acct.Identity(pid)
 	if err != nil {
-		apiErr(w, http.StatusNotFound, "unknown pid")
+		httpx.APIErr(w, http.StatusNotFound, "unknown pid")
 		return
 	}
 	s.markLoginOnline(pid) // the Photon master authenticated this player: playtime starts here
-	writeJSON(w, 200, map[string]any{"pid": pid, "country": id.Country, "baas_user_id": id.BaasUserID})
+	httpx.WriteJSON(w, 200, map[string]any{"pid": pid, "country": id.Country, "baas_user_id": id.BaasUserID})
 }
 
 func validRoomCode(room string) bool {
@@ -253,7 +238,7 @@ func validRoomCode(room string) bool {
 func (s *server) invitations(w http.ResponseWriter, r *http.Request) {
 	pid, name, ok := s.callerPID(r)
 	if !ok {
-		apiErr(w, http.StatusUnauthorized, "invalid or expired session")
+		httpx.APIErr(w, http.StatusUnauthorized, "invalid or expired session")
 		return
 	}
 	if lock := s.pidLock(pid); lock != "" {
@@ -266,7 +251,7 @@ func (s *server) invitations(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.sendInvitation(w, r, pid, name)
 	default:
-		apiErr(w, http.StatusMethodNotAllowed, "GET or POST expected")
+		httpx.APIErr(w, http.StatusMethodNotAllowed, "GET or POST expected")
 	}
 }
 
@@ -281,22 +266,22 @@ func (s *server) sendInvitation(w http.ResponseWriter, r *http.Request, from uin
 		AppParamBase64 string   `json:"app_param_base64"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&in); err != nil {
-		apiErr(w, http.StatusBadRequest, "invalid JSON")
+		httpx.APIErr(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 	if len(in.TargetPIDs) == 0 {
-		apiErr(w, http.StatusBadRequest, "target_pids required")
+		httpx.APIErr(w, http.StatusBadRequest, "target_pids required")
 		return
 	}
 	appParam, err := base64.StdEncoding.DecodeString(in.AppParamBase64)
 	if err != nil || len(appParam) > maxAppParam {
-		apiErr(w, http.StatusBadRequest, "invalid app_param_base64")
+		httpx.APIErr(w, http.StatusBadRequest, "invalid app_param_base64")
 		return
 	}
 	id, err := s.acct.Identity(from)
 	if err != nil {
 		logErr("identity", err)
-		apiErr(w, http.StatusBadGateway, "account lookup failed")
+		httpx.APIErr(w, http.StatusBadGateway, "account lookup failed")
 		return
 	}
 	if id.Nickname != "" {
@@ -304,7 +289,7 @@ func (s *server) sendInvitation(w http.ResponseWriter, r *http.Request, from uin
 	}
 	sender := s.store.UserByPID(from)
 	if sender == nil {
-		apiErr(w, http.StatusBadRequest, "unknown identity")
+		httpx.APIErr(w, http.StatusBadRequest, "unknown identity")
 		return
 	}
 	// The sender's title now, so the invitation carries an application id and
@@ -336,7 +321,7 @@ func (s *server) sendInvitation(w http.ResponseWriter, r *http.Request, from uin
 		sent++
 	}
 	log.Printf("[nx-baas] invitation %s(%s) -> %d/%d target(s)", redact.Text(name), redact.Tag(from), sent, len(in.TargetPIDs))
-	writeJSON(w, 200, map[string]any{"ok": true, "sent": sent})
+	httpx.WriteJSON(w, 200, map[string]any{"ok": true, "sent": sent})
 }
 
 func isFriend(id *Identity, pid uint64) bool {
@@ -353,7 +338,7 @@ func isFriend(id *Identity, pid uint64) bool {
 func (s *server) pollInvitations(w http.ResponseWriter, pid uint64) {
 	receiver := s.store.UserByPID(pid)
 	if receiver == nil {
-		writeJSON(w, 200, map[string]any{"invitations": []any{}})
+		httpx.WriteJSON(w, 200, map[string]any{"invitations": []any{}})
 		return
 	}
 	out := make([]map[string]any, 0, 4)
@@ -361,21 +346,21 @@ func (s *server) pollInvitations(w http.ResponseWriter, pid uint64) {
 		out = append(out, map[string]any{"from_pid": inv.MailboxFromPID, "from_name": inv.MailboxFromName,
 			"app_param_base64": inv.ApplicationData})
 	}
-	writeJSON(w, 200, map[string]any{"invitations": out})
+	httpx.WriteJSON(w, 200, map[string]any{"invitations": out})
 }
 
 // POST /internal/mint-token {"pid":1800000003} -> the fields scripts write into a profile's
 // openpak_account.txt. Dev-rig tooling: it mints a bearer for any PID without a password.
 func (s *server) mintToken(w http.ResponseWriter, r *http.Request) {
-	if !s.internalOK(r) {
-		apiErr(w, http.StatusUnauthorized, "internal")
+	if !httpx.InternalOK(r) {
+		httpx.APIErr(w, http.StatusUnauthorized, "internal")
 		return
 	}
 	var in struct {
 		PID uint64 `json:"pid"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&in); err != nil || in.PID == 0 {
-		apiErr(w, http.StatusBadRequest, "pid required")
+		httpx.APIErr(w, http.StatusBadRequest, "pid required")
 		return
 	}
 	if lock := s.pidLock(in.PID); lock != "" {
@@ -385,16 +370,16 @@ func (s *server) mintToken(w http.ResponseWriter, r *http.Request) {
 	id, err := s.acct.Identity(in.PID)
 	if err != nil {
 		logErr("identity", err)
-		apiErr(w, http.StatusNotFound, "unknown pid")
+		httpx.APIErr(w, http.StatusNotFound, "unknown pid")
 		return
 	}
 	tok := s.acct.nexToken(in.PID, id.Nickname)
 	if tok == "" {
-		apiErr(w, http.StatusServiceUnavailable, "no signing key")
+		httpx.APIErr(w, http.StatusServiceUnavailable, "no signing key")
 		return
 	}
 	log.Printf("[nx-baas] minted token for pid=%s (%s)", redact.Tag(in.PID), redact.Text(id.Nickname))
-	writeJSON(w, 200, map[string]any{"pid": in.PID, "username": id.Nickname, "friend_code": id.FriendCode, "token": tok})
+	httpx.WriteJSON(w, 200, map[string]any{"pid": in.PID, "username": id.Nickname, "friend_code": id.FriendCode, "token": tok})
 }
 
 // POST /internal/notifications/test {"user_id":"…","kind":"presence_updated","payload":{...}}
@@ -404,12 +389,12 @@ func (s *server) mintToken(w http.ResponseWriter, r *http.Request) {
 // "A synthetic event source permits development, not end-to-end completion").
 // Native acceptance still requires the real core events on two consoles.
 func (s *server) penneTestNotification(w http.ResponseWriter, r *http.Request) {
-	if !s.internalOK(r) {
-		apiErr(w, http.StatusUnauthorized, "internal")
+	if !httpx.InternalOK(r) {
+		httpx.APIErr(w, http.StatusUnauthorized, "internal")
 		return
 	}
 	if r.Method != http.MethodPost {
-		apiErr(w, http.StatusMethodNotAllowed, "POST required")
+		httpx.APIErr(w, http.StatusMethodNotAllowed, "POST required")
 		return
 	}
 	var in struct {
@@ -419,14 +404,14 @@ func (s *server) penneTestNotification(w http.ResponseWriter, r *http.Request) {
 		ID      string         `json:"id"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in); err != nil || in.UserID == "" || in.Kind == "" {
-		apiErr(w, http.StatusBadRequest, "user_id and kind required")
+		httpx.APIErr(w, http.StatusBadRequest, "user_id and kind required")
 		return
 	}
 	res := s.submitNotification(PenneDelivery{
 		ID: in.ID, UserID: in.UserID, Kind: in.Kind, Payload: in.Payload,
 	}, true)
 	log.Printf("[nx-baas] penne: test notification user=%s kind=%s -> %s", redact.Tag(in.UserID), in.Kind, res.Outcome)
-	writeJSON(w, 200, map[string]any{"accepted": res.Accepted, "duplicate": res.Duplicate, "outcome": string(res.Outcome), "id": res.ID})
+	httpx.WriteJSON(w, 200, map[string]any{"accepted": res.Accepted, "duplicate": res.Duplicate, "outcome": string(res.Outcome), "id": res.ID})
 }
 
 // ---------- mux ----------

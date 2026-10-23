@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"nx-baas/internal/httpx"
 	"nx-baas/redact"
 	"strings"
 )
@@ -33,20 +34,20 @@ func (s *server) olsc(w http.ResponseWriter, r *http.Request, body []byte) {
 		// Echo the token back, which is what the documented reply carries.
 		tok := bodyField(body, r.URL.Query(), "notification_token")
 		s.bindTokenProfile(r, tok)
-		writeJSON(w, 200, map[string]any{"notification_token": tok})
+		httpx.WriteJSON(w, 200, map[string]any{"notification_token": tok})
 	case strings.HasSuffix(p, "/save_data_archives"):
-		writeJSON(w, 200, map[string]any{"save_data_archives": []any{}})
+		httpx.WriteJSON(w, 200, map[string]any{"save_data_archives": []any{}})
 	case strings.Contains(p, "/save_data_archives/"):
 		// start_upload, finish_upload, generate_key_seed_package and the rest
 		// of the upload dance. Cloud saves are the saves PRD's job; until then
 		// the honest answer is that this archive does not exist.
-		baasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
+		httpx.BaasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 	case strings.Contains(p, "/application_policy/"):
 		// Whether a title may sync at all. "No" is the true answer today.
-		writeJSON(w, 200, map[string]any{"application_policy": map[string]any{"save_data_backup": false}})
+		httpx.WriteJSON(w, 200, map[string]any{"application_policy": map[string]any{"save_data_backup": false}})
 	default:
-		dump(r, body, "!! UNHANDLED olsc")
-		writeJSON(w, 200, map[string]any{})
+		httpx.Dump(r, body, "!! UNHANDLED olsc")
+		httpx.WriteJSON(w, 200, map[string]any{})
 	}
 }
 
@@ -77,7 +78,7 @@ func (s *server) frs(w http.ResponseWriter, r *http.Request, _ []byte) {
 		log.Printf("[nx-baas] frs %s", redact.Path(r.URL.Path))
 		// No recommendations of any kind: nintendo_account, nintendo_3ds
 		// and nintendo_network_id all read the same $.items[].
-		writeJSON(w, 200, map[string]any{"items": []any{}})
+		httpx.WriteJSON(w, 200, map[string]any{"items": []any{}})
 		return
 	}
 	log.Printf("[nx-baas] frs UNSUPPORTED %s %s (answered grpc-status 12)", r.Method, redact.Path(r.URL.Path))
@@ -91,7 +92,7 @@ func (s *server) frs(w http.ResponseWriter, r *http.Request, _ []byte) {
 // everything we serve is right; saying nothing at all reads as an outage.
 func (s *server) serviceStatus(w http.ResponseWriter, r *http.Request, _ []byte) {
 	log.Printf("[nx-baas] service status %s", redact.Path(r.URL.Path))
-	writeJSON(w, 200, map[string]any{"status": "available", "type": "NORMAL"})
+	httpx.WriteJSON(w, 200, map[string]any{"status": "available", "type": "NORMAL"})
 }
 
 // newSavesProxy forwards a scsi-host request to the saves service: same path under /scsi,
@@ -125,7 +126,7 @@ func (s *server) bindTokenProfile(r *http.Request, tok string) {
 	if tok == "" || claims == nil {
 		return
 	}
-	uid := str(claims, "sub")
+	uid := httpx.Str(claims, "sub")
 	if s.store.User(uid) == nil {
 		return
 	}
@@ -145,13 +146,13 @@ func (s *server) savesProxy(w http.ResponseWriter, r *http.Request) {
 	r.Header.Del("X-OpenPak-Device")
 	r.Header.Set("X-Internal-Key", s.savesKey)
 	if claims := s.bearer(r); claims != nil {
-		if uid := str(claims, "sub"); uid != "" {
+		if uid := httpx.Str(claims, "sub"); uid != "" {
 			if u := s.store.User(uid); u != nil {
 				if b, ok := s.acct.(interface{ accountFor(uint64) string }); ok {
 					if acct := b.accountFor(u.PID); acct != "" {
 						r.Header.Set("X-OpenPak-Account", acct)
 						r.Header.Set("X-OpenPak-NSA", uid)
-						r.Header.Set("X-OpenPak-Device", str(claims, "bs:did"))
+						r.Header.Set("X-OpenPak-Device", httpx.Str(claims, "bs:did"))
 					}
 				}
 			}

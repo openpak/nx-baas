@@ -34,6 +34,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"nx-baas/internal/httpx"
 	"nx-baas/redact"
 	"os"
 	"path/filepath"
@@ -60,7 +61,7 @@ func (s *server) errorReports() *reportSpool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.reports == nil {
-		s.reports = newReportSpool(getenv("NX_DATA", "/data") + "/error-reports")
+		s.reports = newReportSpool(httpx.Getenv("NX_DATA", "/data") + "/error-reports")
 	}
 	return s.reports
 }
@@ -69,7 +70,7 @@ func (s *server) errorReports() *reportSpool {
 // bodies at 1 MiB; a report with a screenshot can be larger.
 func (s *server) errorReport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost || r.URL.Path != "/" {
-		log.Printf("[error-report] UNMAPPED %s %s%s", r.Method, hostOf(r), redact.Path(r.URL.Path))
+		log.Printf("[error-report] UNMAPPED %s %s%s", r.Method, httpx.HostOf(r), redact.Path(r.URL.Path))
 		http.Error(w, "no such route", 404)
 		return
 	}
@@ -127,9 +128,9 @@ func (s *server) errorReport(w http.ResponseWriter, r *http.Request) {
 func (s *server) reportIdentity(r *http.Request) (device, account string) {
 	if s.key != nil {
 		if c := s.bearer(r); c != nil {
-			sub := str(c, "sub")
+			sub := httpx.Str(c, "sub")
 			if n, ok := c["nintendo"].(map[string]any); ok {
-				device = str(n, "di")
+				device = httpx.Str(n, "di")
 			}
 			var u *User
 			if s.store != nil {
@@ -367,7 +368,7 @@ func (sp *reportSpool) run() {
 func (sp *reportSpool) flush() int {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
-	base, key := strings.TrimRight(getenv("WEBSITE_INTERNAL_URL", ""), "/"), getenv("WEBSITE_INTERNAL_KEY", "")
+	base, key := strings.TrimRight(httpx.Getenv("WEBSITE_INTERNAL_URL", ""), "/"), httpx.Getenv("WEBSITE_INTERNAL_KEY", "")
 	dir := filepath.Join(sp.dir, "spool")
 	files, _ := filepath.Glob(filepath.Join(dir, "*.json"))
 	if len(files) == 0 {
@@ -419,7 +420,7 @@ func (sp *reportSpool) flush() int {
 }
 
 func (sp *reportSpool) prune() {
-	days, err := strconv.Atoi(getenv("NX_ERROR_REPORT_KEEP_DAYS", "30"))
+	days, err := strconv.Atoi(httpx.Getenv("NX_ERROR_REPORT_KEEP_DAYS", "30"))
 	if err != nil || days <= 0 {
 		return
 	}

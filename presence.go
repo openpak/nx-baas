@@ -26,6 +26,7 @@ package main
 import (
 	"context"
 	"log"
+	"nx-baas/internal/httpx"
 	"nx-baas/redact"
 	"os"
 	"strconv"
@@ -155,7 +156,7 @@ func aggregatePresence(u *User, now int64, lease time.Duration) Presence {
 // another platform already carries one and shows plain "Online"); the state is the part that
 // is known to work.
 func homeAsOnline(p Presence) Presence {
-	if p.State != "INACTIVE" || getenv("NX_HOME_AS_ONLINE", "") != "1" {
+	if p.State != "INACTIVE" || httpx.Getenv("NX_HOME_AS_ONLINE", "") != "1" {
 		return p
 	}
 	p.State = "ONLINE"

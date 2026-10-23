@@ -28,6 +28,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"nx-baas/internal/httpx"
 	"nx-baas/redact"
 	"os"
 	"path/filepath"
@@ -63,9 +64,9 @@ type versionGate struct {
 
 func newVersionGateFromEnv() *versionGate {
 	g := &versionGate{
-		on:        !isOff(getenv("NX_VERSION_GATE", "1")),
-		url:       getenv("NX_VERSION_GATE_URL", versionGateDefaultURL),
-		cachePath: filepath.Join(getenv("NX_DATA", "/data"), "title-versions.json"),
+		on:        !isOff(httpx.Getenv("NX_VERSION_GATE", "1")),
+		url:       httpx.Getenv("NX_VERSION_GATE_URL", versionGateDefaultURL),
+		cachePath: filepath.Join(httpx.Getenv("NX_DATA", "/data"), "title-versions.json"),
 		fetch:     httpFetch,
 	}
 	var err error
@@ -312,14 +313,14 @@ func (g *versionGate) refuse(appID, appVer string) bool {
 // latest is "" when no minimum applies (unknown title, an "all" override, the gate off), and
 // update_required is false then and for any version that is not 8 hex digits.
 func (s *server) titleVersion(w http.ResponseWriter, r *http.Request) {
-	if !s.internalOK(r) {
-		apiErr(w, http.StatusUnauthorized, "internal")
+	if !httpx.InternalOK(r) {
+		httpx.APIErr(w, http.StatusUnauthorized, "internal")
 		return
 	}
 	q := r.URL.Query()
 	title, version := q.Get("title"), q.Get("version")
 	if _, err := parseTitleID(title); err != nil {
-		apiErr(w, http.StatusBadRequest, "title must be 16 hex digits")
+		httpx.APIErr(w, http.StatusBadRequest, "title must be 16 hex digits")
 		return
 	}
 	v := s.versions.verdict(title, version)
@@ -330,7 +331,7 @@ func (s *server) titleVersion(w http.ResponseWriter, r *http.Request) {
 	if v.outdated {
 		log.Printf("[version-gate] game server asked: title %016x version %08x below %s: update required", v.title, v.have, latest)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"title": fmt.Sprintf("%016x", v.title), "version": version,
 		"latest": latest, "update_required": v.outdated,
 	})

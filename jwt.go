@@ -110,14 +110,6 @@ func parseJWT(tok string, key *rsa.PublicKey) (map[string]any, error) {
 	return claims, json.Unmarshal(raw, &claims)
 }
 
-func str(m map[string]any, k string) string {
-	if m == nil {
-		return ""
-	}
-	s, _ := m[k].(string)
-	return s
-}
-
 func randB64(n int) string {
 	b := make([]byte, n)
 	rand.Read(b)

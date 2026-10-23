@@ -25,6 +25,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"nx-baas/internal/httpx"
 	"nx-baas/redact"
 	"strconv"
 	"strings"
@@ -357,10 +358,10 @@ func qrDataURI(u string) string {
 // that never opted into any of this. So without NX_LINK_BASE_URL there is no phone path at all,
 // and callers show the code and the password form instead of a square that leaks.
 func (s *server) linkBaseURL(r *http.Request) (string, bool) {
-	if v := getenv("NX_LINK_BASE_URL", ""); v != "" {
+	if v := httpx.Getenv("NX_LINK_BASE_URL", ""); v != "" {
 		return strings.TrimRight(v, "/"), true
 	}
-	host := hostOf(r)
+	host := httpx.HostOf(r)
 	if strings.Contains(host, "nintendo.") {
 		return "", false
 	}
@@ -399,32 +400,32 @@ func (s *server) qrRoutes(w http.ResponseWriter, r *http.Request, body []byte) b
 			log.Printf("[link] no phone path offered: NX_LINK_BASE_URL is unset")
 		}
 		log.Printf("[link] code %s opened by an in-app client (%s)", redact.Tag(code), redact.IDs(r.UserAgent()))
-		writeJSON(w, 200, out)
+		httpx.WriteJSON(w, 200, out)
 		return true
 
 	case r.URL.Path == "/connect/1.0.0/qr/state":
 		p := s.links.get(code)
 		if p == nil {
-			writeJSON(w, 200, map[string]any{"state": "expired"})
+			httpx.WriteJSON(w, 200, map[string]any{"state": "expired"})
 			return true
 		}
-		writeJSON(w, 200, map[string]any{"state": string(p.State), "account": p.Username})
+		httpx.WriteJSON(w, 200, map[string]any{"state": string(p.State), "account": p.Username})
 		return true
 
 	case r.URL.Path == "/connect/1.0.0/qr/deny" && r.Method == "POST":
 		s.links.update(code, func(p *pendingLink) { p.State = linkDenied })
-		writeJSON(w, 200, map[string]any{"state": "denied"})
+		httpx.WriteJSON(w, 200, map[string]any{"state": "denied"})
 		return true
 
 	case r.URL.Path == "/connect/1.0.0/qr/approve" && r.Method == "POST":
 		p := s.links.get(code)
 		if p == nil || p.State != linkClaimed {
-			writeJSON(w, 409, map[string]any{"error": "not ready"})
+			httpx.WriteJSON(w, 409, map[string]any{"error": "not ready"})
 			return true
 		}
 		s.links.update(code, func(p *pendingLink) { p.State = linkApproved })
 		log.Printf("[link] code %s approved on the console for %s (pid %s)", redact.Tag(code), redact.Tag(p.Username), redact.Tag(p.PID))
-		writeJSON(w, 200, map[string]any{"state": "approved", "redirect": s.finishLink(p)})
+		httpx.WriteJSON(w, 200, map[string]any{"state": "approved", "redirect": s.finishLink(p)})
 		return true
 
 	case r.URL.Path == "/link" && r.Method == "GET":

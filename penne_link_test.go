@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"nx-baas/internal/httpx"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -36,7 +37,7 @@ func fakeNxPenne(t *testing.T) (*httptest.Server, chan penneCall) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/internal/penne/notifications":
-			w.Write([]byte(`{"accepted":true,"duplicate":false,"outcome":"persisted","id":"` + str(body, "id") + `"}`))
+			w.Write([]byte(`{"accepted":true,"duplicate":false,"outcome":"persisted","id":"` + httpx.Str(body, "id") + `"}`))
 		case "/internal/penne/topic-messages":
 			w.Write([]byte(`{"subscribers":2,"delivered":1}`))
 		case "/internal/penne/device-messages":
@@ -82,12 +83,12 @@ func TestMovedPenneReceivesTheCoresCalls(t *testing.T) {
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"deviceToken":"tok1"`) {
 		t.Fatalf("push_channels = %d %s", rec.Code, rec.Body)
 	}
-	if c := expectCall(t, got, "/internal/penne/push-channels"); str(c.body, "user_id") != u.ID || str(c.body, "device_token") != "tok1" || str(c.body, "device_account_id") != "dev1" {
+	if c := expectCall(t, got, "/internal/penne/push-channels"); httpx.Str(c.body, "user_id") != u.ID || httpx.Str(c.body, "device_token") != "tok1" || httpx.Str(c.body, "device_account_id") != "dev1" {
 		t.Fatalf("push channel reached nx-penne as %v", c.body)
 	}
 
 	s.penneBindConsole("cert-1", u.ID)
-	if c := expectCall(t, got, "/internal/penne/consoles"); str(c.body, "device_id") != "cert-1" || str(c.body, "user_id") != u.ID {
+	if c := expectCall(t, got, "/internal/penne/consoles"); httpx.Str(c.body, "device_id") != "cert-1" || httpx.Str(c.body, "user_id") != u.ID {
 		t.Fatalf("console binding = %v", c.body)
 	}
 
@@ -96,7 +97,7 @@ func TestMovedPenneReceivesTheCoresCalls(t *testing.T) {
 		t.Fatal("a notification for an unknown user was handed over")
 	}
 	s.SubmitNotification(PenneDelivery{ID: "core:9", UserID: u.ID, Kind: EventFriendDeleted, Payload: map[string]any{"friendId": "x"}})
-	if c := expectCall(t, got, "/internal/penne/notifications"); str(c.body, "id") != "core:9" || str(c.body, "kind") != EventFriendDeleted {
+	if c := expectCall(t, got, "/internal/penne/notifications"); httpx.Str(c.body, "id") != "core:9" || httpx.Str(c.body, "kind") != EventFriendDeleted {
 		t.Fatalf("notification = %v", c.body)
 	}
 	// The test route waits for nx-penne's outcome.
@@ -110,7 +111,7 @@ func TestMovedPenneReceivesTheCoresCalls(t *testing.T) {
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"delivered":1`) {
 		t.Fatalf("news push = %d %s", rec.Code, rec.Body)
 	}
-	if c := expectCall(t, got, "/internal/penne/topic-messages"); str(c.body, "topic") != "openpak_news" || str(c.body, "receivers") != newsReceiverToken {
+	if c := expectCall(t, got, "/internal/penne/topic-messages"); httpx.Str(c.body, "topic") != "openpak_news" || httpx.Str(c.body, "receivers") != newsReceiverToken {
 		t.Fatalf("topic message = %v", c.body)
 	}
 
@@ -159,7 +160,7 @@ func TestQueuedPushesSurviveAnNxPenneRestart(t *testing.T) {
 		}
 		var body map[string]any
 		json.NewDecoder(r.Body).Decode(&body)
-		got <- str(body, "device_id")
+		got <- httpx.Str(body, "device_id")
 		w.WriteHeader(204)
 	}))
 	defer srv.Close()

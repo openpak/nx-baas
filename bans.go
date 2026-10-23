@@ -27,6 +27,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"nx-baas/internal/httpx"
 	"nx-baas/redact"
 	"strconv"
 	"sync"
@@ -71,7 +72,7 @@ type banCache struct {
 }
 
 func banTTL() time.Duration {
-	n, err := strconv.Atoi(getenv("NX_BAN_CACHE_SECONDS", "30"))
+	n, err := strconv.Atoi(httpx.Getenv("NX_BAN_CACHE_SECONDS", "30"))
 	if err != nil || n < 0 {
 		n = 30
 	}
@@ -166,10 +167,10 @@ func (s *server) naLock(naID string) string {
 // baasLocked is the BaaS answer (2124-5110 / 2124-5111 on the console).
 func baasLocked(w http.ResponseWriter, r *http.Request, lock string) {
 	if lock == lockDeleted {
-		baasErr(w, r, 404, "deleted_user", "Deleted User", "This account has been deleted")
+		httpx.BaasErr(w, r, 404, "deleted_user", "Deleted User", "This account has been deleted")
 		return
 	}
-	baasErr(w, r, 403, "banned_user", "Banned User", "This account is banned from the OpenPak network")
+	httpx.BaasErr(w, r, 403, "banned_user", "Banned User", "This account is banned from the OpenPak network")
 }
 
 // naTokenLocked is the Nintendo Account token endpoint's answer.
@@ -178,7 +179,7 @@ func naTokenLocked(w http.ResponseWriter, lock string) {
 	if lock == lockDeleted {
 		detail = "user_deleted"
 	}
-	writeJSON(w, 400, map[string]any{"error": "invalid_grant", "error_detail": detail,
+	httpx.WriteJSON(w, 400, map[string]any{"error": "invalid_grant", "error_detail": detail,
 		"error_description": "this account cannot sign in to the OpenPak network"})
 }
 
@@ -197,7 +198,7 @@ func internalLocked(w http.ResponseWriter, lock string) {
 	if lock == lockDeleted {
 		msg = "account_deleted"
 	}
-	apiErr(w, http.StatusForbidden, msg)
+	httpx.APIErr(w, http.StatusForbidden, msg)
 }
 
 // lockedPageMessage is what a person typing their password is told.
@@ -214,7 +215,7 @@ func (s *server) naLockOfToken(idTok string) string {
 	if err != nil {
 		return lockBanned
 	}
-	if lock := s.naLock(str(c, "sub")); lock != "" {
+	if lock := s.naLock(httpx.Str(c, "sub")); lock != "" {
 		return lock
 	}
 	return lockBanned

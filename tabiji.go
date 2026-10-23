@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"nx-baas/internal/httpx"
 	"nx-baas/redact"
 	"strings"
 )
@@ -23,7 +24,7 @@ func (s *server) tabiji(w http.ResponseWriter, r *http.Request, body []byte) {
 	p := r.URL.Path
 	if _, genuine := s.pidForIDToken(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")); !genuine {
 		log.Printf("[tabiji] %s %s: no valid NSA id token", r.Method, redact.Path(p))
-		writeJSON(w, 401, map[string]any{"status": 401, "code": "unauthorized", "detail": "invalid id token"})
+		httpx.WriteJSON(w, 401, map[string]any{"status": 401, "code": "unauthorized", "detail": "invalid id token"})
 		return
 	}
 	switch {
@@ -31,14 +32,14 @@ func (s *server) tabiji(w http.ResponseWriter, r *http.Request, body []byte) {
 		log.Printf("[tabiji] play histories: %d bytes discarded (OpenPak collects no play reports)", len(body))
 		// max_play_histories_count 0 = no per-cycle cap; min_interval_sec is the wait before the next
 		// cycle (the console never goes below 60).
-		writeJSON(w, 200, map[string]any{"backpressure": map[string]any{
+		httpx.WriteJSON(w, 200, map[string]any{"backpressure": map[string]any{
 			"standard": map[string]any{"max_play_histories_count": 0, "min_interval_sec": 3600},
 			"catchup":  map[string]any{"max_play_histories_count": 0, "min_interval_sec": 60},
 		}})
 	case r.Method == http.MethodGet && strings.HasPrefix(p, "/console/v1/play_statistics/"):
-		writeJSON(w, 404, map[string]any{"status": 404, "code": "not_found", "detail": "no play statistic"})
+		httpx.WriteJSON(w, 404, map[string]any{"status": 404, "code": "not_found", "detail": "no play statistic"})
 	default:
-		dump(r, body, "!! UNHANDLED tabiji")
-		writeJSON(w, 404, map[string]any{"status": 404, "code": "not_found", "detail": "no such route"})
+		httpx.Dump(r, body, "!! UNHANDLED tabiji")
+		httpx.WriteJSON(w, 404, map[string]any{"status": 404, "code": "not_found", "detail": "no such route"})
 	}
 }

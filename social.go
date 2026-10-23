@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"nx-baas/internal/httpx"
 	"strings"
 )
 
@@ -68,7 +69,7 @@ func (s *server) relationshipObj(viewer *User, f Friend, now int64) map[string]a
 	user := s.friendObj(f, now)
 	presence, on := s.visiblePresenceOn(viewer, f, now)
 	user["presence"] = presence
-	if on != "" && getenv("NX_PLATFORM_IN_NAME", "") == "1" {
+	if on != "" && httpx.Getenv("NX_PLATFORM_IN_NAME", "") == "1" {
 		if name, ok := user["nickname"].(string); ok && name != "" {
 			user["nickname"] = nameWithPlatform(name, on)
 		}

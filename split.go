@@ -16,36 +16,13 @@ package main
 // its own TLS listener.
 
 import (
-	"bytes"
-	"io"
 	"log"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
+	"nx-baas/internal/httpx"
 	"nx-baas/redact"
 	"os"
 	"strings"
 )
-
-// newForwarder is a streaming reverse proxy that keeps the request's Host.
-func newForwarder(name, base string) *httputil.ReverseProxy {
-	target, err := url.Parse(strings.TrimRight(base, "/"))
-	if err != nil || target.Host == "" {
-		log.Fatalf("[nx-baas] %s forward URL %q: %v", name, base, redact.Err(err))
-	}
-	return &httputil.ReverseProxy{
-		Rewrite: func(pr *httputil.ProxyRequest) {
-			pr.SetURL(target)
-			pr.Out.Host = pr.In.Host // the service routes on the console's hostname
-		},
-		// Streamed both ways: store uploads are gigabytes, content downloads too.
-		FlushInterval: -1,
-		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			log.Printf("[nx-baas] forward to %s failed: %s %s%s: %v", name, r.Method, hostOf(r), redact.Path(r.URL.Path), redact.Err(err))
-			writeJSON(w, http.StatusBadGateway, map[string]any{"status": 502, "title": name + " unreachable"})
-		},
-	}
-}
 
 // requiredForwards are the families nx-baas no longer serves itself: without the URL of the
 // service that owns one, its consoles would get nothing, so the process refuses to start.
@@ -70,7 +47,7 @@ func missingForward() (env, service string) {
 // forwardersFromEnv installs the forwarders whose URLs are set.
 func (s *server) forwardersFromEnv() {
 	if u := os.Getenv("NX_PLAYFAB_URL"); u != "" {
-		s.playfabFwd = newForwarder("playfab", u)
+		s.playfabFwd = httpx.NewForwarder("playfab", u)
 		// Preserve the SDK error envelope even when the upstream is unavailable.
 		s.playfabFwd.ErrorHandler = func(w http.ResponseWriter, r *http.Request, _ error) {
 			playfabUnavailable(w, r)
@@ -78,21 +55,21 @@ func (s *server) forwardersFromEnv() {
 		log.Printf("[nx-baas] Core Keeper PlayFab forwarding enabled")
 	}
 	if u := os.Getenv("NX_SHOP_URL"); u != "" {
-		s.shopFwd = newForwarder("nx-shop", u)
+		s.shopFwd = httpx.NewForwarder("nx-shop", u)
 		log.Printf("[nx-baas] eShop moved: forwarding its hosts and /internal/store to %s", u)
 	}
 	if u := os.Getenv("NX_PENNE_URL"); u != "" {
-		s.penneFwd = newForwarder("nx-penne", u)
+		s.penneFwd = httpx.NewForwarder("nx-penne", u)
 		s.penneRemote = newPenneRemote(u)
 		s.notifier = s.penneRemote
 		log.Printf("[nx-baas] Penne moved: registrations, tickets, /internal/penne and every push go to %s", u)
 	}
 	if u := os.Getenv("NX_PCTL_URL"); u != "" {
-		s.pctlFwd = newForwarder("nx-pctl", u)
+		s.pctlFwd = httpx.NewForwarder("nx-pctl", u)
 		log.Printf("[nx-baas] parental controls moved: forwarding the pctl hosts and /internal/pctl to %s", u)
 	}
 	if u := os.Getenv("NX_BCAT_URL"); u != "" {
-		s.bcatFwd = newForwarder("nx-bcat", u)
+		s.bcatFwd = httpx.NewForwarder("nx-bcat", u)
 		log.Printf("[nx-baas] BCAT moved: forwarding the bcat hosts (News lists, game data) to %s", u)
 	}
 }
@@ -130,7 +107,7 @@ func isShopHost(host string) bool {
 // forwardMoved hands a console request to the service that owns its host, before the body
 // is read so uploads and downloads stream. False when this process still serves it.
 func (s *server) forwardMoved(w http.ResponseWriter, r *http.Request) bool {
-	host := hostOf(r)
+	host := httpx.HostOf(r)
 	if strings.HasPrefix(r.URL.Path, "/internal/") && s.movedFamily(host) {
 		// The services serve their admin routes on the same listener this forwards to;
 		// a console host must never reach them, whatever path it asks for.
@@ -148,7 +125,7 @@ func (s *server) forwardMoved(w http.ResponseWriter, r *http.Request) bool {
 			// body on the first flush). Traefik must send the
 			// frontline straight to nx-penne; reaching here means its router is missing.
 			log.Printf("[nx-baas] !! MISROUTED Penne frontline %s: route it to nx-penne in Traefik", host)
-			writeJSON(w, http.StatusMisdirectedRequest, map[string]any{"status": 421, "title": "misdirected request"})
+			httpx.WriteJSON(w, http.StatusMisdirectedRequest, map[string]any{"status": 421, "title": "misdirected request"})
 			return true
 		}
 		s.penneFwd.ServeHTTP(w, r)
@@ -170,14 +147,6 @@ func (s *server) movedFamily(host string) bool {
 	return s.shopFwd != nil && (isShopHost(host) || strings.HasPrefix(host, "dragons.")) ||
 		s.penneFwd != nil && isPenneHost(host) || s.pctlFwd != nil && isPctlHost(host) ||
 		s.bcatFwd != nil && isBcatHost(host)
-}
-
-// forwardRead forwards a request whose body this process already read.
-func forwardRead(fwd *httputil.ReverseProxy, w http.ResponseWriter, r *http.Request, body []byte) {
-	r2 := r.Clone(r.Context())
-	r2.Body = io.NopCloser(bytes.NewReader(body))
-	r2.ContentLength = int64(len(body))
-	fwd.ServeHTTP(w, r2)
 }
 
 // shopRightsRoute: the dragons rights routes the store workstream owns. Everything else on

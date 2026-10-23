@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"nx-baas/internal/httpx"
 	"os"
 	"strings"
 )
@@ -45,12 +46,12 @@ var newsReceiverToken = func() string {
 // topic id itself is matched. Live delivery only: a console that is offline refreshes on
 // its next boot anyway, and a stale revision is worthless.
 func (s *server) newsPush(w http.ResponseWriter, r *http.Request) {
-	if !s.internalOK(r) {
-		apiErr(w, http.StatusUnauthorized, "internal")
+	if !httpx.InternalOK(r) {
+		httpx.APIErr(w, http.StatusUnauthorized, "internal")
 		return
 	}
 	if r.Method != http.MethodPost {
-		apiErr(w, http.StatusMethodNotAllowed, "POST required")
+		httpx.APIErr(w, http.StatusMethodNotAllowed, "POST required")
 		return
 	}
 	var in struct {
@@ -62,7 +63,7 @@ func (s *server) newsPush(w http.ResponseWriter, r *http.Request) {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
 	dec.UseNumber()
 	if err := dec.Decode(&in); err != nil || in.TopicID == "" || in.Revision == "" {
-		apiErr(w, http.StatusBadRequest, "topic_id and revision required")
+		httpx.APIErr(w, http.StatusBadRequest, "topic_id and revision required")
 		return
 	}
 	// bcat reads "$.revision" with its string getter and hashes it; a bare number is ignored
@@ -78,7 +79,7 @@ func (s *server) newsPush(w http.ResponseWriter, r *http.Request) {
 	}
 	subscribers, delivered := s.deliverToTopic(strings.ToLower(topic), "news", string(body))
 	log.Printf("[news] push %s revision %s -> topic %q: %d subscriber(s), %d connection(s)", in.TopicID, in.Revision, topic, subscribers, delivered)
-	writeJSON(w, 200, map[string]any{"topic": topic, "subscribers": subscribers, "delivered": delivered})
+	httpx.WriteJSON(w, 200, map[string]any{"topic": topic, "subscribers": subscribers, "delivered": delivered})
 }
 
 // deliverToTopic writes one message to every live connection of every account that

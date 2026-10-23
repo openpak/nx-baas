@@ -22,7 +22,6 @@ import (
 	"crypto/x509/pkix"
 	_ "embed"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +33,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"nx-baas/internal/httpx"
 	"nx-baas/redact"
 	"os"
 	"regexp"
@@ -57,13 +57,6 @@ const (
 
 //go:embed assets/default.jpg
 var defaultAvatar []byte
-
-func getenv(k, d string) string {
-	if v := os.Getenv(k); v != "" {
-		return v
-	}
-	return d
-}
 
 type server struct {
 	store      *Store
@@ -197,63 +190,6 @@ func (s *server) takeCode(code string, spend bool) (naCode, bool) {
 
 // ---------- errors / helpers ----------
 
-func baasErr(w http.ResponseWriter, r *http.Request, status int, code, title, detail string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]any{
-		"status": status, "errorCode": code, "title": title, "detail": detail,
-		"instance": r.URL.Path, "type": fmt.Sprintf("https://baas.nintendo.com/errors/1.0.0/%d/%s", status, code),
-	})
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	// Captured from a real reply, which sends both beside the no-cache
-	// this already had.
-	w.Header().Set("Pragma", "no-cache")
-	w.Header().Set("Vary", "Accept-Encoding,Origin")
-	w.Header().Set("Cache-Control", "no-store, no-cache")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
-}
-
-func hostOf(r *http.Request) string {
-	h := r.Host
-	if i := strings.IndexByte(h, ':'); i >= 0 {
-		h = h[:i]
-	}
-	return h
-}
-
-// dump logs a request the server does not (fully) understand. By default it
-// names the route, the header names and the body's size: header values, query
-// values and bodies carry tokens, ids and names. NXBAAS_TRACE_BODIES=1 (never in
-// production) adds the full headers and body.
-func dump(r *http.Request, body []byte, tag string) {
-	if !redact.Bodies {
-		names := make([]string, 0, len(r.Header))
-		for k := range r.Header {
-			names = append(names, k)
-		}
-		sort.Strings(names)
-		log.Printf("[nx-baas] %s %s %s%s hdr{%s} body(%d) ct=%q", tag, r.Method, hostOf(r), redact.URL(r.URL),
-			strings.Join(names, ","), len(body), r.Header.Get("Content-Type"))
-		return
-	}
-	var hdr strings.Builder
-	for k, v := range r.Header {
-		if k == "Authorization" && len(v) > 0 && len(v[0]) > 40 {
-			fmt.Fprintf(&hdr, " %s: %s...;", k, v[0][:40])
-			continue
-		}
-		fmt.Fprintf(&hdr, " %s: %s;", k, strings.Join(v, ","))
-	}
-	log.Printf("[nx-baas] %s %s %s%s?%s hdr{%s} body(%d)=%q", tag, r.Method, hostOf(r), r.URL.Path, r.URL.RawQuery, hdr.String(), len(body), body)
-	if len(body) > 0 && !json.Valid(body) && !strings.Contains(r.Header.Get("Content-Type"), "form") {
-		log.Printf("[nx-baas] %s body hex: %s", tag, hex.EncodeToString(body))
-	}
-}
-
 // bearer returns the claims of our own access token on the request, or nil.
 func (s *server) bearer(r *http.Request) map[string]any {
 	a := r.Header.Get("Authorization")
@@ -276,7 +212,7 @@ func (s *server) validBearer(r *http.Request) map[string]any {
 	if c == nil {
 		return nil
 	}
-	if str(c, "typ") != "token" || str(c, "iss") != baasIssuer {
+	if httpx.Str(c, "typ") != "token" || httpx.Str(c, "iss") != baasIssuer {
 		return nil
 	}
 	exp, ok := c["exp"].(float64)
@@ -302,15 +238,15 @@ func (s *server) bearerUser(r *http.Request) *User {
 			log.Printf("[nx-baas] auth: %s %s carries no bearer", r.Method, redact.Path(r.URL.Path))
 		} else if raw := s.bearer(r); raw == nil {
 			log.Printf("[nx-baas] auth: %s %s bearer does not verify against this server's key", r.Method, redact.Path(r.URL.Path))
-		} else if str(raw, "typ") != "token" || str(raw, "iss") != baasIssuer {
+		} else if httpx.Str(raw, "typ") != "token" || httpx.Str(raw, "iss") != baasIssuer {
 			log.Printf("[nx-baas] auth: %s %s bearer is typ=%q iss=%q, want typ=token from this issuer",
-				r.Method, redact.Path(r.URL.Path), str(raw, "typ"), str(raw, "iss"))
+				r.Method, redact.Path(r.URL.Path), httpx.Str(raw, "typ"), httpx.Str(raw, "iss"))
 		} else {
 			log.Printf("[nx-baas] auth: %s %s bearer has expired", r.Method, redact.Path(r.URL.Path))
 		}
 		return nil
 	}
-	sub := str(c, "sub")
+	sub := httpx.Str(c, "sub")
 	u := s.store.User(sub)
 	if u == nil {
 		// The give-away: an application token's subject is the device id.
@@ -327,13 +263,13 @@ func (s *server) bearerUser(r *http.Request) *User {
 func (s *server) requireCaller(w http.ResponseWriter, r *http.Request, pathUserID string) *User {
 	me := s.bearerUser(r)
 	if me == nil {
-		baasErr(w, r, 401, "invalid_token", "Invalid token", "a current access token is required")
+		httpx.BaasErr(w, r, 401, "invalid_token", "Invalid token", "a current access token is required")
 		return nil
 	}
 	if pathUserID != "" && pathUserID != me.ID {
 		// Cross-account denial: a valid token for someone else must not read
 		// or write this user's social state, ever.
-		baasErr(w, r, 403, "insufficient_scope", "Token is insufficient", "the token does not belong to this user")
+		httpx.BaasErr(w, r, 403, "insufficient_scope", "Token is insufficient", "the token does not belong to this user")
 		return nil
 	}
 	return me
@@ -366,10 +302,10 @@ func (s *server) idToken(u *User, id *Identity, username string, app map[string]
 	// the appAuthNToken when the console sends one, else the VPS defaults.
 	ai, av := "0100f8f0000a2000", "0033"
 	if n, ok := app["nintendo"].(map[string]any); ok {
-		if v := str(n, "ai"); v != "" {
+		if v := httpx.Str(n, "ai"); v != "" {
 			ai = v
 		}
-		if v := str(n, "av"); v != "" {
+		if v := httpx.Str(n, "av"); v != "" {
 			av = v
 		}
 	}
@@ -415,7 +351,7 @@ func (s *server) bindNotificationChannel(deviceAuthenticationToken, baasUserID s
 		return
 	}
 	if dt, err := parseJWT(deviceAuthenticationToken, &s.key.PublicKey); err == nil {
-		s.penneBindConsole(str(dt, "sub"), baasUserID)
+		s.penneBindConsole(httpx.Str(dt, "sub"), baasUserID)
 	}
 }
 
@@ -574,7 +510,7 @@ func testPF(client string) (int, bool) {
 	if client == "" {
 		client = "switch"
 	}
-	for _, kv := range strings.Split(getenv("NX_PF_TEST", ""), ",") {
+	for _, kv := range strings.Split(httpx.Getenv("NX_PF_TEST", ""), ",") {
 		if k, v, ok := strings.Cut(strings.TrimSpace(kv), "="); ok && strings.EqualFold(k, client) {
 			if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 3 {
 				return n, true
@@ -676,7 +612,7 @@ func (s *server) userObj(u *User, id *Identity, devicePassword string) map[strin
 		// different things about the same person in the same flow. Matching
 		// that fallback is not inventing a fact — it is refusing to contradict
 		// ourselves.
-		country = getenv("NA_FALLBACK_COUNTRY", "GB")
+		country = httpx.Getenv("NA_FALLBACK_COUNTRY", "GB")
 	}
 	birthday := u.Birthday
 	if (birthday == "" || birthday == "0000-00-00") && id != nil && id.Birthday != "" {
@@ -878,7 +814,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 	// 2124-5110 (bans.go). Pictures and key sets stay public.
 	if strings.HasPrefix(p, "/1.0.0/users/") || strings.HasPrefix(p, "/2.0.0/") {
 		if c := s.validBearer(r); c != nil {
-			if lock := s.userLock(s.store.User(str(c, "sub"))); lock != "" {
+			if lock := s.userLock(s.store.User(httpx.Str(c, "sub"))); lock != "" {
 				baasLocked(w, r, lock)
 				return
 			}
@@ -895,7 +831,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			// the picture now ships inside the binary, so no deployment can be
 			// missing it. A file in NX_DATA still wins if someone wants their
 			// own.
-			img, err := os.ReadFile(getenv("NX_DATA", "/data") + "/default.jpg")
+			img, err := os.ReadFile(httpx.Getenv("NX_DATA", "/data") + "/default.jpg")
 			if err != nil {
 				img = defaultAvatar
 			}
@@ -941,7 +877,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				// is our own left hand failing our own right: the console shows
 				// a friend with a broken picture. The default avatar is what an
 				// account without a picture means (SOC-01: a reachable avatar).
-				img, derr := os.ReadFile(getenv("NX_DATA", "/data") + "/default.jpg")
+				img, derr := os.ReadFile(httpx.Getenv("NX_DATA", "/data") + "/default.jpg")
 				if derr != nil {
 					img = defaultAvatar
 				}
@@ -967,19 +903,19 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 	case p == "/1.0.0/application/token" && r.Method == "POST":
 		// The assertion is nx-dauth's device token; we trust it as-is (dauth already gated).
 		claims, _ := parseJWT(form.Get("assertion"), nil)
-		di := str(claims, "sub")
+		di := httpx.Str(claims, "sub")
 		sn := ""
 		if n, ok := claims["nintendo"].(map[string]any); ok {
-			sn = str(n, "sn")
+			sn = httpx.Str(n, "sn")
 		}
 		if di == "" {
-			baasErr(w, r, 400, "invalid_params", "Invalid Params", "assertion is not a device token")
+			httpx.BaasErr(w, r, 400, "invalid_params", "Invalid Params", "assertion is not a device token")
 			return
 		}
 		s.mu.Lock()
 		s.device[di] = sn
 		s.mu.Unlock()
-		writeJSON(w, 200, map[string]any{"accessToken": s.accessToken(di, 1, randHex(8), di, sn), "tokenType": "Bearer", "expiresIn": 10800})
+		httpx.WriteJSON(w, 200, map[string]any{"accessToken": s.accessToken(di, 1, randHex(8), di, sn), "tokenType": "Bearer", "expiresIn": 10800})
 		return
 
 	case p == "/1.0.0/image_upload" && r.Method == "POST":
@@ -992,7 +928,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		_ = json.Unmarshal(body, &img)
 		tok := s.validBearer(r)
-		if uid := str(tok, "sub"); uid != "" && img.RawContent != "" {
+		if uid := httpx.Str(tok, "sub"); uid != "" && img.RawContent != "" {
 			if raw, err := base64.StdEncoding.DecodeString(img.RawContent); err != nil {
 				log.Printf("[nx-baas] image_upload: not base64 (%d bytes): %v", len(img.RawContent), redact.Err(err))
 			} else if u := s.store.User(uid); u != nil {
@@ -1013,38 +949,38 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		// The console keeps the url and later compares its last path segment
 		// with thumbnailUrl's, so it is the same address the user object
 		// serves from now on.
-		if uid := str(s.bearer(r), "sub"); uid != "" {
+		if uid := httpx.Str(s.bearer(r), "sub"); uid != "" {
 			if u := s.store.User(uid); u != nil {
 				url := s.userObj(u, s.identity(u), "")["thumbnailUrl"]
-				writeJSON(w, 200, map[string]any{"content": map[string]any{"url": url, "format": "jpg"}})
+				httpx.WriteJSON(w, 200, map[string]any{"content": map[string]any{"url": url, "format": "jpg"}})
 				return
 			}
 		}
-		baasErr(w, r, 401, "invalid_token", "Invalid token", "no user for this token")
+		httpx.BaasErr(w, r, 401, "invalid_token", "Invalid token", "no user for this token")
 		return
 
 	case p == "/1.0.0/users" && r.Method == "POST":
 		u, d := s.store.NewUser()
 		log.Printf("[nx-baas] new device account %s for user %s", redact.Tag(d.ID), redact.Tag(u.ID))
 		w.Header().Set("Location", "/1.0.0/users/"+u.ID)
-		writeJSON(w, 201, s.userObj(u, nil, d.Password))
+		httpx.WriteJSON(w, 201, s.userObj(u, nil, d.Password))
 		return
 
 	case (p == "/1.0.0/login" || p == "/1.0.0/federation") && r.Method == "POST":
 		u := s.store.Login(form.Get("id"), form.Get("password"))
 		if u == nil {
-			baasErr(w, r, 400, "invalid_device_account", "Invalid Device Account", "Device Account's id or password is invalid")
+			httpx.BaasErr(w, r, 400, "invalid_device_account", "Invalid Device Account", "Device Account's id or password is invalid")
 			return
 		}
 		tok := s.bearer(r)
-		di, sn := str(tok, "sub"), ""
+		di, sn := httpx.Str(tok, "sub"), ""
 		if n, ok := tok["nintendo"].(map[string]any); ok {
-			sn = str(n, "sn")
+			sn = httpx.Str(n, "sn")
 		}
 		if !s.bindDeviceAccount(form.Get("id"), di) {
 			// A device account another enrolled console signed in with first.
 			log.Printf("[nx-baas] %s refused: the device account belongs to another console", seg[1])
-			baasErr(w, r, 400, "invalid_device_account", "Invalid Device Account", "Device Account's id or password is invalid")
+			httpx.BaasErr(w, r, 400, "invalid_device_account", "Invalid Device Account", "Device Account's id or password is invalid")
 			return
 		}
 		if p == "/1.0.0/federation" {
@@ -1055,7 +991,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 					return
 				}
 				log.Printf("[nx-baas] federation failed: %v", redact.Err(err))
-				baasErr(w, r, 400, "invalid_idp_account", "Invalid IdP Account", "IdP account is invalid")
+				httpx.BaasErr(w, r, 400, "invalid_idp_account", "Invalid IdP Account", "IdP account is invalid")
 				return
 			}
 		}
@@ -1113,13 +1049,13 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		// answered on capi's memberships endpoint, which is where the console
 		// actually asks.
 		log.Printf("[nx-baas] %s user=%s pid=%s ua=%s", seg[1], redact.Tag(u.ID), redact.Tag(u.PID), redact.IDs(r.UserAgent()))
-		writeJSON(w, 200, res)
+		httpx.WriteJSON(w, 200, res)
 		return
 
 	case len(seg) == 3 && seg[0] == "1.0.0" && seg[1] == "users":
 		u := s.store.User(seg[2])
 		if u == nil {
-			baasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
+			httpx.BaasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 			return
 		}
 		// Reading or writing a user object binds to the authenticated user:
@@ -1130,7 +1066,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		switch r.Method {
 		case "GET":
-			writeJSON(w, 200, s.userObj(u, s.identity(u), ""))
+			httpx.WriteJSON(w, 200, s.userObj(u, s.identity(u), ""))
 		case "PATCH":
 			var ops []struct {
 				Op, Path string
@@ -1210,16 +1146,16 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 					}
 				}
 			}
-			writeJSON(w, 200, s.userObj(u, s.identity(u), ""))
+			httpx.WriteJSON(w, 200, s.userObj(u, s.identity(u), ""))
 		default:
-			baasErr(w, r, 405, "method_not_allowed", "Method Not Allowed", "Method Not Allowed")
+			httpx.BaasErr(w, r, 405, "method_not_allowed", "Method Not Allowed", "Method Not Allowed")
 		}
 		return
 
 	case len(seg) == 4 && seg[0] == "1.0.0" && seg[1] == "users":
 		u := s.store.User(seg[2])
 		if u == nil {
-			baasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
+			httpx.BaasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 			return
 		}
 		switch seg[3] {
@@ -1227,13 +1163,13 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			nu, err := s.link(u, form.Get("idToken"))
 			if err != nil {
 				log.Printf("[nx-baas] link failed: %v", redact.Err(err))
-				baasErr(w, r, 400, "invalid_idp_account", "Invalid IdP Account", "IdP account is invalid")
+				httpx.BaasErr(w, r, 400, "invalid_idp_account", "Invalid IdP Account", "IdP account is invalid")
 				return
 			}
-			writeJSON(w, 200, s.userObj(nu, s.identity(nu), ""))
+			httpx.WriteJSON(w, 200, s.userObj(nu, s.identity(nu), ""))
 		case "unlink":
 			s.store.Update(u, func(u *User) { u.PID, u.NaID = 0, "" })
-			writeJSON(w, 200, s.userObj(u, nil, ""))
+			httpx.WriteJSON(w, 200, s.userObj(u, nil, ""))
 		case "generate_code":
 			if s.requireCaller(w, r, seg[2]) == nil {
 				return
@@ -1242,23 +1178,23 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			// This used to answer "there is nothing to regenerate" and hand
 			// back the same code, which is a lie a console cannot see through.
 			if u.CodeGeneratedAt > 0 && time.Now().Unix()-u.CodeGeneratedAt < 24*3600 {
-				baasErr(w, r, 422, "friend_code_unregenerable_state", "Friend Code Unregenerable State", "")
+				httpx.BaasErr(w, r, 422, "friend_code_unregenerable_state", "Friend Code Unregenerable State", "")
 				return
 			}
 			if err := s.acct.RegenerateFriendCode(u.PID); err != nil {
 				log.Printf("[nx-baas] generate_code: %v", redact.Err(err))
-				baasErr(w, r, 500, "internal_server_error", "Internal Server Error", "Internal Server Error")
+				httpx.BaasErr(w, r, 500, "internal_server_error", "Internal Server Error", "Internal Server Error")
 				return
 			}
 			s.store.Update(u, func(u *User) { u.CodeGeneratedAt = time.Now().Unix() })
-			writeJSON(w, 200, s.userObj(u, s.identity(u), ""))
+			httpx.WriteJSON(w, 200, s.userObj(u, s.identity(u), ""))
 		case "device_histories":
 			if s.requireCaller(w, r, seg[2]) == nil {
 				return
 			}
 			// Every console this user has signed in on. We keep no history, and
 			// an empty list is a true answer; a 404 here is not.
-			writeJSON(w, 200, map[string]any{"count": 0, "deviceHistories": []any{}})
+			httpx.WriteJSON(w, 200, map[string]any{"count": 0, "deviceHistories": []any{}})
 		case "blocks":
 			switch r.Method {
 			case "POST":
@@ -1267,7 +1203,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				// userId and id are what this server read before, kept.
 				target := bodyField(body, form, "targetUserId", "userId", "id")
 				if target == "" {
-					baasErr(w, r, 400, "invalid_params", "Invalid Params", "invalid params")
+					httpx.BaasErr(w, r, 400, "invalid_params", "Invalid Params", "invalid params")
 					return
 				}
 				if s.requireCaller(w, r, seg[2]) == nil {
@@ -1275,7 +1211,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				}
 				other := s.resolveFriend(target)
 				if other == nil {
-					baasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
+					httpx.BaasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 					return
 				}
 				// Blocks commit in the core, which owns enforcement for every
@@ -1284,7 +1220,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				if err := s.setBlock(u, other, true); err != nil {
 					log.Printf("[nx-baas] block failed user=%s target=%s: %v", redact.Tag(u.ID), redact.Tag(target), redact.Err(err))
 					status, code, title, detail := baasFailure(err)
-					baasErr(w, r, status, code, title, detail)
+					httpx.BaasErr(w, r, status, code, title, detail)
 					return
 				}
 				var in struct {
@@ -1301,7 +1237,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 					u.BlockDetails[other.BaasUserID] = &BlockDetail{CreatedAt: now, Self: in.Extras.Self}
 				})
 				// The console ignores this body; it re-syncs the list.
-				writeJSON(w, 200, s.blockObj(u, other.BaasUserID, now))
+				httpx.WriteJSON(w, 200, s.blockObj(u, other.BaasUserID, now))
 			default:
 				if s.requireCaller(w, r, seg[2]) == nil {
 					return
@@ -1319,20 +1255,20 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 					}
 					list = append(list, s.blockObj(u, b, now))
 				}
-				writeJSON(w, 200, listEnvelope(list))
+				httpx.WriteJSON(w, 200, listEnvelope(list))
 			}
 		case "friends", "friend_requests", "relationships":
 			s.friends(w, r, u, seg[3:], body)
 		default:
-			dump(r, body, "!! UNHANDLED user sub-resource")
-			baasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
+			httpx.Dump(r, body, "!! UNHANDLED user sub-resource")
+			httpx.BaasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 		}
 		return
 
 	case len(seg) == 5 && seg[0] == "1.0.0" && seg[1] == "users" && seg[3] == "blocks" && r.Method == "DELETE":
 		u := s.store.User(seg[2])
 		if u == nil {
-			baasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
+			httpx.BaasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 			return
 		}
 		if s.requireCaller(w, r, seg[2]) == nil {
@@ -1340,13 +1276,13 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		other := s.resolveFriend(seg[4])
 		if other == nil {
-			baasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
+			httpx.BaasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 			return
 		}
 		if err := s.setBlock(u, other, false); err != nil {
 			log.Printf("[nx-baas] unblock failed user=%s target=%s: %v", redact.Tag(u.ID), redact.Tag(seg[4]), redact.Err(err))
 			status, code, title, detail := baasFailure(err)
-			baasErr(w, r, status, code, title, detail)
+			httpx.BaasErr(w, r, status, code, title, detail)
 			return
 		}
 		w.WriteHeader(204)
@@ -1355,7 +1291,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 	case len(seg) == 5 && seg[0] == "1.0.0" && seg[1] == "users" && seg[3] == "device_accounts":
 		u := s.store.User(seg[2])
 		if u == nil {
-			baasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
+			httpx.BaasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 			return
 		}
 		if s.requireCaller(w, r, seg[2]) == nil {
@@ -1404,7 +1340,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				}
 			}
 			if state == "" {
-				baasErr(w, r, 400, "invalid_params", "Invalid Params", "no presence state in patch")
+				httpx.BaasErr(w, r, 400, "invalid_params", "Invalid Params", "no presence state in patch")
 				return
 			}
 			client, clientOS := requestClient(r), requestClientOS(r)
@@ -1417,10 +1353,10 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				s.reportOnline(r.Context(), u, client, clientOS)
 			}
 			log.Printf("[nx-baas] presence user=%s pid=%s device=%s client=%q os=%q %s app=%s field(%d)", redact.Tag(u.ID), redact.Tag(u.PID), redact.Tag(device), client, clientOS, state, appID, len(appField))
-			writeJSON(w, 200, s.userObj(u, s.identity(u), ""))
+			httpx.WriteJSON(w, 200, s.userObj(u, s.identity(u), ""))
 		default:
-			dump(r, body, "!! UNHANDLED device_accounts")
-			baasErr(w, r, 405, "method_not_allowed", "Method Not Allowed", "Method Not Allowed")
+			httpx.Dump(r, body, "!! UNHANDLED device_accounts")
+			httpx.BaasErr(w, r, 405, "method_not_allowed", "Method Not Allowed", "Method Not Allowed")
 		}
 		return
 
@@ -1443,7 +1379,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		// lookup missed and the console said it could not find the user. The
 		// value carries no SW- prefix and $in may list several.
 		if s.validBearer(r) == nil {
-			baasErr(w, r, 401, "invalid_token", "Invalid token", "a current access token is required")
+			httpx.BaasErr(w, r, 401, "invalid_token", "Invalid token", "a current access token is required")
 			return
 		}
 		q := r.URL.Query()
@@ -1480,7 +1416,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		// console reads "items" and nothing else, so a search that found
 		// somebody was reported to the person as "unable to find user" while
 		// our own log said count:1.
-		writeJSON(w, 200, map[string]any{"items": users})
+		httpx.WriteJSON(w, 200, map[string]any{"items": users})
 		return
 
 	case p == "/1.0.0/devices/snapshot":
@@ -1496,7 +1432,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				deleted = append(deleted, uid)
 			}
 		}
-		writeJSON(w, 200, map[string]any{"deletedUserIds": deleted, "persistentUserIds": persistent})
+		httpx.WriteJSON(w, 200, map[string]any{"deletedUserIds": deleted, "persistentUserIds": persistent})
 		return
 
 	case strings.HasPrefix(p, "/1.0.0/push_channels/"):
@@ -1510,10 +1446,10 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		now := time.Now().Unix()
 		// B workstream (NTF-01): keep the association this echo used to drop.
-		s.penneRecordPushChannel(userID, devID, str(in, "service"), str(in, "deviceToken"))
-		writeJSON(w, 200, map[string]any{
-			"createdAt": now, "deviceAccountId": devID, "deviceAttributes": map[string]any{}, "deviceToken": str(in, "deviceToken"),
-			"service": str(in, "service"), "updatedAt": now, "userAttributes": map[string]any{}, "userId": userID,
+		s.penneRecordPushChannel(userID, devID, httpx.Str(in, "service"), httpx.Str(in, "deviceToken"))
+		httpx.WriteJSON(w, 200, map[string]any{
+			"createdAt": now, "deviceAccountId": devID, "deviceAttributes": map[string]any{}, "deviceToken": httpx.Str(in, "deviceToken"),
+			"service": httpx.Str(in, "service"), "updatedAt": now, "userAttributes": map[string]any{}, "userId": userID,
 		})
 		return
 	case p == "/1.0.0/devices/me/delete":
@@ -1530,12 +1466,12 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		} else {
 			log.Printf("[nx-baas] devices/me/delete without a device id; nothing to expire")
 		}
-		writeJSON(w, 200, map[string]any{})
+		httpx.WriteJSON(w, 200, map[string]any{})
 		return
 	}
 
-	dump(r, body, "!! UNHANDLED")
-	baasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
+	httpx.Dump(r, body, "!! UNHANDLED")
+	httpx.BaasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 }
 
 // link binds a BAAS user to the OpenPak account behind a Nintendo-Account id_token we issued.
@@ -1544,7 +1480,7 @@ func (s *server) link(u *User, idTok string) (*User, error) {
 	if err != nil {
 		return nil, err
 	}
-	naID := str(claims, "sub")
+	naID := httpx.Str(claims, "sub")
 	pid := s.store.PIDForNA(naID)
 	if pid == 0 {
 		return nil, fmt.Errorf("unknown Nintendo-Account sub %q", naID)
@@ -1573,7 +1509,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 	json.Unmarshal(body, &in)
 	form, _ := url.ParseQuery(string(body))
 	field := func(k string) string {
-		if v := str(in, k); v != "" {
+		if v := httpx.Str(in, k); v != "" {
 			return v
 		}
 		return form.Get(k)
@@ -1583,7 +1519,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 	// let one account read another's list.
 	me := s.bearerUser(r)
 	if me == nil {
-		baasErr(w, r, 401, "invalid_token", "Invalid token", "a current access token is required")
+		httpx.BaasErr(w, r, 401, "invalid_token", "Invalid token", "a current access token is required")
 		return
 	}
 	// The caller's identity as the core sees it, for rendering "me" objects.
@@ -1609,7 +1545,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 				list = list[:maxListEntries]
 			}
 		}
-		writeJSON(w, 200, listEnvelopeWith(list, `""`, 100))
+		httpx.WriteJSON(w, 200, listEnvelopeWith(list, `""`, 100))
 		return
 
 	case len(seg) == 4 && seg[0] == "users" && seg[2] == "friends" && r.Method == "PATCH":
@@ -1663,7 +1599,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			}
 		})
 		if !changed {
-			baasErr(w, r, 400, "invalid_params", "Invalid Params", "no known relationship field in patch")
+			httpx.BaasErr(w, r, 400, "invalid_params", "Invalid Params", "no known relationship field in patch")
 			return
 		}
 		// Answer with the single-friend shape the firmware's single-entry
@@ -1689,7 +1625,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			// than a plainer reply), so render what we know.
 			target = &Friend{BaasUserID: seg[3]}
 		}
-		writeJSON(w, 200, s.relationshipObj(me, *target, now))
+		httpx.WriteJSON(w, 200, s.relationshipObj(me, *target, now))
 		return
 
 	case len(seg) == 4 && seg[0] == "users" && seg[2] == "friends" && r.Method == "DELETE":
@@ -1701,13 +1637,13 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		}
 		target := s.resolveFriend(seg[3])
 		if target == nil {
-			baasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
+			httpx.BaasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 			return
 		}
 		if err := s.removeFriend(me, target); err != nil {
 			log.Printf("[nx-baas] friend-remove failed user=%s other=%s: %v", redact.Tag(me.ID), redact.Tag(seg[3]), redact.Err(err))
 			status, code, title, detail := baasFailure(err)
-			baasErr(w, r, status, code, title, detail)
+			httpx.BaasErr(w, r, status, code, title, detail)
 			return
 		}
 		w.WriteHeader(204)
@@ -1722,7 +1658,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			return
 		}
 		if myID == nil {
-			baasErr(w, r, 403, "insufficient_scope", "Token is insufficient", "not linked")
+			httpx.BaasErr(w, r, 403, "insufficient_scope", "Token is insufficient", "not linked")
 			return
 		}
 		list := []map[string]any{}
@@ -1804,12 +1740,12 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		for i, e := range list {
 			items[i] = e
 		}
-		writeJSON(w, 200, listEnvelope(items))
+		httpx.WriteJSON(w, 200, listEnvelope(items))
 		return
 
 	case len(seg) == 1 && seg[0] == "friend_requests" && r.Method == "POST":
 		if myID == nil {
-			baasErr(w, r, 403, "insufficient_scope", "Token is insufficient", "not linked")
+			httpx.BaasErr(w, r, 403, "insufficient_scope", "Token is insufficient", "not linked")
 			return
 		}
 		var target *Friend
@@ -1821,10 +1757,10 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		} else if t := field("userId"); t != "" {
 			target, err = s.acct.Resolve(url.Values{"baas": {t}})
 		} else {
-			dump(r, body, "friend_requests: unknown body")
+			httpx.Dump(r, body, "friend_requests: unknown body")
 		}
 		if err != nil || target == nil {
-			baasErr(w, r, 400, "invalid_friend_code_format", "Invalid friend code", "no such user")
+			httpx.BaasErr(w, r, 400, "invalid_friend_code_format", "Invalid friend code", "no such user")
 			return
 		}
 		// 30811 ChangeFriendRequestReception: a receiver who turned requests
@@ -1833,7 +1769,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		// the friendship they initiated.
 		if receiver := s.store.User(target.BaasUserID); !acceptsFriendRequests(receiver) &&
 			!s.store.OpenRequest(target.PID, me.PID) {
-			baasErr(w, r, 400, "could_not_send_request", "Could Not Send Request", "not accepting friend requests")
+			httpx.BaasErr(w, r, 400, "could_not_send_request", "Could Not Send Request", "not accepting friend requests")
 			return
 		}
 		created, authorized, reqID, err := s.commitFriendRequest(me, target)
@@ -1843,7 +1779,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			// answered 201 anyway).
 			log.Printf("[nx-baas] friend-request failed user=%s target=%s: %v", redact.Tag(me.ID), redact.Tag(target.BaasUserID), redact.Err(err))
 			status, code, title, detail := baasFailure(err)
-			baasErr(w, r, status, code, title, detail)
+			httpx.BaasErr(w, r, status, code, title, detail)
 			return
 		}
 		if created {
@@ -1864,12 +1800,12 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			// receiver, and the answer is that they are now friends.
 			reply["state"] = "AUTHORIZED"
 		}
-		writeJSON(w, code, reply)
+		httpx.WriteJSON(w, code, reply)
 		return
 
 	case len(seg) == 2 && seg[0] == "friend_requests" && (r.Method == "PATCH" || r.Method == "DELETE"):
 		if myID == nil {
-			baasErr(w, r, 403, "insufficient_scope", "Token is insufficient", "not linked")
+			httpx.BaasErr(w, r, 403, "insufficient_scope", "Token is insufficient", "not linked")
 			return
 		}
 		state := patchedState(body)
@@ -1893,7 +1829,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 				target = other
 			}
 			if target == nil {
-				baasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
+				httpx.BaasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 				return
 			}
 			// 30205 ReadFriendRequest: [{"op":"add","path":"/extras/receiver/read",
@@ -1920,7 +1856,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 				reply["state"] = requestState(record.State)
 			}
 			reply["extras"] = map[string]any{"receiver": map[string]any{"read": read}}
-			writeJSON(w, 200, reply)
+			httpx.WriteJSON(w, 200, reply)
 			return
 		}
 		var err error
@@ -1932,7 +1868,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			// though the friendship went through. Same answer, no second
 			// commit; a different answer is genuinely gone.
 			if requestState(record.State) != state {
-				baasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
+				httpx.BaasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 				return
 			}
 		case record != nil:
@@ -1946,7 +1882,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			case "CANCELED":
 				err = s.cancelRequest(me, record)
 			default:
-				baasErr(w, r, 400, "invalid_params", "Invalid Params", "unknown request state")
+				httpx.BaasErr(w, r, 400, "invalid_params", "Invalid Params", "unknown request state")
 				return
 			}
 			if err == nil {
@@ -1962,7 +1898,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 				err = s.acct.FriendAccept(me.PID, other.PID, state == "AUTHORIZED")
 			}
 		default:
-			baasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
+			httpx.BaasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 			return
 		}
 		if err != nil {
@@ -1970,7 +1906,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			// contract, and can re-sync.
 			log.Printf("[nx-baas] friend-request %s failed user=%s ref=%s: %v", state, redact.Tag(me.ID), redact.Tag(seg[1]), redact.Err(err))
 			status, code, title, detail := baasFailure(err)
-			baasErr(w, r, status, code, title, detail)
+			httpx.BaasErr(w, r, status, code, title, detail)
 			return
 		}
 		// The other side of the request, for the reply the console expects.
@@ -2015,7 +1951,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		if otherFriend.CreatedAt > 0 {
 			createdAt = otherFriend.CreatedAt
 		}
-		writeJSON(w, 200, map[string]any{
+		httpx.WriteJSON(w, 200, map[string]any{
 			"id":       seg[1],
 			"senderId": senderID, "receiverId": receiverID,
 			"sender": senderObj, "receiver": receiverObj,
@@ -2059,11 +1995,11 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 				}
 			}
 		}
-		writeJSON(w, 200, rel)
+		httpx.WriteJSON(w, 200, rel)
 		return
 	}
-	dump(r, body, "!! UNHANDLED 2.0.0")
-	baasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
+	httpx.Dump(r, body, "!! UNHANDLED 2.0.0")
+	httpx.BaasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 }
 
 // ---------- Nintendo Account (accounts.nintendo.com) ----------
@@ -2083,7 +2019,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		now := time.Now().Unix()
 		exp := now + 7*86400
 		param := fmt.Sprintf("https://accounts.nintendo.com/qr_verify?sig=%s&iat=%d&aud=6ffd70c434d303c8&sub=%s&exp=%d", randB64(32), now, naID, exp)
-		writeJSON(w, 200, map[string]any{"exp": exp, "param": param, "userId": naID})
+		httpx.WriteJSON(w, 200, map[string]any{"exp": exp, "param": param, "userId": naID})
 		return
 
 	case p == "/connect/1.0.0/term_confirm" || p == "/1.0.0/term_confirm":
@@ -2093,7 +2029,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		// reports the EULA and privacy policy as agreed — so this confirms
 		// rather than 404s, which is what keeps account setup moving.
 		log.Printf("[nx-baas] NA term_confirm for user=%s", redact.Tag(form.Get("userId")))
-		writeJSON(w, 200, map[string]any{"status": 200})
+		httpx.WriteJSON(w, 200, map[string]any{"status": 200})
 		return
 
 	case strings.HasPrefix(p, "/connect/1.0.0/api/term_agreement_token") ||
@@ -2102,8 +2038,8 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		// is not recovered (the module reads $.challenge_src and $.errorCode
 		// near this call), and a token is not a thing to invent, so the
 		// request is recorded and refused.
-		dump(r, body, "!! NA term_agreement_token (document shape unrecovered)")
-		writeJSON(w, 404, map[string]any{"status": 404, "errorCode": "not_found",
+		httpx.Dump(r, body, "!! NA term_agreement_token (document shape unrecovered)")
+		httpx.WriteJSON(w, 404, map[string]any{"status": 404, "errorCode": "not_found",
 			"detail": "no term agreement is issued on this network"})
 		return
 
@@ -2111,8 +2047,8 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		// Moving an account between consoles [account module 0x17d920]. This
 		// server has no transfer flow, and half-answering one risks an account
 		// that exists in two places: refuse plainly and record the attempt.
-		dump(r, body, "!! NA transfer_na_tokens (account transfer is not supported)")
-		writeJSON(w, 400, map[string]any{"status": 400, "errorCode": "invalid_request",
+		httpx.Dump(r, body, "!! NA transfer_na_tokens (account transfer is not supported)")
+		httpx.WriteJSON(w, 400, map[string]any{"status": 400, "errorCode": "invalid_request",
 			"detail": "account transfer is not supported on this network"})
 		return
 
@@ -2121,10 +2057,10 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		cl, err := parseJWT(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), &s.key.PublicKey)
 		pid := uint64(0)
 		if err == nil {
-			pid = s.store.PIDForNA(str(cl, "sub"))
+			pid = s.store.PIDForNA(httpx.Str(cl, "sub"))
 		}
 		if pid == 0 {
-			writeJSON(w, 401, map[string]any{"error": "login_required"})
+			httpx.WriteJSON(w, 401, map[string]any{"error": "login_required"})
 			return
 		}
 		if s.pidLock(pid) != "" {
@@ -2134,7 +2070,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		id, err := s.acct.Identity(pid)
 		if err != nil {
-			writeJSON(w, 401, map[string]any{"error": "login_required"})
+			httpx.WriteJSON(w, 401, map[string]any{"error": "login_required"})
 			return
 		}
 		c := naCode{PID: pid, Username: id.Nickname, ClientID: form.Get("client_id"), NaID: id.NaID, Nonce: form.Get("nonce"), Created: time.Now()}
@@ -2227,7 +2163,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			http.Redirect(w, r, dest, http.StatusFound)
 			return
 		}
-		dump(r, body, "NA authorize")
+		httpx.Dump(r, body, "NA authorize")
 		s.authorizePage(w, r, q, "")
 		return
 
@@ -2269,7 +2205,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		return
 
 	case p == "/connect/1.0.0/api/session_token" || p == "/connect/1.0.0/api/token":
-		dump(r, body, "NA token")
+		httpx.Dump(r, body, "NA token")
 		code := form.Get("session_token_code")
 		if code == "" {
 			code = form.Get("code")
@@ -2284,8 +2220,8 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		if !ok && form.Get("refresh_token") != "" {
 			// Later boots: the console refreshes with the token we issued (a signed JWT whose sub
 			// is the NA id); the NA id -> PID map is persisted, so this survives restarts.
-			if cl, err := parseJWT(form.Get("refresh_token"), &s.key.PublicKey); err == nil && str(cl, "typ") == "refresh" {
-				if pid := s.store.PIDForNA(str(cl, "sub")); pid != 0 {
+			if cl, err := parseJWT(form.Get("refresh_token"), &s.key.PublicKey); err == nil && httpx.Str(cl, "typ") == "refresh" {
+				if pid := s.store.PIDForNA(httpx.Str(cl, "sub")); pid != 0 {
 					if id, err := s.acct.Identity(pid); err == nil {
 						c, ok = naCode{PID: pid, Username: id.Nickname, ClientID: form.Get("client_id"), NaID: id.NaID}, true
 						s.bindNotificationChannel(form.Get("device_authentication_token"), id.BaasUserID)
@@ -2294,7 +2230,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			}
 		}
 		if !ok {
-			writeJSON(w, 400, map[string]any{"error": "invalid_grant", "error_description": "unknown code"})
+			httpx.WriteJSON(w, 400, map[string]any{"error": "invalid_grant", "error_description": "unknown code"})
 			return
 		}
 		// Codes and refresh tokens minted before a ban stop here: no token for a banned
@@ -2305,14 +2241,14 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			return
 		}
 		if p == "/connect/1.0.0/api/session_token" {
-			writeJSON(w, 200, map[string]any{"session_token": code, "code": code})
+			httpx.WriteJSON(w, 200, map[string]any{"session_token": code, "code": code})
 			return
 		}
 		if id, err := s.acct.Identity(c.PID); err == nil {
 			s.bindNotificationChannel(form.Get("device_authentication_token"), id.BaasUserID)
 		}
 		at := s.naAccessToken(c)
-		writeJSON(w, 200, map[string]any{
+		httpx.WriteJSON(w, 200, map[string]any{
 			"access_token": at, "expires_in": 900, "id_token": s.naIDToken(c, at, ""), "refresh_token": s.naRefreshToken(c),
 			"scope":         strings.Fields(strings.ReplaceAll(form.Get("scope"), "+", " ")),
 			"session_token": randHex(24), "token_type": "Bearer",
@@ -2324,23 +2260,23 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			w.WriteHeader(204)
 			return
 		}
-		writeJSON(w, 200, map[string]any{"agreements": []any{}})
+		httpx.WriteJSON(w, 200, map[string]any{"agreements": []any{}})
 		return
 
 	case p == "/2.0.0/users/me":
 		c, err := parseJWT(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), &s.key.PublicKey)
 		if err != nil {
-			writeJSON(w, 401, map[string]any{"error": "invalid_token"})
+			httpx.WriteJSON(w, 401, map[string]any{"error": "invalid_token"})
 			return
 		}
-		pid := s.store.PIDForNA(str(c, "sub"))
+		pid := s.store.PIDForNA(httpx.Str(c, "sub"))
 		if lock := s.pidLock(pid); lock != "" {
 			naTokenLocked(w, lock)
 			return
 		}
 		id, err := s.acct.Identity(pid)
 		if err != nil {
-			writeJSON(w, 404, map[string]any{"error": "not_found"})
+			httpx.WriteJSON(w, 404, map[string]any{"error": "not_found"})
 			return
 		}
 		// Console rules (Fix_Experimental relay, A/B on hardware): id == access token sub, 16 lowercase
@@ -2383,10 +2319,10 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			"updatedAt": now,
 		}
 		log.Printf("[nx-baas] users/me -> id=%s nickname=%s", redact.Tag(me["id"]), redact.Text(nick))
-		writeJSON(w, 200, me)
+		httpx.WriteJSON(w, 200, me)
 		return
 	}
-	dump(r, body, "!! UNHANDLED NA")
+	httpx.Dump(r, body, "!! UNHANDLED NA")
 	w.WriteHeader(404)
 }
 
@@ -2623,7 +2559,7 @@ var pctlPinInBody = regexp.MustCompile(`("(?:synchronizedUnlockCode|unlockCode|u
 var minimal = os.Getenv("NX_MINIMAL") != "" // bisecting 2124-0292: only the NA link on top of the POST /users shape
 
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	host := hostOf(r)
+	host := httpx.HostOf(r)
 	log.Printf("[nx-baas] %s %s%s ua=%q", r.Method, host, redact.URL(r.URL), redact.IDs(r.UserAgent()))
 	// A family that moved to its own service is forwarded before anything here reads the
 	// body (split.go); with no forward URL configured this is a no-op.
@@ -2678,7 +2614,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if debug && !strings.HasPrefix(r.URL.Path, "/avatar/") {
 		// No PIN either: parental controls carry one in both directions.
-		dump(r, pctlPinInBody.ReplaceAll(passwordRe.ReplaceAll(body, []byte("password=***")), []byte(`${1}****"`)), "DBG >>>")
+		httpx.Dump(r, pctlPinInBody.ReplaceAll(passwordRe.ReplaceAll(body, []byte("password=***")), []byte(`${1}****"`)), "DBG >>>")
 		rec := &recorder{ResponseWriter: w, status: 200}
 		w = rec
 		defer func() {
@@ -2694,7 +2630,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// before host routing: the console-facing names all resolve here, and a
 	// health check should not have to pick one of them.
 	case r.URL.Path == "/healthz":
-		writeJSON(w, 200, map[string]any{"status": "ok", "service": "nx-baas"})
+		httpx.WriteJSON(w, 200, map[string]any{"status": "ok", "service": "nx-baas"})
 	case strings.HasPrefix(r.URL.Path, "/connect/1.0.0/qr/") || strings.HasPrefix(r.URL.Path, "/link"):
 		if !s.qrRoutes(w, r, body) {
 			http.NotFound(w, r)
@@ -2724,7 +2660,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// `/v1/users/<id>/membership?application_id=<tid>` and reads
 		// `$.membership.active` [firmware, account strings]. Answering only the
 		// plural left this one on the catch-all 404.
-		writeJSON(w, 200, map[string]any{"membership": map[string]any{
+		httpx.WriteJSON(w, 200, map[string]any{"membership": map[string]any{
 			"active": true, "expires_at": time.Now().Unix() + 365*86400,
 		}})
 	case strings.HasPrefix(host, "capi.") && strings.HasSuffix(r.URL.Path, "/memberships"):
@@ -2737,7 +2673,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		seg := strings.Split(r.URL.Path, "/")
 		naID := seg[len(seg)-2]
 		expires := time.Now().Unix() + 365*86400
-		writeJSON(w, 200, map[string]any{"count": 2, "items": []any{
+		httpx.WriteJSON(w, 200, map[string]any{"count": 2, "items": []any{
 			map[string]any{"context": "ex", "membership": map[string]any{"active": true, "expires_at": expires}, "user_id": naID},
 			map[string]any{"context": "default", "membership": map[string]any{"active": true, "expires_at": expires}, "user_id": naID},
 		}, "total": 2})
@@ -2751,7 +2687,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// BCAT and the News channel are nx-bcat's: Traefik routes these hosts there, and
 		// NX_BCAT_URL forwards whatever still lands here (split.go). Without it, nothing.
 		log.Printf("[nx-baas] bcat host %s%s -> 404: BCAT is served by nx-bcat (NX_BCAT_URL unset)", host, redact.Path(r.URL.Path))
-		writeJSON(w, 404, map[string]any{})
+		httpx.WriteJSON(w, 404, map[string]any{})
 	case strings.Contains(host, ".acbaa.srv.nintendo.net"):
 		// Animal Crossing web API (acbaa.go): island registration. Before
 		// this it fell into the catch-all 404 and ACNH errored (2219-xxxx)
@@ -2775,8 +2711,8 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// (eshop_unserved.go). It returns false when the path is not one of them.
 	case s.nimUnserved(w, r, body):
 	case !strings.Contains(host, "baas.nintendo.com"):
-		dump(r, body, "!! UNHANDLED host (catch-all)")
-		writeJSON(w, 404, map[string]any{})
+		httpx.Dump(r, body, "!! UNHANDLED host (catch-all)")
+		httpx.WriteJSON(w, 404, map[string]any{})
 	default:
 		s.baas(w, r, body)
 	}
@@ -2825,16 +2761,16 @@ func selfSigned(hosts []string, caDir string) tls.Certificate {
 // account core (ACCOUNT_BACKEND=openpak).
 func newBackend() accountBackend {
 	if os.Getenv("ACCOUNT_BACKEND") == "openpak" {
-		b, err := newOpenpakBackend(context.Background(), getenv("NX_DATA", "/data"))
+		b, err := newOpenpakBackend(context.Background(), httpx.Getenv("NX_DATA", "/data"))
 		if err != nil {
 			log.Fatalf("[nx-baas] openpak backend: %v", redact.Err(err))
 		}
-		log.Printf("[nx-baas] identity backend: openpak account core (%s)", getenv("ACCOUNT_GRPC_ADDR", "127.0.0.1:7000"))
+		log.Printf("[nx-baas] identity backend: openpak account core (%s)", httpx.Getenv("ACCOUNT_GRPC_ADDR", "127.0.0.1:7000"))
 		return b
 	}
 	log.Printf("[nx-baas] identity backend: earlier account server (no console two-factor step-up; alpha requires ACCOUNT_BACKEND=openpak)")
 	return &accountClient{
-		base: strings.TrimRight(getenv("ACCOUNT_API", "http://account:8080"), "/"), adminKey: os.Getenv("OPENPAK_ADMIN_KEY"),
+		base: strings.TrimRight(httpx.Getenv("ACCOUNT_API", "http://account:8080"), "/"), adminKey: os.Getenv("OPENPAK_ADMIN_KEY"),
 		secret: []byte(os.Getenv("OPENPAK_SECRET")), http: &http.Client{Timeout: 10 * time.Second},
 	}
 }
@@ -2843,13 +2779,13 @@ func main() {
 	if env, service := missingForward(); env != "" {
 		log.Fatalf("[nx-baas] %s is required: %s serves that family now and nx-baas only forwards to it (docs/service-split.md)", env, service)
 	}
-	key := loadRSAKey(getenv("BAAS_SIGNING_KEY", "/keys/baas_signing_key.pem"))
+	key := loadRSAKey(httpx.Getenv("BAAS_SIGNING_KEY", "/keys/baas_signing_key.pem"))
 	s := &server{
-		store:      loadStore(getenv("NX_DATA", "/data") + "/baas.json"),
+		store:      loadStore(httpx.Getenv("NX_DATA", "/data") + "/baas.json"),
 		key:        key,
-		idKid:      getenv("BAAS_KID", "openpak-baas-key-1"),
-		accKid:     getenv("BAAS_ACCESS_KID", "00000000-0000-0000-0000-000000000003"),
-		naKid:      getenv("BAAS_NA_KID", "00000000-0000-0000-0000-000000000001"),
+		idKid:      httpx.Getenv("BAAS_KID", "openpak-baas-key-1"),
+		accKid:     httpx.Getenv("BAAS_ACCESS_KID", "00000000-0000-0000-0000-000000000003"),
+		naKid:      httpx.Getenv("BAAS_NA_KID", "00000000-0000-0000-0000-000000000001"),
 		codes:      map[string]naCode{},
 		device:     map[string]string{},
 		links:      newLinkStore(),
@@ -2860,7 +2796,7 @@ func main() {
 	}
 	s.forwardersFromEnv()
 	s.initHarborDevices()
-	s.acbaaPath = getenv("NX_DATA", "/data") + "/acbaa.json"
+	s.acbaaPath = httpx.Getenv("NX_DATA", "/data") + "/acbaa.json"
 	s.acbaaLoad()
 	if b, ok := s.acct.(*openpakBackend); ok {
 		go s.followCoreEvents(b)
@@ -2887,7 +2823,7 @@ func main() {
 		s.saves, s.savesKey = newSavesProxy(u), os.Getenv("SAVES_INTERNAL_KEY")
 		log.Printf("[nx-baas] save-data cloud: forwarding scsi hosts to %s", u)
 	}
-	s.jwks = jwksFor(&key.PublicKey, s.idKid, getenv("BAAS_ID_KID", "00000000-0000-0000-0000-000000000002"), s.accKid, s.naKid)
+	s.jwks = jwksFor(&key.PublicKey, s.idKid, httpx.Getenv("BAAS_ID_KID", "00000000-0000-0000-0000-000000000002"), s.accKid, s.naKid)
 	cert := selfSigned([]string{baasHost, "m-lp1.baas.nintendo.com", "cdn-image-e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com",
 		"accounts.nintendo.com", "api.accounts.nintendo.com", "cdn.accounts.nintendo.com",
 		"god.hac.lp1.penne.srv.nintendo.net", "val.hac.penne.srv.nintendo.net", "val.hac.lp1.penne.srv.nintendo.net",
@@ -2926,7 +2862,7 @@ func main() {
 		// attempt would produce a handshake EOF and no log at all — which
 		// reads as "the console never tried" and would send phase 0's gate
 		// hunting the wrong thing. Firmware template: api-%.pctl.srv.nintendo.net.
-		"api-lp1.pctl.srv.nintendo.net"}, getenv("NX_CA_DIR", "/data/ca"))
+		"api-lp1.pctl.srv.nintendo.net"}, httpx.Getenv("NX_CA_DIR", "/data/ca"))
 	var handler http.Handler = s
 	if up := os.Getenv("NX_UPSTREAM"); up != "" {
 		log.Printf("[nx-baas] CAPTURE MODE: forwarding everything to %s; bodies and headers are logged only with NXBAAS_TRACE_BODIES=1", up)
@@ -2951,7 +2887,7 @@ func main() {
 			return c.(*tls.Certificate), nil
 		}
 		log.Printf("[nx-baas] on-demand cert for unrouted SNI %s", h.ServerName)
-		c := selfSigned([]string{h.ServerName}, getenv("NX_CA_DIR", "/data/ca"))
+		c := selfSigned([]string{h.ServerName}, httpx.Getenv("NX_CA_DIR", "/data/ca"))
 		onDemand.Store(h.ServerName, &c)
 		return &c, nil
 	}
@@ -3000,14 +2936,14 @@ func main() {
 		tlsConf.Certificates = []tls.Certificate{cert}
 	}
 	srv := &http.Server{
-		Addr: getenv("NX_ADDR", ":443"), Handler: handler,
+		Addr: httpx.Getenv("NX_ADDR", ":443"), Handler: handler,
 		TLSConfig: tlsConf, ErrorLog: redact.ErrorLog(),
 	}
 	// The game-facing API (Photon room presence, invitations) is plain HTTP on an internal
 	// port -- consoles never reach it, only the Photon server, the emulator and rig tooling.
 	go func() {
-		addr := getenv("NX_API_ADDR", ":20070")
-		if getenv("NX_INTERNAL_KEY", getenv("OPENPAK_INTERNAL_KEY", "")) == "" {
+		addr := httpx.Getenv("NX_API_ADDR", ":20070")
+		if httpx.Getenv("NX_INTERNAL_KEY", httpx.Getenv("OPENPAK_INTERNAL_KEY", "")) == "" {
 			if os.Getenv("NX_INTERNAL_INSECURE") == "1" {
 				log.Printf("[nx-baas] WARNING: game API on %s runs with NX_INTERNAL_INSECURE=1: /internal routes accept without a key. Isolated development only.", addr)
 			} else {
@@ -3017,12 +2953,12 @@ func main() {
 		log.Printf("[nx-baas] game API listening %s (photon-room, invitations, mint-token)", addr)
 		log.Fatal((&http.Server{Addr: addr, Handler: s.gameAPI(), ErrorLog: redact.ErrorLog()}).ListenAndServe())
 	}()
-	log.Printf("[nx-baas] listening %s (BAAS + Nintendo Account); account backend %s; users=%d devices=%d", srv.Addr, getenv("ACCOUNT_BACKEND", "unset"), len(s.store.Users), len(s.store.Devices))
+	log.Printf("[nx-baas] listening %s (BAAS + Nintendo Account); account backend %s; users=%d devices=%d", srv.Addr, httpx.Getenv("ACCOUNT_BACKEND", "unset"), len(s.store.Users), len(s.store.Devices))
 	// The console's web applet enforces certificate checking unless Atmosphère patches it, so
 	// the link page is also served over plain HTTP. Nothing secret crosses it: the console
 	// shows a short-lived code, the password is typed on the phone against the public site,
 	// and the link is approved on the console itself.
-	if addr := getenv("NX_HTTP_ADDR", ""); addr != "" {
+	if addr := httpx.Getenv("NX_HTTP_ADDR", ""); addr != "" {
 		go func() {
 			log.Printf("[nx-baas] plain HTTP on %s (link page without TLS)", addr)
 			if err := (&http.Server{Addr: addr, Handler: handler, ErrorLog: redact.ErrorLog()}).ListenAndServe(); err != nil {
@@ -3060,11 +2996,11 @@ func naAddress(address string) (email, screenName string) {
 func naProfile(id *Identity) (country, birthday string) {
 	country, birthday = id.Country, id.Birthday
 	if country == "" {
-		country = getenv("NA_FALLBACK_COUNTRY", "GB")
+		country = httpx.Getenv("NA_FALLBACK_COUNTRY", "GB")
 		log.Printf("[nx-baas] users/me: account %s has no country of its own; serving %s", redact.Tag(id.NaID), country)
 	}
 	if birthday == "" || birthday == "0000-00-00" {
-		birthday = getenv("NA_FALLBACK_BIRTHDAY", "2000-01-01")
+		birthday = httpx.Getenv("NA_FALLBACK_BIRTHDAY", "2000-01-01")
 	}
 	return country, birthday
 }

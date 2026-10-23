@@ -18,6 +18,7 @@ import (
 	"time"
 
 	accountv1 "nx-baas/accountpb"
+	"nx-baas/internal/httpx"
 )
 
 // corePresence is one account's presence as the core holds it.
@@ -132,7 +133,7 @@ func (s *server) presenceFromCore(accountID, namespace string, now int64) (Prese
 		}
 		return out, true
 	}
-	if getenv("NX_FOREIGN_PRESENCE_DESCRIPTION", "1") != "0" {
+	if httpx.Getenv("NX_FOREIGN_PRESENCE_DESCRIPTION", "1") != "0" {
 		out.AppField = descriptionAppField(presenceDescription(clientLabel(p.Namespace, p.Client),
 			p.TitleID, siteTitleNames.name(p.Namespace, p.TitleID)))
 	}

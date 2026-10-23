@@ -10,6 +10,7 @@ package main
 
 import (
 	"fmt"
+	"nx-baas/internal/httpx"
 	"strings"
 )
 
@@ -51,4 +52,4 @@ func reservedID(namespace, client string) string {
 }
 
 // platformTitle reports whether the pseudo-titles are served (NX_PLATFORM_TITLE=1).
-func platformTitle() bool { return getenv("NX_PLATFORM_TITLE", "") == "1" }
+func platformTitle() bool { return httpx.Getenv("NX_PLATFORM_TITLE", "") == "1" }

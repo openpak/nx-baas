@@ -23,6 +23,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"nx-baas/internal/httpx"
 	"nx-baas/redact"
 	"strings"
 )
@@ -42,15 +43,15 @@ func (s *server) nimUnserved(w http.ResponseWriter, r *http.Request, body []byte
 	// an empty candidate list is the true answer, not a placeholder.
 	case p == "/v1/accounts/vphyms":
 		log.Printf("[shop] nim %s %s -> no virtual cards (OpenPak has no family lending)", r.Method, redact.Path(p))
-		writeJSON(w, 200, map[string]any{"vphyms": []any{}})
+		httpx.WriteJSON(w, 200, map[string]any{"vphyms": []any{}})
 		return true
 	case p == "/v1/accounts/vphym-borrowers/candidates":
 		log.Printf("[shop] nim %s %s -> no borrowers", r.Method, redact.Path(p))
-		writeJSON(w, 200, map[string]any{"candidates": []any{}})
+		httpx.WriteJSON(w, 200, map[string]any{"candidates": []any{}})
 		return true
 	case strings.HasPrefix(p, "/v1/accounts/in-same-family"):
 		log.Printf("[shop] nim %s %s -> not in a family", r.Method, redact.Path(p))
-		writeJSON(w, 200, map[string]any{"inSameFamily": false})
+		httpx.WriteJSON(w, 200, map[string]any{"inSameFamily": false})
 		return true
 
 	// "Is another console of mine nearby?" — the local-transfer proximity
@@ -58,7 +59,7 @@ func (s *server) nimUnserved(w http.ResponseWriter, r *http.Request, body []byte
 	// device-to-device transfers, so there are no checks outstanding.
 	case strings.HasPrefix(p, "/v1/nearness-checks"):
 		log.Printf("[shop] nim %s %s -> no nearness checks", r.Method, redact.Path(p))
-		writeJSON(w, 200, map[string]any{"nearnessChecks": []any{}})
+		httpx.WriteJSON(w, 200, map[string]any{"nearnessChecks": []any{}})
 		return true
 
 	// "Is there a system update?" [nim: /v1/system_update_meta?device_id=].
@@ -67,7 +68,7 @@ func (s *server) nimUnserved(w http.ResponseWriter, r *http.Request, body []byte
 	// one at an update it cannot get.
 	case strings.HasPrefix(p, "/v1/system_update_meta"):
 		log.Printf("[shop] nim %s %s -> no system update", r.Method, redact.Path(p))
-		writeJSON(w, 200, map[string]any{"system_update_metas": []any{}})
+		httpx.WriteJSON(w, 200, map[string]any{"system_update_metas": []any{}})
 		return true
 	// aqua: "which system version must I have before content delivery?"
 	// [nim: aqua.hac.%.d4c.nintendo.net/required_system_update_meta?device_id=,
@@ -83,7 +84,7 @@ func (s *server) nimUnserved(w http.ResponseWriter, r *http.Request, body []byte
 	// so we never name a real floor.
 	case strings.HasPrefix(p, "/required_system_update_meta"):
 		log.Printf("[shop] nim aqua required system update device=%s -> none (0100000000000816 v0)", redact.Tag(r.URL.Query().Get("device_id")))
-		writeJSON(w, 200, map[string]any{
+		httpx.WriteJSON(w, 200, map[string]any{
 			"contents_delivery_required_title_id":      "0100000000000816",
 			"contents_delivery_required_title_version": 0,
 		})
@@ -94,7 +95,7 @@ func (s *server) nimUnserved(w http.ResponseWriter, r *http.Request, body []byte
 	// /v1/accounts/notify-to-family]. Nothing produces either yet.
 	case strings.HasPrefix(p, "/v1/direct-messages"):
 		log.Printf("[shop] nim %s %s -> no messages", r.Method, redact.Path(p))
-		writeJSON(w, 200, map[string]any{"messages": []any{}, "count": 0})
+		httpx.WriteJSON(w, 200, map[string]any{"messages": []any{}, "count": 0})
 		return true
 	case p == "/v1/accounts/notify", p == "/v1/accounts/notify-to-family":
 		log.Printf("[shop] nim %s %s -> accepted, nothing to fan out", r.Method, redact.Path(p))
@@ -105,14 +106,14 @@ func (s *server) nimUnserved(w http.ResponseWriter, r *http.Request, body []byte
 	// superfly [nim: /v1/a/%016llx/dv, built at 0x1ecbe0; the reply is read by
 	// the SAX handler at 0x3280e0]. Answered from the catalog in nx-shop.
 	case strings.HasPrefix(p, "/v1/a/") && strings.HasSuffix(p, "/dv") && s.shopFwd != nil:
-		forwardRead(s.shopFwd, w, r, body) // the catalog lives in nx-shop (split.go)
+		httpx.ForwardRead(s.shopFwd, w, r, body) // the catalog lives in nx-shop (split.go)
 		return true
 
 	// The eShop's own catalogue search [nim: /v1/acds/search]. Answered from
 	// the shop catalog in nx-shop rather than with an empty list: the console is
 	// asking what this store has, and the store knows.
 	case strings.HasPrefix(p, "/v1/acds/search") && s.shopFwd != nil:
-		forwardRead(s.shopFwd, w, r, body)
+		httpx.ForwardRead(s.shopFwd, w, r, body)
 		return true
 	}
 	return false

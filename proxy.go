@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"nx-baas/internal/httpx"
 	"nx-baas/redact"
 	"regexp"
 	"strings"
@@ -50,7 +51,7 @@ func newCaptureProxy(upstream string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		r.Body = io.NopCloser(bytes.NewReader(body))
-		dump(r, passwordRe.ReplaceAll(body, []byte("password=***")), ">>> capture")
+		httpx.Dump(r, passwordRe.ReplaceAll(body, []byte("password=***")), ">>> capture")
 		rp.ServeHTTP(w, r)
 	})
 }

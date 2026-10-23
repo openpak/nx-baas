@@ -41,6 +41,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"nx-baas/internal/httpx"
 	"nx-baas/redact"
 	"os"
 	"regexp"
@@ -199,7 +200,7 @@ func invitationStoreFor() *invitationStore {
 		return invStoreOverride
 	}
 	invStoreOnce.Do(func() {
-		invStore = loadInvitationStore(getenv("NX_DATA", "/data") + "/invitations.json")
+		invStore = loadInvitationStore(httpx.Getenv("NX_DATA", "/data") + "/invitations.json")
 	})
 	return invStore
 }
@@ -429,7 +430,7 @@ func (s *server) fiveAuth(r *http.Request) *User {
 	if iat, ok := c["iat"].(float64); ok && now+60 < int64(iat) {
 		return nil
 	}
-	if str(c, "aud") != baasAudience {
+	if httpx.Str(c, "aud") != baasAudience {
 		return nil
 	}
 	// Grant 2 is a user token. Grant 1 (anonymous device) tokens carry a
@@ -437,7 +438,7 @@ func (s *server) fiveAuth(r *http.Request) *User {
 	if g, ok := c["bs:grt"].(float64); !ok || int(g) != 2 {
 		return nil
 	}
-	u := s.store.User(str(c, "sub"))
+	u := s.store.User(httpx.Str(c, "sub"))
 	if u == nil || u.PID == 0 {
 		return nil
 	}
@@ -451,7 +452,7 @@ func (s *server) fiveAuth(r *http.Request) *User {
 // verifiably able to map. Codes are the wiki's known set; unknown cases take
 // the closest documented code rather than an invented one.
 func fiveError(w http.ResponseWriter, r *http.Request, status int, code, message string) {
-	writeJSON(w, status, map[string]any{"error": map[string]any{"code": code, "message": message}})
+	httpx.WriteJSON(w, status, map[string]any{"error": map[string]any{"code": code, "message": message}})
 }
 
 // ---------- host entry ----------
@@ -476,7 +477,7 @@ func (s *server) five(w http.ResponseWriter, r *http.Request, body []byte) {
 			s.invitationGroupDetail(w, r, seg[2])
 			return
 		}
-		dump(r, body, "!! five invitation_groups")
+		httpx.Dump(r, body, "!! five invitation_groups")
 		fiveError(w, r, http.StatusNotFound, "0003", "resource_is_not_found")
 		return
 	}
@@ -496,7 +497,7 @@ func (s *server) five(w http.ResponseWriter, r *http.Request, body []byte) {
 			return
 		}
 	}
-	dump(r, body, "!! UNHANDLED five")
+	httpx.Dump(r, body, "!! UNHANDLED five")
 	fiveError(w, r, http.StatusNotFound, "0003", "resource_is_not_found")
 }
 
@@ -654,7 +655,7 @@ func (s *server) invitationGroupCreate(w http.ResponseWriter, r *http.Request, b
 	}
 
 	ttl := invitationTTLDefault
-	if v := getenv("NX_INVITATION_TTL_SECONDS", ""); v != "" {
+	if v := httpx.Getenv("NX_INVITATION_TTL_SECONDS", ""); v != "" {
 		if secs, err := strconv.Atoi(v); err == nil && secs > 0 && time.Duration(secs)*time.Second <= invitationTTLDefault {
 			ttl = time.Duration(secs) * time.Second
 		}
@@ -706,7 +707,7 @@ func (s *server) invitationGroupCreate(w http.ResponseWriter, r *http.Request, b
 			UnreadCount: unread[inv.ReceiverID],
 		})
 	}
-	writeJSON(w, 200, s.invitationGroupObj(group, invitations))
+	httpx.WriteJSON(w, 200, s.invitationGroupObj(group, invitations))
 }
 
 // invitationCoreFor returns the core surface when the adapter runs on the
@@ -851,7 +852,7 @@ func (s *server) invitationGroupDetail(w http.ResponseWriter, r *http.Request, i
 		fiveError(w, r, http.StatusNotFound, "0010", "resource_is_not_found")
 		return
 	}
-	writeJSON(w, 200, s.invitationGroupObj(g, invitations))
+	httpx.WriteJSON(w, 200, s.invitationGroupObj(g, invitations))
 }
 
 func (s *server) groupReceiver(g *invitationGroup, uid string) bool {
@@ -890,7 +891,7 @@ func (s *server) invitationInbox(w http.ResponseWriter, r *http.Request, uid str
 	if v := q.Get("invitation_types"); v != "" && v != "friend" {
 		// Only the friend type exists on this surface; an unknown type is an
 		// empty inbox rather than an error (filters select, they do not fail).
-		writeJSON(w, 200, map[string]any{"count": 0})
+		httpx.WriteJSON(w, 200, map[string]any{"count": 0})
 		return
 	}
 
@@ -927,13 +928,13 @@ func (s *server) invitationInbox(w http.ResponseWriter, r *http.Request, uid str
 	st.mu.Unlock()
 
 	if countOnly {
-		writeJSON(w, 200, map[string]any{"count": count, "original_count": count})
+		httpx.WriteJSON(w, 200, map[string]any{"count": count, "original_count": count})
 		return
 	}
 	// The console reads $.original_count beside $.count [firmware, friends
 	// module]: the total before this page's slice, which is the same number
 	// here because the inbox is answered whole.
-	writeJSON(w, 200, map[string]any{"count": count, "original_count": count, "items": list})
+	httpx.WriteJSON(w, 200, map[string]any{"count": count, "original_count": count, "items": list})
 }
 
 func invitationInboxItem(inv *invitationRecord) map[string]any {
@@ -1061,7 +1062,7 @@ func (s *server) invitationPatch(w http.ResponseWriter, r *http.Request, body []
 			}
 		}
 		if !ok {
-			dump(r, body, "!! five patch: unbindable path")
+			httpx.Dump(r, body, "!! five patch: unbindable path")
 			fiveError(w, r, http.StatusBadRequest, "0002", "invalid_params")
 			return
 		}
@@ -1112,7 +1113,7 @@ func (s *server) applyRead(w http.ResponseWriter, receiverID string, ids map[str
 	})
 	st.mu.Unlock()
 	log.Printf("[nx-baas] five: mark read for %s: %d applied, %d unread left", redact.Tag(receiverID), applied, unread)
-	writeJSON(w, 200, map[string]any{"count": unread})
+	httpx.WriteJSON(w, 200, map[string]any{"count": unread})
 }
 
 // ---------- game-API mailbox (emulator/console title path) ----------

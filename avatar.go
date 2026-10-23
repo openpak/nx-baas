@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"nx-baas/internal/httpx"
 	"nx-baas/redact"
 	"time"
 )
@@ -21,12 +22,12 @@ import (
 // failed one. The picture is kept locally either way, so nothing is lost if
 // this call does not land.
 func (s *server) shareAvatar(subject, base64JPEG string) {
-	url, key := getenv("WEBSITE_INTERNAL_URL", ""), getenv("WEBSITE_INTERNAL_KEY", "")
+	url, key := httpx.Getenv("WEBSITE_INTERNAL_URL", ""), httpx.Getenv("WEBSITE_INTERNAL_KEY", "")
 	if url == "" || key == "" {
 		return // not configured: the console still gets its picture back from here
 	}
 	body, err := json.Marshal(map[string]string{
-		"namespace":      getenv("SWITCH_NAMESPACE", "switch"),
+		"namespace":      httpx.Getenv("SWITCH_NAMESPACE", "switch"),
 		"subject":        subject,
 		"content_base64": base64JPEG,
 	})

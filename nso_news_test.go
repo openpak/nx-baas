@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"nx-baas/internal/httpx"
 	"strings"
 	"testing"
 )
@@ -145,10 +146,10 @@ func TestNewsPushNeedsTheKeyAndGoesToPenne(t *testing.T) {
 		t.Errorf("push reply = %s", w.Body.String())
 	}
 	c := expectCall(t, got, "/internal/penne/topic-messages")
-	if str(c.body, "topic") != "openpak_news" || str(c.body, "name") != "news" || str(c.body, "receivers") != newsReceiverToken {
+	if httpx.Str(c.body, "topic") != "openpak_news" || httpx.Str(c.body, "name") != "news" || httpx.Str(c.body, "receivers") != newsReceiverToken {
 		t.Fatalf("topic message = %v", c.body)
 	}
-	msg := str(c.body, "body")
+	msg := httpx.Str(c.body, "body")
 	for _, want := range []string{`"type":"news"`, `"topic_id":"OpenPak_News"`, `"revision":"7"`, `"wait_range":600`} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("message %s lacks %s", msg, want)
@@ -157,7 +158,7 @@ func TestNewsPushNeedsTheKeyAndGoesToPenne(t *testing.T) {
 
 	// "subscription" names the Penne topic when it differs from the News topic id.
 	identityDo(t, s, "POST", "/internal/news/push", `{"topic_id":"openpak_news","revision":8,"subscription":"nx_data_0100000000010000"}`)
-	if c := expectCall(t, got, "/internal/penne/topic-messages"); str(c.body, "topic") != "nx_data_0100000000010000" {
+	if c := expectCall(t, got, "/internal/penne/topic-messages"); httpx.Str(c.body, "topic") != "nx_data_0100000000010000" {
 		t.Fatalf("subscription override = %v", c.body)
 	}
 }

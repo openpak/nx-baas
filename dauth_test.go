@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"nx-baas/internal/httpx"
 	"reflect"
 	"strings"
 	"testing"
@@ -29,10 +30,10 @@ func TestDeviceTokenCarriesDeviceID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("device token does not decode: %v", err)
 	}
-	if got := str(claims, "sub"); got != "dev-123" {
+	if got := httpx.Str(claims, "sub"); got != "dev-123" {
 		t.Errorf("sub = %q, want %q", got, "dev-123")
 	}
-	if got := str(claims, "aud"); got != "client-abc" {
+	if got := httpx.Str(claims, "aud"); got != "client-abc" {
 		t.Errorf("aud = %q, want %q", got, "client-abc")
 	}
 }
@@ -86,7 +87,7 @@ func TestDeviceTokensFromRealConsoleBody(t *testing.T) {
 		t.Errorf("first client_id = %q", out.Tokens[0].ClientID)
 	}
 	claims, err := parseJWT(out.Tokens[1].Token, nil)
-	if err != nil || str(claims, "aud") != "dc656ea03b63cf68" {
+	if err != nil || httpx.Str(claims, "aud") != "dc656ea03b63cf68" {
 		t.Errorf("second token does not carry its client_id (%v)", err)
 	}
 }
@@ -124,7 +125,7 @@ func TestDeviceTokenCarriesAStableSerial(t *testing.T) {
 	s := dauthServer(t)
 	claims, _ := parseJWT(s.deviceToken("dev-123", "client-abc"), nil)
 	n, _ := claims["nintendo"].(map[string]any)
-	sn := str(n, "sn")
+	sn := httpx.Str(n, "sn")
 	if sn == "" || sn != consoleSerial("dev-123") {
 		t.Fatalf("serial = %q, want the stable one for dev-123", sn)
 	}

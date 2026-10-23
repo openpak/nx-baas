@@ -16,6 +16,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"nx-baas/internal/httpx"
 	"nx-baas/redact"
 	"sort"
 	"strconv"
@@ -33,7 +34,7 @@ const ctestPayload = 30 << 20
 // one measurement only the server can make -- the two cdn hosts are the
 // throughput probes, and `/v1/time` is where NIM corrects the system clock.
 func (s *server) netdiag(w http.ResponseWriter, r *http.Request) {
-	host := hostOf(r)
+	host := httpx.HostOf(r)
 	switch {
 	// nifm's reachability probe, and the reason a console says "connected"
 	// rather than "check your connection". It reads one header off the reply
@@ -79,7 +80,7 @@ func (s *server) netdiag(w http.ResponseWriter, r *http.Request) {
 		// the test fails with 2160-6000 (0x2ee0a0, the code the caller returns
 		// when nothing was extracted). A second key "ip" reproduced that on a
 		// console, 2026-09-24.
-		writeJSON(w, 200, map[string]any{"global_ip": ip})
+		httpx.WriteJSON(w, 200, map[string]any{"global_ip": ip})
 	default:
 		log.Printf("[netdiag] UNMAPPED %s %s%s", r.Method, host, redact.Path(r.URL.Path))
 		http.Error(w, "no such netdiag route", 404)
@@ -93,7 +94,7 @@ func (s *server) netdiag(w http.ResponseWriter, r *http.Request) {
 // reports are kept and forwarded instead (errorreport.go). The size is logged
 // so an operator can see the surface is live, never the contents.
 func (s *server) telemetry(w http.ResponseWriter, r *http.Request, body []byte) {
-	host, p := hostOf(r), r.URL.Path
+	host, p := httpx.HostOf(r), r.URL.Path
 	kind := "play report"
 	ok := p == "/post" || p == "/api/v1/realtime_reports"
 	if !ok {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"nx-baas/internal/httpx"
 	"nx-baas/redact"
 	"strconv"
 	"strings"
@@ -17,7 +18,7 @@ import (
 // title's whole bootstrap, and it stays in nx-baas while Penne itself (god, val, fro-) is
 // nx-penne's (split.go). Shapes per kinnay's Penne-Servers page and the hardware trace.
 func (s *server) vermillion(w http.ResponseWriter, r *http.Request, body []byte) {
-	host, p := hostOf(r), r.URL.Path
+	host, p := httpx.HostOf(r), r.URL.Path
 	if s.key != nil && s.store != nil {
 		// Nothing here needs the account, but the bearer check logs why a token does not
 		// name one, and that diagnostic has always come with these requests.
@@ -34,26 +35,26 @@ func (s *server) vermillion(w http.ResponseWriter, r *http.Request, body []byte)
 	}
 	switch {
 	case strings.HasPrefix(host, "gw.") && p == "/v1/accounts/config":
-		writeJSON(w, 200, payloadEnvelope(map[string]any{"online_license": map[string]any{"is_available": true}})) // the online gate; is_available:false parks the game at the lobby with 2321-4992
+		httpx.WriteJSON(w, 200, payloadEnvelope(map[string]any{"online_license": map[string]any{"is_available": true}})) // the online gate; is_available:false parks the game at the lobby with 2321-4992
 	case strings.HasPrefix(host, "gw.") && strings.Contains(p, "/accounts/vphyms"):
-		writeJSON(w, 200, payloadEnvelope(map[string]any{})) // 404 makes the title restart its whole bootstrap with a new penne id, forever
+		httpx.WriteJSON(w, 200, payloadEnvelope(map[string]any{})) // 404 makes the title restart its whole bootstrap with a new penne id, forever
 	case strings.HasPrefix(host, "gw.") && (r.Method == "PUT" || r.Method == "POST") && strings.HasPrefix(p, "/v1/devices/"):
 		w.WriteHeader(204)
 	case strings.HasPrefix(host, "gw.") && p == "/v1/devices/vermillion-device-id":
-		writeJSON(w, 200, map[string]any{"vermillionDeviceId": vermillionDeviceID(deviceIDFromUA(r.UserAgent()))})
+		httpx.WriteJSON(w, 200, map[string]any{"vermillionDeviceId": vermillionDeviceID(deviceIDFromUA(r.UserAgent()))})
 	// The vermillion gateway also carries NIM's family, nearness and notify routes
 	// (eshop_unserved.go); those get their own answers rather than a bare {}.
 	case strings.HasPrefix(host, "gw.") && s.nimUnserved(w, r, body):
 	case strings.HasPrefix(host, "gw.") && r.Method == "GET" && strings.HasPrefix(p, "/v1/devices/"):
-		writeJSON(w, 200, map[string]any{}) // /v1/devices/<id>
+		httpx.WriteJSON(w, 200, map[string]any{}) // /v1/devices/<id>
 	case strings.HasPrefix(host, "gw."):
 		// Kept as the old 200 {} (a title that gets a 404 on this gateway restarts its
 		// bootstrap), but no longer silent: it is the one answer here nobody chose.
-		dump(r, body, "!! UNHANDLED vermillion gw (answered 200 {})")
-		writeJSON(w, 200, map[string]any{})
+		httpx.Dump(r, body, "!! UNHANDLED vermillion gw (answered 200 {})")
+		httpx.WriteJSON(w, 200, map[string]any{})
 	default:
-		dump(r, body, "!! UNHANDLED penne/npns")
-		writeJSON(w, 404, map[string]any{})
+		httpx.Dump(r, body, "!! UNHANDLED penne/npns")
+		httpx.WriteJSON(w, 404, map[string]any{})
 	}
 	log.Printf("[nx-baas] penne %s %s%s -> handled", r.Method, host, redact.Path(p))
 }

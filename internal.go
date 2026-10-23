@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"nx-baas/internal/httpx"
 	"os"
 	"time"
 )
@@ -21,8 +22,8 @@ type switchPlayer struct {
 }
 
 func (s *server) switchIdentity(w http.ResponseWriter, r *http.Request) {
-	if !s.internalOK(r) {
-		apiErr(w, http.StatusUnauthorized, "internal")
+	if !httpx.InternalOK(r) {
+		httpx.APIErr(w, http.StatusUnauthorized, "internal")
 		return
 	}
 	var in struct {
@@ -31,7 +32,7 @@ func (s *server) switchIdentity(w http.ResponseWriter, r *http.Request) {
 		PID     uint64 `json:"pid"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&in); err != nil {
-		apiErr(w, http.StatusBadRequest, "invalid JSON")
+		httpx.APIErr(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 	pid := in.PID
@@ -40,20 +41,20 @@ func (s *server) switchIdentity(w http.ResponseWriter, r *http.Request) {
 	case in.OpenPak != "":
 		var ok bool
 		if pid, _, ok = verifyNexToken(s.acct.nexSigningKey(), in.OpenPak); !ok {
-			apiErr(w, http.StatusUnauthorized, "openpak not proven")
+			httpx.APIErr(w, http.StatusUnauthorized, "openpak not proven")
 			return
 		}
 	case in.IDToken != "":
 		var genuine bool
 		if pid, genuine = s.pidForIDToken(in.IDToken); !genuine {
-			apiErr(w, http.StatusUnauthorized, "id_token not proven")
+			httpx.APIErr(w, http.StatusUnauthorized, "id_token not proven")
 			return
 		}
 		// Only expose an application claim after proving the whole token. Title
 		// servers (PlayFab) bind their login to this value, never an unsigned JWT.
 		claims, _ := parseJWT(in.IDToken, &s.key.PublicKey)
 		application, _ := claims["nintendo"].(map[string]any)
-		applicationID = str(application, "ai")
+		applicationID = httpx.Str(application, "ai")
 		// pid can be 0 here, and that is deliberately not a 401: the token is genuine and we
 		// simply do not know the account. platforms/switch/games/switch-nex maps 401 to TokenExpired and the console
 		// fetches a fresh token and retries, so answering 401 for an unknown account is a
@@ -68,7 +69,7 @@ func (s *server) switchIdentity(w http.ResponseWriter, r *http.Request) {
 	id, err := s.acct.Identity(pid)
 	if err != nil {
 		logErr("identity", err)
-		apiErr(w, http.StatusNotFound, "unknown pid")
+		httpx.APIErr(w, http.StatusNotFound, "unknown pid")
 		return
 	}
 	accountID := ""
@@ -81,7 +82,7 @@ func (s *server) switchIdentity(w http.ResponseWriter, r *http.Request) {
 	for _, f := range id.Friends {
 		friends = append(friends, switchPlayer{PID: f.PID, BaasUserID: f.BaasUserID, Nickname: f.Nickname})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"pid": id.PID, "baas_user_id": id.BaasUserID, "nickname": id.Nickname, "friends": friends,
 		// The core account, so a title server can ask the core about it directly.
 		"account_id":     accountID,
@@ -107,7 +108,7 @@ func (s *server) pidForIDToken(tok string) (uint64, bool) {
 	if err != nil {
 		return 0, false
 	}
-	if str(c, "typ") != "id_token" || str(c, "iss") != baasIssuer {
+	if httpx.Str(c, "typ") != "id_token" || httpx.Str(c, "iss") != baasIssuer {
 		return 0, false
 	}
 	exp, _ := c["exp"].(float64)
@@ -117,7 +118,7 @@ func (s *server) pidForIDToken(tok string) (uint64, bool) {
 	// Genuine from here on. ponytail: the subject is the BAAS user id, which is the store's own
 	// key, so the lookup is the mapping. A session table is the upgrade if a token ever has to be
 	// revocable before it expires.
-	u := s.store.User(str(c, "sub"))
+	u := s.store.User(httpx.Str(c, "sub"))
 	if u == nil || u.PID == 0 {
 		return 0, true
 	}
@@ -130,21 +131,21 @@ func (s *server) pidForIDToken(tok string) (uint64, bool) {
 // hex id as SW-xxxx-xxxx-xxxx, so people were being shown, and reading out, an
 // identifier that is not their friend code.
 func (s *server) switchFriendCode(w http.ResponseWriter, r *http.Request) {
-	if !s.internalOK(r) {
-		apiErr(w, http.StatusUnauthorized, "internal")
+	if !httpx.InternalOK(r) {
+		httpx.APIErr(w, http.StatusUnauthorized, "internal")
 		return
 	}
 	accountID := r.URL.Query().Get("account_id")
 	if accountID == "" {
-		apiErr(w, http.StatusBadRequest, "account_id required")
+		httpx.APIErr(w, http.StatusBadRequest, "account_id required")
 		return
 	}
 	code, ok := s.acct.friendCodeForAccount(accountID)
 	if !ok {
-		apiErr(w, http.StatusNotFound, "no console linked to that account")
+		httpx.APIErr(w, http.StatusNotFound, "no console linked to that account")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"friend_code": code})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"friend_code": code})
 }
 
 // switchAccountByFriendCode is the mirror of switchFriendCode, and the half
@@ -153,21 +154,21 @@ func (s *server) switchFriendCode(w http.ResponseWriter, r *http.Request) {
 // but the core's "switch" subject is the BAAS user id -- so every Switch friend
 // code answered "no account found", always.
 func (s *server) switchAccountByFriendCode(w http.ResponseWriter, r *http.Request) {
-	if !s.internalOK(r) {
-		apiErr(w, http.StatusUnauthorized, "internal")
+	if !httpx.InternalOK(r) {
+		httpx.APIErr(w, http.StatusUnauthorized, "internal")
 		return
 	}
 	code := r.URL.Query().Get("friend_code")
 	if code == "" {
-		apiErr(w, http.StatusBadRequest, "friend_code required")
+		httpx.APIErr(w, http.StatusBadRequest, "friend_code required")
 		return
 	}
 	accountID, ok := s.acct.accountForFriendCode(code)
 	if !ok {
-		apiErr(w, http.StatusNotFound, "no account for that friend code")
+		httpx.APIErr(w, http.StatusNotFound, "no account for that friend code")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"account_id": accountID})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"account_id": accountID})
 }
 
 // ---- the emulator surface ----
@@ -180,13 +181,13 @@ func (s *server) switchAccountByFriendCode(w http.ResponseWriter, r *http.Reques
 
 // switchEmulator answers GET /internal/switch/emulator?account_id=…
 func (s *server) switchEmulator(w http.ResponseWriter, r *http.Request) {
-	if !s.internalOK(r) {
-		apiErr(w, http.StatusUnauthorized, "internal")
+	if !httpx.InternalOK(r) {
+		httpx.APIErr(w, http.StatusUnauthorized, "internal")
 		return
 	}
 	accountID := r.URL.Query().Get("account_id")
 	if accountID == "" {
-		apiErr(w, http.StatusBadRequest, "account_id required")
+		httpx.APIErr(w, http.StatusBadRequest, "account_id required")
 		return
 	}
 	if lock := s.accountLock(accountID); lock != "" {
@@ -195,20 +196,20 @@ func (s *server) switchEmulator(w http.ResponseWriter, r *http.Request) {
 	}
 	b, ok := s.acct.(*openpakBackend)
 	if !ok {
-		apiErr(w, http.StatusNotImplemented, "openpak backend only")
+		httpx.APIErr(w, http.StatusNotImplemented, "openpak backend only")
 		return
 	}
 	// First sight of an account mints its Switch identity, exactly as linking a console does.
 	pr, err := b.ensure(r.Context(), accountID)
 	if err != nil {
 		logErr("emulator ensure", err)
-		apiErr(w, http.StatusBadGateway, "identity unavailable")
+		httpx.APIErr(w, http.StatusBadGateway, "identity unavailable")
 		return
 	}
 	id, err := s.acct.Identity(pr.PID)
 	if err != nil {
 		logErr("emulator identity", err)
-		apiErr(w, http.StatusNotFound, "unknown account")
+		httpx.APIErr(w, http.StatusNotFound, "unknown account")
 		return
 	}
 	// Presence comes from this server's own store, the way the console's
@@ -270,7 +271,7 @@ func (s *server) switchEmulator(w http.ResponseWriter, r *http.Request) {
 	for _, f := range id.FriendRequests {
 		requests = append(requests, friend(f))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		// country is the account's own, so an emulator can tell a game where
 		// its player is from: a console has one from setup and shows a flag
 		// beside the player, an emulator had none to give (2026-09-20).
@@ -286,13 +287,13 @@ func (s *server) switchEmulator(w http.ResponseWriter, r *http.Request) {
 // emulator whose person already signed in to the website has proved the same thing, so the
 // website asks here on their behalf and nobody types the password twice.
 func (s *server) switchEmulatorLinkToken(w http.ResponseWriter, r *http.Request) {
-	if !s.internalOK(r) {
-		apiErr(w, http.StatusUnauthorized, "internal")
+	if !httpx.InternalOK(r) {
+		httpx.APIErr(w, http.StatusUnauthorized, "internal")
 		return
 	}
 	accountID := r.URL.Query().Get("account_id")
 	if accountID == "" {
-		apiErr(w, http.StatusBadRequest, "account_id required")
+		httpx.APIErr(w, http.StatusBadRequest, "account_id required")
 		return
 	}
 	if lock := s.accountLock(accountID); lock != "" {
@@ -301,32 +302,32 @@ func (s *server) switchEmulatorLinkToken(w http.ResponseWriter, r *http.Request)
 	}
 	b, ok := s.acct.(*openpakBackend)
 	if !ok {
-		apiErr(w, http.StatusNotImplemented, "openpak backend only")
+		httpx.APIErr(w, http.StatusNotImplemented, "openpak backend only")
 		return
 	}
 	pr, err := b.ensure(r.Context(), accountID)
 	if err != nil {
 		logErr("emulator link ensure", err)
-		apiErr(w, http.StatusBadGateway, "identity unavailable")
+		httpx.APIErr(w, http.StatusBadGateway, "identity unavailable")
 		return
 	}
 	id, err := s.acct.Identity(pr.PID)
 	if err != nil {
 		logErr("emulator link identity", err)
-		apiErr(w, http.StatusNotFound, "unknown account")
+		httpx.APIErr(w, http.StatusNotFound, "unknown account")
 		return
 	}
 	// The same bookkeeping the authorize page does: link() resolves the token's sub through it.
 	s.store.RememberNA(id.NaID, pr.PID)
 	c := naCode{PID: pr.PID, Username: id.Nickname, ClientID: r.URL.Query().Get("client_id"), NaID: id.NaID}
-	writeJSON(w, http.StatusOK, map[string]any{"id_token": s.naIDToken(c, "", "")})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"id_token": s.naIDToken(c, "", "")})
 }
 
 // switchEmulatorFriend answers POST /internal/switch/emulator/friend
 // {"account_id":…, "action":"request"|"accept"|"decline", "pid":…, "friend_code":…}
 func (s *server) switchEmulatorFriend(w http.ResponseWriter, r *http.Request) {
-	if !s.internalOK(r) {
-		apiErr(w, http.StatusUnauthorized, "internal")
+	if !httpx.InternalOK(r) {
+		httpx.APIErr(w, http.StatusUnauthorized, "internal")
 		return
 	}
 	var in struct {
@@ -336,7 +337,7 @@ func (s *server) switchEmulatorFriend(w http.ResponseWriter, r *http.Request) {
 		FriendCode string `json:"friend_code"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in); err != nil || in.AccountID == "" {
-		apiErr(w, http.StatusBadRequest, "invalid JSON")
+		httpx.APIErr(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 	if lock := s.accountLock(in.AccountID); lock != "" {
@@ -345,12 +346,12 @@ func (s *server) switchEmulatorFriend(w http.ResponseWriter, r *http.Request) {
 	}
 	b, ok := s.acct.(*openpakBackend)
 	if !ok {
-		apiErr(w, http.StatusNotImplemented, "openpak backend only")
+		httpx.APIErr(w, http.StatusNotImplemented, "openpak backend only")
 		return
 	}
 	pr, err := b.ensure(r.Context(), in.AccountID)
 	if err != nil {
-		apiErr(w, http.StatusBadGateway, "identity unavailable")
+		httpx.APIErr(w, http.StatusBadGateway, "identity unavailable")
 		return
 	}
 	target := in.PID
@@ -361,13 +362,13 @@ func (s *server) switchEmulatorFriend(w http.ResponseWriter, r *http.Request) {
 		// code itself was perfectly good (SOC-04).
 		f, err := s.acct.Resolve(url.Values{"code": {normaliseFriendCode(in.FriendCode)}})
 		if err != nil || f == nil {
-			apiErr(w, http.StatusNotFound, "no account for that friend code")
+			httpx.APIErr(w, http.StatusNotFound, "no account for that friend code")
 			return
 		}
 		target = f.PID
 	}
 	if target == 0 || target == pr.PID {
-		apiErr(w, http.StatusBadRequest, "pid or friend_code required")
+		httpx.APIErr(w, http.StatusBadRequest, "pid or friend_code required")
 		return
 	}
 	switch in.Action {
@@ -378,27 +379,27 @@ func (s *server) switchEmulatorFriend(w http.ResponseWriter, r *http.Request) {
 	case "decline":
 		err = s.acct.FriendAccept(pr.PID, target, false)
 	default:
-		apiErr(w, http.StatusBadRequest, "unknown action")
+		httpx.APIErr(w, http.StatusBadRequest, "unknown action")
 		return
 	}
 	if err != nil {
-		apiErr(w, http.StatusConflict, err.Error())
+		httpx.APIErr(w, http.StatusConflict, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // switchCA hands the website the CA every console-facing certificate chains to, so an
 // emulator can fetch it over public TLS from openpak.org and pin it, instead of turning
 // verification off.
 func (s *server) switchCA(w http.ResponseWriter, r *http.Request) {
-	if !s.internalOK(r) {
-		apiErr(w, http.StatusUnauthorized, "internal")
+	if !httpx.InternalOK(r) {
+		httpx.APIErr(w, http.StatusUnauthorized, "internal")
 		return
 	}
-	pem, err := os.ReadFile(getenv("NX_CA_DIR", "/data/ca") + "/ca.pem")
+	pem, err := os.ReadFile(httpx.Getenv("NX_CA_DIR", "/data/ca") + "/ca.pem")
 	if err != nil {
-		apiErr(w, http.StatusNotFound, "no CA on this adapter")
+		httpx.APIErr(w, http.StatusNotFound, "no CA on this adapter")
 		return
 	}
 	w.Header().Set("Content-Type", "application/x-pem-file")

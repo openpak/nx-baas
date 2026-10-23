@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http/httputil"
 	"net/url"
+	"nx-baas/internal/httpx"
 	"nx-baas/redact"
 	"os"
 	"strings"
@@ -39,5 +40,5 @@ func spelunky2Forwarder() *httputil.ReverseProxy {
 		log.Printf("[nx-baas] NX_SPELUNKY2_URL %q: %v (forwarding off)", u, redact.Err(err))
 		return nil
 	}
-	return newForwarder("spelunky2", u)
+	return httpx.NewForwarder("spelunky2", u)
 }

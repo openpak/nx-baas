@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"nx-baas/internal/httpx"
 	"strconv"
 	"strings"
 	"time"
@@ -17,7 +18,7 @@ func (s *server) acbaaEmigration(w http.ResponseWriter, r *http.Request, body []
 		claims := s.bearer(r)
 		exp, _ := claims["exp"].(float64)
 		if claims != nil && int64(exp) > time.Now().Unix() {
-			caller, _ = strconv.ParseUint(str(claims, "sub"), 16, 64)
+			caller, _ = strconv.ParseUint(httpx.Str(claims, "sub"), 16, 64)
 			valid = caller != 0
 		}
 	}

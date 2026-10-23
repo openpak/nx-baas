@@ -24,6 +24,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"nx-baas/internal/httpx"
 	"nx-baas/redact"
 	"strings"
 	"time"
@@ -63,7 +64,7 @@ func (p *penneRemote) call(method, path string, in, out any) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Internal-Key", getenv("NX_INTERNAL_KEY", getenv("OPENPAK_INTERNAL_KEY", "")))
+	req.Header.Set("X-Internal-Key", httpx.Getenv("NX_INTERNAL_KEY", httpx.Getenv("OPENPAK_INTERNAL_KEY", "")))
 	resp, err := p.http.Do(req)
 	if err != nil {
 		return retryable{err}

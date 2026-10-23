@@ -37,6 +37,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"nx-baas/internal/httpx"
 	"nx-baas/redact"
 	"path"
 	"strings"
@@ -44,15 +45,15 @@ import (
 )
 
 func (s *server) nso(w http.ResponseWriter, r *http.Request, body []byte) {
-	host, p := hostOf(r), r.URL.Path
+	host, p := httpx.HostOf(r), r.URL.Path
 	if strings.HasPrefix(host, "fw-api.") {
 		// Logged in full whatever the path: the body is the unrecovered half.
-		dump(r, body, "!! NSO fw-api (events shape unrecovered; answering an empty collection)")
+		httpx.Dump(r, body, "!! NSO fw-api (events shape unrecovered; answering an empty collection)")
 		if p == "/v1/events" {
 			writeJSONValue(w, 200, []any{})
 			return
 		}
-		writeJSON(w, 404, map[string]any{"status": 404, "title": "not found"})
+		httpx.WriteJSON(w, 404, map[string]any{"status": 404, "title": "not found"})
 		return
 	}
 	if strings.HasPrefix(p, "/_openpak/icon/") {
@@ -99,13 +100,13 @@ func (s *server) zncLobby(w http.ResponseWriter, r *http.Request, body []byte) {
 		return
 	}
 	if p != "/lobby" && !strings.HasPrefix(p, "/lobby/") {
-		dump(r, body, "!! UNHANDLED znc (only /lobby/ is known)")
-		writeJSON(w, 404, map[string]any{"status": 404, "title": "not found"})
+		httpx.Dump(r, body, "!! UNHANDLED znc (only /lobby/ is known)")
+		httpx.WriteJSON(w, 404, map[string]any{"status": 404, "title": "not found"})
 		return
 	}
 	q := r.URL.Query()
 	log.Printf("[nso] znc lobby %s %s%s app_id=%q param=%q ua=%q -> OpenPak voice chat lobby",
-		r.Method, hostOf(r), redact.Path(p), redact.IDs(q.Get("app_id")), redact.IDs(q.Get("param")), redact.IDs(r.UserAgent()))
+		r.Method, httpx.HostOf(r), redact.Path(p), redact.IDs(q.Get("app_id")), redact.IDs(q.Get("param")), redact.IDs(r.UserAgent()))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	fmt.Fprint(w, lobbyPage)
@@ -125,25 +126,25 @@ func (s *server) lobbyVoice(w http.ResponseWriter, r *http.Request) {
 		account = s.banSrc().accountFor(u.PID)
 	}
 	if account == "" {
-		writeJSON(w, 401, map[string]any{"status": 401, "title": "who is this console?"})
+		httpx.WriteJSON(w, 401, map[string]any{"status": 401, "title": "who is this console?"})
 		return
 	}
-	base, key := strings.TrimRight(getenv("WEBSITE_INTERNAL_URL", ""), "/"), getenv("WEBSITE_INTERNAL_KEY", "")
+	base, key := strings.TrimRight(httpx.Getenv("WEBSITE_INTERNAL_URL", ""), "/"), httpx.Getenv("WEBSITE_INTERNAL_KEY", "")
 	if base == "" || key == "" {
-		writeJSON(w, 503, map[string]any{"status": 503, "title": "voice chat is not configured"})
+		httpx.WriteJSON(w, 503, map[string]any{"status": 503, "title": "voice chat is not configured"})
 		return
 	}
 	u := base + "/internal/voice/room?" + url.Values{"account_id": {account}, "app_id": {r.URL.Query().Get("app_id")}}.Encode()
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, u, nil)
 	if err != nil {
-		writeJSON(w, 503, map[string]any{"status": 503, "title": "voice chat unavailable"})
+		httpx.WriteJSON(w, 503, map[string]any{"status": 503, "title": "voice chat unavailable"})
 		return
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
 	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
 	if err != nil {
 		log.Printf("[nso] lobby voice: website unreachable: %v", redact.Err(err))
-		writeJSON(w, 503, map[string]any{"status": 503, "title": "voice chat unavailable"})
+		httpx.WriteJSON(w, 503, map[string]any{"status": 503, "title": "voice chat unavailable"})
 		return
 	}
 	defer resp.Body.Close()
@@ -166,7 +167,7 @@ func (s *server) nsoMembership(w http.ResponseWriter, r *http.Request) {
 	} else {
 		out["signed_in"] = false
 	}
-	writeJSON(w, 200, out)
+	httpx.WriteJSON(w, 200, out)
 }
 
 // writeJSONValue is writeJSON for a reply whose top level is not an object.
@@ -427,12 +428,12 @@ func (s *server) shopPrincipalUnchecked(r *http.Request) (accountID, baasUserID 
 		if claims == nil {
 			continue
 		}
-		sub := str(claims, "sub")
-		iss := str(claims, "iss")
+		sub := httpx.Str(claims, "sub")
+		iss := httpx.Str(claims, "iss")
 		// The shop page may hold the network service account's id token instead
 		// (systemWeb's setNsaIdTokenAvailableCallback): our BAAS signs it, its subject
 		// is the BAAS user, and that user carries the Nintendo Account id.
-		if iss == baasIssuer && str(claims, "typ") == "id_token" && s.store != nil {
+		if iss == baasIssuer && httpx.Str(claims, "typ") == "id_token" && s.store != nil {
 			if u := s.store.User(sub); u != nil && u.NaID != "" {
 				if headerID != "" && headerID != u.NaID {
 					log.Printf("[shop] principal: header %s disagrees with nsa token's account %s; refusing", redact.Tag(headerID), redact.Tag(u.NaID))

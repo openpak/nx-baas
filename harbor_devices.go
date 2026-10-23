@@ -69,6 +69,7 @@ import (
 	"time"
 
 	"nx-baas/internal/b233"
+	"nx-baas/internal/httpx"
 )
 
 const (
@@ -366,7 +367,7 @@ func (s *server) dauthIdentity(r *http.Request, req deviceTokenRequest) (id, ser
 }
 
 func writeDeviceInUse(w http.ResponseWriter) {
-	writeJSON(w, http.StatusConflict, map[string]any{"error": "device_id_in_use", "action": "make_new_console"})
+	httpx.WriteJSON(w, http.StatusConflict, map[string]any{"error": "device_id_in_use", "action": "make_new_console"})
 }
 
 // ---- the enrolment ----
@@ -698,7 +699,7 @@ func (d *harborDevices) allowAttempt(deviceID string) bool {
 // harborDevicesHandler answers /harbor/v1/devices* on the dauth host.
 func (s *server) harborDevicesHandler(w http.ResponseWriter, r *http.Request, body []byte) {
 	if s.harbor == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "enrolment_unavailable"})
+		httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "enrolment_unavailable"})
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -718,7 +719,7 @@ func (s *server) harborDevicesHandler(w http.ResponseWriter, r *http.Request, bo
 			writeEnrolError(w, err)
 			return
 		}
-		writeJSON(w, 200, map[string]any{"nonce": nonce, "expires_in": int(nonceLifetime.Seconds())})
+		httpx.WriteJSON(w, 200, map[string]any{"nonce": nonce, "expires_in": int(nonceLifetime.Seconds())})
 
 	case "/harbor/v1/devices":
 		var req enrolRequest
@@ -737,7 +738,7 @@ func (s *server) harborDevicesHandler(w http.ResponseWriter, r *http.Request, bo
 		} else {
 			log.Printf("[harbor-devices] an enrolled console asked again (same keys)")
 		}
-		writeJSON(w, 200, map[string]any{
+		httpx.WriteJSON(w, 200, map[string]any{
 			"ecc_certificate":     dev.ECCCert,
 			"eticket_certificate": dev.ETicketCert,
 			"device_certificate":  dev.DeviceCert,
@@ -791,10 +792,10 @@ func writeEnrolError(w http.ResponseWriter, err error) {
 	}
 	var e *enrolError
 	if errors.As(err, &e) {
-		writeJSON(w, e.status, map[string]any{"error": e.code, "reason": e.reason})
+		httpx.WriteJSON(w, e.status, map[string]any{"error": e.code, "reason": e.reason})
 		return
 	}
-	writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal"})
+	httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal"})
 }
 
 // ---- BaaS: a device account belongs to the enrolled console that first used it ----
@@ -821,6 +822,6 @@ func (s *server) initHarborDevices() {
 		log.Printf("[harbor-devices] enrolment off (no NX_DEVICE_CA_* key files): enrolment answers 503, dauth unchanged")
 		return
 	}
-	s.harbor = newHarborDevices(ca, getenv("NX_DATA", "/data")+"/harbor-devices.json")
+	s.harbor = newHarborDevices(ca, httpx.Getenv("NX_DATA", "/data")+"/harbor-devices.json")
 	log.Printf("[harbor-devices] enrolment on (%d console(s) enrolled)", len(s.harbor.Devices))
 }
