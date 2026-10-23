@@ -1,6 +1,6 @@
-package main
-
-// A small msgpack encoder: Animal Crossing's web API answers in msgpack (acbaa.go).
+// Package msgpack is a small msgpack encoder and decoder: Animal Crossing's web API speaks
+// msgpack (acbaa.go), as do the console's error reports.
+package msgpack
 
 import (
 	"encoding/binary"
@@ -9,14 +9,14 @@ import (
 	"sort"
 )
 
-// msgpack encodes the subset these documents use: string-keyed maps, strings,
+// Encode encodes the subset these documents use: string-keyed maps, strings,
 // integers, booleans and arrays. ponytail: no dependency for four type tags —
 // add one the day a document needs floats or binary.
-// msgpackRaw is msgpack already encoded, for embedding an ordered map in a
+// Raw is msgpack already encoded, for embedding an ordered map in a
 // list the game reads positionally.
-type msgpackRaw []byte
+type Raw []byte
 
-func msgpack(v any) []byte {
+func Encode(v any) []byte {
 	var out []byte
 	switch t := v.(type) {
 	case nil:
@@ -27,7 +27,7 @@ func msgpack(v any) []byte {
 		} else {
 			out = append(out, 0xc2)
 		}
-	case msgpackRaw: // already encoded, embedded as-is (ordered maps inside lists)
+	case Raw: // already encoded, embedded as-is (ordered maps inside lists)
 		out = append(out, t...)
 	case []byte:
 		switch {
@@ -38,26 +38,26 @@ func msgpack(v any) []byte {
 		}
 		out = append(out, t...)
 	case string:
-		out = append(out, msgpackLen(0xa0, 0xd9, 0xda, 0xdb, len(t))...)
+		out = append(out, Len(0xa0, 0xd9, 0xda, 0xdb, len(t))...)
 		out = append(out, t...)
 	case int:
-		out = append(out, msgpackInt(int64(t))...)
+		out = append(out, Int(int64(t))...)
 	case int64:
-		out = append(out, msgpackInt(t)...)
+		out = append(out, Int(t)...)
 	case uint64:
 		if t <= math.MaxInt64 {
-			out = append(out, msgpackInt(int64(t))...)
+			out = append(out, Int(int64(t))...)
 			break
 		}
 		out = append(out, 0xcf)
 		out = binary.BigEndian.AppendUint64(out, t)
 	case []any:
-		out = append(out, msgpackLen(0x90, 0, 0xdc, 0xdd, len(t))...)
+		out = append(out, Len(0x90, 0, 0xdc, 0xdd, len(t))...)
 		for _, e := range t {
-			out = append(out, msgpack(e)...)
+			out = append(out, Encode(e)...)
 		}
 	case map[string]any:
-		out = append(out, msgpackLen(0x80, 0, 0xde, 0xdf, len(t))...)
+		out = append(out, Len(0x80, 0, 0xde, 0xdf, len(t))...)
 		// Sorted so the ETag is a function of the document, not of Go's map order.
 		keys := make([]string, 0, len(t))
 		for k := range t {
@@ -65,8 +65,8 @@ func msgpack(v any) []byte {
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			out = append(out, msgpack(k)...)
-			out = append(out, msgpack(t[k])...)
+			out = append(out, Encode(k)...)
+			out = append(out, Encode(t[k])...)
 		}
 	default:
 		panic(fmt.Sprintf("msgpack: unsupported %T", v))
@@ -74,9 +74,9 @@ func msgpack(v any) []byte {
 	return out
 }
 
-// msgpackLen writes the fix/8/16/32 header for a length-prefixed type. `f8` is
+// Len writes the fix/8/16/32 header for a length-prefixed type. `f8` is
 // 0 for arrays and maps, which have no 8-bit form.
-func msgpackLen(fix, f8, f16, f32 byte, n int) []byte {
+func Len(fix, f8, f16, f32 byte, n int) []byte {
 	limit := 15
 	if fix == 0xa0 {
 		limit = 31
@@ -93,7 +93,7 @@ func msgpackLen(fix, f8, f16, f32 byte, n int) []byte {
 	}
 }
 
-func msgpackInt(n int64) []byte {
+func Int(n int64) []byte {
 	switch {
 	case n >= 0 && n <= 127:
 		return []byte{byte(n)}

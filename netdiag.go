@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/msgpack"
 	"nx-baas/redact"
 	"sort"
 	"strconv"
@@ -110,7 +111,7 @@ func (s *server) telemetry(w http.ResponseWriter, r *http.Request, body []byte) 
 // the only fields read (a game's error event is the console's own account of a failure no server
 // saw). Every other value stays unread. For a body that is not msgpack, only its first byte.
 func reportEvents(body []byte) string {
-	v, err := msgpackDecode(body)
+	v, err := msgpack.Decode(body)
 	if err != nil {
 		if len(body) == 0 {
 			return ""
@@ -134,7 +135,7 @@ func reportEvents(body []byte) string {
 					case string:
 						val = y
 					case int64, uint64:
-						val = fmt.Sprintf("%016x", msgpackReadUintOf(y))
+						val = fmt.Sprintf("%016x", msgpack.UintOf(y))
 					}
 					if val != "" && len(val) <= 64 && !seen[k+"="+val] {
 						seen[k+"="+val] = true

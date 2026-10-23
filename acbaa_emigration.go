@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/msgpack"
 	"strconv"
 	"strings"
 	"time"
@@ -26,7 +27,7 @@ func (s *server) acbaaEmigration(w http.ResponseWriter, r *http.Request, body []
 		acbaaError(w, 401, "4001")
 		return
 	}
-	v, err := msgpackDecode(body)
+	v, err := msgpack.Decode(body)
 	doc, ok := v.(map[string]any)
 	if err != nil || !ok {
 		acbaaError(w, 400, "3001")
@@ -73,7 +74,7 @@ func (s *server) acbaaEmigration(w http.ResponseWriter, r *http.Request, body []
 	// it here rejected an authenticated, correctly migrated player (2026-10-13).
 	w.Header().Set("Content-Type", "application/x-msgpack")
 	w.WriteHeader(200)
-	w.Write(msgpack(map[string]any{"land": map[string]any{"id": land, "password": acbaaLandPassword(land)}, "users": users}))
+	w.Write(msgpack.Encode(map[string]any{"land": map[string]any{"id": land, "password": acbaaLandPassword(land)}, "users": users}))
 	log.Printf("[acbaa] departure credential exchange accepted; requested residents=%d", len(ids))
 }
 

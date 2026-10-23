@@ -12,6 +12,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"net/http/httptest"
+	"nx-baas/internal/msgpack"
 	"nx-baas/internal/token"
 	"strconv"
 	"strings"
@@ -31,7 +32,7 @@ func TestAcbaaDecodeReadsTheObservedLandPost(t *testing.T) {
 	if len(acbaaObservedLand) != 65 {
 		t.Fatalf("fixture is %d bytes, want the observed 65", len(acbaaObservedLand))
 	}
-	v, err := msgpackDecode(acbaaObservedLand)
+	v, err := msgpack.Decode(acbaaObservedLand)
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -64,7 +65,7 @@ func TestAcbaaDecodeRefusesGarbage(t *testing.T) {
 		{"unknown tag", []byte("\xd4\x01\x00")},
 		{"non-string key", []byte("\x81\x01\x02")},
 	} {
-		if _, err := msgpackDecode(tc.body); err == nil {
+		if _, err := msgpack.Decode(tc.body); err == nil {
 			t.Errorf("%s: decoded without error", tc.name)
 		}
 	}
@@ -88,7 +89,7 @@ func TestAcbaaRegisterLandAnswersThePostedIsland(t *testing.T) {
 	if ct := w.Header().Get("Content-Type"); ct != "application/x-msgpack" {
 		t.Fatalf("content-type %q, want msgpack", ct)
 	}
-	v, err := msgpackDecode(w.Body.Bytes())
+	v, err := msgpack.Decode(w.Body.Bytes())
 	if err != nil {
 		t.Fatalf("answer is not msgpack: %v", err)
 	}
@@ -99,7 +100,7 @@ func TestAcbaaRegisterLandAnswersThePostedIsland(t *testing.T) {
 	// Exactly the documented shape, {id: Uint64, password: String} — a
 	// nested land record was tried here and the flow never advanced past
 	// setup, so the test pins the documented bytes only.
-	if id := msgpackReadUintOf(land["id"]); id != 2720403009 {
+	if id := msgpack.UintOf(land["id"]); id != 2720403009 {
 		t.Errorf("id = %v, want the island's in_app_id", land["id"])
 	}
 	pw, ok := land["password"].(string)
@@ -129,7 +130,7 @@ func TestAcbaaRegisterUserAnswersIdAndPassword(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("status %d, want 200", w.Code)
 	}
-	v, err := msgpackDecode(w.Body.Bytes())
+	v, err := msgpack.Decode(w.Body.Bytes())
 	if err != nil {
 		t.Fatalf("answer is not msgpack: %v", err)
 	}
@@ -137,7 +138,7 @@ func TestAcbaaRegisterUserAnswersIdAndPassword(t *testing.T) {
 	if !ok {
 		t.Fatalf("answer is %T, want map", v)
 	}
-	if msgpackReadUintOf(user["id"]) == 0 {
+	if msgpack.UintOf(user["id"]) == 0 {
 		t.Errorf("id = %#v, want non-zero", user["id"])
 	}
 	if pw, _ := user["password"].(string); pw == "" {
@@ -163,7 +164,7 @@ func TestAcbaaUserIdBindsToBearerSub(t *testing.T) {
 		if w.Code != 200 {
 			t.Fatalf("status %d, want 200", w.Code)
 		}
-		v, err := msgpackDecode(w.Body.Bytes())
+		v, err := msgpack.Decode(w.Body.Bytes())
 		if err != nil {
 			t.Fatalf("answer is not msgpack: %v", err)
 		}
@@ -173,11 +174,11 @@ func TestAcbaaUserIdBindsToBearerSub(t *testing.T) {
 	tok := "eyJhbGciOiJSUzI1NiIsImtpZCI6IngifQ." +
 		"eyJzdWIiOiJhYWFhYWFhYWFhYWEwMDAxIn0.c2ln"
 	first := post(tok)
-	if id := msgpackReadUintOf(first["id"]); id != 0xaaaaaaaaaaaa0001 {
+	if id := msgpack.UintOf(first["id"]); id != 0xaaaaaaaaaaaa0001 {
 		t.Errorf("id = %#x, want the Bearer sub", id)
 	}
 	again := post(tok)
-	if msgpackReadUintOf(again["id"]) != msgpackReadUintOf(first["id"]) ||
+	if msgpack.UintOf(again["id"]) != msgpack.UintOf(first["id"]) ||
 		again["password"] != first["password"] {
 		t.Errorf("repeat post moved id/password: %#v vs %#v", again, first)
 	}
@@ -188,7 +189,7 @@ func TestAcbaaUserIdBindsToBearerSub(t *testing.T) {
 func TestAcbaaAuthTokenMintsVerifiableToken(t *testing.T) {
 	s := &server{}
 	id := uint64(0xaaaaaaaaaaaa0001)
-	body := msgpackOrdered("id", id, "password", acbaaUserPassword(id))
+	body := msgpack.Ordered("id", id, "password", acbaaUserPassword(id))
 	r := httptest.NewRequest("POST", "https://api.hac.lp1.acbaa.srv.nintendo.net/api/v1/auth_token",
 		bytes.NewReader(body))
 	w := httptest.NewRecorder()
@@ -196,7 +197,7 @@ func TestAcbaaAuthTokenMintsVerifiableToken(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("status %d, want 200", w.Code)
 	}
-	v, err := msgpackDecode(w.Body.Bytes())
+	v, err := msgpack.Decode(w.Body.Bytes())
 	if err != nil {
 		t.Fatalf("answer is not msgpack: %v", err)
 	}
@@ -208,7 +209,7 @@ func TestAcbaaAuthTokenMintsVerifiableToken(t *testing.T) {
 	if token == "" {
 		t.Fatalf("token = %#v, want non-empty", resp["token"])
 	}
-	if exp := msgpackReadIntOf(resp["expire_at"]); exp <= 0 {
+	if exp := msgpack.IntOf(resp["expire_at"]); exp <= 0 {
 		t.Errorf("expire_at = %#v, want a future timestamp", resp["expire_at"])
 	}
 	if got, ok := acbaaVerifyToken(token); !ok || got != id {
@@ -221,7 +222,7 @@ func TestAcbaaAuthTokenMintsVerifiableToken(t *testing.T) {
 // stale. Tampered tokens verify false the same way.
 func TestAcbaaAuthTokenRefusesBadCredentials(t *testing.T) {
 	s := &server{}
-	body := msgpackOrdered("id", uint64(0xaaaaaaaaaaaa0001), "password", "wrong")
+	body := msgpack.Ordered("id", uint64(0xaaaaaaaaaaaa0001), "password", "wrong")
 	r := httptest.NewRequest("POST", "https://api.hac.lp1.acbaa.srv.nintendo.net/api/v1/auth_token",
 		bytes.NewReader(body))
 	w := httptest.NewRecorder()
@@ -258,7 +259,7 @@ func TestAcbaaBindUserLand(t *testing.T) {
 		s.ServeHTTP(w, r)
 		return w
 	}
-	good := msgpackOrdered("id", land, "password", acbaaLandPassword(land))
+	good := msgpack.Ordered("id", land, "password", acbaaLandPassword(land))
 	mine := acbaaMintToken(uid)
 	if w := put(mine, good); w.Code != 200 {
 		t.Fatalf("own token + land creds: status %d, want 200", w.Code)
@@ -268,7 +269,7 @@ func TestAcbaaBindUserLand(t *testing.T) {
 	if w := put("Bearer "+jwtWithSub("aaaaaaaaaaaa0001"), good); w.Code != 200 {
 		t.Errorf("baas sub + land creds: status %d, want 200", w.Code)
 	}
-	bad := msgpackOrdered("id", land, "password", "nope")
+	bad := msgpack.Ordered("id", land, "password", "nope")
 	if w := put(mine, bad); w.Code != 401 {
 		t.Errorf("wrong land password: status %d, want 401", w.Code)
 	}
@@ -299,12 +300,12 @@ func TestAcbaaFriendsEmpty(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("status %d, want 200", w.Code)
 	}
-	v, err := msgpackDecode(w.Body.Bytes())
+	v, err := msgpack.Decode(w.Body.Bytes())
 	if err != nil {
 		t.Fatalf("answer is not msgpack: %v", err)
 	}
 	list, ok := v.(map[string]any)
-	if !ok || msgpackReadIntOf(list["count"]) != 0 {
+	if !ok || msgpack.IntOf(list["count"]) != 0 {
 		t.Fatalf("answer = %#v, want empty count", v)
 	}
 	if friends, _ := list["friends"].([]any); len(friends) != 0 {
@@ -316,7 +317,7 @@ func TestAcbaaFriendsEmpty(t *testing.T) {
 // Bare 200; the token is logged per user for a future push backend.
 func TestAcbaaNotificationTokenAccepted(t *testing.T) {
 	s := &server{}
-	body := msgpackOrdered("token", "")
+	body := msgpack.Ordered("token", "")
 	r := httptest.NewRequest("POST", "https://api.hac.lp1.acbaa.srv.nintendo.net/api/v1/notification_tokens",
 		bytes.NewReader(body))
 	w := httptest.NewRecorder()
@@ -347,12 +348,12 @@ func TestAcbaaMessageCardsEmpty(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("status %d, want 200", w.Code)
 	}
-	v, err := msgpackDecode(w.Body.Bytes())
+	v, err := msgpack.Decode(w.Body.Bytes())
 	if err != nil {
 		t.Fatalf("answer is not msgpack: %v", err)
 	}
 	list, ok := v.(map[string]any)
-	if !ok || msgpackReadIntOf(list["total"]) != 0 || msgpackReadIntOf(list["count"]) != 0 {
+	if !ok || msgpack.IntOf(list["total"]) != 0 || msgpack.IntOf(list["count"]) != 0 {
 		t.Fatalf("answer = %#v, want empty total/count", v)
 	}
 	if headers, _ := list["headers"].([]any); len(headers) != 0 {
@@ -371,7 +372,7 @@ func TestAcbaaProfileStatusAndUpload(t *testing.T) {
 		if w.Code != 200 {
 			t.Fatalf("status: %d, want 200", w.Code)
 		}
-		v, err := msgpackDecode(w.Body.Bytes())
+		v, err := msgpack.Decode(w.Body.Bytes())
 		if err != nil {
 			t.Fatalf("status answer is not msgpack: %v", err)
 		}
@@ -397,7 +398,7 @@ func TestAcbaaProfileStatusAndUpload(t *testing.T) {
 	// The upload answer carries the stored record: id echoes the user,
 	// digest is the 40-hex SHA1 the game's 0x29 buffer takes, created_at a
 	// unix time. An empty answer fails the whole setup client-side.
-	v, err := msgpackDecode(w2.Body.Bytes())
+	v, err := msgpack.Decode(w2.Body.Bytes())
 	if err != nil {
 		t.Fatalf("upload answer is not msgpack: %v", err)
 	}
@@ -405,14 +406,14 @@ func TestAcbaaProfileStatusAndUpload(t *testing.T) {
 	if !ok {
 		t.Fatalf("upload answer is %T, want map", v)
 	}
-	if msgpackReadUintOf(rec["id"]) != 12297829382472990721 {
+	if msgpack.UintOf(rec["id"]) != 12297829382472990721 {
 		t.Errorf("record id = %#v, want the user", rec["id"])
 	}
 	digest, _ := rec["digest"].(string)
 	if len(digest) != 40 {
 		t.Errorf("digest = %#v, want 40-hex SHA1", rec["digest"])
 	}
-	if msgpackReadIntOf(rec["created_at"]) <= 0 {
+	if msgpack.IntOf(rec["created_at"]) <= 0 {
 		t.Errorf("created_at = %#v, want unix time", rec["created_at"])
 	}
 	// Uploading never changes the answer: nothing here reports anyone.
@@ -423,7 +424,7 @@ func TestAcbaaProfileStatusAndUpload(t *testing.T) {
 	// even before a separate lands/<id>/profile upload (which the game
 	// never calls in the observed flow).
 	bind := httptest.NewRequest("PUT", host+"/api/v1/users/12297829382472990721/land",
-		bytes.NewReader(msgpackOrdered("id", uint64(2720403009), "password", acbaaLandPassword(2720403009))))
+		bytes.NewReader(msgpack.Ordered("id", uint64(2720403009), "password", acbaaLandPassword(2720403009))))
 	bind.Header.Set("Authorization", "Bearer "+acbaaMintToken(12297829382472990721))
 	w3 := httptest.NewRecorder()
 	s.ServeHTTP(w3, bind)
@@ -442,7 +443,7 @@ func TestAcbaaProfileStatusAndUpload(t *testing.T) {
 	}
 	// Same record shape as the player profile: id echoes the land,
 	// digest is 40-hex, created_at a unix time.
-	lv, lerr := msgpackDecode(w4.Body.Bytes())
+	lv, lerr := msgpack.Decode(w4.Body.Bytes())
 	if lerr != nil {
 		t.Fatalf("land upload answer is not msgpack: %v", lerr)
 	}
@@ -450,13 +451,13 @@ func TestAcbaaProfileStatusAndUpload(t *testing.T) {
 	if lrec == nil {
 		t.Fatalf("land upload answer is %T, want map", lv)
 	}
-	if msgpackReadUintOf(lrec["id"]) != 2720403009 {
+	if msgpack.UintOf(lrec["id"]) != 2720403009 {
 		t.Errorf("record id = %#v, want the land", lrec["id"])
 	}
 	if digest, _ := lrec["digest"].(string); len(digest) != 40 {
 		t.Errorf("digest = %#v, want 40-hex", lrec["digest"])
 	}
-	if msgpackReadIntOf(lrec["created_at"]) <= 0 {
+	if msgpack.IntOf(lrec["created_at"]) <= 0 {
 		t.Errorf("created_at = %#v, want unix time", lrec["created_at"])
 	}
 	if status := get(); status["user_profile"] != "ok" || status["land_profile"] != "ok" {
@@ -499,7 +500,7 @@ func TestAcbaaEarlierUIDResolvesForward(t *testing.T) {
 		if w.Code != 200 {
 			t.Fatalf("GET %s: status %d, want 200", path, w.Code)
 		}
-		v, err := msgpackDecode(w.Body.Bytes())
+		v, err := msgpack.Decode(w.Body.Bytes())
 		if err != nil {
 			t.Fatalf("GET %s: not msgpack: %v", path, err)
 		}
@@ -523,11 +524,11 @@ func TestAcbaaEarlierUIDResolvesForward(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("earlier upload: status %d, want 200", w.Code)
 	}
-	v, err := msgpackDecode(w.Body.Bytes())
+	v, err := msgpack.Decode(w.Body.Bytes())
 	if err != nil {
 		t.Fatalf("earlier upload: not msgpack: %v", err)
 	}
-	if rec, ok := v.(map[string]any); !ok || msgpackReadUintOf(rec["id"]) != oldUID {
+	if rec, ok := v.(map[string]any); !ok || msgpack.UintOf(rec["id"]) != oldUID {
 		t.Fatalf("earlier upload answer = %#v, want id echo %d", v, oldUID)
 	}
 	if _, found := s.acbaaProfiles[newPID]; !found {
@@ -538,7 +539,7 @@ func TestAcbaaEarlierUIDResolvesForward(t *testing.T) {
 	}
 	// Bind with an earlier token against the earlier path links the canonical id.
 	bind := httptest.NewRequest("PUT", host+"/api/v1/users/12297829382472990721/land",
-		bytes.NewReader(msgpackOrdered("id", uint64(2720403009), "password", acbaaLandPassword(2720403009))))
+		bytes.NewReader(msgpack.Ordered("id", uint64(2720403009), "password", acbaaLandPassword(2720403009))))
 	bind.Header.Set("Authorization", "Bearer "+acbaaMintToken(oldUID))
 	w2 := httptest.NewRecorder()
 	s.ServeHTTP(w2, bind)
@@ -561,12 +562,12 @@ func TestAcbaaRewardsEmpty(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("status %d, want 200", w.Code)
 	}
-	v, err := msgpackDecode(w.Body.Bytes())
+	v, err := msgpack.Decode(w.Body.Bytes())
 	if err != nil {
 		t.Fatalf("answer is not msgpack: %v", err)
 	}
 	list, ok := v.(map[string]any)
-	if !ok || msgpackReadIntOf(list["total"]) != 0 || msgpackReadIntOf(list["count"]) != 0 {
+	if !ok || msgpack.IntOf(list["total"]) != 0 || msgpack.IntOf(list["count"]) != 0 {
 		t.Fatalf("answer = %#v, want empty total/count", v)
 	}
 }
@@ -583,11 +584,11 @@ func TestAcbaaWebResourcesAcceptedAndRemembered(t *testing.T) {
 		s.ServeHTTP(w, r)
 		return w
 	}
-	landMemory := msgpackOrdered("data", map[string]any{"mVer": 1})
+	landMemory := msgpack.Ordered("data", map[string]any{"mVer": 1})
 	if w := post("land_memory", landMemory); w.Code != 200 {
 		t.Errorf("land_memory: status %d, want 200", w.Code)
 	}
-	if w := post("emoticon", msgpackOrdered("data", map[string]any{})); w.Code != 200 {
+	if w := post("emoticon", msgpack.Ordered("data", map[string]any{})); w.Code != 200 {
 		t.Errorf("emoticon: status %d, want 200", w.Code)
 	}
 	if got := s.acbaaResources[12297829382472990721]["land_memory"]; !bytes.Equal(got, landMemory) {
@@ -653,7 +654,7 @@ func TestAcbaaNamesSurviveRestart(t *testing.T) {
 // whole flow. Empty directory, current timestamp.
 func TestAcbaaUpdatedAddressesEmpty(t *testing.T) {
 	s := &server{}
-	body := msgpackOrdered("user_ids", []any{uint64(12297829382472990721)}, "since", int64(0))
+	body := msgpack.Ordered("user_ids", []any{uint64(12297829382472990721)}, "since", int64(0))
 	r := httptest.NewRequest("POST", "https://api.hac.lp1.acbaa.srv.nintendo.net/api/v1/lands/updated_addresses",
 		bytes.NewReader(body))
 	w := httptest.NewRecorder()
@@ -661,7 +662,7 @@ func TestAcbaaUpdatedAddressesEmpty(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("status %d, want 200", w.Code)
 	}
-	v, err := msgpackDecode(w.Body.Bytes())
+	v, err := msgpack.Decode(w.Body.Bytes())
 	if err != nil {
 		t.Fatalf("answer is not msgpack: %v", err)
 	}
@@ -695,12 +696,12 @@ func TestAcbaaFriendRequestsEmpty(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("status %d, want 200", w.Code)
 	}
-	v, err := msgpackDecode(w.Body.Bytes())
+	v, err := msgpack.Decode(w.Body.Bytes())
 	if err != nil {
 		t.Fatalf("answer is not msgpack: %v", err)
 	}
 	list, ok := v.(map[string]any)
-	if !ok || msgpackReadIntOf(list["count"]) != 0 {
+	if !ok || msgpack.IntOf(list["count"]) != 0 {
 		t.Fatalf("answer = %#v, want empty count", v)
 	}
 	if reqs, _ := list["friend_requests"].([]any); len(reqs) != 0 {
@@ -731,7 +732,7 @@ func TestAcbaaRegisterUserAnswersNEXPID(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("status %d, want 200", w.Code)
 	}
-	v, err := msgpackDecode(w.Body.Bytes())
+	v, err := msgpack.Decode(w.Body.Bytes())
 	if err != nil {
 		t.Fatalf("answer is not msgpack: %v", err)
 	}
@@ -741,7 +742,7 @@ func TestAcbaaRegisterUserAnswersNEXPID(t *testing.T) {
 	}
 	// The id is the NSA id (the sub as a number), the same number the game
 	// logs in to NEX with — not the minted pid.
-	if id := msgpackReadUintOf(user["id"]); id != 0xaaaaaaaaaaaa0001 {
+	if id := msgpack.UintOf(user["id"]); id != 0xaaaaaaaaaaaa0001 {
 		t.Errorf("id = %v, want the NSA id", user["id"])
 	}
 }
@@ -805,7 +806,7 @@ func TestAcbaaRegisterLandIsIdempotent(t *testing.T) {
 		if w.Code != 200 {
 			t.Fatalf("post %d: status %d, want 200", i, w.Code)
 		}
-		v, err := msgpackDecode(w.Body.Bytes())
+		v, err := msgpack.Decode(w.Body.Bytes())
 		if err != nil {
 			t.Fatalf("post %d: answer is not msgpack: %v", i, err)
 		}
@@ -840,7 +841,7 @@ func TestUnknownAcbaaRouteIs404(t *testing.T) {
 	if w.Code != 404 {
 		t.Fatalf("status %d, want 404", w.Code)
 	}
-	v, err := msgpackDecode(w.Body.Bytes())
+	v, err := msgpack.Decode(w.Body.Bytes())
 	if err != nil {
 		t.Fatalf("error body is not msgpack: %v", err)
 	}
@@ -865,14 +866,14 @@ func TestAcbaaBestFriends(t *testing.T) {
 		if w.Code != 200 {
 			t.Fatalf("%s %s: status %d", method, path, w.Code)
 		}
-		v, err := msgpackDecode(w.Body.Bytes())
+		v, err := msgpack.Decode(w.Body.Bytes())
 		if err != nil {
 			t.Fatalf("%s %s: not msgpack: %v", method, path, err)
 		}
 		return v.(map[string]any)
 	}
 	meta := []byte{0x81, 0xa6, 'm', 'M', 't', 'V', 'e', 'r', 0x02}
-	sent := do("POST", "/api/v1/friend_requests?target_user_id=12297829382472990722", a, msgpack(map[string]any{"meta": meta}))
+	sent := do("POST", "/api/v1/friend_requests?target_user_id=12297829382472990722", a, msgpack.Encode(map[string]any{"meta": meta}))
 	if sent["approved"] != false {
 		t.Fatalf("first request approved = %#v, want false", sent["approved"])
 	}
@@ -882,27 +883,27 @@ func TestAcbaaBestFriends(t *testing.T) {
 		t.Fatalf("B's inbox has %d, want 1", len(items))
 	}
 	entry := items[0].(map[string]any)
-	if msgpackReadUintOf(entry["user_id"]) != a || !bytes.Equal(entry["meta"].([]byte), meta) {
+	if msgpack.UintOf(entry["user_id"]) != a || !bytes.Equal(entry["meta"].([]byte), meta) {
 		t.Fatalf("inbox entry = %#v", entry)
 	}
-	if out := do("GET", "/api/v1/friend_requests?type=send", a, nil); msgpackReadIntOf(out["count"]) != 1 {
+	if out := do("GET", "/api/v1/friend_requests?type=send", a, nil); msgpack.IntOf(out["count"]) != 1 {
 		t.Fatalf("A's outbox = %#v", out)
 	}
-	id := msgpackReadUintOf(entry["id"])
-	do("PUT", "/api/v1/friend_requests/"+strconv.FormatUint(id, 10), b, msgpack(map[string]any{"action": "accept"}))
+	id := msgpack.UintOf(entry["id"])
+	do("PUT", "/api/v1/friend_requests/"+strconv.FormatUint(id, 10), b, msgpack.Encode(map[string]any{"action": "accept"}))
 	for _, who := range []uint64{a, b} {
 		fr := do("GET", "/api/v1/friends", who, nil)
-		if msgpackReadIntOf(fr["count"]) != 1 {
+		if msgpack.IntOf(fr["count"]) != 1 {
 			t.Fatalf("%d's friends = %#v", who, fr)
 		}
 	}
-	if left := do("GET", "/api/v1/friend_requests?type=receive", b, nil); msgpackReadIntOf(left["count"]) != 0 {
+	if left := do("GET", "/api/v1/friend_requests?type=receive", b, nil); msgpack.IntOf(left["count"]) != 0 {
 		t.Fatalf("accepted request still listed: %#v", left)
 	}
 	// Mutual: C asks D, D asks C -> approved immediately.
 	c, d := uint64(11), uint64(12)
-	do("POST", "/api/v1/friend_requests?target_user_id=12", c, msgpack(map[string]any{"meta": meta}))
-	if got := do("POST", "/api/v1/friend_requests?target_user_id=11", d, msgpack(map[string]any{"meta": meta})); got["approved"] != true {
+	do("POST", "/api/v1/friend_requests?target_user_id=12", c, msgpack.Encode(map[string]any{"meta": meta}))
+	if got := do("POST", "/api/v1/friend_requests?target_user_id=11", d, msgpack.Encode(map[string]any{"meta": meta})); got["approved"] != true {
 		t.Fatalf("mutual request approved = %#v, want true", got["approved"])
 	}
 }

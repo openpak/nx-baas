@@ -1,4 +1,4 @@
-package main
+package msgpack
 
 // The msgpack encoder's bytes, checked against the spec's own encoding.
 
@@ -33,7 +33,7 @@ func TestMsgpackEncodesTheDocumentTypesBCATUses(t *testing.T) {
 		if err != nil {
 			t.Fatalf("bad fixture %q: %v", tc.want, err)
 		}
-		if got := msgpack(tc.in); !bytes.Equal(got, want) {
+		if got := Encode(tc.in); !bytes.Equal(got, want) {
 			t.Errorf("msgpack(%#v) = %x, want %x", tc.in, got, want)
 		}
 	}
@@ -53,7 +53,7 @@ func stripSpaces(s string) string {
 // length boundary these documents can realistically hit (URLs and digests).
 func TestMsgpackStringsCrossTheFixstrBoundary(t *testing.T) {
 	long := string(bytes.Repeat([]byte("x"), 33))
-	got := msgpack(long)
+	got := Encode(long)
 	if got[0] != 0xd9 || got[1] != 33 || string(got[2:]) != long {
 		t.Fatalf("str8 encoding wrong: %x", got[:4])
 	}

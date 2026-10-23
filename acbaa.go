@@ -44,8 +44,8 @@ import (
 	"fmt"
 	"hash/fnv"
 	"log"
-	"math"
 	"net/http"
+	"nx-baas/internal/msgpack"
 	"nx-baas/redact"
 	"os"
 	"strconv"
@@ -138,7 +138,7 @@ func (s *server) acbaa(w http.ResponseWriter, r *http.Request, body []byte) {
 func acbaaError(w http.ResponseWriter, status int, code string) {
 	w.Header().Set("Content-Type", "application/x-msgpack")
 	w.WriteHeader(status)
-	w.Write(msgpack(map[string]any{"category": "lib", "code": code}))
+	w.Write(msgpack.Encode(map[string]any{"category": "lib", "code": code}))
 }
 
 // acbaaRegisterLand records the island the game posts and answers it back.
@@ -146,7 +146,7 @@ func acbaaError(w http.ResponseWriter, status int, code string) {
 // (echo plus id), so there is nothing a restart can lose. A registry belongs
 // here the day a second endpoint needs to look a land up (Dodo-code visits).
 func (s *server) acbaaRegisterLand(w http.ResponseWriter, r *http.Request, body []byte) {
-	v, err := msgpackDecode(body)
+	v, err := msgpack.Decode(body)
 	if err != nil {
 		log.Printf("[acbaa] POST /api/v1/lands: bad msgpack (%dB): %v", len(body), redact.Err(err))
 		http.Error(w, "bad msgpack", 400)
@@ -159,10 +159,10 @@ func (s *server) acbaaRegisterLand(w http.ResponseWriter, r *http.Request, body 
 		return
 	}
 	name, _ := land["name"].(string)
-	displayID := msgpackReadIntOf(land["display_id"])
-	inAppID := msgpackReadUintOf(land["in_app_id"])
-	region := msgpackReadIntOf(land["region"])
-	hemisphere := msgpackReadIntOf(land["hemisphere"])
+	displayID := msgpack.IntOf(land["display_id"])
+	inAppID := msgpack.UintOf(land["in_app_id"])
+	region := msgpack.IntOf(land["region"])
+	hemisphere := msgpack.IntOf(land["hemisphere"])
 	password := acbaaLandPassword(inAppID)
 	uid := s.acbaaResolveUID(acbaaBearerID(r.Header.Get("Authorization")))
 	s.mu.Lock()
@@ -181,7 +181,7 @@ func (s *server) acbaaRegisterLand(w http.ResponseWriter, r *http.Request, body 
 	// to the documented bytes: anything extra risks a strict reader.
 	w.Header().Set("Content-Type", "application/x-msgpack")
 	w.WriteHeader(200)
-	w.Write(msgpackOrdered(
+	w.Write(msgpack.Ordered(
 		"id", inAppID,
 		"password", password,
 	))
@@ -200,24 +200,6 @@ func acbaaLandPassword(inAppID uint64) string {
 	return hex.EncodeToString(sum[:12])
 }
 
-// msgpackOrdered encodes a string-keyed map with caller-chosen key order,
-// unlike msgpack() in msgpack.go which sorts. Takes an even list of key, value.
-func msgpackOrdered(pairs ...any) []byte {
-	if len(pairs)%2 != 0 {
-		panic("msgpackOrdered: odd pair count")
-	}
-	out := msgpackLen(0x80, 0, 0xde, 0xdf, len(pairs)/2)
-	for i := 0; i < len(pairs); i += 2 {
-		k, ok := pairs[i].(string)
-		if !ok {
-			panic("msgpackOrdered: non-string key")
-		}
-		out = append(out, msgpack(k)...)
-		out = append(out, msgpack(pairs[i+1])...)
-	}
-	return out
-}
-
 // acbaaRegisterUser registers the player: POST /api/v1/users takes
 // {name, birth_month, birth_date} (observed 2026-09-21: "hansolo", 6, 9)
 // and answers {id: Uint64, password: String} per the documented shape.
@@ -228,7 +210,7 @@ func msgpackOrdered(pairs ...any) []byte {
 // and every island visit answered empty.) The password is derived like the
 // land's, under its own domain separator.
 func (s *server) acbaaRegisterUser(w http.ResponseWriter, r *http.Request, body []byte) {
-	v, err := msgpackDecode(body)
+	v, err := msgpack.Decode(body)
 	if err != nil {
 		log.Printf("[acbaa] POST /api/v1/users: bad msgpack (%dB): %v", len(body), redact.Err(err))
 		http.Error(w, "bad msgpack", 400)
@@ -257,7 +239,7 @@ func (s *server) acbaaRegisterUser(w http.ResponseWriter, r *http.Request, body 
 		redact.Text(name), redact.Tag(id), bearerSummary(r.Header.Get("Authorization")))
 	w.Header().Set("Content-Type", "application/x-msgpack")
 	w.WriteHeader(200)
-	w.Write(msgpackOrdered(
+	w.Write(msgpack.Ordered(
 		"id", id,
 		"password", password,
 	))
@@ -436,7 +418,7 @@ func acbaaUserPassword(id uint64) string {
 // credentials go stale. The token is self-verifying (id plus an
 // authenticator), so later endpoints resolve the caller with no store.
 func (s *server) acbaaAuthToken(w http.ResponseWriter, r *http.Request, body []byte) {
-	v, err := msgpackDecode(body)
+	v, err := msgpack.Decode(body)
 	if err != nil {
 		log.Printf("[acbaa] POST /api/v1/auth_token: bad msgpack (%dB): %v", len(body), redact.Err(err))
 		http.Error(w, "bad msgpack", 400)
@@ -448,7 +430,7 @@ func (s *server) acbaaAuthToken(w http.ResponseWriter, r *http.Request, body []b
 		http.Error(w, "want map", 400)
 		return
 	}
-	id := msgpackReadUintOf(cred["id"])
+	id := msgpack.UintOf(cred["id"])
 	password, _ := cred["password"].(string)
 	if id == 0 || subtle.ConstantTimeCompare([]byte(password), []byte(acbaaUserPassword(id))) != 1 {
 		log.Printf("[acbaa] POST /api/v1/auth_token: bad credentials for id=%s", redact.Tag(id))
@@ -459,7 +441,7 @@ func (s *server) acbaaAuthToken(w http.ResponseWriter, r *http.Request, body []b
 	log.Printf("[acbaa] auth token for id=%s expires in 1h", redact.Tag(id))
 	w.Header().Set("Content-Type", "application/x-msgpack")
 	w.WriteHeader(200)
-	w.Write(msgpackOrdered(
+	w.Write(msgpack.Ordered(
 		"token", token,
 		"expire_at", time.Now().Unix()+3600,
 	))
@@ -519,7 +501,7 @@ func (s *server) acbaaBindUserLand(w http.ResponseWriter, r *http.Request, body 
 		acbaaError(w, 401, "4001")
 		return
 	}
-	v, err := msgpackDecode(body)
+	v, err := msgpack.Decode(body)
 	if err != nil {
 		log.Printf("[acbaa] PUT %s: bad msgpack (%dB): %v", redact.Path(r.URL.Path), len(body), redact.Err(err))
 		http.Error(w, "bad msgpack", 400)
@@ -531,7 +513,7 @@ func (s *server) acbaaBindUserLand(w http.ResponseWriter, r *http.Request, body 
 		http.Error(w, "want map", 400)
 		return
 	}
-	landID := msgpackReadUintOf(link["id"])
+	landID := msgpack.UintOf(link["id"])
 	password, _ := link["password"].(string)
 	if landID == 0 || subtle.ConstantTimeCompare([]byte(password), []byte(acbaaLandPassword(landID))) != 1 {
 		log.Printf("[acbaa] PUT %s: bad land credentials for land=%s", redact.Path(r.URL.Path), redact.Tag(landID))
@@ -579,7 +561,7 @@ func (s *server) acbaaCallerOwns(auth string, uid uint64) bool {
 // (The game's online-setup function calls this before validating profiles;
 // an unanswered here aborts the whole flow.)
 func (s *server) acbaaUpdatedAddresses(w http.ResponseWriter, r *http.Request, body []byte) {
-	v, err := msgpackDecode(body)
+	v, err := msgpack.Decode(body)
 	if err != nil {
 		log.Printf("[acbaa] POST /api/v1/lands/updated_addresses: bad msgpack (%dB): %v", len(body), redact.Err(err))
 		http.Error(w, "bad msgpack", 400)
@@ -598,7 +580,7 @@ func (s *server) acbaaUpdatedAddresses(w http.ResponseWriter, r *http.Request, b
 	log.Printf("[acbaa] updated addresses for %d user(s)", n)
 	w.Header().Set("Content-Type", "application/x-msgpack")
 	w.WriteHeader(200)
-	w.Write(msgpack(map[string]any{"accessed_at": time.Now().Unix(), "addresses": []any{}}))
+	w.Write(msgpack.Encode(map[string]any{"accessed_at": time.Now().Unix(), "addresses": []any{}}))
 }
 
 // /api/v1/notification_tokens takes {token: String} (observed 2026-09-21:
@@ -607,7 +589,7 @@ func (s *server) acbaaUpdatedAddresses(w http.ResponseWriter, r *http.Request, b
 // no response body is documented. Logged per user for the day a push
 // backend wants to know whom a token belongs to; nothing is delivered.
 func (s *server) acbaaNotificationToken(w http.ResponseWriter, r *http.Request, body []byte) {
-	v, err := msgpackDecode(body)
+	v, err := msgpack.Decode(body)
 	if err != nil {
 		log.Printf("[acbaa] POST /api/v1/notification_tokens: bad msgpack (%dB): %v", len(body), redact.Err(err))
 		http.Error(w, "bad msgpack", 400)
@@ -633,7 +615,7 @@ func (s *server) acbaaNotificationToken(w http.ResponseWriter, r *http.Request, 
 func (s *server) acbaaRewards(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-msgpack")
 	w.WriteHeader(200)
-	w.Write(msgpack(map[string]any{"total": 0, "count": 0, "headers": []any{}}))
+	w.Write(msgpack.Encode(map[string]any{"total": 0, "count": 0, "headers": []any{}}))
 }
 
 // acbaaWebResource takes companion-app sync uploads: PUT
@@ -648,7 +630,7 @@ func (s *server) acbaaWebResource(w http.ResponseWriter, r *http.Request, body [
 		acbaaError(w, 404, "3004")
 		return
 	}
-	v, err := msgpackDecode(body)
+	v, err := msgpack.Decode(body)
 	if err != nil {
 		log.Printf("[acbaa] PUT web resource %s: bad msgpack (%dB): %v", name, len(body), redact.Err(err))
 		http.Error(w, "bad msgpack", 400)
@@ -840,7 +822,7 @@ func (s *server) acbaaSendFriendRequest(w http.ResponseWriter, r *http.Request, 
 	}
 	to = s.acbaaResolveUID(to)
 	var meta []byte
-	if v, err := msgpackDecode(body); err == nil {
+	if v, err := msgpack.Decode(body); err == nil {
 		if m, ok := v.(map[string]any); ok {
 			meta, _ = m["meta"].([]byte)
 		}
@@ -868,7 +850,7 @@ func (s *server) acbaaSendFriendRequest(w http.ResponseWriter, r *http.Request, 
 	log.Printf("[acbaa] friend request from=%s to=%s meta=%dB approved=%v", redact.Tag(from), redact.Tag(to), len(meta), approved)
 	w.Header().Set("Content-Type", "application/x-msgpack")
 	w.WriteHeader(200)
-	w.Write(msgpackOrdered("id", id, "approved", approved))
+	w.Write(msgpack.Ordered("id", id, "approved", approved))
 }
 
 func (s *server) acbaaAreFriendsLocked(a, b uint64) bool {
@@ -903,7 +885,7 @@ func (s *server) acbaaAnswerFriendRequest(w http.ResponseWriter, r *http.Request
 		return
 	}
 	action := ""
-	if v, err := msgpackDecode(body); err == nil {
+	if v, err := msgpack.Decode(body); err == nil {
 		if m, ok := v.(map[string]any); ok {
 			action, _ = m["action"].(string)
 		}
@@ -926,7 +908,7 @@ func (s *server) acbaaAnswerFriendRequest(w http.ResponseWriter, r *http.Request
 	log.Printf("[acbaa] friend request %s from=%s to=%s action=%q befriended=%v", redact.Tag(id), redact.Tag(req.From), redact.Tag(req.To), action, !refused)
 	w.Header().Set("Content-Type", "application/x-msgpack")
 	w.WriteHeader(200)
-	w.Write(msgpack(map[string]any{}))
+	w.Write(msgpack.Encode(map[string]any{}))
 }
 
 // acbaaFriends: GET /api/v1/friends -> {count, friends:[{user_id}]}.
@@ -942,7 +924,7 @@ func (s *server) acbaaFriends(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[acbaa] friends of %s -> %d", redact.Tag(me), len(friends))
 	w.Header().Set("Content-Type", "application/x-msgpack")
 	w.WriteHeader(200)
-	w.Write(msgpackOrdered("count", len(friends), "friends", friends))
+	w.Write(msgpack.Ordered("count", len(friends), "friends", friends))
 }
 
 // acbaaFriendRequests: GET /api/v1/friend_requests?type=send|receive ->
@@ -963,7 +945,7 @@ func (s *server) acbaaFriendRequests(w http.ResponseWriter, r *http.Request) {
 		default:
 			continue
 		}
-		out = append(out, msgpackRaw(msgpackOrdered("id", id, "user_id", other, "sent_at", req.SentAt, "meta", req.Meta)))
+		out = append(out, msgpack.Raw(msgpack.Ordered("id", id, "user_id", other, "sent_at", req.SentAt, "meta", req.Meta)))
 	}
 	s.mu.Unlock()
 	if out == nil {
@@ -972,7 +954,7 @@ func (s *server) acbaaFriendRequests(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[acbaa] friend requests type=%q for %s -> %d", typ, redact.Tag(me), len(out))
 	w.Header().Set("Content-Type", "application/x-msgpack")
 	w.WriteHeader(200)
-	w.Write(msgpackOrdered("count", len(out), "friend_requests", out))
+	w.Write(msgpack.Ordered("count", len(out), "friend_requests", out))
 }
 
 // acbaaMessageCards lists the player's message cards: GET
@@ -996,7 +978,7 @@ func acbaaUserOf(path string) (uint64, bool) {
 func (s *server) acbaaMessageCards(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-msgpack")
 	w.WriteHeader(200)
-	w.Write(msgpack(map[string]any{"total": 0, "count": 0, "headers": []any{}}))
+	w.Write(msgpack.Encode(map[string]any{"total": 0, "count": 0, "headers": []any{}}))
 }
 
 // acbaaProfileStatus answers GET users/<id>/profile_status: whether the
@@ -1019,7 +1001,7 @@ func (s *server) acbaaProfileStatus(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(200)
 	// kinnay's field order (user_profile first): the shared encoder sorts
 	// keys, and a positional reader would swap the two on a sorted map.
-	w.Write(msgpackOrdered(
+	w.Write(msgpack.Ordered(
 		"user_profile", "ok",
 		"land_profile", "ok",
 	))
@@ -1040,7 +1022,7 @@ func (s *server) acbaaUploadProfile(w http.ResponseWriter, r *http.Request, body
 	}
 	pathUID := uid
 	uid = s.acbaaResolveUID(uid)
-	if _, err := msgpackDecode(body); err != nil {
+	if _, err := msgpack.Decode(body); err != nil {
 		log.Printf("[acbaa] profile upload uid=%s: bad msgpack (%dB): %v", redact.Tag(uid), len(body), redact.Err(err))
 		http.Error(w, "bad msgpack", 400)
 		return
@@ -1051,7 +1033,7 @@ func (s *server) acbaaUploadProfile(w http.ResponseWriter, r *http.Request, body
 	log.Printf("[acbaa] profile upload uid=%s %dB sha256=%s", redact.Tag(uid), len(body), sha[:16])
 	w.Header().Set("Content-Type", "application/x-msgpack")
 	w.WriteHeader(200)
-	w.Write(msgpackOrdered(
+	w.Write(msgpack.Ordered(
 		"id", pathUID,
 		"digest", hex.EncodeToString(sum1[:]),
 		"created_at", now,
@@ -1075,7 +1057,7 @@ func (s *server) acbaaUploadLandProfile(w http.ResponseWriter, r *http.Request, 
 		acbaaError(w, 404, "3004")
 		return
 	}
-	if _, err := msgpackDecode(body); err != nil {
+	if _, err := msgpack.Decode(body); err != nil {
 		log.Printf("[acbaa] land profile upload land=%s: bad msgpack (%dB): %v", redact.Tag(landID), len(body), redact.Err(err))
 		http.Error(w, "bad msgpack", 400)
 		return
@@ -1097,7 +1079,7 @@ func (s *server) acbaaUploadLandProfile(w http.ResponseWriter, r *http.Request, 
 	now := time.Now().Unix()
 	w.Header().Set("Content-Type", "application/x-msgpack")
 	w.WriteHeader(200)
-	w.Write(msgpackOrdered(
+	w.Write(msgpack.Ordered(
 		"id", landID,
 		"digest", hex.EncodeToString(sum1[:]),
 		"created_at", now,
@@ -1153,266 +1135,4 @@ func bearerSummary(auth string) string {
 		sub = redact.Tag(sub)
 	}
 	return fmt.Sprintf("kid=%s iss=%s sub=%s", kid, iss, sub)
-}
-
-// msgpackReadIntOf reads the small integers the game sends (posfixint through
-// int64) as int64. Anything else is 0 — the caller logs the raw map on the
-// error paths that matter, so a mistyped field reads as zero, not a refusal.
-func msgpackReadIntOf(v any) int64 {
-	switch t := v.(type) {
-	case int64:
-		return t
-	case uint64:
-		if t <= math.MaxInt64 {
-			return int64(t)
-		}
-	}
-	return 0
-}
-
-// msgpackReadUintOf is the unsigned sibling, for ids that may one day set the top
-// bit. Today in_app_id fits either way; the response encodes it unsigned.
-func msgpackReadUintOf(v any) uint64 {
-	switch t := v.(type) {
-	case uint64:
-		return t
-	case int64:
-		if t >= 0 {
-			return uint64(t)
-		}
-	}
-	return 0
-}
-
-// msgpackDecode reads the subset of msgpack the game and these documents use:
-// nil, booleans, integers through 64 bits, floats (kept whole), strings,
-// binary, arrays and string-keyed maps. It is the mirror of msgpack() in
-// msgpack.go, which only encodes. Unknown type tags are an error, not a guess:
-// silently skipping a field would register a different island than the game
-// posted.
-func msgpackDecode(b []byte) (any, error) {
-	v, rest, err := msgpackValue(b)
-	if err != nil {
-		return nil, err
-	}
-	if len(rest) != 0 {
-		return nil, fmt.Errorf("msgpack: %d trailing bytes", len(rest))
-	}
-	return v, nil
-}
-
-func msgpackValue(b []byte) (any, []byte, error) {
-	if len(b) == 0 {
-		return nil, nil, fmt.Errorf("msgpack: empty")
-	}
-	c := b[0]
-	switch {
-	case c <= 0x7f: // posfixint
-		return int64(c), b[1:], nil
-	case c >= 0xe0: // negfixint
-		return int64(int8(c)), b[1:], nil
-	case c >= 0xa0 && c <= 0xbf: // fixstr
-		return msgpackBytes(b, 1, int(c&0x1f), true)
-	case c >= 0x90 && c <= 0x9f: // fixarray
-		return msgpackArray(b, 1, int(c&0x0f))
-	case c >= 0x80 && c <= 0x8f: // fixmap
-		return msgpackMap(b, 1, int(c&0x0f))
-	}
-	switch c {
-	case 0xc0:
-		return nil, b[1:], nil
-	case 0xc2:
-		return false, b[1:], nil
-	case 0xc3:
-		return true, b[1:], nil
-	case 0xca: // float32
-		if len(b) < 5 {
-			return nil, nil, fmt.Errorf("msgpack: float32 truncated")
-		}
-		return float64(math.Float32frombits(binary.BigEndian.Uint32(b[1:]))), b[5:], nil
-	case 0xcb: // float64
-		if len(b) < 9 {
-			return nil, nil, fmt.Errorf("msgpack: float64 truncated")
-		}
-		return math.Float64frombits(binary.BigEndian.Uint64(b[1:])), b[9:], nil
-	case 0xcc:
-		return msgpackReadUint(b, 2)
-	case 0xcd:
-		return msgpackReadUint(b, 3)
-	case 0xce:
-		return msgpackReadUint(b, 5)
-	case 0xcf:
-		return msgpackReadUint(b, 9)
-	case 0xd0:
-		return msgpackReadInt(b, 2)
-	case 0xd1:
-		return msgpackReadInt(b, 3)
-	case 0xd2:
-		return msgpackReadInt(b, 5)
-	case 0xd3:
-		return msgpackReadInt(b, 9)
-	case 0xd9: // str8
-		if len(b) < 2 {
-			return nil, nil, fmt.Errorf("msgpack: str8 truncated")
-		}
-		return msgpackBytes(b, 2, int(b[1]), true)
-	case 0xda: // str16
-		if len(b) < 3 {
-			return nil, nil, fmt.Errorf("msgpack: str16 truncated")
-		}
-		return msgpackBytes(b, 3, int(binary.BigEndian.Uint16(b[1:])), true)
-	case 0xdb: // str32
-		if len(b) < 5 {
-			return nil, nil, fmt.Errorf("msgpack: str32 truncated")
-		}
-		n := binary.BigEndian.Uint32(b[1:])
-		if n > math.MaxInt32 {
-			return nil, nil, fmt.Errorf("msgpack: str32 absurd length %d", n)
-		}
-		return msgpackBytes(b, 5, int(n), true)
-	case 0xc4: // bin8
-		if len(b) < 2 {
-			return nil, nil, fmt.Errorf("msgpack: bin8 truncated")
-		}
-		return msgpackBytes(b, 2, int(b[1]), false)
-	case 0xc5: // bin16
-		if len(b) < 3 {
-			return nil, nil, fmt.Errorf("msgpack: bin16 truncated")
-		}
-		return msgpackBytes(b, 3, int(binary.BigEndian.Uint16(b[1:])), false)
-	case 0xc6: // bin32
-		if len(b) < 5 {
-			return nil, nil, fmt.Errorf("msgpack: bin32 truncated")
-		}
-		n := binary.BigEndian.Uint32(b[1:])
-		if n > math.MaxInt32 {
-			return nil, nil, fmt.Errorf("msgpack: bin32 absurd length %d", n)
-		}
-		return msgpackBytes(b, 5, int(n), false)
-	case 0xdc: // array16
-		if len(b) < 3 {
-			return nil, nil, fmt.Errorf("msgpack: array16 truncated")
-		}
-		return msgpackArray(b, 3, int(binary.BigEndian.Uint16(b[1:])))
-	case 0xdd: // array32
-		if len(b) < 5 {
-			return nil, nil, fmt.Errorf("msgpack: array32 truncated")
-		}
-		n := binary.BigEndian.Uint32(b[1:])
-		if n > 1<<20 {
-			return nil, nil, fmt.Errorf("msgpack: array32 absurd length %d", n)
-		}
-		return msgpackArray(b, 5, int(n))
-	case 0xde: // map16
-		if len(b) < 3 {
-			return nil, nil, fmt.Errorf("msgpack: map16 truncated")
-		}
-		return msgpackMap(b, 3, int(binary.BigEndian.Uint16(b[1:])))
-	case 0xdf: // map32
-		if len(b) < 5 {
-			return nil, nil, fmt.Errorf("msgpack: map32 truncated")
-		}
-		n := binary.BigEndian.Uint32(b[1:])
-		if n > 1<<20 {
-			return nil, nil, fmt.Errorf("msgpack: map32 absurd length %d", n)
-		}
-		return msgpackMap(b, 5, int(n))
-	}
-	return nil, nil, fmt.Errorf("msgpack: unknown tag 0x%02x", c)
-}
-
-// msgpackReadUint reads an unsigned integer whose tag plus width is n bytes.
-func msgpackReadUint(b []byte, n int) (any, []byte, error) {
-	if len(b) < n {
-		return nil, nil, fmt.Errorf("msgpack: uint truncated")
-	}
-	switch n {
-	case 2:
-		return int64(b[1]), b[2:], nil
-	case 3:
-		return int64(binary.BigEndian.Uint16(b[1:])), b[3:], nil
-	case 5:
-		return int64(binary.BigEndian.Uint32(b[1:])), b[5:], nil
-	default:
-		return binary.BigEndian.Uint64(b[1:]), b[9:], nil
-	}
-}
-
-// msgpackReadInt reads a signed integer whose tag plus width is n bytes.
-func msgpackReadInt(b []byte, n int) (any, []byte, error) {
-	if len(b) < n {
-		return nil, nil, fmt.Errorf("msgpack: int truncated")
-	}
-	switch n {
-	case 2:
-		return int64(int8(b[1])), b[2:], nil
-	case 3:
-		return int64(int16(binary.BigEndian.Uint16(b[1:]))), b[3:], nil
-	case 5:
-		return int64(int32(binary.BigEndian.Uint32(b[1:]))), b[5:], nil
-	default:
-		return int64(binary.BigEndian.Uint64(b[1:])), b[9:], nil
-	}
-}
-
-// msgpackBytes reads n content bytes at offset off. str is whether the bytes
-// must be valid UTF-8 (msgpack str) as opposed to opaque binary.
-func msgpackBytes(b []byte, off, n int, str bool) (any, []byte, error) {
-	if n < 0 || len(b)-off < n {
-		return nil, nil, fmt.Errorf("msgpack: string/binary truncated")
-	}
-	raw := bytes.Clone(b[off : off+n])
-	if str {
-		return string(raw), b[off+n:], nil
-	}
-	return raw, b[off+n:], nil
-}
-
-// msgpackArray reads n elements.
-func msgpackArray(b []byte, off, n int) (any, []byte, error) {
-	if n < 0 || n > 1<<20 {
-		return nil, nil, fmt.Errorf("msgpack: absurd array length %d", n)
-	}
-	rest := b[off:]
-	out := make([]any, 0, n)
-	for range n {
-		var v any
-		var err error
-		v, rest, err = msgpackValue(rest)
-		if err != nil {
-			return nil, nil, err
-		}
-		out = append(out, v)
-	}
-	return out, rest, nil
-}
-
-// msgpackMap reads n string-keyed pairs. A non-string key is an error: every
-// document on this host is a JSON-shaped record, and a positional map would
-// decode into the wrong island.
-func msgpackMap(b []byte, off, n int) (any, []byte, error) {
-	if n < 0 || n > 1<<20 {
-		return nil, nil, fmt.Errorf("msgpack: absurd map length %d", n)
-	}
-	rest := b[off:]
-	out := make(map[string]any, n)
-	for range n {
-		var k any
-		var err error
-		k, rest, err = msgpackValue(rest)
-		if err != nil {
-			return nil, nil, err
-		}
-		ks, ok := k.(string)
-		if !ok {
-			return nil, nil, fmt.Errorf("msgpack: non-string map key %T", k)
-		}
-		var v any
-		v, rest, err = msgpackValue(rest)
-		if err != nil {
-			return nil, nil, err
-		}
-		out[ks] = v
-	}
-	return out, rest, nil
 }

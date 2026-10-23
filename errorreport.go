@@ -35,6 +35,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/msgpack"
 	"nx-baas/internal/token"
 	"nx-baas/redact"
 	"os"
@@ -248,7 +249,7 @@ func decodeErrorReport(contentType string, body []byte) decodedReport {
 
 // decodeReportMsgpack decodes one msgpack part to JSON-ready values (binary → base64).
 func decodeReportMsgpack(b []byte) map[string]any {
-	v, err := msgpackDecode(b)
+	v, err := msgpack.Decode(b)
 	if err != nil {
 		log.Printf("!! ERROR REPORT: msgpack part does not decode (%v); %d bytes",
 			redact.Err(err), len(b))

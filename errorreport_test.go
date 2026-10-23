@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
+	"nx-baas/internal/msgpack"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,7 +21,7 @@ import (
 // screenshot attachment.
 func consoleReport(t *testing.T) ([]byte, string) {
 	t.Helper()
-	report := msgpack(map[string]any{
+	report := msgpack.Encode(map[string]any{
 		"ErrorCode":           "2168-0002",
 		"ApplicationID":       "01006f8002326000",
 		"OsVersion":           "22.5.0",

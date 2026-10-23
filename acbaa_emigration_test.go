@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http/httptest"
+	"nx-baas/internal/msgpack"
 	"testing"
 )
 
@@ -12,17 +13,17 @@ func TestAcbaaEmigrationRecoveredContract(t *testing.T) {
 	r := httptest.NewRequest("POST", "https://api.hac.lp1.acbaa.srv.nintendo.net/api/v1/emigrations", nil)
 	r.Header.Set("Authorization", "Bearer "+acbaaMintToken(42))
 	w := httptest.NewRecorder()
-	s.acbaa(w, r, msgpack(request))
+	s.acbaa(w, r, msgpack.Encode(request))
 	if w.Code != 200 {
 		t.Fatalf("status %d", w.Code)
 	}
-	v, err := msgpackDecode(w.Body.Bytes())
+	v, err := msgpack.Decode(w.Body.Bytes())
 	if err != nil {
 		t.Fatal(err)
 	}
 	doc := v.(map[string]any)
 	land := doc["land"].(map[string]any)
-	if msgpackReadUintOf(land["id"]) != 99 || land["password"] != acbaaLandPassword(99) {
+	if msgpack.UintOf(land["id"]) != 99 || land["password"] != acbaaLandPassword(99) {
 		t.Fatal("island credentials mismatch")
 	}
 	users := doc["users"].([]any)
@@ -56,7 +57,7 @@ func TestAcbaaEmigrationRejectsInvalidOwnershipAndShapes(t *testing.T) {
 			r := httptest.NewRequest("POST", "/api/v1/emigrations", nil)
 			r.Header.Set("Authorization", "Bearer "+acbaaMintToken(42))
 			w := httptest.NewRecorder()
-			s.acbaa(w, r, msgpack(tc.body))
+			s.acbaa(w, r, msgpack.Encode(tc.body))
 			if w.Code != tc.status {
 				t.Fatalf("status %d, want %d", w.Code, tc.status)
 			}
@@ -70,16 +71,16 @@ func TestAcbaaDepartureMigratedPlayerWithoutIslandBinding(t *testing.T) {
 	r := httptest.NewRequest("POST", "/api/v1/emigrations", nil)
 	r.Header.Set("Authorization", "Bearer "+acbaaMintToken(42))
 	w := httptest.NewRecorder()
-	s.acbaa(w, r, msgpack(map[string]any{"land_id": uint64(99), "my_user_id": uint64(43), "user_ids": []any{uint64(43)}}))
+	s.acbaa(w, r, msgpack.Encode(map[string]any{"land_id": uint64(99), "my_user_id": uint64(43), "user_ids": []any{uint64(43)}}))
 	if w.Code != 200 {
 		t.Fatalf("migrated player with no cached binding refused: %d", w.Code)
 	}
-	v, err := msgpackDecode(w.Body.Bytes())
+	v, err := msgpack.Decode(w.Body.Bytes())
 	if err != nil {
 		t.Fatal(err)
 	}
 	user := v.(map[string]any)["users"].([]any)[0].(map[string]any)
-	if msgpackReadUintOf(user["id"]) != 43 || user["password"] != acbaaUserPassword(43) {
+	if msgpack.UintOf(user["id"]) != 43 || user["password"] != acbaaUserPassword(43) {
 		t.Fatal("saved identity's credentials changed")
 	}
 	if len(s.acbaaUserLand) != 0 {

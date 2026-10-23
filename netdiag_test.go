@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"nx-baas/internal/msgpack"
 	"strconv"
 	"strings"
 	"testing"
@@ -207,7 +208,7 @@ func TestErrorReportUploadIsAccepted(t *testing.T) {
 
 // A play report names its events and application, and nothing else is read.
 func TestReportEvents(t *testing.T) {
-	body := msgpackOrdered("application_id", "0100c2500fc20000", "event_id", "online_error", "data", msgpackOrdered("user", "secret"))
+	body := msgpack.Ordered("application_id", "0100c2500fc20000", "event_id", "online_error", "data", msgpack.Ordered("user", "secret"))
 	got := reportEvents(body)
 	if got != " [application_id=0100c2500fc20000 event_id=online_error]" {
 		t.Fatalf("got %q", got)
