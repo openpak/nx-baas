@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"nx-baas/internal/core"
+	"nx-baas/internal/gameapi"
 	"nx-baas/internal/identity"
 	"nx-baas/internal/invitations"
 	"nx-baas/internal/store"
@@ -96,14 +97,14 @@ func do(t *testing.T, s *server, method, path, token, body string) *httptest.Res
 func TestNexTokenRoundTripAndTamper(t *testing.T) {
 	s := testServer(t)
 	tok := s.Acct.NexToken(hostPID, "OutboundHost")
-	pid, name, ok := verifyNexToken(s.Acct.NexSigningKey(), tok)
+	pid, name, ok := gameapi.VerifyNexToken(s.Acct.NexSigningKey(), tok)
 	if !ok || pid != hostPID || name != "OutboundHost" {
 		t.Fatalf("round trip: pid=%d name=%q ok=%v", pid, name, ok)
 	}
-	if _, _, ok := verifyNexToken(s.Acct.NexSigningKey(), tok[:len(tok)-2]+"xx"); ok {
+	if _, _, ok := gameapi.VerifyNexToken(s.Acct.NexSigningKey(), tok[:len(tok)-2]+"xx"); ok {
 		t.Fatal("a tampered signature verified")
 	}
-	if _, _, ok := verifyNexToken([]byte("another key another key another!"), tok); ok {
+	if _, _, ok := gameapi.VerifyNexToken([]byte("another key another key another!"), tok); ok {
 		t.Fatal("a foreign key verified")
 	}
 }
@@ -197,7 +198,7 @@ func TestMintTokenIsUsableAsBearer(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil || out.Username != "OutboundHost" {
 		t.Fatalf("mint: %d %s err=%v", w.Code, w.Body, err)
 	}
-	if pid, _, ok := verifyNexToken(s.Acct.NexSigningKey(), out.Token); !ok || pid != hostPID {
+	if pid, _, ok := gameapi.VerifyNexToken(s.Acct.NexSigningKey(), out.Token); !ok || pid != hostPID {
 		t.Fatalf("minted token does not authenticate its pid: %v %d", ok, pid)
 	}
 }

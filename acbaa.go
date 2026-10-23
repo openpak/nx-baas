@@ -260,7 +260,7 @@ func acbaaUserID(s *server, auth, name string) uint64 {
 	nsa := acbaaSubID(auth, name)
 	tok := strings.TrimPrefix(auth, "Bearer ")
 	if s != nil && s.Key != nil && s.Store != nil {
-		if pid, genuine := s.pidForIDToken(tok); genuine && pid != 0 && pid != nsa {
+		if pid, genuine := s.PIDForIDToken(tok); genuine && pid != 0 && pid != nsa {
 			s.acbaaMigrateUID(pid, nsa)
 		}
 	}

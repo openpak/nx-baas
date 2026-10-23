@@ -1,4 +1,4 @@
-package main
+package gameapi
 
 // The identity API: what the services split out of this one (nx-shop, nx-penne, nx-pctl;
 // docs/service-split.md) may ask the core about accounts. It is the whole of their access to
@@ -35,7 +35,7 @@ func identityAuth(w http.ResponseWriter, r *http.Request) bool {
 }
 
 // identityUsers serves /internal/identity/users/{id}[/avatar | /friends/{friend}/preference].
-func (s *server) identityUsers(w http.ResponseWriter, r *http.Request) {
+func (s *Service) identityUsers(w http.ResponseWriter, r *http.Request) {
 	if !identityAuth(w, r) {
 		return
 	}
@@ -48,16 +48,16 @@ func (s *server) identityUsers(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case len(parts) == 1:
 		httpx.WriteJSON(w, 200, map[string]any{
-			"id": u.ID, "na_id": u.NaID, "pid": u.PID, "nickname": u.Nickname, "lock": s.locks().UserLock(u),
+			"id": u.ID, "na_id": u.NaID, "pid": u.PID, "nickname": u.Nickname, "lock": s.Locks.UserLock(u),
 		})
 	case len(parts) == 2 && parts[1] == "avatar":
 		// Exactly what the cdn-image host serves for /1/<id>: the shop's corner picture is
 		// the one the console's profile shows.
 		r2 := r.Clone(r.Context())
 		r2.URL.Path = "/1/" + u.ID
-		s.baasSvc().Handle(w, r2, nil)
+		s.BAAS.Handle(w, r2, nil)
 	case len(parts) == 4 && parts[1] == "friends" && parts[3] == "preference":
-		httpx.WriteJSON(w, 200, map[string]any{"online_notification": friends.OnlineNotificationOf(s.friendsSvc().PrefOf(u, parts[2]))})
+		httpx.WriteJSON(w, 200, map[string]any{"online_notification": friends.OnlineNotificationOf(s.Friends.PrefOf(u, parts[2]))})
 	default:
 		httpx.APIErr(w, http.StatusNotFound, "no such route")
 	}
@@ -66,7 +66,7 @@ func (s *server) identityUsers(w http.ResponseWriter, r *http.Request) {
 // identityNA serves /internal/identity/na/{na_id}. An NA id this server signed a token for
 // names an account even before a console linked to it, so an unknown id is a 200 with no
 // BAAS user, the same answer shopPrincipal used to compute in-process.
-func (s *server) identityNA(w http.ResponseWriter, r *http.Request) {
+func (s *Service) identityNA(w http.ResponseWriter, r *http.Request) {
 	if !identityAuth(w, r) {
 		return
 	}
@@ -75,7 +75,7 @@ func (s *server) identityNA(w http.ResponseWriter, r *http.Request) {
 		httpx.APIErr(w, http.StatusNotFound, "no such route")
 		return
 	}
-	out := map[string]any{"na_id": naID, "baas_user_id": "", "pid": uint64(0), "lock": s.locks().NALock(naID)}
+	out := map[string]any{"na_id": naID, "baas_user_id": "", "pid": uint64(0), "lock": s.Locks.NALock(naID)}
 	if pid := s.Store.PIDForNA(naID); pid != 0 {
 		out["pid"] = pid
 		if u := s.Store.UserByPID(pid); u != nil {
@@ -87,7 +87,7 @@ func (s *server) identityNA(w http.ResponseWriter, r *http.Request) {
 
 // identityAccounts serves /internal/identity/accounts/{account_id}: the Switch Nintendo
 // Account id the projection minted for a core account (the store admin's account views).
-func (s *server) identityAccounts(w http.ResponseWriter, r *http.Request) {
+func (s *Service) identityAccounts(w http.ResponseWriter, r *http.Request) {
 	if !identityAuth(w, r) {
 		return
 	}
@@ -112,7 +112,7 @@ func (s *server) identityAccounts(w http.ResponseWriter, r *http.Request) {
 
 // identityPresence serves POST /internal/identity/presence (a DAPresence frame the Penne
 // frontline decoded) and POST /internal/identity/presence/renew (its lease).
-func (s *server) identityPresence(w http.ResponseWriter, r *http.Request) {
+func (s *Service) identityPresence(w http.ResponseWriter, r *http.Request) {
 	if !identityAuth(w, r) {
 		return
 	}
@@ -139,7 +139,7 @@ func (s *server) identityPresence(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.HasSuffix(r.URL.Path, "/renew") {
-		s.presenceSvc().RenewDevicePresence(u.ID, in.Device)
+		s.Presence.RenewDevicePresence(u.ID, in.Device)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -152,6 +152,6 @@ func (s *server) identityPresence(w http.ResponseWriter, r *http.Request) {
 		acd = *in.ACDIndex
 	}
 	// Only a real console speaks Penne: emulators publish over REST (the device-presence REST route).
-	s.presenceSvc().NoteClientPresence(u, in.Device, "switch", "", in.State, in.AppID, in.AppField, in.GroupID, acd)
+	s.Presence.NoteClientPresence(u, in.Device, "switch", "", in.State, in.AppID, in.AppField, in.GroupID, acd)
 	w.WriteHeader(http.StatusNoContent)
 }

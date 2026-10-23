@@ -1,6 +1,4 @@
-package main
-
-// Game-facing HTTP API on a plain internal port (ports.md: 20070). These are the endpoints
+// Package gameapi is the game-facing HTTP API on a plain internal port (ports.md: 20070). These are the endpoints
 // the Photon server and the emulator used to get from the earlier account server:
 //
 //	POST /internal/photon-room   Photon publishes the room a player just entered, so the
@@ -14,6 +12,7 @@ package main
 // Anything else under /api/ is forwarded to ACCOUNT_API while the rest of the account surface
 // (friends, presence, saves...) still lives there.
 // ponytail: drop the forwarder once the OpenPak core serves those directly.
+package gameapi
 
 import (
 	"context"
@@ -25,11 +24,17 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"nx-baas/internal/baas"
 	"nx-baas/internal/bans"
+	"nx-baas/internal/core"
+	"nx-baas/internal/dauth"
+	"nx-baas/internal/friends"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
 	"nx-baas/internal/invitations"
+	"nx-baas/internal/nxaccount"
 	"nx-baas/internal/penne"
+	"nx-baas/internal/presence"
 	"nx-baas/redact"
 	"os"
 	"strconv"
@@ -55,7 +60,7 @@ const maxAppParam = 1024
 // verifyNexToken checks the "nx2." token both this server and the earlier account server mint
 // (nexToken): HMAC-SHA256 over "nex:<pid>.<username>.<expiry>". Returning the PID is the
 // whole point -- it is what binds a request to an account.
-func verifyNexToken(key []byte, tok string) (uint64, string, bool) {
+func VerifyNexToken(key []byte, tok string) (uint64, string, bool) {
 	parts := strings.Split(tok, ".")
 	if len(key) == 0 || len(parts) != 3 || parts[0] != "nx2" {
 		return 0, "", false
@@ -91,9 +96,9 @@ func verifyNexToken(key []byte, tok string) (uint64, string, bool) {
 
 // callerPID authenticates an /api request. 401 makes the emulator drop its session, so it is
 // returned only for a token that is actually bad.
-func (s *server) callerPID(r *http.Request) (uint64, string, bool) {
+func (s *Service) callerPID(r *http.Request) (uint64, string, bool) {
 	tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer"))
-	return verifyNexToken(s.Acct.NexSigningKey(), tok)
+	return VerifyNexToken(s.Acct.NexSigningKey(), tok)
 }
 
 // ---------- room presence ----------
@@ -101,9 +106,9 @@ func (s *server) callerPID(r *http.Request) (uint64, string, bool) {
 // pidForIdentity resolves what the Photon server extracted from a client's id_token:
 // "nex:<nx2 token>" (emulators; account-signed, so it identifies an account) or
 // "bsdid:<bs:did>" (consoles) -- see AccountIdentityRegistry.ExtractToken.
-func (s *server) pidForIdentity(identity string) uint64 {
+func (s *Service) pidForIdentity(identity string) uint64 {
 	if tok, ok := strings.CutPrefix(identity, "nex:"); ok {
-		pid, _, valid := verifyNexToken(s.Acct.NexSigningKey(), tok)
+		pid, _, valid := VerifyNexToken(s.Acct.NexSigningKey(), tok)
 		if !valid {
 			return 0
 		}
@@ -120,7 +125,7 @@ func (s *server) pidForIdentity(identity string) uint64 {
 // The room becomes the player's friend presence: app_field carries the exact application
 // parameter the title expects (Outbound: u32_le(1) || u8(len) || ascii(code)), so a friend
 // joins the same way whether a console or an emulator hosts.
-func (s *server) photonRoom(w http.ResponseWriter, r *http.Request) {
+func (s *Service) photonRoom(w http.ResponseWriter, r *http.Request) {
 	if !httpx.InternalOK(r) {
 		httpx.APIErr(w, http.StatusUnauthorized, "internal")
 		return
@@ -144,7 +149,7 @@ func (s *server) photonRoom(w http.ResponseWriter, r *http.Request) {
 		httpx.APIErr(w, http.StatusBadRequest, "unknown identity")
 		return
 	}
-	if lock := s.locks().PIDLock(pid); lock != "" {
+	if lock := s.Locks.PIDLock(pid); lock != "" {
 		bans.InternalLocked(w, lock)
 		return
 	}
@@ -153,7 +158,7 @@ func (s *server) photonRoom(w http.ResponseWriter, r *http.Request) {
 	// friend's list shows PLAYING for exactly as long as the room lives —
 	// and not one request longer than the lease if the game never reports
 	// the departure.
-	s.presenceSvc().NoteDevicePresence(u, "photon:"+in.Identity, "PLAYING", in.AppID,
+	s.Presence.NoteDevicePresence(u, "photon:"+in.Identity, "PLAYING", in.AppID,
 		base64.StdEncoding.EncodeToString(appParam), in.AppID, -1)
 	log.Printf("[nx-baas] photon-room pid=%s app=%s room=%s", redact.Tag(pid), in.AppID, redact.Tag(in.Room))
 	httpx.WriteJSON(w, 200, map[string]any{"ok": true})
@@ -163,7 +168,7 @@ func (s *server) photonRoom(w http.ResponseWriter, r *http.Request) {
 // The room a player left is not a room they are in: without this the PLAYING
 // claim outlived the game and a friend's list offered a join into nothing
 // (PRE-02, room leave).
-func (s *server) photonRoomLeave(w http.ResponseWriter, r *http.Request) {
+func (s *Service) photonRoomLeave(w http.ResponseWriter, r *http.Request) {
 	if !httpx.InternalOK(r) {
 		httpx.APIErr(w, http.StatusUnauthorized, "internal")
 		return
@@ -181,7 +186,7 @@ func (s *server) photonRoomLeave(w http.ResponseWriter, r *http.Request) {
 		httpx.APIErr(w, http.StatusBadRequest, "unknown identity")
 		return
 	}
-	s.presenceSvc().NoteDevicePresence(u, "photon:"+in.Identity, "OFFLINE", "", "", "", -1)
+	s.Presence.NoteDevicePresence(u, "photon:"+in.Identity, "OFFLINE", "", "", "", -1)
 	log.Printf("[nx-baas] photon-room-leave pid=%s", redact.Tag(pid))
 	httpx.WriteJSON(w, 200, map[string]any{"ok": true})
 }
@@ -189,7 +194,7 @@ func (s *server) photonRoomLeave(w http.ResponseWriter, r *http.Request) {
 // POST /internal/photon-identity {"identity":"nex:...|bsdid:..."} -> {"pid":..,"country":"AU"}
 // The Photon master asks this when a player authenticates, so a room they create can be placed
 // on the region node for their country. Same identity shapes as photon-room.
-func (s *server) photonIdentity(w http.ResponseWriter, r *http.Request) {
+func (s *Service) photonIdentity(w http.ResponseWriter, r *http.Request) {
 	if !httpx.InternalOK(r) {
 		httpx.APIErr(w, http.StatusUnauthorized, "internal")
 		return
@@ -206,7 +211,7 @@ func (s *server) photonIdentity(w http.ResponseWriter, r *http.Request) {
 		httpx.APIErr(w, http.StatusBadRequest, "unknown identity")
 		return
 	}
-	if lock := s.locks().PIDLock(pid); lock != "" {
+	if lock := s.Locks.PIDLock(pid); lock != "" {
 		bans.InternalLocked(w, lock)
 		return
 	}
@@ -215,7 +220,7 @@ func (s *server) photonIdentity(w http.ResponseWriter, r *http.Request) {
 		httpx.APIErr(w, http.StatusNotFound, "unknown pid")
 		return
 	}
-	s.markLoginOnline(pid) // the Photon master authenticated this player: playtime starts here
+	s.MarkLoginOnline(pid) // the Photon master authenticated this player: playtime starts here
 	httpx.WriteJSON(w, 200, map[string]any{"pid": pid, "country": id.Country, "baas_user_id": id.BaasUserID})
 }
 
@@ -239,13 +244,13 @@ func validRoomCode(room string) bool {
 // mailbox sends land in one lifecycle, and a stale room fails the pop cleanly
 // (INV-03/INV-04). The five-minute TTL stands as the room-staleness bound.
 
-func (s *server) invitations(w http.ResponseWriter, r *http.Request) {
+func (s *Service) invitations(w http.ResponseWriter, r *http.Request) {
 	pid, name, ok := s.callerPID(r)
 	if !ok {
 		httpx.APIErr(w, http.StatusUnauthorized, "invalid or expired session")
 		return
 	}
-	if lock := s.locks().PIDLock(pid); lock != "" {
+	if lock := s.Locks.PIDLock(pid); lock != "" {
 		bans.InternalLocked(w, lock)
 		return
 	}
@@ -264,7 +269,7 @@ func (s *server) invitations(w http.ResponseWriter, r *http.Request) {
 // lists friends, and without the check this is a generic spam relay. With the OpenPak core
 // attached, the core's own interaction check (friendship, blocks, account status) is the
 // authority; the friend list is the fallback for the earlier account backend.
-func (s *server) sendInvitation(w http.ResponseWriter, r *http.Request, from uint64, name string) {
+func (s *Service) sendInvitation(w http.ResponseWriter, r *http.Request, from uint64, name string) {
 	var in struct {
 		TargetPIDs     []uint64 `json:"target_pids"`
 		AppParamBase64 string   `json:"app_param_base64"`
@@ -299,13 +304,13 @@ func (s *server) sendInvitation(w http.ResponseWriter, r *http.Request, from uin
 	// The sender's title now, so the invitation carries an application id and
 	// the staleness check can answer "is this room still alive" later.
 	appID := sender.Presence.AppID
-	core := s.invitationsSvc().CoreFor()
+	core := s.Invitations.CoreFor()
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	sent := 0
 	for _, pid := range in.TargetPIDs {
 		target := s.Store.UserByPID(pid)
-		if target == nil || !isFriend(id, pid) || s.locks().PIDLock(pid) != "" {
+		if target == nil || !isFriend(id, pid) || s.Locks.PIDLock(pid) != "" {
 			continue
 		}
 		if core != nil {
@@ -318,7 +323,7 @@ func (s *server) sendInvitation(w http.ResponseWriter, r *http.Request, from uin
 			if err != nil || !allowed {
 				continue
 			}
-		} else if invitations.MeBlocks(sender, target.ID) || invitations.TargetBlocksUser(s.invitationsSvc(), target.ID, sender.ID) {
+		} else if invitations.MeBlocks(sender, target.ID) || invitations.TargetBlocksUser(s.Invitations, target.ID, sender.ID) {
 			continue
 		}
 		invitations.CreateMailbox(sender, name, target, in.AppParamBase64, appID)
@@ -339,14 +344,14 @@ func isFriend(id *identity.Identity, pid uint64) bool {
 
 // GET /api/invitations -- pops every invitation queued for the caller, matching the console's
 // own TryPopFromFriendInvitationStorageChannel (a poll-until-something's-there call).
-func (s *server) pollInvitations(w http.ResponseWriter, pid uint64) {
+func (s *Service) pollInvitations(w http.ResponseWriter, pid uint64) {
 	receiver := s.Store.UserByPID(pid)
 	if receiver == nil {
 		httpx.WriteJSON(w, 200, map[string]any{"invitations": []any{}})
 		return
 	}
 	out := make([]map[string]any, 0, 4)
-	for _, inv := range invitations.PopMailbox(s.invitationsSvc(), receiver) {
+	for _, inv := range invitations.PopMailbox(s.Invitations, receiver) {
 		out = append(out, map[string]any{"from_pid": inv.MailboxFromPID, "from_name": inv.MailboxFromName,
 			"app_param_base64": inv.ApplicationData})
 	}
@@ -355,7 +360,7 @@ func (s *server) pollInvitations(w http.ResponseWriter, pid uint64) {
 
 // POST /internal/mint-token {"pid":1800000003} -> the fields scripts write into a profile's
 // openpak_account.txt. Dev-rig tooling: it mints a bearer for any PID without a password.
-func (s *server) mintToken(w http.ResponseWriter, r *http.Request) {
+func (s *Service) mintToken(w http.ResponseWriter, r *http.Request) {
 	if !httpx.InternalOK(r) {
 		httpx.APIErr(w, http.StatusUnauthorized, "internal")
 		return
@@ -367,7 +372,7 @@ func (s *server) mintToken(w http.ResponseWriter, r *http.Request) {
 		httpx.APIErr(w, http.StatusBadRequest, "pid required")
 		return
 	}
-	if lock := s.locks().PIDLock(in.PID); lock != "" {
+	if lock := s.Locks.PIDLock(in.PID); lock != "" {
 		bans.InternalLocked(w, lock)
 		return
 	}
@@ -392,7 +397,7 @@ func (s *server) mintToken(w http.ResponseWriter, r *http.Request) {
 // real A/C feeds. It permits development, not end-to-end completion (PRD:
 // "A synthetic event source permits development, not end-to-end completion").
 // Native acceptance still requires the real core events on two consoles.
-func (s *server) penneTestNotification(w http.ResponseWriter, r *http.Request) {
+func (s *Service) penneTestNotification(w http.ResponseWriter, r *http.Request) {
 	if !httpx.InternalOK(r) {
 		httpx.APIErr(w, http.StatusUnauthorized, "internal")
 		return
@@ -411,7 +416,7 @@ func (s *server) penneTestNotification(w http.ResponseWriter, r *http.Request) {
 		httpx.APIErr(w, http.StatusBadRequest, "user_id and kind required")
 		return
 	}
-	res := s.submitNotification(penne.Delivery{
+	res := s.Submit(penne.Delivery{
 		ID: in.ID, UserID: in.UserID, Kind: in.Kind, Payload: in.Payload,
 	}, true)
 	log.Printf("[nx-baas] penne: test notification user=%s kind=%s -> %s", redact.Tag(in.UserID), in.Kind, res.Outcome)
@@ -420,7 +425,8 @@ func (s *server) penneTestNotification(w http.ResponseWriter, r *http.Request) {
 
 // ---------- mux ----------
 
-func (s *server) gameAPI() http.Handler {
+// Handler is the game API mux.
+func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/internal/photon-room", s.photonRoom)
 	mux.HandleFunc("/internal/photon-room-leave", s.photonRoomLeave)
@@ -428,21 +434,21 @@ func (s *server) gameAPI() http.Handler {
 	mux.HandleFunc("/internal/mint-token", s.mintToken)
 	mux.HandleFunc("/internal/switch/identity", s.switchIdentity)
 	mux.HandleFunc("/internal/switch/friend-code", s.switchFriendCode)
-	mux.HandleFunc("/internal/switch/account-by-friend-code", s.switchAccountByFriendCode)
+	mux.HandleFunc("/internal/switch/account-by-friend-code", s.SwitchAccountByFriendCode)
 	mux.HandleFunc("/internal/switch/emulator", s.switchEmulator)
 	mux.HandleFunc("/internal/switch/emulator/friend", s.switchEmulatorFriend)
 	mux.HandleFunc("/internal/switch/emulator/link-token", s.switchEmulatorLinkToken)
 	mux.HandleFunc("/internal/switch/ca", s.switchCA)
-	mux.HandleFunc("/internal/title-version", s.dauthSvc().TitleVersion)
+	mux.HandleFunc("/internal/title-version", s.Dauth.TitleVersion)
 	mux.HandleFunc("/api/invitations", s.invitations)
 	mux.HandleFunc("/internal/notifications/test", s.penneTestNotification)
 	mux.HandleFunc("/internal/news/push", s.Penne.NewsPush)
-	if s.pctlFwd != nil {
+	if s.PctlFwd != nil {
 		// The website's parent routes are nx-pctl's now; forwarded until it points there.
-		mux.Handle("/internal/pctl/", s.pctlFwd)
+		mux.Handle("/internal/pctl/", s.PctlFwd)
 	}
-	if s.shopFwd != nil {
-		mux.Handle("/internal/store/", s.shopFwd)
+	if s.ShopFwd != nil {
+		mux.Handle("/internal/store/", s.ShopFwd)
 	}
 	// What the split-out services ask the core (internal_identity.go).
 	mux.HandleFunc("/internal/identity/users/", s.identityUsers)
@@ -450,9 +456,9 @@ func (s *server) gameAPI() http.Handler {
 	mux.HandleFunc("/internal/identity/accounts/", s.identityAccounts)
 	mux.HandleFunc("/internal/identity/presence", s.identityPresence)
 	mux.HandleFunc("/internal/identity/presence/renew", s.identityPresence)
-	if s.penneFwd != nil {
+	if s.PenneFwd != nil {
 		// Penne's API is nx-penne's; a caller still pointed here is forwarded.
-		mux.Handle("/internal/penne/", s.penneFwd)
+		mux.Handle("/internal/penne/", s.PenneFwd)
 	}
 	if base := os.Getenv("ACCOUNT_API"); base != "" {
 		if u, err := url.Parse(strings.TrimRight(base, "/")); err == nil {
@@ -462,4 +468,21 @@ func (s *server) gameAPI() http.Handler {
 		}
 	}
 	return mux
+}
+
+// Service is the game-facing internal API (plain HTTP on NX_API_ADDR): what game servers,
+// the website and the split-out services ask the core. It holds no state of its own.
+type Service struct {
+	*core.Core
+	Locks       *bans.Checker
+	Dauth       *dauth.Service
+	Invitations *invitations.Service
+	Presence    *presence.Service
+	NA          *nxaccount.Service
+	BAAS        *baas.Service
+	Friends     *friends.Service
+	// Submit hands a checked notification to Penne; wait asks for nx-penne's outcome.
+	Submit func(d penne.Delivery, wait bool) penne.Submission
+	// The forwarders to the split-out services whose admin routes the website still calls here.
+	ShopFwd, PctlFwd, PenneFwd *httputil.ReverseProxy
 }

@@ -1,4 +1,4 @@
-package main
+package gameapi
 
 // POST /internal/switch/identity {"openpak":"nx2…"}, {"id_token":"eyJ…"} or {"pid":18…} -> the
 // player's Switch projection plus the friends that have one. The title-server surface (PRD §8):
@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/url"
 	"nx-baas/internal/bans"
-	"nx-baas/internal/core"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
 	"nx-baas/internal/nxaccount"
@@ -22,13 +21,13 @@ import (
 	"time"
 )
 
-type switchPlayer struct {
+type SwitchPlayer struct {
 	PID        uint64 `json:"pid"`
 	BaasUserID string `json:"baas_user_id"` // the NSA id titles see
 	Nickname   string `json:"nickname"`
 }
 
-func (s *server) switchIdentity(w http.ResponseWriter, r *http.Request) {
+func (s *Service) switchIdentity(w http.ResponseWriter, r *http.Request) {
 	if !httpx.InternalOK(r) {
 		httpx.APIErr(w, http.StatusUnauthorized, "internal")
 		return
@@ -47,13 +46,13 @@ func (s *server) switchIdentity(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case in.OpenPak != "":
 		var ok bool
-		if pid, _, ok = verifyNexToken(s.Acct.NexSigningKey(), in.OpenPak); !ok {
+		if pid, _, ok = VerifyNexToken(s.Acct.NexSigningKey(), in.OpenPak); !ok {
 			httpx.APIErr(w, http.StatusUnauthorized, "openpak not proven")
 			return
 		}
 	case in.IDToken != "":
 		var genuine bool
-		if pid, genuine = s.pidForIDToken(in.IDToken); !genuine {
+		if pid, genuine = s.PIDForIDToken(in.IDToken); !genuine {
 			httpx.APIErr(w, http.StatusUnauthorized, "id_token not proven")
 			return
 		}
@@ -69,7 +68,7 @@ func (s *server) switchIdentity(w http.ResponseWriter, r *http.Request) {
 	}
 	// A banned account's title-server login ends here: 403 account_banned, never 401
 	// (platforms/switch/games/switch-nex maps 401 to TokenExpired and the console would refresh forever).
-	if lock := s.locks().PIDLock(pid); lock != "" {
+	if lock := s.Locks.PIDLock(pid); lock != "" {
 		bans.InternalLocked(w, lock)
 		return
 	}
@@ -80,14 +79,14 @@ func (s *server) switchIdentity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	accountID := ""
-	if src := s.locks().Src(); src != nil {
+	if src := s.Locks.Src(); src != nil {
 		accountID = src.AccountFor(pid)
 	}
 	// A game server just proved who this player is: they are on it (playtime starts here).
-	s.markLoginOnline(pid)
-	friends := make([]switchPlayer, 0, len(id.Friends))
+	s.MarkLoginOnline(pid)
+	friends := make([]SwitchPlayer, 0, len(id.Friends))
 	for _, f := range id.Friends {
-		friends = append(friends, switchPlayer{PID: f.PID, BaasUserID: f.BaasUserID, Nickname: f.Nickname})
+		friends = append(friends, SwitchPlayer{PID: f.PID, BaasUserID: f.BaasUserID, Nickname: f.Nickname})
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"pid": id.PID, "baas_user_id": id.BaasUserID, "nickname": id.Nickname, "friends": friends,
@@ -98,46 +97,12 @@ func (s *server) switchIdentity(w http.ResponseWriter, r *http.Request) {
 		"country": id.Country})
 }
 
-// pidForIDToken proves a BAAS id_token this server issued and answers with the account behind
-// it. A retail console sends a plain id_token with no binding claim -- only an emulator build
-// adds one -- so treating a missing claim as an error refuses every real console. The signature
-// is the proof, and it is one we can check because we minted the token.
-//
-// Every token this server signs uses the same key, so the signature alone does not say what kind
-// of token this is: "typ" and "iss" are what keep an access token, a Nintendo-Account token or a
-// refresh token from being spent here as a login.
-//
-// The bool is "this token is genuine", not "this call succeeded". A genuine token for an account
-// we do not know returns (0, true), because the two cases are answered with different status
-// codes and a caller that conflates them makes a console retry forever.
-func (s *server) pidForIDToken(tok string) (uint64, bool) {
-	c, err := token.ParseJWT(tok, &s.Key.PublicKey)
-	if err != nil {
-		return 0, false
-	}
-	if httpx.Str(c, "typ") != "id_token" || httpx.Str(c, "iss") != core.BaasIssuer {
-		return 0, false
-	}
-	exp, _ := c["exp"].(float64)
-	if int64(exp) <= time.Now().Unix() {
-		return 0, false
-	}
-	// Genuine from here on. ponytail: the subject is the BAAS user id, which is the store's own
-	// key, so the lookup is the mapping. A session table is the upgrade if a token ever has to be
-	// revocable before it expires.
-	u := s.Store.User(httpx.Str(c, "sub"))
-	if u == nil || u.PID == 0 {
-		return 0, true
-	}
-	return u.PID, true
-}
-
 // switchFriendCode answers "what is this account's friend code" for the
 // website, which cannot know: the code is minted here and the core holds only
 // the link subject, which is the BAAS user id. The site was formatting that
 // hex id as SW-xxxx-xxxx-xxxx, so people were being shown, and reading out, an
 // identifier that is not their friend code.
-func (s *server) switchFriendCode(w http.ResponseWriter, r *http.Request) {
+func (s *Service) switchFriendCode(w http.ResponseWriter, r *http.Request) {
 	if !httpx.InternalOK(r) {
 		httpx.APIErr(w, http.StatusUnauthorized, "internal")
 		return
@@ -160,7 +125,7 @@ func (s *server) switchFriendCode(w http.ResponseWriter, r *http.Request) {
 // add-a-friend form asked the core for a link whose subject matched the code,
 // but the core's "switch" subject is the BAAS user id -- so every Switch friend
 // code answered "no account found", always.
-func (s *server) switchAccountByFriendCode(w http.ResponseWriter, r *http.Request) {
+func (s *Service) SwitchAccountByFriendCode(w http.ResponseWriter, r *http.Request) {
 	if !httpx.InternalOK(r) {
 		httpx.APIErr(w, http.StatusUnauthorized, "internal")
 		return
@@ -187,7 +152,7 @@ func (s *server) switchAccountByFriendCode(w http.ResponseWriter, r *http.Reques
 // is the only caller; it proves the bearer and sends the account id.
 
 // switchEmulator answers GET /internal/switch/emulator?account_id=…
-func (s *server) switchEmulator(w http.ResponseWriter, r *http.Request) {
+func (s *Service) switchEmulator(w http.ResponseWriter, r *http.Request) {
 	if !httpx.InternalOK(r) {
 		httpx.APIErr(w, http.StatusUnauthorized, "internal")
 		return
@@ -197,7 +162,7 @@ func (s *server) switchEmulator(w http.ResponseWriter, r *http.Request) {
 		httpx.APIErr(w, http.StatusBadRequest, "account_id required")
 		return
 	}
-	if lock := s.locks().AccountLock(accountID); lock != "" {
+	if lock := s.Locks.AccountLock(accountID); lock != "" {
 		bans.InternalLocked(w, lock)
 		return
 	}
@@ -239,9 +204,9 @@ func (s *server) switchEmulator(w http.ResponseWriter, r *http.Request) {
 			}
 			if p.State == "OFFLINE" {
 				// Nothing live here: the core knows where else they are.
-				if elsewhere, live := s.presenceSvc().FromCore(b.AccountFor(f.PID), b.Namespace, now); live {
+				if elsewhere, live := s.Presence.FromCore(b.AccountFor(f.PID), b.Namespace, now); live {
 					p = elsewhere
-					if cp, ok := s.presenceSvc().CorePresenceOf(b.AccountFor(f.PID)); ok {
+					if cp, ok := s.Presence.CorePresenceOf(b.AccountFor(f.PID)); ok {
 						namespace, since, client = cp.Namespace, cp.Since, cp.Client
 					}
 				}
@@ -293,7 +258,7 @@ func (s *server) switchEmulator(w http.ResponseWriter, r *http.Request) {
 // account with. A console gets this by typing the e-mail and password into the link page; an
 // emulator whose person already signed in to the website has proved the same thing, so the
 // website asks here on their behalf and nobody types the password twice.
-func (s *server) switchEmulatorLinkToken(w http.ResponseWriter, r *http.Request) {
+func (s *Service) switchEmulatorLinkToken(w http.ResponseWriter, r *http.Request) {
 	if !httpx.InternalOK(r) {
 		httpx.APIErr(w, http.StatusUnauthorized, "internal")
 		return
@@ -303,7 +268,7 @@ func (s *server) switchEmulatorLinkToken(w http.ResponseWriter, r *http.Request)
 		httpx.APIErr(w, http.StatusBadRequest, "account_id required")
 		return
 	}
-	if lock := s.locks().AccountLock(accountID); lock != "" {
+	if lock := s.Locks.AccountLock(accountID); lock != "" {
 		bans.InternalLocked(w, lock)
 		return
 	}
@@ -327,12 +292,12 @@ func (s *server) switchEmulatorLinkToken(w http.ResponseWriter, r *http.Request)
 	// The same bookkeeping the authorize page does: link() resolves the token's sub through it.
 	s.Store.RememberNA(id.NaID, pr.PID)
 	c := nxaccount.Code{PID: pr.PID, Username: id.Nickname, ClientID: r.URL.Query().Get("client_id"), NaID: id.NaID}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"id_token": s.naSvc().NAIDToken(c, "", "")})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"id_token": s.NA.NAIDToken(c, "", "")})
 }
 
 // switchEmulatorFriend answers POST /internal/switch/emulator/friend
 // {"account_id":…, "action":"request"|"accept"|"decline", "pid":…, "friend_code":…}
-func (s *server) switchEmulatorFriend(w http.ResponseWriter, r *http.Request) {
+func (s *Service) switchEmulatorFriend(w http.ResponseWriter, r *http.Request) {
 	if !httpx.InternalOK(r) {
 		httpx.APIErr(w, http.StatusUnauthorized, "internal")
 		return
@@ -347,7 +312,7 @@ func (s *server) switchEmulatorFriend(w http.ResponseWriter, r *http.Request) {
 		httpx.APIErr(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if lock := s.locks().AccountLock(in.AccountID); lock != "" {
+	if lock := s.Locks.AccountLock(in.AccountID); lock != "" {
 		bans.InternalLocked(w, lock)
 		return
 	}
@@ -399,7 +364,7 @@ func (s *server) switchEmulatorFriend(w http.ResponseWriter, r *http.Request) {
 // switchCA hands the website the CA every console-facing certificate chains to, so an
 // emulator can fetch it over public TLS from openpak.org and pin it, instead of turning
 // verification off.
-func (s *server) switchCA(w http.ResponseWriter, r *http.Request) {
+func (s *Service) switchCA(w http.ResponseWriter, r *http.Request) {
 	if !httpx.InternalOK(r) {
 		httpx.APIErr(w, http.StatusUnauthorized, "internal")
 		return

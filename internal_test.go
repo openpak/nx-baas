@@ -154,7 +154,7 @@ func TestSwitchAccountByFriendCodeRoute(t *testing.T) {
 
 	r := httptest.NewRequest("GET", "/internal/switch/account-by-friend-code?friend_code=SW-1000-0000-0002", nil)
 	w := httptest.NewRecorder()
-	s.switchAccountByFriendCode(w, r)
+	s.gameAPISvc().SwitchAccountByFriendCode(w, r)
 	if w.Code != 200 {
 		t.Fatalf("status %d: %s", w.Code, w.Body.String())
 	}
@@ -167,7 +167,7 @@ func TestSwitchAccountByFriendCodeRoute(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	s.switchAccountByFriendCode(w, httptest.NewRequest("GET", "/internal/switch/account-by-friend-code?friend_code=SW-0000-0000-0001", nil))
+	s.gameAPISvc().SwitchAccountByFriendCode(w, httptest.NewRequest("GET", "/internal/switch/account-by-friend-code?friend_code=SW-0000-0000-0001", nil))
 	if w.Code != 404 {
 		t.Fatalf("unknown code answered %d, want 404", w.Code)
 	}

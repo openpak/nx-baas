@@ -24,6 +24,7 @@ import (
 	"nx-baas/internal/dauth"
 	"nx-baas/internal/devices"
 	"nx-baas/internal/friends"
+	"nx-baas/internal/gameapi"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
 	"nx-baas/internal/invitations"
@@ -367,3 +368,14 @@ func (s *server) baasSvc() *baas.Service {
 	s.baasOnce.Do(func() { s.baasService = baas.New(s.Core, s.locks(), s.presenceSvc(), s.friendsSvc()) })
 	return s.baasService
 }
+
+// gameAPISvc is the game API over the current services and forwarders. It keeps no state, so
+// it is built afresh: a test that installs a forwarder after the first call still sees it.
+func (s *server) gameAPISvc() *gameapi.Service {
+	return &gameapi.Service{Core: s.Core, Locks: s.locks(), Dauth: s.dauthSvc(), Invitations: s.invitationsSvc(),
+		Presence: s.presenceSvc(), NA: s.naSvc(), BAAS: s.baasSvc(), Friends: s.friendsSvc(),
+		Submit: s.submitNotification, ShopFwd: s.shopFwd, PctlFwd: s.pctlFwd, PenneFwd: s.penneFwd}
+}
+
+// gameAPI is the game-facing internal API's mux (NX_API_ADDR).
+func (s *server) gameAPI() http.Handler { return s.gameAPISvc().Handler() }

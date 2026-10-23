@@ -18,6 +18,7 @@ import (
 
 	accountv1 "nx-baas/accountpb"
 	"nx-baas/internal/core"
+	"nx-baas/internal/gameapi"
 	"nx-baas/internal/identity"
 )
 
@@ -439,8 +440,8 @@ func TestInternalSwitchIdentity(t *testing.T) {
 	srv := httptest.NewServer((&server{Core: &core.Core{Acct: b}}).gameAPI())
 	defer srv.Close()
 	post := func(body, k string) (int, struct {
-		switchPlayer
-		Friends []switchPlayer `json:"friends"`
+		gameapi.SwitchPlayer
+		Friends []gameapi.SwitchPlayer `json:"friends"`
 	}) {
 		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/internal/switch/identity", strings.NewReader(body))
 		req.Header.Set("X-Internal-Key", k)
@@ -450,8 +451,8 @@ func TestInternalSwitchIdentity(t *testing.T) {
 		}
 		defer resp.Body.Close()
 		var out struct {
-			switchPlayer
-			Friends []switchPlayer `json:"friends"`
+			gameapi.SwitchPlayer
+			Friends []gameapi.SwitchPlayer `json:"friends"`
 		}
 		_ = json.NewDecoder(resp.Body).Decode(&out)
 		return resp.StatusCode, out

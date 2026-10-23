@@ -1,4 +1,4 @@
-package main
+package gameapi
 
 // Playtime on openpak.org counts only time a game server confirmed the player online, and the
 // confirmation is the login itself: when a game server asks who a player is and gets an answer,
@@ -12,7 +12,7 @@ type onlineMarker interface {
 }
 
 // markLoginOnline is called after a game server's identity lookup succeeded.
-func (s *server) markLoginOnline(pid uint64) {
+func (s *Service) MarkLoginOnline(pid uint64) {
 	if m, ok := s.Acct.(onlineMarker); ok && pid != 0 {
 		m.MarkOnline(pid)
 	}

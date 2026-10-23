@@ -22,7 +22,7 @@ import (
 // the title grid; add a table here when that is wanted.
 func (s *server) tabiji(w http.ResponseWriter, r *http.Request, body []byte) {
 	p := r.URL.Path
-	if _, genuine := s.pidForIDToken(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")); !genuine {
+	if _, genuine := s.PIDForIDToken(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")); !genuine {
 		log.Printf("[tabiji] %s %s: no valid NSA id token", r.Method, redact.Path(p))
 		httpx.WriteJSON(w, 401, map[string]any{"status": 401, "code": "unauthorized", "detail": "invalid id token"})
 		return

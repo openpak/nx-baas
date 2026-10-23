@@ -169,3 +169,37 @@ func AvatarURL(pid uint64, b64 string, updatedAt int64) string {
 	}
 	return fmt.Sprintf("%s/avatar/%d.jpg?v=%d", CdnHost, pid, updatedAt)
 }
+
+// PIDForIDToken proves a BAAS id_token this server issued and answers with the account behind
+// it. A retail console sends a plain id_token with no binding claim -- only an emulator build
+// adds one -- so treating a missing claim as an error refuses every real console. The signature
+// is the proof, and it is one we can check because we minted the token.
+//
+// Every token this server signs uses the same key, so the signature alone does not say what kind
+// of token this is: "typ" and "iss" are what keep an access token, a Nintendo-Account token or a
+// refresh token from being spent here as a login.
+//
+// The bool is "this token is genuine", not "this call succeeded". A genuine token for an account
+// we do not know returns (0, true), because the two cases are answered with different status
+// codes and a caller that conflates them makes a console retry forever.
+func (s *Core) PIDForIDToken(tok string) (uint64, bool) {
+	c, err := token.ParseJWT(tok, &s.Key.PublicKey)
+	if err != nil {
+		return 0, false
+	}
+	if httpx.Str(c, "typ") != "id_token" || httpx.Str(c, "iss") != BaasIssuer {
+		return 0, false
+	}
+	exp, _ := c["exp"].(float64)
+	if int64(exp) <= time.Now().Unix() {
+		return 0, false
+	}
+	// Genuine from here on. ponytail: the subject is the BAAS user id, which is the store's own
+	// key, so the lookup is the mapping. A session table is the upgrade if a token ever has to be
+	// revocable before it expires.
+	u := s.Store.User(httpx.Str(c, "sub"))
+	if u == nil || u.PID == 0 {
+		return 0, true
+	}
+	return u.PID, true
+}
