@@ -24,6 +24,7 @@ import (
 	"nx-baas/internal/core"
 	"nx-baas/internal/dauth"
 	"nx-baas/internal/devices"
+	"nx-baas/internal/events"
 	"nx-baas/internal/friends"
 	"nx-baas/internal/gameapi"
 	"nx-baas/internal/httpx"
@@ -129,16 +130,16 @@ func main() {
 	s.Harbor = devices.FromEnv()
 	s.acbaaSvc().Open(httpx.Getenv("NX_DATA", "/data") + "/acbaa.json")
 	if b, ok := s.Acct.(*identity.OpenpakBackend); ok {
-		go s.followCoreEvents(b)
+		go s.eventsSvc().Follow(b)
 		// One presence reconciler beside the one core-event poller: leases,
 		// heartbeats and expiries on the adapter's clock (PRE-02).
 		go s.presenceSvc().ReconcileLoop()
-		go s.provisionAllAccounts(b)
+		go s.eventsSvc().ProvisionAll(b)
 	}
 	// Integration wiring: C's committed-invitation seam delivers through B
 	// (notify_wiring.go). Registered here so the REST surface keeps working
 	// unchanged when the notification side is absent.
-	s.wireInvitationNotifications()
+	s.eventsSvc().WireInvitations()
 	// Console error reports: kept raw, forwarded to the website, retried (errorreport.go).
 	go s.errorReports().run()
 	// Latest version only: outdated titles get 2124-3001 at aauth (versiongate.go).
@@ -363,4 +364,21 @@ func (s *server) gameAPI() http.Handler { return s.gameAPISvc().Handler() }
 func (s *server) acbaaSvc() *acbaa.Service {
 	s.acbaaOnce.Do(func() { s.acbaaService = &acbaa.Service{Core: s.Core} })
 	return s.acbaaService
+}
+
+// eventsSvc follows the account core's events over the current services.
+func (s *server) eventsSvc() *events.Follower {
+	return &events.Follower{Core: s.Core, Locks: s.locks(), Friends: s.friendsSvc(), Presence: s.presenceSvc(), Notify: s.SubmitNotification}
+}
+
+// SubmitNotification is the entry point the social, presence and invitation code calls.
+// Accepted means nx-penne has it (or will, through the ordered queue); the caller never
+// retries a submission that returned Accepted.
+func (s *server) SubmitNotification(d penne.Delivery) penne.Submission {
+	return s.submitNotification(d, false)
+}
+
+// submitNotification is SubmitNotification with the choice to wait for nx-penne's outcome.
+func (s *server) submitNotification(d penne.Delivery, wait bool) penne.Submission {
+	return penne.Submit(s.Store, s.notifier, d, wait)
 }

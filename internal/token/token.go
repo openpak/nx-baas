@@ -41,7 +41,7 @@ func UUID4() string {
 // and writes nothing at all otherwise -- and that record is create-only, so a
 // profile that links with a non-hex password can never publish presence or
 // receive notifications until it is unlinked (2026-09-20,
-// docs/switch/presence-publish-gate-2026-09-20.md). Alphanumeric passwords
+// internal research notes). Alphanumeric passwords
 // passed that check with probability about 1e-18.
 func RandPassword() string {
 	return RandHex(20)

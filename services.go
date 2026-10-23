@@ -121,7 +121,7 @@ func newSavesProxy(base string) *httputil.ReverseProxy {
 // second of minting a profile's notification token, olsc uploads that token to
 // scsi .../network_service_accounts/<user>/notification_tokens with the user's
 // own token: token -> profile (recorded at mint) -> user (proven here)
-// [firmware, olsc; docs/switch/friends-notifications-firmware-2026-09-19.md §1].
+// [firmware, olsc; internal research notes §1].
 func (s *server) bindTokenProfile(r *http.Request, tok string) {
 	claims := s.Bearer(r)
 	if tok == "" || claims == nil {

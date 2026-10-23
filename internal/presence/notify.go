@@ -105,14 +105,14 @@ func EventValue(userID string, agg store.Presence) map[string]any {
 
 // presenceEventExtras renders the app fields a presence event carries, with the
 // types the console publishes them in: the ids as quoted 16-hex strings, the
-// catalog index as a number (docs/switch/firmware-22.5.0-followup-2026-09-12.md §15).
+// catalog index as a number (internal research notes §15).
 //
 // appField, appInfo:appId and appInfo:presenceGroupId are all required. The
 // event parser keeps a field mask and, at the end of the document, fails the
 // whole presence_updated unless userId, state, appId, presenceGroupId,
 // appField, updatedAt, logoutAt and $.createdAt all arrived (mask 0x3eb; only
 // pf and acdIndex are optional) [firmware: friends 22.5.0 0x1a74a0, 23.0.1
-// 0x1aaea0; docs/switch/friends-presence-firmware-2026-09-19.md §6]. So "no
+// 0x1aaea0; internal research notes §6]. So "no
 // game" is the all-zero id, exactly as the console publishes it from HOME
 // ("%016llx" of 0), never an absent key: until 2026-10-10 every INACTIVE,
 // OFFLINE and title-less ONLINE event was dropped by the console, which then

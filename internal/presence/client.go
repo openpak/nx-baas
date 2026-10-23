@@ -130,7 +130,7 @@ const maxDescriptionBytes = 160
 
 // descriptionAppField renders the description as the appField a console
 // publishes for SetDescription: a JSON object string with one key,
-// sys_description [docs/switch/friends-presence-firmware-2026-09-19.md §1.2,
+// sys_description [internal research notes §1.2,
 // §2.2]. The friend-list parser reads it back into the key/value blob that
 // FriendPresence::GetDescription searches.
 func DescriptionAppField(desc string) string {

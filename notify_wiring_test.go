@@ -32,7 +32,7 @@ func TestCoreFriendEventsNotifyTheAccountTheCoreAddressed(t *testing.T) {
 		{"friend_accepted", penne.EventFriendRequestAuthorized, 12},
 		{"friend_removed", penne.EventFriendDeleted, 13},
 	} {
-		s.notifyCoreFriendEvent(b, tc.core, "acc-a@example.com", "acc-b@example.com", tc.version)
+		s.eventsSvc().NotifyCoreFriendEvent(b, tc.core, "acc-a@example.com", "acc-b@example.com", tc.version)
 		queue := outboxOf(s, a.ID)
 		if len(queue) == 0 {
 			t.Fatalf("%s produced no delivery", tc.core)
@@ -61,7 +61,7 @@ func TestRequestReceivedPushCarriesTheChannel(t *testing.T) {
 
 	id, _ := s.Store.EnsureRequest(other.PID, a.PID)
 	s.friendsSvc().NoteRequestRoute(id, []byte(`{"channels":["IN_APP"]}`))
-	s.notifyCoreFriendEvent(b, "friend_requested", "acc-a@example.com", "acc-b@example.com", 21)
+	s.eventsSvc().NotifyCoreFriendEvent(b, "friend_requested", "acc-a@example.com", "acc-b@example.com", 21)
 	queue := outboxOf(s, a.ID)
 	if len(queue) != 1 {
 		t.Fatalf("friend_requested produced %d deliveries, want 1", len(queue))
@@ -75,7 +75,7 @@ func TestRequestReceivedPushCarriesTheChannel(t *testing.T) {
 	// A request this server never saw still parses: FRIEND_CODE.
 	s2, _, users2 := socialServer(t)
 	b2 := s2.Acct.(*identity.OpenpakBackend)
-	s2.notifyCoreFriendEvent(b2, "friend_requested", "acc-a@example.com", "acc-b@example.com", 22)
+	s2.eventsSvc().NotifyCoreFriendEvent(b2, "friend_requested", "acc-a@example.com", "acc-b@example.com", 22)
 	queue2 := outboxOf(s2, users2[0].ID)
 	if len(queue2) != 1 {
 		t.Fatalf("friend_requested produced %d deliveries, want 1", len(queue2))
@@ -93,8 +93,8 @@ func TestReplayedCoreEventsKeepTheirEventID(t *testing.T) {
 	s, _, users := socialServer(t)
 	b := s.Acct.(*identity.OpenpakBackend)
 
-	s.notifyCoreFriendEvent(b, "friend_requested", "acc-a@example.com", "acc-b@example.com", 77)
-	s.notifyCoreFriendEvent(b, "friend_requested", "acc-a@example.com", "acc-b@example.com", 77)
+	s.eventsSvc().NotifyCoreFriendEvent(b, "friend_requested", "acc-a@example.com", "acc-b@example.com", 77)
+	s.eventsSvc().NotifyCoreFriendEvent(b, "friend_requested", "acc-a@example.com", "acc-b@example.com", 77)
 
 	q := outboxOf(s, users[0].ID)
 	if len(q) != 2 || q[0].ID == "" || q[0].ID != q[1].ID {
@@ -108,7 +108,7 @@ func TestCoreEventForAnUnprojectedAccountIsDropped(t *testing.T) {
 	s, _, users := socialServer(t)
 	b := s.Acct.(*identity.OpenpakBackend)
 
-	s.notifyCoreFriendEvent(b, "friend_requested", "acc-nobody@example.com", "acc-b@example.com", 5)
+	s.eventsSvc().NotifyCoreFriendEvent(b, "friend_requested", "acc-nobody@example.com", "acc-b@example.com", 5)
 
 	for _, u := range users {
 		if len(outboxOf(s, u.ID)) != 0 {
@@ -187,7 +187,7 @@ func TestBlockedViewerIsNotToldAboutPresence(t *testing.T) {
 // firmware-confirmed.
 func TestCommittedInvitationIsHandedToPenne(t *testing.T) {
 	s, _, users := socialServer(t)
-	s.wireInvitationNotifications()
+	s.eventsSvc().WireInvitations()
 	t.Cleanup(func() { invitations.NotifyHook = nil })
 
 	invitations.NotifyCommitted(invitations.Event{

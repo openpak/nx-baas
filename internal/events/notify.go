@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-package main
+package events
 
-// Integration wiring for the combined native-Switch branch.
+// The notification wiring of the combined native-Switch branch.
 //
 // The coordination plan split ownership deliberately: A owns the single core-
 // event poller and the presence model, C owns invitation state, B owns wire
@@ -23,18 +23,6 @@ import (
 	"nx-baas/internal/penne"
 	"time"
 )
-
-// SubmitNotification is the entry point the social, presence and invitation code calls.
-// Accepted means nx-penne has it (or will, through the ordered queue); the caller never
-// retries a submission that returned Accepted.
-func (s *server) SubmitNotification(d penne.Delivery) penne.Submission {
-	return s.submitNotification(d, false)
-}
-
-// submitNotification is SubmitNotification with the choice to wait for nx-penne's outcome.
-func (s *server) submitNotification(d penne.Delivery, wait bool) penne.Submission {
-	return penne.Submit(s.Store, s.notifier, d, wait)
-}
 
 // coreEventKind maps the account core's friend events onto the five event
 // kinds the 22.5.0 friends module recognizes. Only these three core events
@@ -60,7 +48,7 @@ var coreEventKind = map[string]string{
 // identity. A poll page reprocessed after a crash resubmits the same ids and
 // B's outbox recognizes them, which is what keeps A's at-least-once cursor
 // safe against duplicate user-visible alerts (NTF-05).
-func (s *server) notifyCoreFriendEvent(b *identity.OpenpakBackend, evType, accountID, subjectID string, version uint64) {
+func (s *Follower) NotifyCoreFriendEvent(b *identity.OpenpakBackend, evType, accountID, subjectID string, version uint64) {
 	kind := coreEventKind[evType]
 	if kind == "" || b == nil || b.Proj == nil {
 		return
@@ -88,17 +76,13 @@ func (s *server) notifyCoreFriendEvent(b *identity.OpenpakBackend, evType, accou
 		}
 		payload["value"] = map[string]any{"channels": []string{ch}}
 	}
-	s.SubmitNotification(penne.Delivery{
+	s.Notify(penne.Delivery{
 		ID:      fmt.Sprintf("core:%d", version),
 		UserID:  me.BaasUserID,
 		Kind:    kind,
 		Payload: payload,
 	})
 }
-
-// ---------- presence fan-out (PRE-03 visibility, NTF-04 presence_updated) ----------
-
-// ---------- invitations (C's seam) ----------
 
 // wireInvitationNotifications connects C's committed-invitation event to B's
 // delivery. C calls its hook strictly after the store write returns, so an
@@ -107,16 +91,16 @@ func (s *server) notifyCoreFriendEvent(b *identity.OpenpakBackend, evType, accou
 // The payload nests the invitation under $.invitation because those are the
 // parser paths C recorded as firmware-confirmed: $.type and
 // $.invitation.{id, sender_id, application_id, invitation_group_id}.
-func (s *server) wireInvitationNotifications() {
+func (s *Follower) WireInvitations() {
 	invitations.NotifyHook = func(ev invitations.Event) {
-		s.SubmitNotification(penne.Delivery{
+		s.Notify(penne.Delivery{
 			ID:     ev.EventID, // "invitation:<id>", already stable across retries
 			UserID: ev.ReceiverID,
 			Kind:   penne.EventFriendInvitationReceived,
 			Payload: map[string]any{
 				// id and invitation_group_id are JSON integers: the event parser
 				// type-checks them and drops the whole event on a string
-				// [firmware, 0x1a9870; docs/switch/friend-invitations-firmware-2026-09-19.md §1a].
+				// [firmware, 0x1a9870; internal research notes §1a].
 				"invitation": map[string]any{
 					"id":                  invitations.JSONUint(ev.InvitationID),
 					"sender_id":           ev.SenderID,

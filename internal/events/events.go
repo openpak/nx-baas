@@ -1,9 +1,16 @@
-package main
+// Package events follows the account core's event stream (bans, deletions, friendships,
+// presence on other networks) and carries each event to the surfaces it changes.
+package events
 
 import (
 	"context"
 	"log"
+	"nx-baas/internal/bans"
+	"nx-baas/internal/core"
+	"nx-baas/internal/friends"
 	"nx-baas/internal/identity"
+	"nx-baas/internal/penne"
+	"nx-baas/internal/presence"
 	"nx-baas/internal/store"
 	"nx-baas/redact"
 	"os"
@@ -20,10 +27,10 @@ import (
 // friend_removed; the two projections named by the event get their
 // FriendsUpdatedAt bumped, which is what makes the console re-fetch its list
 // (the same path a change made on this adapter takes).
-func (s *server) followCoreEvents(b *identity.OpenpakBackend) {
+func (s *Follower) Follow(b *identity.OpenpakBackend) {
 	events := accountv1.NewEventsClient(b.Conn)
 	cursorPath := filepath.Join(filepath.Dir(b.Proj.FilePath), "core-events.cursor")
-	version, known := readCursor(cursorPath)
+	version, known := ReadCursor(cursorPath)
 	if !known {
 		// Start from the beginning, deliberately.
 		//
@@ -62,19 +69,19 @@ func (s *server) followCoreEvents(b *identity.OpenpakBackend) {
 				s.projectionFriendsChanged(b, e.GetAccountId(), e.GetSubjectId())
 				// Integration wiring: the state above is committed, so the
 				// native notification may now be submitted (notify_wiring.go).
-				s.notifyCoreFriendEvent(b, e.GetType(), e.GetAccountId(), e.GetSubjectId(), e.GetVersion())
+				s.NotifyCoreFriendEvent(b, e.GetType(), e.GetAccountId(), e.GetSubjectId(), e.GetVersion())
 			case "presence_changed":
 				// account = a friend online on this network, subject = whose presence moved.
 				if e.GetNamespace() == b.Namespace { // addressed to a friend on another network: not ours
-					s.presenceSvc().NotifyCorePresence(b, e.GetAccountId(), e.GetSubjectId())
+					s.Presence.NotifyCorePresence(b, e.GetAccountId(), e.GetSubjectId())
 				}
 			case "account_unbanned":
-				s.locks().Forget(e.GetAccountId())
+				s.Locks.Forget(e.GetAccountId())
 			case "account_banned", "account_deleted", "account_delete_started", "credential_revoked", "link_unlinked":
 				if e.GetType() != "credential_revoked" && e.GetType() != "link_unlinked" {
 					// Bans take effect now, not when the cache entry ages out, and the
 					// console's open notification channel goes with them.
-					s.locks().Forget(e.GetAccountId())
+					s.Locks.Forget(e.GetAccountId())
 					s.closeAccountSessions(b, e.GetAccountId())
 				}
 				if e.GetType() == "account_deleted" {
@@ -93,7 +100,7 @@ func (s *server) followCoreEvents(b *identity.OpenpakBackend) {
 			version = e.GetVersion()
 		}
 		if len(page.GetEvents()) > 0 {
-			writeCursor(cursorPath, version)
+			WriteCursor(cursorPath, version)
 			continue
 		}
 		time.Sleep(2 * time.Second)
@@ -103,7 +110,7 @@ func (s *server) followCoreEvents(b *identity.OpenpakBackend) {
 // revokeAccountPresence ends every device claim of one core account: a
 // banned, deleted or unlinked account is offline everywhere, now, instead of
 // whenever its leases happen to lapse.
-func (s *server) revokeAccountPresence(b *identity.OpenpakBackend, accountID string) {
+func (s *Follower) revokeAccountPresence(b *identity.OpenpakBackend, accountID string) {
 	b.Proj.Mu.Lock()
 	pr := b.Proj.ByAccount[accountID]
 	b.Proj.Mu.Unlock()
@@ -118,7 +125,7 @@ func (s *server) revokeAccountPresence(b *identity.OpenpakBackend, accountID str
 	}
 }
 
-func (s *server) projectionFriendsChanged(b *identity.OpenpakBackend, accountID, otherID string) {
+func (s *Follower) projectionFriendsChanged(b *identity.OpenpakBackend, accountID, otherID string) {
 	b.Proj.Mu.Lock()
 	p, other := b.Proj.ByAccount[accountID], b.Proj.ByAccount[otherID]
 	b.Proj.Mu.Unlock()
@@ -130,11 +137,11 @@ func (s *server) projectionFriendsChanged(b *identity.OpenpakBackend, accountID,
 		if other != nil {
 			otherBaas = other.BaasUserID
 		}
-		s.friendsSvc().FriendGraphChanged(u, otherBaas)
+		s.Friends.FriendGraphChanged(u, otherBaas)
 	}
 }
 
-func readCursor(path string) (uint64, bool) {
+func ReadCursor(path string) (uint64, bool) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return 0, false
@@ -143,9 +150,19 @@ func readCursor(path string) (uint64, bool) {
 	return v, err == nil
 }
 
-func writeCursor(path string, v uint64) {
+func WriteCursor(path string, v uint64) {
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, []byte(strconv.FormatUint(v, 10)), 0o600); err == nil {
 		os.Rename(tmp, path)
 	}
+}
+
+// Follower follows the account core's event stream and carries each event to the surfaces
+// it changes: bans, friends' lists, presence, and the notifications consoles are sent.
+type Follower struct {
+	*core.Core
+	Locks    *bans.Checker
+	Friends  *friends.Service
+	Presence *presence.Service
+	Notify   func(penne.Delivery) penne.Submission
 }

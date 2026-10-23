@@ -1,7 +1,7 @@
 package main
 
 // The friend-online pop-up on a real console, held to the firmware's rules
-// (docs/switch/friends-presence-firmware-2026-09-19.md §6):
+// (internal research notes §6):
 //
 //   - the presence_updated parser fails the whole event unless userId, state,
 //     appInfo:appId, appInfo:presenceGroupId, appField, updatedAt, logoutAt and

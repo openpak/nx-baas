@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-package main
+package events
 
 // Every core account has a Switch identity, whether or not it has ever used a Switch: a friend
 // list on another network has to be able to show them, and a console to show them back. ensure
@@ -17,7 +17,7 @@ import (
 
 const provisionEvery = time.Minute
 
-func (s *server) provisionAllAccounts(b *identity.OpenpakBackend) {
+func (s *Follower) ProvisionAll(b *identity.OpenpakBackend) {
 	for ; ; time.Sleep(provisionEvery) {
 		made, failed := 0, 0
 		after := ""

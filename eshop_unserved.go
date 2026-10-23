@@ -1,7 +1,7 @@
 // Surfaces the 22.5.0 modules reach that this adapter had no answer for.
 //
 // Every route here was found in a firmware module's own string table (NIM and
-// the friends module; see docs/switch/firmware-22.5.0-followup-2026-09-12.md),
+// the friends module; see internal research notes),
 // which means a console can ask for it — an unanswered host is a TLS error and
 // an unanswered path is our 404, and either can stall a native journey in a way
 // that is hard to attribute afterwards. So each one is answered here with the
