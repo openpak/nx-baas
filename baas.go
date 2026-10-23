@@ -13,6 +13,7 @@ import (
 	"nx-baas/internal/bans"
 	"nx-baas/internal/core"
 	"nx-baas/internal/dauth"
+	"nx-baas/internal/friends"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
 	"nx-baas/internal/presence"
@@ -72,312 +73,6 @@ func (s *server) idToken(u *store.User, id *identity.Identity, username string, 
 		}
 	}
 	return token.SignJWT(map[string]any{"alg": "RS256", "jku": core.BaasJku + "/1.0.0/certificates", "kid": s.IDKid, "typ": "JWT"}, claims, s.Key)
-}
-
-func (s *server) identity(u *store.User) *identity.Identity {
-	if u == nil || u.PID == 0 {
-		return nil
-	}
-	id, err := s.Acct.Identity(u.PID)
-	identity.LogErr("identity", err)
-	// Remember the account's bs:did: it is what a console's id_token carries and what the
-	// Photon server reports back on /internal/photon-room, which has no PID of its own.
-	if id != nil && id.BsDid != "" && u.BsDid != id.BsDid {
-		s.Store.Update(u, func(u *store.User) { u.BsDid = id.BsDid })
-	}
-	return id
-}
-
-// friendCodeID: BAAS friend codes are "1234-5678-9012"; OpenPak displays them as "SW-...".
-func friendCodeID(fc string) string { return strings.TrimPrefix(fc, "SW-") }
-
-// codeRegen reports the friend-code regeneration state the console shows:
-// regenerableAt is the "next issuable" time and regenerable whether a new
-// code may be issued now. A new code is allowed once a day from the last
-// issue — generate_code enforces the same 24 h — so advertising +30 d showed
-// a date the enforcement never kept [friends-contract-22.5.0 §A.6, C11].
-// A code that was never issued is issuable now.
-func codeRegen(codeGeneratedAt, fallback int64) (regenerableAt int64, regenerable bool) {
-	if codeGeneratedAt <= 0 {
-		return fallback, true
-	}
-	at := codeGeneratedAt + 24*3600
-	return at, time.Now().Unix() >= at
-}
-
-func extras() map[string]any {
-	return map[string]any{"self": map[string]any{}, "favoriteFriends": map[string]any{}, "friends": map[string]any{}, "foaf": map[string]any{}, "everyone": map[string]any{}}
-}
-
-func presenceObj(p store.Presence) map[string]any {
-	ex := extras()
-	if p.AppID == "" && p.AppField != "" && p.AppField != "{}" {
-		// No title, but words: a friend on another platform (presenceFromCore).
-		// Never a foreign title id in appInfo; the description carries it.
-		ex["friends"] = map[string]any{"appField": p.AppField}
-	}
-	if p.AppID != "" {
-		friends := map[string]any{"appField": presence.AppFieldOrEmpty(p.AppField), "appInfo:appId": p.AppID, "appInfo:presenceGroupId": p.PresenceGroupID}
-		if p.ACDIndex >= 0 {
-			// Read back by the friend list's numeric parser
-			// [firmware, $.items[*].friend.presence.extras.friends.appInfo:acdIndex].
-			friends["appInfo:acdIndex"] = p.ACDIndex
-		}
-		ex["friends"] = friends
-	}
-	out := map[string]any{"state": p.State, "extras": ex, "updatedAt": p.UpdatedAt, "logoutAt": p.LogoutAt}
-	if pf, ok := presence.ProbePF(p.Client); ok {
-		out["pf"] = pf
-	}
-	return out
-}
-
-func (s *server) userObj(u *store.User, id *identity.Identity, devicePassword string) map[string]any {
-	devs := []map[string]any{}
-	for _, d := range u.DeviceAccounts {
-		m := map[string]any{"id": d}
-		if devicePassword != "" {
-			m["password"] = devicePassword
-		}
-		devs = append(devs, m)
-	}
-	nickname, country := u.Nickname, u.Country
-	links := map[string]any{}
-	self := map[string]any{"playLog": ""}
-	// The console uploads its own profile blob (PATCH /extras/self/nxAccount) after linking, and
-	// a foreign blob makes it drop the profile to local-only. Serve nothing until it writes one:
-	// the global constant we briefly served came from a capture of our own probe value, not from
-	// the service, and every account importing one stranger's profile is not a fixture worth
-	// keeping.
-	nx := u.NxAccount
-	if nx == "" && id != nil {
-		// The reply a console accepted carries extras.self.nxAccount and
-		// isMediaUploaded; ours carried neither, because the console only
-		// PATCHes its own blob after a link it never completes. Serving the
-		// captured constant is what the stack did when links worked, so it is
-		// back -- env-gated, so it can be taken away again in one restart.
-		nx = os.Getenv("NX_TEST_NXACCOUNT")
-	}
-	if nx != "" {
-		self["isMediaUploaded"] = true
-		self["nxAccount"] = nx
-	} else if u.Avatar != "" {
-		self["isMediaUploaded"] = true
-	}
-	friendsEx := map[string]any{"isChatActivated": true, "isChatInvitable": true, "playLog": ""}
-	everyone := map[string]any{"playLog": ""}
-	thumb1, thumb2, thumbAt := core.CdnHost+"/1/default", core.CdnHost+"/2/default", int64(0) // VPS parity for unlinked users
-	etag := token.RandHex(8)
-	if id != nil {
-		etag = id.BsDid // VPS parity: user.etag == the token bs:did for a linked user
-		nickname = id.Nickname
-		if u.NxAccount != "" && u.Nickname != "" {
-			// Once the console has PATCHed its profile (/nickname and
-			// /extras/self/nxAccount always travel together) its nickname is
-			// the one served back: the PATCH reply must repeat what was sent
-			// or the sysmodule fails it with 2124-3121 (23.0.1 0xe8a5c), and
-			// every later sync compares this field with the local profile.
-			nickname = u.Nickname
-		}
-		links["nintendoAccount"] = map[string]any{"id": id.NaID, "createdAt": u.CreatedAt, "updatedAt": u.CreatedAt}
-		if !minimal {
-			regenAt, regen := codeRegen(u.CodeGeneratedAt, u.CreatedAt)
-			links["friendCode"] = map[string]any{"id": friendCodeID(id.FriendCode), "createdAt": u.CreatedAt, "updatedAt": u.CreatedAt, "regenerableAt": regenAt, "regenerable": regen}
-			if pl, ok := id.PlayLog.(string); ok && pl != "" && pl != "null" && u.PlayLog == nil {
-				friendsEx["playLog"], everyone["playLog"] = pl, pl
-			}
-			if at := newerPicture(u, id); at > 0 {
-				// A picture can be changed in two places, and the console only
-				// refetches when this timestamp moves. It is the newer of the
-				// two: the console's own upload, or the account's picture on
-				// the website.
-				thumbAt = at
-				thumb1, thumb2 = core.CdnHost+"/1/"+u.ID, core.CdnHost+"/2/"+u.ID
-			} else if u.Avatar != "" {
-				// The console's own upload. Without this the reply to an
-				// upload still points at /1/default with an uploaded-at of
-				// zero, which is the service telling the console that the
-				// picture it just sent does not exist.
-				thumbAt = u.UpdatedAt
-				thumb1, thumb2 = core.CdnHost+"/1/"+u.ID, core.CdnHost+"/2/"+u.ID
-			}
-		}
-	}
-	if thumbAt > 0 {
-		// The console caches images by URL: an avatar change must change the
-		// URL, or friends keep the old picture after the kind-6 refetch
-		// [friends-contract-22.5.0 §A.11, C21]. ?v= is the versioning the
-		// /avatar/ URLs already ship, and the route matches on the path, so
-		// the query is ignored on fetch.
-		thumb1 += fmt.Sprintf("?v=%d", thumbAt)
-		thumb2 += fmt.Sprintf("?v=%d", thumbAt)
-	}
-	// Serve what the account actually holds, and nothing more: a captured working response
-	// carries "birthday":"0000-00-00" with the console perfectly happy, so the invented
-	// defaults we used to substitute were fixing a problem that was never demonstrated.
-	if country == "" && id != nil {
-		country = id.Country
-	}
-	if country == "" {
-		// The Nintendo Account object cannot carry an empty country, so it
-		// falls back; if this one stayed empty the console would be told two
-		// different things about the same person in the same flow. Matching
-		// that fallback is not inventing a fact — it is refusing to contradict
-		// ourselves.
-		country = httpx.Getenv("NA_FALLBACK_COUNTRY", "GB")
-	}
-	birthday := u.Birthday
-	if (birthday == "" || birthday == "0000-00-00") && id != nil && id.Birthday != "" {
-		birthday = id.Birthday
-	}
-	favoriteFriends := map[string]any{"playLog": ""}
-	if u.PlayLog != nil {
-		// What the console wrote, group by group: the group carrying the log
-		// is its play-log permission, and an empty answer makes it write an
-		// initial "[]" on every sync [friends-contract-22.5.0 §A.6, C9].
-		for g, ex := range map[string]map[string]any{"self": self, "favoriteFriends": favoriteFriends, "friends": friendsEx, "everyone": everyone} {
-			ex["playLog"] = u.PlayLog[g]
-		}
-	}
-	return map[string]any{
-		"birthday": birthday, "blocksUpdatedAt": u.CreatedAt, "country": country, "createdAt": u.CreatedAt, "deleted": false,
-		"deviceAccounts": devs, "etag": fmt.Sprintf("\"%s\"", etag),
-		"extras":           map[string]any{"everyone": everyone, "favoriteFriends": favoriteFriends, "foaf": map[string]any{"playLog": ""}, "friends": friendsEx, "self": self},
-		"friendsUpdatedAt": friendsUpdatedAt(u), "id": u.ID, "links": links, "nickname": nickname, "nicknameUpdatedAt": u.UpdatedAt,
-		"permissions":   permissionsOf(u),
-		"thumbnail2Url": thumb2, "thumbnailUploadedAt": thumbAt, "thumbnailUrl": thumb1, "updatedAt": u.UpdatedAt,
-	}
-}
-
-// friendObj: a *user* about somebody else. This is the nested renderer — the
-// value inside a relationship's "friend", and the whole item of a search
-// result. Relationship-level state (friendId, isFavorite, extras.self) and
-// presence are the relationship renderer's job (social.go), which is also
-// why none of them appear here: a search result carrying them was refused by
-// the console, the same way it refused a login reply with an extra
-// "summary".
-//
-// Every timestamp is derived from state we hold, never from the render, so
-// rendering the same person twice yields the same object and a stable list
-// etag (SOC-05).
-func (s *server) friendObj(f identity.Friend, now int64) map[string]any {
-	// The same object the console accepts for itself, about somebody else.
-	// A search result carrying only id/nickname/links parses into a user the
-	// console then refuses to use: it answered "unable to find user" to a
-	// reply that had found one. Every key here is in a capture a console
-	// accepted; TestFriendObjectCarriesWhatAUserObjectCarries keeps it that
-	// way.
-	created := f.CreatedAt
-	if created == 0 {
-		created = now
-	}
-	// What this server already knows about them beats what the lookup carried:
-	// the console PATCHes country and uploads a picture here, and a user object
-	// that says country "" and owns no device accounts is not one the console
-	// accepts. updatedAt follows the local record's own clock when there is
-	// one — a lookup-time constant is not a state change.
-	updatedAt := created
-	country, devices := f.Country, []map[string]any{}
-	local := s.Store.User(f.BaasUserID)
-	if local != nil {
-		if local.Country != "" {
-			country = local.Country
-		}
-		if local.UpdatedAt > updatedAt {
-			updatedAt = local.UpdatedAt
-		}
-		// One, as a real search result carries. Eleven of them is this
-		// server telling a console about every profile that ever registered,
-		// and nothing that reads a friend expects that.
-		if n := len(local.DeviceAccounts); n > 0 {
-			devices = append(devices, map[string]any{"id": local.DeviceAccounts[n-1]})
-		}
-	}
-	// The next-issuable time of their code, when this server knows when it
-	// was issued; otherwise the same 24 h rule from what the lookup carried.
-	var codeGen int64
-	if local != nil {
-		codeGen = local.CodeGeneratedAt
-	}
-	regenAt, regen := codeRegen(codeGen, created)
-	// Their picture's version, when this server holds their record: the
-	// console caches images by URL, so a new picture must come with a new
-	// URL or friends keep the old one [friends-contract-22.5.0 §A.11, C21].
-	picAt, picKnown := created, false
-	if local != nil {
-		if at := newerPicture(local, nil); at > 0 {
-			picAt, picKnown = at, true
-		}
-	}
-	if f.PictureAt > 0 && !picKnown {
-		picAt, picKnown = f.PictureAt, true // versioned, so a console drops the default it cached
-	}
-	thumbURL, thumb2URL := core.CdnHost+"/1/"+f.BaasUserID, core.CdnHost+"/2/"+f.BaasUserID
-	if picKnown {
-		thumbURL += fmt.Sprintf("?v=%d", picAt)
-		thumb2URL += fmt.Sprintf("?v=%d", picAt)
-	}
-	obj := map[string]any{
-		"id":        f.BaasUserID,
-		"nickname":  f.Nickname,
-		"country":   country,
-		"birthday":  "0000-00-00",
-		"deleted":   false,
-		"etag":      strconv.Quote(f.BaasUserID),
-		"createdAt": created,
-		"updatedAt": updatedAt,
-		// Always a real address: every account has a picture, and an empty
-		// string here is a user the console cannot render. The avatar route
-		// answers this address with the account's picture, or the default
-		// when it has none — a URL in a reply this server 404s is how a
-		// "reachable avatar" becomes a broken one.
-		"thumbnailUrl":        thumbURL,
-		"thumbnail2Url":       thumb2URL,
-		"thumbnailUploadedAt": picAt,
-		"nicknameUpdatedAt":   created,
-		"friendsUpdatedAt":    created,
-		"blocksUpdatedAt":     created,
-		"deviceAccounts":      devices,
-		"links": map[string]any{
-			"friendCode": map[string]any{
-				"id": friendCodeID(f.FriendCode), "createdAt": created, "updatedAt": created,
-				"regenerable": regen, "regenerableAt": regenAt,
-			},
-			"nintendoAccount": map[string]any{"id": f.NaID, "createdAt": created, "updatedAt": created},
-		},
-		"permissions": map[string]any{
-			"friendRequestReception": true, "friends": "EVERYONE",
-			"personalAnalytics": true, "personalAnalyticsUpdatedAt": created,
-			"personalNotification": true, "personalNotificationUpdatedAt": created,
-			"presence": "FRIENDS", "presenceUpdatedAt": created,
-		},
-		// Exactly the groups a real reply carries about somebody else:
-		// foaf and self are empty, and friends has no isChatActivated. self is
-		// the visibility group only its owner sees, so putting anything in it
-		// for a stranger is both wrong and, to this console, unparsable.
-		"extras": map[string]any{
-			"self":            map[string]any{},
-			"favoriteFriends": map[string]any{"playLog": ""},
-			"friends":         map[string]any{"isChatInvitable": true, "playLog": ""},
-			"foaf":            map[string]any{},
-			"everyone":        map[string]any{"playLog": ""},
-		},
-	}
-	// A play log in the everyone group is anyone's to see; the viewer-bound
-	// groups are the relationship renderer's and the search's job.
-	group, pl := s.visiblePlayLog(nil, s.Store.User(f.BaasUserID), false)
-	setPlayLog(obj, group, pl)
-	return obj
-}
-
-// searchUserObj is a user, not a friend. The friend-list keys — friendId,
-// presence, the viewer's own extras — belong to the relationship renderer,
-// and a stranger you have just looked up is not one. The console refused a
-// search result that carried them, the same way it refused a login reply
-// that carried an extra "summary"; the exact-match test
-// TestSearchReplyMatchesTheAcceptedShape keeps it that way.
-func (s *server) searchUserObj(f identity.Friend, now int64) map[string]any {
-	return s.friendObj(f, now)
 }
 
 // reportOnline tells the core that this account is signed in, which is a
@@ -452,7 +147,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			pid, _ = strconv.ParseUint(strings.TrimSuffix(strings.TrimPrefix(p, "/avatar/"), ".jpg"), 10, 64)
 		} else if u := s.Store.User(p[3:]); u != nil {
 			pid = u.PID
-		} else if f := s.resolveFriend(p[3:]); f != nil {
+		} else if f := s.friendsSvc().ResolveFriend(p[3:]); f != nil {
 			pid = f.PID // an account that has never been on a console
 		}
 		id, err := s.Acct.Identity(pid)
@@ -466,7 +161,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			// the website could never reach a console that had ever set one
 			// of its own.
 			if u := s.Store.User(p[3:]); u != nil {
-				if err != nil || id.ImageUpdatedAt <= newerPicture(u, nil) {
+				if err != nil || id.ImageUpdatedAt <= friends.NewerPicture(u, nil) {
 					avatar = u.Avatar
 				}
 			}
@@ -561,7 +256,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		// serves from now on.
 		if uid := httpx.Str(s.Bearer(r), "sub"); uid != "" {
 			if u := s.Store.User(uid); u != nil {
-				url := s.userObj(u, s.identity(u), "")["thumbnailUrl"]
+				url := s.friendsSvc().UserObj(u, s.friendsSvc().Identity(u), "")["thumbnailUrl"]
 				httpx.WriteJSON(w, 200, map[string]any{"content": map[string]any{"url": url, "format": "jpg"}})
 				return
 			}
@@ -573,7 +268,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		u, d := s.Store.NewUser()
 		log.Printf("[nx-baas] new device account %s for user %s", redact.Tag(d.ID), redact.Tag(u.ID))
 		w.Header().Set("Location", "/1.0.0/users/"+u.ID)
-		httpx.WriteJSON(w, 201, s.userObj(u, nil, d.Password))
+		httpx.WriteJSON(w, 201, s.friendsSvc().UserObj(u, nil, d.Password))
 		return
 
 	case (p == "/1.0.0/login" || p == "/1.0.0/federation") && r.Method == "POST":
@@ -613,7 +308,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			return
 		}
 		app, _ := token.ParseJWT(form.Get("appAuthNToken"), nil)
-		id := s.identity(u)
+		id := s.friendsSvc().Identity(u)
 		username := u.Nickname
 		if id != nil {
 			username = id.Nickname
@@ -646,7 +341,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		s.reportOnline(r.Context(), u, client, clientOS)
 		res := map[string]any{
-			"expiresIn": 10800, "user": s.userObj(u, id, ""), "idToken": s.idToken(u, id, username, app),
+			"expiresIn": 10800, "user": s.friendsSvc().UserObj(u, id, ""), "idToken": s.idToken(u, id, username, app),
 			"accessToken": s.accessToken(u.ID, 2, func() string {
 				if id != nil {
 					return id.BsDid
@@ -676,7 +371,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		switch r.Method {
 		case "GET":
-			httpx.WriteJSON(w, 200, s.userObj(u, s.identity(u), ""))
+			httpx.WriteJSON(w, 200, s.friendsSvc().UserObj(u, s.friendsSvc().Identity(u), ""))
 		case "PATCH":
 			var ops []struct {
 				Op, Path string
@@ -720,7 +415,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 						if u.Permissions == nil {
 							u.Permissions = map[string]any{}
 						}
-						u.Permissions["presence"] = normalizePresencePermission(o.Value)
+						u.Permissions["presence"] = friends.NormalizePresencePermission(o.Value)
 					case "/permissions/friendRequestReception":
 						// 30811 ChangeFriendRequestReception: a bool. Anything
 						// else is not a switch position and is ignored [C10].
@@ -756,7 +451,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 					}
 				}
 			}
-			httpx.WriteJSON(w, 200, s.userObj(u, s.identity(u), ""))
+			httpx.WriteJSON(w, 200, s.friendsSvc().UserObj(u, s.friendsSvc().Identity(u), ""))
 		default:
 			httpx.BaasErr(w, r, 405, "method_not_allowed", "Method Not Allowed", "Method Not Allowed")
 		}
@@ -776,10 +471,10 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				httpx.BaasErr(w, r, 400, "invalid_idp_account", "Invalid IdP Account", "IdP account is invalid")
 				return
 			}
-			httpx.WriteJSON(w, 200, s.userObj(nu, s.identity(nu), ""))
+			httpx.WriteJSON(w, 200, s.friendsSvc().UserObj(nu, s.friendsSvc().Identity(nu), ""))
 		case "unlink":
 			s.Store.Update(u, func(u *store.User) { u.PID, u.NaID = 0, "" })
-			httpx.WriteJSON(w, 200, s.userObj(u, nil, ""))
+			httpx.WriteJSON(w, 200, s.friendsSvc().UserObj(u, nil, ""))
 		case "generate_code":
 			if s.RequireCaller(w, r, seg[2]) == nil {
 				return
@@ -797,7 +492,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				return
 			}
 			s.Store.Update(u, func(u *store.User) { u.CodeGeneratedAt = time.Now().Unix() })
-			httpx.WriteJSON(w, 200, s.userObj(u, s.identity(u), ""))
+			httpx.WriteJSON(w, 200, s.friendsSvc().UserObj(u, s.friendsSvc().Identity(u), ""))
 		case "device_histories":
 			if s.RequireCaller(w, r, seg[2]) == nil {
 				return
@@ -811,7 +506,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				// {"targetUserId":"%016llx","extras":{"self":{"reason":…}}}
 				// is what the console sends [friends-contract-22.5.0 §A.8];
 				// userId and id are what this server read before, kept.
-				target := bodyField(body, form, "targetUserId", "userId", "id")
+				target := friends.BodyField(body, form, "targetUserId", "userId", "id")
 				if target == "" {
 					httpx.BaasErr(w, r, 400, "invalid_params", "Invalid Params", "invalid params")
 					return
@@ -819,7 +514,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				if s.RequireCaller(w, r, seg[2]) == nil {
 					return
 				}
-				other := s.resolveFriend(target)
+				other := s.friendsSvc().ResolveFriend(target)
 				if other == nil {
 					httpx.BaasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 					return
@@ -827,9 +522,9 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				// Blocks commit in the core, which owns enforcement for every
 				// adapter (SOC-03); the local mirror only feeds this server's
 				// own reads.
-				if err := s.setBlock(u, other, true); err != nil {
+				if err := s.friendsSvc().SetBlock(u, other, true); err != nil {
 					log.Printf("[nx-baas] block failed user=%s target=%s: %v", redact.Tag(u.ID), redact.Tag(target), redact.Err(err))
-					status, code, title, detail := baasFailure(err)
+					status, code, title, detail := friends.BaasFailure(err)
 					httpx.BaasErr(w, r, status, code, title, detail)
 					return
 				}
@@ -847,7 +542,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 					u.BlockDetails[other.BaasUserID] = &store.BlockDetail{CreatedAt: now, Self: in.Extras.Self}
 				})
 				// The console ignores this body; it re-syncs the list.
-				httpx.WriteJSON(w, 200, s.blockObj(u, other.BaasUserID, now))
+				httpx.WriteJSON(w, 200, s.friendsSvc().BlockObj(u, other.BaasUserID, now))
 			default:
 				if s.RequireCaller(w, r, seg[2]) == nil {
 					return
@@ -860,15 +555,15 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				now := time.Now().Unix()
 				list := []any{}
 				for _, b := range u.Blocks {
-					if len(list) == maxBlockEntries {
+					if len(list) == friends.MaxBlockEntries {
 						break
 					}
-					list = append(list, s.blockObj(u, b, now))
+					list = append(list, s.friendsSvc().BlockObj(u, b, now))
 				}
-				httpx.WriteJSON(w, 200, listEnvelope(list))
+				httpx.WriteJSON(w, 200, friends.ListEnvelope(list))
 			}
 		case "friends", "friend_requests", "relationships":
-			s.friends(w, r, u, seg[3:], body)
+			s.friendsSvc().HandleV1(w, r, u, seg[3:], body)
 		default:
 			httpx.Dump(r, body, "!! UNHANDLED user sub-resource")
 			httpx.BaasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
@@ -884,14 +579,14 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		if s.RequireCaller(w, r, seg[2]) == nil {
 			return
 		}
-		other := s.resolveFriend(seg[4])
+		other := s.friendsSvc().ResolveFriend(seg[4])
 		if other == nil {
 			httpx.BaasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 			return
 		}
-		if err := s.setBlock(u, other, false); err != nil {
+		if err := s.friendsSvc().SetBlock(u, other, false); err != nil {
 			log.Printf("[nx-baas] unblock failed user=%s target=%s: %v", redact.Tag(u.ID), redact.Tag(seg[4]), redact.Err(err))
-			status, code, title, detail := baasFailure(err)
+			status, code, title, detail := friends.BaasFailure(err)
 			httpx.BaasErr(w, r, status, code, title, detail)
 			return
 		}
@@ -963,7 +658,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				s.reportOnline(r.Context(), u, client, clientOS)
 			}
 			log.Printf("[nx-baas] presence user=%s pid=%s device=%s client=%q os=%q %s app=%s field(%d)", redact.Tag(u.ID), redact.Tag(u.PID), redact.Tag(device), client, clientOS, state, appID, len(appField))
-			httpx.WriteJSON(w, 200, s.userObj(u, s.identity(u), ""))
+			httpx.WriteJSON(w, 200, s.friendsSvc().UserObj(u, s.friendsSvc().Identity(u), ""))
 		default:
 			httpx.Dump(r, body, "!! UNHANDLED device_accounts")
 			httpx.BaasErr(w, r, 405, "method_not_allowed", "Method Not Allowed", "Method Not Allowed")
@@ -974,7 +669,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 	// friend request fell straight through to the catch-all 404 and the console
 	// said "please try again later" (2121-2031).
 	case len(seg) >= 2 && seg[0] == "2.0.0":
-		s.friends2(w, r, seg[1:], body)
+		s.friendsSvc().HandleV2(w, r, seg[1:], body)
 		return
 
 	case p == "/1.0.0/users" && r.Method == "GET":
@@ -999,24 +694,24 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		// groups.
 		viewer := s.BearerUser(r)
 		friendOf := map[string]bool{}
-		if id := s.identity(viewer); viewer != nil && id != nil {
+		if id := s.friendsSvc().Identity(viewer); viewer != nil && id != nil {
 			for _, f := range id.Friends {
 				friendOf[f.BaasUserID] = true
 			}
 		}
 		found := func(f identity.Friend) any {
-			obj := s.searchUserObj(f, now)
-			group, pl := s.visiblePlayLog(viewer, s.Store.User(f.BaasUserID), friendOf[f.BaasUserID])
-			setPlayLog(obj, group, pl)
+			obj := s.friendsSvc().SearchUserObj(f, now)
+			group, pl := s.friendsSvc().VisiblePlayLog(viewer, s.Store.User(f.BaasUserID), friendOf[f.BaasUserID])
+			friends.SetPlayLog(obj, group, pl)
 			return obj
 		}
 		users := []any{}
-		for _, code := range queryList(q, "filter.links.friendCode.id.$in", "friendCode") {
+		for _, code := range friends.QueryList(q, "filter.links.friendCode.id.$in", "friendCode") {
 			if f, err := s.Acct.Resolve(url.Values{"code": {identity.NormaliseFriendCode(code)}}); err == nil && f != nil {
 				users = append(users, found(*f))
 			}
 		}
-		for _, id := range queryList(q, "filter.id.$in", "id") {
+		for _, id := range friends.QueryList(q, "filter.id.$in", "id") {
 			if f, err := s.Acct.Resolve(url.Values{"baas": {id}}); err == nil && f != nil {
 				users = append(users, found(*f))
 			}
@@ -1066,8 +761,8 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		// A device deleting itself is a departure (PRE-02): its presence claim
 		// ends here, not when a lease happens to lapse. The request names the
 		// device; where it names a user too, end it on that user's record.
-		if dev := bodyField(body, form, "deviceId", "deviceAccountId", "device"); dev != "" {
-			if uid := bodyField(body, form, "userId", "user"); uid != "" {
+		if dev := friends.BodyField(body, form, "deviceId", "deviceAccountId", "device"); dev != "" {
+			if uid := friends.BodyField(body, form, "userId", "user"); uid != "" {
 				if u := s.Store.User(uid); u != nil {
 					s.presenceSvc().ExpireDevicePresence(u, dev)
 				}
@@ -1107,4 +802,4 @@ func (s *server) link(u *store.User, idTok string) (*store.User, error) {
 	return nu, nil
 }
 
-var minimal = os.Getenv("NX_MINIMAL") != "" // bisecting 2124-0292: only the NA link on top of the POST /users shape
+// bisecting 2124-0292: only the NA link on top of the POST /users shape

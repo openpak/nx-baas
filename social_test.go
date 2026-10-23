@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"nx-baas/internal/core"
+	"nx-baas/internal/friends"
 	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 	"nx-baas/internal/token"
@@ -893,7 +894,7 @@ func TestEveryFriendPatchAnswersTheWholeRelationship(t *testing.T) {
 		}
 		var reply map[string]any
 		_ = json.Unmarshal(w.Body.Bytes(), &reply)
-		if gaps := relationshipEntryGaps(reply); len(gaps) > 0 {
+		if gaps := friends.RelationshipEntryGaps(reply); len(gaps) > 0 {
 			t.Fatalf("PATCH %s reply lacks %v: %v", body, gaps, reply)
 		}
 		return reply

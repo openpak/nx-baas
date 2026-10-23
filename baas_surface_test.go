@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"nx-baas/internal/core"
+	"nx-baas/internal/friends"
 	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 	"strings"
@@ -420,8 +421,8 @@ func TestBecomingFriendsMovesFriendsUpdatedAt(t *testing.T) {
 		friend: &identity.Friend{PID: 2, BaasUserID: other.ID, FriendCode: "SW-1000-0000-0001",
 			Nickname: "hansolo", CreatedAt: 1788818380}}
 
-	before := s.userObj(me, s.identity(me), "")["friendsUpdatedAt"].(int64)
-	otherBefore := s.userObj(other, nil, "")["friendsUpdatedAt"].(int64)
+	before := s.friendsSvc().UserObj(me, s.friendsSvc().Identity(me), "")["friendsUpdatedAt"].(int64)
+	otherBefore := s.friendsSvc().UserObj(other, nil, "")["friendsUpdatedAt"].(int64)
 
 	r := httptest.NewRequest("PATCH", "https://"+core.BaasHost+"/2.0.0/friend_requests/"+other.ID,
 		strings.NewReader(`[{"op":"replace","path":"/state","value":"AUTHORIZED"}]`))
@@ -434,11 +435,11 @@ func TestBecomingFriendsMovesFriendsUpdatedAt(t *testing.T) {
 		t.Fatalf("accept = %d: %s", w.Code, w.Body.String())
 	}
 
-	if got := s.userObj(me, s.identity(me), "")["friendsUpdatedAt"].(int64); got <= before {
+	if got := s.friendsSvc().UserObj(me, s.friendsSvc().Identity(me), "")["friendsUpdatedAt"].(int64); got <= before {
 		t.Errorf("friendsUpdatedAt did not move for the console that accepted (%d -> %d)", before, got)
 	}
 	// And for the other one, which is not holding the controller.
-	if got := s.userObj(other, nil, "")["friendsUpdatedAt"].(int64); got <= otherBefore {
+	if got := s.friendsSvc().UserObj(other, nil, "")["friendsUpdatedAt"].(int64); got <= otherBefore {
 		t.Errorf("friendsUpdatedAt did not move for the other side (%d -> %d)", otherBefore, got)
 	}
 }
@@ -479,14 +480,14 @@ func TestOldFriendListCacheIsInvalidatedOnce(t *testing.T) {
 	s := dauthServer(t)
 	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
 	me, _ := s.Store.NewUser()
-	s.Store.Update(me, func(u *store.User) { u.PID, u.FriendsUpdatedAt = 1, friendListFormatEpoch-1 })
-	if got := s.userObj(me, nil, "")["friendsUpdatedAt"].(int64); got != friendListFormatEpoch {
-		t.Errorf("stale cache not invalidated: friendsUpdatedAt = %d, want %d", got, friendListFormatEpoch)
+	s.Store.Update(me, func(u *store.User) { u.PID, u.FriendsUpdatedAt = 1, friends.FriendListFormatEpoch-1 })
+	if got := s.friendsSvc().UserObj(me, nil, "")["friendsUpdatedAt"].(int64); got != friends.FriendListFormatEpoch {
+		t.Errorf("stale cache not invalidated: friendsUpdatedAt = %d, want %d", got, friends.FriendListFormatEpoch)
 	}
 	// A later friendship still wins; the floor is a floor, not the answer.
-	s.Store.Update(me, func(u *store.User) { u.FriendsUpdatedAt = friendListFormatEpoch + 5 })
-	if got := s.userObj(me, nil, "")["friendsUpdatedAt"].(int64); got != friendListFormatEpoch+5 {
-		t.Errorf("friendsUpdatedAt = %d, want %d", got, friendListFormatEpoch+5)
+	s.Store.Update(me, func(u *store.User) { u.FriendsUpdatedAt = friends.FriendListFormatEpoch + 5 })
+	if got := s.friendsSvc().UserObj(me, nil, "")["friendsUpdatedAt"].(int64); got != friends.FriendListFormatEpoch+5 {
+		t.Errorf("friendsUpdatedAt = %d, want %d", got, friends.FriendListFormatEpoch+5)
 	}
 }
 

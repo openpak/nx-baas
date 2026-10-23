@@ -1,12 +1,14 @@
-package main
+package friends
 
 import (
 	"encoding/json"
 	"log"
 	"net/http"
 	"net/url"
+	"nx-baas/internal/core"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
+	"nx-baas/internal/presence"
 	"nx-baas/internal/store"
 	"nx-baas/redact"
 	"sort"
@@ -16,12 +18,12 @@ import (
 )
 
 // /1.0.0/users/<id>/{friends,friend_requests,relationships}: older-firmware spellings, same data.
-func (s *server) friends(w http.ResponseWriter, r *http.Request, u *store.User, rest []string, body []byte) {
-	s.friends2(w, r, append([]string{"users", u.ID}, rest...), body)
+func (s *Service) HandleV1(w http.ResponseWriter, r *http.Request, u *store.User, rest []string, body []byte) {
+	s.HandleV2(w, r, append([]string{"users", u.ID}, rest...), body)
 }
 
 // /2.0.0 friends surface: see the function comment on friends2.
-func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, body []byte) {
+func (s *Service) HandleV2(w http.ResponseWriter, r *http.Request, seg []string, body []byte) {
 	now := time.Now().Unix()
 	var in map[string]any
 	json.Unmarshal(body, &in)
@@ -41,7 +43,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		return
 	}
 	// The caller's identity as the core sees it, for rendering "me" objects.
-	myID := s.identity(me)
+	myID := s.Identity(me)
 
 	switch {
 	case len(seg) == 3 && seg[0] == "users" && seg[2] == "friends" && r.Method == "GET":
@@ -54,16 +56,16 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 				// One relationship entry per core friend, in the shape the
 				// 22.5.0 parser counts: friendId + friend{nickname,
 				// thumbnailUrl} + the viewer's own relationship state.
-				list = append(list, s.relationshipObj(me, f, now))
+				list = append(list, s.RelationshipObj(me, f, now))
 			}
-			if len(list) > maxListEntries {
+			if len(list) > MaxListEntries {
 				// The parser caps at 300 itself; sending more would be
 				// dropped silently at the far end. No native cursor exists
 				// to paginate with, so the bound is the contract.
-				list = list[:maxListEntries]
+				list = list[:MaxListEntries]
 			}
 		}
-		httpx.WriteJSON(w, 200, listEnvelopeWith(list, `""`, 100))
+		httpx.WriteJSON(w, 200, ListEnvelopeWith(list, `""`, 100))
 		return
 
 	case len(seg) == 4 && seg[0] == "users" && seg[2] == "friends" && r.Method == "PATCH":
@@ -122,7 +124,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		}
 		// Answer with the single-friend shape the firmware's single-entry
 		// parser reads: $.friendId, $.friend.nickname, $.isFavorite.
-		target := s.resolveFriend(seg[3])
+		target := s.ResolveFriend(seg[3])
 		if target == nil && myID != nil {
 			// The console *replaces* its cached entry with this reply, and a
 			// reply without friendId, friend.nickname and friend.thumbnailUrl
@@ -143,7 +145,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			// than a plainer reply), so render what we know.
 			target = &identity.Friend{BaasUserID: seg[3]}
 		}
-		httpx.WriteJSON(w, 200, s.relationshipObj(me, *target, now))
+		httpx.WriteJSON(w, 200, s.RelationshipObj(me, *target, now))
 		return
 
 	case len(seg) == 4 && seg[0] == "users" && seg[2] == "friends" && r.Method == "DELETE":
@@ -153,14 +155,14 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		if s.RequireCaller(w, r, seg[1]) == nil {
 			return
 		}
-		target := s.resolveFriend(seg[3])
+		target := s.ResolveFriend(seg[3])
 		if target == nil {
 			httpx.BaasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 			return
 		}
 		if err := s.removeFriend(me, target); err != nil {
 			log.Printf("[nx-baas] friend-remove failed user=%s other=%s: %v", redact.Tag(me.ID), redact.Tag(seg[3]), redact.Err(err))
-			status, code, title, detail := baasFailure(err)
+			status, code, title, detail := BaasFailure(err)
 			httpx.BaasErr(w, r, status, code, title, detail)
 			return
 		}
@@ -192,7 +194,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		if st := q.Get("filter.state.$eq"); st != "" && requestState(st) != "PENDING" {
 			requests = nil
 		}
-		meObj := s.userObj(me, myID, "")
+		meObj := s.UserObj(me, myID, "")
 		for _, f := range requests {
 			var reqID string
 			if incoming {
@@ -205,7 +207,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			if record != nil {
 				createdAt, updatedAt = record.CreatedAt, record.UpdatedAt
 			}
-			other := s.friendObj(f, now)
+			other := s.FriendObj(f, now)
 			entry := map[string]any{
 				"id": reqID, "state": "PENDING",
 				"createdAt": createdAt, "updatedAt": updatedAt,
@@ -258,7 +260,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		for i, e := range list {
 			items[i] = e
 		}
-		httpx.WriteJSON(w, 200, listEnvelope(items))
+		httpx.WriteJSON(w, 200, ListEnvelope(items))
 		return
 
 	case len(seg) == 1 && seg[0] == "friend_requests" && r.Method == "POST":
@@ -296,14 +298,14 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			// success with a timestamp (the old code logged the failure and
 			// answered 201 anyway).
 			log.Printf("[nx-baas] friend-request failed user=%s target=%s: %v", redact.Tag(me.ID), redact.Tag(target.BaasUserID), redact.Err(err))
-			status, code, title, detail := baasFailure(err)
+			status, code, title, detail := BaasFailure(err)
 			httpx.BaasErr(w, r, status, code, title, detail)
 			return
 		}
 		if created {
-			s.noteRequestRoute(reqID, body)
+			s.NoteRequestRoute(reqID, body)
 		}
-		s.friendGraphChanged(me, target.BaasUserID)
+		s.FriendGraphChanged(me, target.BaasUserID)
 		// The request gets its own durable id. It used to be handed back the
 		// receiver's user id, which is a different thing entirely: the console
 		// PATCHes /2.0.0/friend_requests/<id> to cancel, and an id that is
@@ -423,7 +425,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			// No commit, no success: the console is told, in its own error
 			// contract, and can re-sync.
 			log.Printf("[nx-baas] friend-request %s failed user=%s ref=%s: %v", state, redact.Tag(me.ID), redact.Tag(seg[1]), redact.Err(err))
-			status, code, title, detail := baasFailure(err)
+			status, code, title, detail := BaasFailure(err)
 			httpx.BaasErr(w, r, status, code, title, detail)
 			return
 		}
@@ -442,7 +444,7 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 			otherFriend = &identity.Friend{BaasUserID: seg[1]}
 		}
 		otherBaas := otherFriend.BaasUserID
-		s.friendGraphChanged(me, otherBaas)
+		s.FriendGraphChanged(me, otherBaas)
 		// An acceptance completes the new-friend acknowledgement too: the
 		// friendship is not news to the person who just accepted it.
 		if state == "AUTHORIZED" {
@@ -456,8 +458,8 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		// with our own vocabulary ("ACCEPTED") and a three-field stub, and the
 		// console called it a communication error even though the friendship
 		// had gone through.
-		otherObj := s.friendObj(*otherFriend, now)
-		meObj := s.userObj(me, myID, "")
+		otherObj := s.FriendObj(*otherFriend, now)
+		meObj := s.UserObj(me, myID, "")
 		senderObj, receiverObj := any(otherObj), any(meObj)
 		senderID, receiverID := otherBaas, me.ID
 		if state == "CANCELED" || (record != nil && record.FromPID == me.PID) {
@@ -490,15 +492,15 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 		// The console renders the person, not just the verdict: it reads
 		// targetUser.nickname and targetUser.thumbnailUrl off this reply
 		// [firmware, friends module]. Resolving costs one core lookup.
-		if f := s.resolveFriend(seg[3]); f != nil {
-			rel["targetUser"] = s.friendObj(*f, now)
+		if f := s.ResolveFriend(seg[3]); f != nil {
+			rel["targetUser"] = s.FriendObj(*f, now)
 		}
 		for _, b := range me.Blocks {
 			if b == seg[3] {
 				rel["isBlocking"] = true
 			}
 		}
-		if p := s.prefOf(me, seg[3]); p != nil && p.Favorite {
+		if p := s.PrefOf(me, seg[3]); p != nil && p.Favorite {
 			rel["isFavoriteFriend"] = true
 		}
 		if myID != nil {
@@ -518,4 +520,11 @@ func (s *server) friends2(w http.ResponseWriter, r *http.Request, seg []string, 
 	}
 	httpx.Dump(r, body, "!! UNHANDLED 2.0.0")
 	httpx.BaasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
+}
+
+// Service is the friends surface (friends, friend requests, relationships, blocks) and the
+// BAAS user and friend objects it renders, over the shared state.
+type Service struct {
+	*core.Core
+	Presence *presence.Service
 }

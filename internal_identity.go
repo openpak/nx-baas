@@ -18,6 +18,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"nx-baas/internal/friends"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
 	"strings"
@@ -56,7 +57,7 @@ func (s *server) identityUsers(w http.ResponseWriter, r *http.Request) {
 		r2.URL.Path = "/1/" + u.ID
 		s.baas(w, r2, nil)
 	case len(parts) == 4 && parts[1] == "friends" && parts[3] == "preference":
-		httpx.WriteJSON(w, 200, map[string]any{"online_notification": onlineNotificationOf(s.prefOf(u, parts[2]))})
+		httpx.WriteJSON(w, 200, map[string]any{"online_notification": friends.OnlineNotificationOf(s.friendsSvc().PrefOf(u, parts[2]))})
 	default:
 		httpx.APIErr(w, http.StatusNotFound, "no such route")
 	}

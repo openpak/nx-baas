@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"nx-baas/internal/friends"
 	"nx-baas/internal/httpx"
 	"nx-baas/redact"
 	"strings"
@@ -32,7 +33,7 @@ func (s *server) olsc(w http.ResponseWriter, r *http.Request, body []byte) {
 	switch {
 	case strings.HasSuffix(p, "notification_tokens"):
 		// Echo the token back, which is what the documented reply carries.
-		tok := bodyField(body, r.URL.Query(), "notification_token")
+		tok := friends.BodyField(body, r.URL.Query(), "notification_token")
 		s.bindTokenProfile(r, tok)
 		httpx.WriteJSON(w, 200, map[string]any{"notification_token": tok})
 	case strings.HasSuffix(p, "/save_data_archives"):
@@ -139,7 +140,7 @@ func (s *server) savesProxy(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(io.LimitReader(r.Body, 4096))
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		r.ContentLength = int64(len(body))
-		s.bindTokenProfile(r, bodyField(body, r.URL.Query(), "notification_token"))
+		s.bindTokenProfile(r, friends.BodyField(body, r.URL.Query(), "notification_token"))
 	}
 	r.Header.Del("X-OpenPak-Account")
 	r.Header.Del("X-OpenPak-NSA")

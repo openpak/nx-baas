@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"nx-baas/internal/core"
+	"nx-baas/internal/friends"
 	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 	"os"
@@ -77,7 +78,7 @@ func renderGaps(entry map[string]any, required map[string]string) []string {
 func TestRelationshipEntrySatisfiesTheNativeFixture(t *testing.T) {
 	s := dauthServer(t)
 	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
-	entry := s.relationshipObj(nil, identity.Friend{
+	entry := s.friendsSvc().RelationshipObj(nil, identity.Friend{
 		PID: 2, BaasUserID: "0123456789abcdef", Nickname: "OpenPak Test",
 		FriendCode: "SW-0000-0000-0001", Country: "IE", CreatedAt: 1788818380,
 	}, 1788899654)
@@ -86,7 +87,7 @@ func TestRelationshipEntrySatisfiesTheNativeFixture(t *testing.T) {
 	if gaps := renderGaps(entry, required); len(gaps) > 0 {
 		t.Errorf("rendered entry missing %v — the parser would drop this item", gaps)
 	}
-	if gaps := relationshipEntryGaps(entry); len(gaps) > 0 {
+	if gaps := friends.RelationshipEntryGaps(entry); len(gaps) > 0 {
 		t.Errorf("entry gate reports %v", gaps)
 	}
 }
@@ -96,11 +97,11 @@ func TestRelationshipEntrySatisfiesTheNativeFixture(t *testing.T) {
 func TestOldFlatEntryFailsTheNativeGate(t *testing.T) {
 	s := dauthServer(t)
 	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
-	flat := s.friendObj(identity.Friend{
+	flat := s.friendsSvc().FriendObj(identity.Friend{
 		PID: 2, BaasUserID: "0123456789abcdef", Nickname: "OpenPak Test",
 		Country: "IE", CreatedAt: 1788818380,
 	}, 1788899654)
-	if gaps := relationshipEntryGaps(flat); len(gaps) == 0 {
+	if gaps := friends.RelationshipEntryGaps(flat); len(gaps) == 0 {
 		t.Fatal("the flat shape passes the gate; the empty-list regression is back")
 	}
 }
@@ -110,7 +111,7 @@ func TestOldFlatEntryFailsTheNativeGate(t *testing.T) {
 func TestEachRequiredFieldOmissionIsDetected(t *testing.T) {
 	s := dauthServer(t)
 	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
-	entry := s.relationshipObj(nil, identity.Friend{BaasUserID: "0123456789abcdef", CreatedAt: 1}, 1788899654)
+	entry := s.friendsSvc().RelationshipObj(nil, identity.Friend{BaasUserID: "0123456789abcdef", CreatedAt: 1}, 1788899654)
 
 	for _, drop := range []struct {
 		path  string
@@ -124,7 +125,7 @@ func TestEachRequiredFieldOmissionIsDetected(t *testing.T) {
 		var clone map[string]any
 		_ = json.Unmarshal(cp, &clone)
 		drop.apply(clone)
-		if len(relationshipEntryGaps(clone)) == 0 {
+		if len(friends.RelationshipEntryGaps(clone)) == 0 {
 			t.Errorf("dropping %q was not detected", drop.path)
 		}
 	}
@@ -141,30 +142,30 @@ func dropPathKey(path string) string {
 func TestFriendListBoundsAndEmptyCase(t *testing.T) {
 	s := dauthServer(t)
 	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
-	friends := []identity.Friend{}
+	fl := []identity.Friend{}
 	for i := 0; i < 310; i++ {
-		friends = append(friends, identity.Friend{PID: uint64(i + 2), BaasUserID: strings.Repeat("a", 15) + string(rune('a'+i%26)) + itoa(i),
+		fl = append(fl, identity.Friend{PID: uint64(i + 2), BaasUserID: strings.Repeat("a", 15) + string(rune('a'+i%26)) + itoa(i),
 			Nickname: "F", FriendCode: "SW-0000-0000-0001", Country: "IE", CreatedAt: 1788818380})
 	}
 	// exactly 300 through the wire: the renderer caps before the envelope.
 	list := []any{}
-	for _, f := range friends {
-		list = append(list, s.relationshipObj(nil, f, 1788899654))
+	for _, f := range fl {
+		list = append(list, s.friendsSvc().RelationshipObj(nil, f, 1788899654))
 	}
-	if len(list) > maxListEntries {
-		list = list[:maxListEntries]
+	if len(list) > friends.MaxListEntries {
+		list = list[:friends.MaxListEntries]
 	}
-	env := listEnvelopeWith(list, `""`, 100)
+	env := friends.ListEnvelopeWith(list, `""`, 100)
 	if env["count"] != 300 {
 		t.Errorf("count = %v, want the 300 bound", env["count"])
 	}
 
 	// Empty and one-entry lists keep the quoted empty etag the capture shows.
-	empty := listEnvelopeWith(nil, `""`, 100)
+	empty := friends.ListEnvelopeWith(nil, `""`, 100)
 	if empty["count"] != 0 || empty["etag"] != `""` {
 		t.Errorf("empty envelope: %v", empty)
 	}
-	one := listEnvelopeWith([]any{s.relationshipObj(nil, identity.Friend{BaasUserID: "0123456789abcdef", Nickname: "x", CreatedAt: 5}, 1788899654)}, `""`, 100)
+	one := friends.ListEnvelopeWith([]any{s.friendsSvc().RelationshipObj(nil, identity.Friend{BaasUserID: "0123456789abcdef", Nickname: "x", CreatedAt: 5}, 1788899654)}, `""`, 100)
 	if one["count"] != 1 || one["etag"] == `""` {
 		t.Errorf("one-entry envelope: count %v etag %v", one["count"], one["etag"])
 	}

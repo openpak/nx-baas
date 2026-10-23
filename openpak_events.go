@@ -130,7 +130,7 @@ func (s *server) projectionFriendsChanged(b *identity.OpenpakBackend, accountID,
 		if other != nil {
 			otherBaas = other.BaasUserID
 		}
-		s.friendGraphChanged(u, otherBaas)
+		s.friendsSvc().FriendGraphChanged(u, otherBaas)
 	}
 }
 

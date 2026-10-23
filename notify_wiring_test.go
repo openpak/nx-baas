@@ -60,7 +60,7 @@ func TestRequestReceivedPushCarriesTheChannel(t *testing.T) {
 	a, other := users[0], users[1]
 
 	id, _ := s.Store.EnsureRequest(other.PID, a.PID)
-	s.noteRequestRoute(id, []byte(`{"channels":["IN_APP"]}`))
+	s.friendsSvc().NoteRequestRoute(id, []byte(`{"channels":["IN_APP"]}`))
 	s.notifyCoreFriendEvent(b, "friend_requested", "acc-a@example.com", "acc-b@example.com", 21)
 	queue := outboxOf(s, a.ID)
 	if len(queue) != 1 {

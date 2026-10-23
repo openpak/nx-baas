@@ -8,8 +8,6 @@ import (
 	"log"
 	"net/http"
 	"nx-baas/internal/httpx"
-	"nx-baas/internal/identity"
-	"nx-baas/internal/store"
 	"nx-baas/redact"
 	"time"
 )
@@ -77,22 +75,4 @@ func fetchAvatar(url string) ([]byte, error) {
 		return nil, fmt.Errorf("avatar: %s did not return a JPEG", url)
 	}
 	return img, nil
-}
-
-// newerPicture answers "does this user have a picture, and when did it last
-// change" across the two places one can be set: the console's own upload and
-// the account's avatar on the website. Zero means neither, which is the only
-// case where a console should be sent to /1/default.
-func newerPicture(u *store.User, id *identity.Identity) int64 {
-	at := u.AvatarAt
-	if u.Avatar != "" && at == 0 {
-		at = u.UpdatedAt // uploaded before this field existed
-	}
-	if u.Avatar == "" {
-		at = 0
-	}
-	if id != nil && id.ImageUpdatedAt > at {
-		return id.ImageUpdatedAt
-	}
-	return at
 }

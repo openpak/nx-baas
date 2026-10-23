@@ -1,4 +1,4 @@
-package main
+package friends
 
 import (
 	"crypto/sha256"
@@ -13,7 +13,7 @@ import (
 
 // queryList reads a console filter parameter, which may repeat and whose $in
 // form is comma-separated. The fallbacks are the older, simpler spellings.
-func queryList(q url.Values, keys ...string) []string {
+func QueryList(q url.Values, keys ...string) []string {
 	var out []string
 	for _, k := range keys {
 		for _, v := range q[k] {
@@ -30,7 +30,7 @@ func queryList(q url.Values, keys ...string) []string {
 // bodyField reads a parameter from either encoding: this server takes form or
 // JSON depending on the method, and the console picks. Documented on kinnay's
 // BAAS page; observed both ways on hardware.
-func bodyField(body []byte, form url.Values, keys ...string) string {
+func BodyField(body []byte, form url.Values, keys ...string) string {
 	var j map[string]any
 	_ = json.Unmarshal(body, &j)
 	for _, k := range keys {
@@ -47,7 +47,7 @@ func bodyField(body []byte, form url.Values, keys ...string) string {
 // permissionsOf serves the user's privacy switches: the documented defaults,
 // overridden by anything they changed on the console. Values are the console's
 // own (friends EVERYONE|FRIENDS|SELF, presence FRIENDS|FAVORITE_FRIENDS|SELF).
-func permissionsOf(u *store.User) map[string]any {
+func PermissionsOf(u *store.User) map[string]any {
 	p := map[string]any{
 		"friendRequestReception": true, "friends": "EVERYONE",
 		"personalAnalytics": true, "personalAnalyticsUpdatedAt": u.CreatedAt,
@@ -66,8 +66,8 @@ func permissionsOf(u *store.User) map[string]any {
 // process-global map lost every request on restart, which turned a cancel
 // into a gamble on which server instance answered.
 
-func (s *server) rememberRequest(receiverBaasID string) string  { return "" }        // removed: see store.EnsureRequest
-func (s *server) requestTarget(requestID string) (string, bool) { return "", false } // removed: see store.RequestByID
+func (s *Service) rememberRequest(receiverBaasID string) string  { return "" }        // removed: see store.EnsureRequest
+func (s *Service) requestTarget(requestID string) (string, bool) { return "", false } // removed: see store.RequestByID
 
 // channelsOf echoes back the channels the console said it used, defaulting to
 // the one it uses when adding by code.
@@ -86,15 +86,15 @@ func channelsOf(body []byte) []string {
 // to name the array after its contents -- "friends", "friendRequests", "users"
 // -- and a console reading "items" found nothing every time, which is what an
 // empty friend list and an empty inbox looked like from the sofa.
-func listEnvelope(items []any) map[string]any {
-	return listEnvelopeWith(items, "", 100)
+func ListEnvelope(items []any) map[string]any {
+	return ListEnvelopeWith(items, "", 100)
 }
 
 // listEnvelopeWith exists because the two captures differ and this parser has
 // not forgiven a difference yet: the friend list carries a quoted empty etag
 // and itemsPerPage 100, the request boxes a bare empty etag. The inbox reply
 // with a bare etag is the one a console has demonstrably read, so it keeps it.
-func listEnvelopeWith(items []any, etag string, perPage int) map[string]any {
+func ListEnvelopeWith(items []any, etag string, perPage int) map[string]any {
 	if items == nil {
 		items = []any{}
 	}
@@ -152,19 +152,19 @@ func patchedState(body []byte) string {
 // friendListFormatEpoch is when the 22.5.0 friend-list shape shipped. Consoles
 // that cached an empty list from the old shape only refetch when the version
 // moves past the one they stored, so every account's version floors here once.
-const friendListFormatEpoch = 1789159700 // 2026-09-11T20:48:20Z, when this shipped
+const FriendListFormatEpoch = 1789159700 // 2026-09-11T20:48:20Z, when this shipped
 
 // friendsUpdatedAt is the version a console watches to decide whether its
 // cached friend list is stale. It used to be the user's UpdatedAt, which moves
 // for a picture or a nickname and not for a friendship, so a console that had
 // just become friends with somebody never asked for the list again.
-func friendsUpdatedAt(u *store.User) int64 {
+func FriendsUpdatedAt(u *store.User) int64 {
 	v := u.UpdatedAt
 	if u.FriendsUpdatedAt > 0 {
 		v = u.FriendsUpdatedAt
 	}
-	if v < friendListFormatEpoch {
-		return friendListFormatEpoch
+	if v < FriendListFormatEpoch {
+		return FriendListFormatEpoch
 	}
 	return v
 }
@@ -174,7 +174,7 @@ func friendsUpdatedAt(u *store.User) int64 {
 // strictly monotonic (see bumpFriendsUpdated): two changes inside one second
 // must not collapse into one, or a console that refetched between them keeps
 // the stale list.
-func (s *server) friendGraphChanged(u *store.User, otherBaasID string) {
+func (s *Service) FriendGraphChanged(u *store.User, otherBaasID string) {
 	now := time.Now().Unix()
 	s.Store.Update(u, func(u *store.User) { store.BumpFriendsUpdated(u, now) })
 	if other := s.Store.User(otherBaasID); other != nil {

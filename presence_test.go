@@ -19,6 +19,7 @@ import (
 
 	accountv1 "nx-baas/accountpb"
 	"nx-baas/internal/core"
+	"nx-baas/internal/friends"
 	"nx-baas/internal/identity"
 	"nx-baas/internal/presence"
 	"nx-baas/internal/store"
@@ -539,7 +540,7 @@ func TestAFriendPlayingOnAnotherPlatformReadsAsOnline(t *testing.T) {
 			f = cand
 		}
 	}
-	got := s.visiblePresence(viewer, f, time.Now().Unix())
+	got := s.friendsSvc().VisiblePresence(viewer, f, time.Now().Unix())
 	if got["state"] != "ONLINE" {
 		t.Fatalf("presence = %v, want ONLINE for a friend playing elsewhere", got["state"])
 	}
@@ -563,7 +564,7 @@ func TestAFriendPlayingOnAnotherPlatformReadsAsOnline(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	got = s.visiblePresence(viewer, f, time.Now().Unix())
+	got = s.friendsSvc().VisiblePresence(viewer, f, time.Now().Unix())
 	if got["state"] != "PLAYING" {
 		t.Fatalf("presence = %v, want PLAYING on this platform", got["state"])
 	}
@@ -744,7 +745,7 @@ func TestNameWithPlatform(t *testing.T) {
 		{"AVeryLongNicknameThatFillsTheLimit", "Wharf", "AVeryLongNicknameThatFil (Wharf)"},
 		{"ÀÀÀÀÀÀÀÀÀÀÀÀÀÀÀÀÀÀÀÀ", "Pier", "ÀÀÀÀÀÀÀÀÀÀÀÀ (Pier)"},
 	} {
-		got := nameWithPlatform(c.name, c.platform)
+		got := friends.NameWithPlatform(c.name, c.platform)
 		if got != c.want || len(got) > 32 {
 			t.Errorf("nameWithPlatform(%q,%q) = %q (%d bytes), want %q", c.name, c.platform, got, len(got), c.want)
 		}
@@ -767,7 +768,7 @@ func TestTestPF(t *testing.T) {
 			t.Fatalf("%s: out-of-range, unparsable and unlisted must send nothing", c)
 		}
 	}
-	p := presenceObj(store.Presence{State: "ONLINE", Client: "harbor", ACDIndex: -1})
+	p := friends.PresenceObj(store.Presence{State: "ONLINE", Client: "harbor", ACDIndex: -1})
 	if p["pf"] != 2 {
 		t.Fatalf("friend list entry: %v", p["pf"])
 	}

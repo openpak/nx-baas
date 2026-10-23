@@ -22,6 +22,7 @@ import (
 	"nx-baas/internal/core"
 	"nx-baas/internal/dauth"
 	"nx-baas/internal/devices"
+	"nx-baas/internal/friends"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
 	"nx-baas/internal/invitations"
@@ -94,6 +95,9 @@ type server struct {
 	// naService is the Nintendo Account surface and the console link pages (internal/nxaccount).
 	naService *nxaccount.Service
 	naOnce    sync.Once
+	// friendsService is the friends surface and the BAAS objects it renders (internal/friends).
+	friendsService *friends.Service
+	friendsOnce    sync.Once
 	// dauthService is device and application authentication (internal/dauth).
 	dauthService *dauth.Service
 	dauthOnce    sync.Once
@@ -347,4 +351,10 @@ func (s *server) invitationsSvc() *invitations.Service {
 func (s *server) naSvc() *nxaccount.Service {
 	s.naOnce.Do(func() { s.naService = nxaccount.New(s.Core, s.locks()) })
 	return s.naService
+}
+
+// friendsSvc is the friends surface, created on first use like locks.
+func (s *server) friendsSvc() *friends.Service {
+	s.friendsOnce.Do(func() { s.friendsService = &friends.Service{Core: s.Core, Presence: s.presenceSvc()} })
+	return s.friendsService
 }

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"nx-baas/internal/core"
+	"nx-baas/internal/friends"
 	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
 	"os"
@@ -177,7 +178,7 @@ func TestTheNewerPictureWins(t *testing.T) {
 		if w.Body.Len() != len(fromSite) {
 			t.Fatalf("served %d bytes, want the website's %d", w.Body.Len(), len(fromSite))
 		}
-		if got := s.userObj(u, s.identity(u), "")["thumbnailUploadedAt"]; got != websiteEdit {
+		if got := s.friendsSvc().UserObj(u, s.friendsSvc().Identity(u), "")["thumbnailUploadedAt"]; got != websiteEdit {
 			t.Fatalf("thumbnailUploadedAt = %v, want the website's %d — the console will not refetch", got, websiteEdit)
 		}
 	})
@@ -191,7 +192,7 @@ func TestTheNewerPictureWins(t *testing.T) {
 		if w.Body.Len() == len(fromSite) {
 			t.Fatal("the website's picture overwrote a newer one from the console")
 		}
-		if got := s.userObj(u, s.identity(u), "")["thumbnailUploadedAt"]; got != consoleUpload {
+		if got := s.friendsSvc().UserObj(u, s.friendsSvc().Identity(u), "")["thumbnailUploadedAt"]; got != consoleUpload {
 			t.Fatalf("thumbnailUploadedAt = %v, want the console's %d", got, consoleUpload)
 		}
 	})
@@ -291,7 +292,7 @@ func TestFriendObjectCarriesWhatAUserObjectCarries(t *testing.T) {
 
 	s := dauthServer(t)
 	s.Store = &store.Store{Devices: map[string]*store.DeviceAccount{}, Users: map[string]*store.User{}, NaToPID: map[string]uint64{}}
-	obj := s.friendObj(identity.Friend{
+	obj := s.friendsSvc().FriendObj(identity.Friend{
 		PID: 1900000002, BaasUserID: "aaaaaaaaaaaa0002", NaID: "bbbbbbbbbbbb0002",
 		FriendCode: "SW-1000-0000-0002", Nickname: "Leia", Country: "GB", CreatedAt: 1788896080,
 	}, 1788899654)
@@ -423,7 +424,7 @@ func TestFriendListEntriesCarryACountry(t *testing.T) {
 	entry := got.Items[0]
 	// The parser's three-field gate: an entry missing any of these never
 	// reaches the list, however right the rest of it is.
-	if gaps := relationshipEntryGaps(entry); len(gaps) > 0 {
+	if gaps := friends.RelationshipEntryGaps(entry); len(gaps) > 0 {
 		t.Errorf("entry would be dropped by the parser, missing %v", gaps)
 	}
 	if entry["friendId"] != "aaaaaaaaaaaa0001" {

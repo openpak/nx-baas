@@ -151,7 +151,7 @@ func TestUserObjectInventsNothing(t *testing.T) {
 	t.Setenv("NX_DEFAULT_COUNTRY", "GB")
 	t.Setenv("NX_DEFAULT_BIRTHDAY", "1990-01-01")
 	u := &store.User{ID: "user-1", Birthday: "0000-00-00"}
-	obj := s.userObj(u, &identity.Identity{PID: 1, Nickname: "someone", FriendCode: "SW-0000-0000-0000"}, "")
+	obj := s.friendsSvc().UserObj(u, &identity.Identity{PID: 1, Nickname: "someone", FriendCode: "SW-0000-0000-0000"}, "")
 
 	self := obj["extras"].(map[string]any)["self"].(map[string]any)
 	if _, ok := self["nxAccount"]; ok {
@@ -181,7 +181,7 @@ func TestNintendoAccountFollowsTheAccountsOwnProfile(t *testing.T) {
 	if country != "IE" || birthday != "1984-03-02" {
 		t.Fatalf("users/me served %q/%q, want the account's own IE/1984-03-02", country, birthday)
 	}
-	obj := s.userObj(&store.User{ID: "u1", Country: "IE", Birthday: "1984-03-02"}, id, "")
+	obj := s.friendsSvc().UserObj(&store.User{ID: "u1", Country: "IE", Birthday: "1984-03-02"}, id, "")
 	if obj["country"] != country || obj["birthday"] != birthday {
 		t.Errorf("the two objects disagree: BAAS %v/%v vs NA %v/%v", obj["country"], obj["birthday"], country, birthday)
 	}
