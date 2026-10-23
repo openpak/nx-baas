@@ -76,7 +76,7 @@ where to continue, never the password; it is single-use and ten minutes. This ne
 The console page and the phone pages share one stylesheet split by a body class: a television
 read from a sofa and driven by a stick is not a phone held at arm's length. Both carry their CSS
 inline, because a console browser may have no route to the website. Full flow:
-[`../docs/switch/console-link-flow.md`](../docs/switch/console-link-flow.md).
+internal research notes.
 
 `PREVIEW_DIR=/tmp/link go test -count=1 -run DumpLinkPages .` writes every one of those pages out
 to look at; the console page must be judged at 1280×720.
@@ -85,7 +85,7 @@ to look at; the console page must be judged at 1280×720.
 
 Adding a friend works end to end on hardware except the console's own friend list, which stays
 empty; the whole investigation, every captured shape and every fix, is in
-[`../docs/switch/friend-flow-2026-09-08.md`](../docs/switch/friend-flow-2026-09-08.md).
+internal research notes.
 
 Two rules from it, because breaking either costs an evening:
 

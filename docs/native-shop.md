@@ -165,7 +165,7 @@ unpublished titles are invisible to the storefront, tagaya, superfly, pushmo and
 
 ## 22.5.0 surface (2026-09-23)
 
-From `../docs/switch/native-news-eshop-nso-gap-22.5.0-2026-09-23.md` and a further read of
+From internal research notes and a further read of
 NIM and ns for the update path. Nothing here is hardware-confirmed.
 
 **Scope.** The store carries homebrew and the updates for it. Store titles have no rights

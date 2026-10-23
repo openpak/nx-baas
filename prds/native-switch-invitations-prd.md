@@ -17,8 +17,8 @@ architecture, provenance, security, performance targets, acceptance and review a
 it does not need to implement the other workstreams to submit its own review package.
 
 Target Horizon 22.5.0; record the actual Atmosphère setup. Use the
-[firmware findings](../../docs/switch/firmware-22.5.0-social-eshop-findings.md),
-[backend audit](../../docs/switch/native-social-eshop-audit-2026-09-11.md), and public
+firmware findings (internal research notes),
+backend audit (internal research notes), and public
 references linked in the parent. The firmware findings supersede the audit's unknown
 friend-list shape. Firmware and Ghidra work remain in the private paths recorded there.
 Recheck current source and account contracts before treating historical gaps as current.

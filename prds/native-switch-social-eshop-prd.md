@@ -34,16 +34,16 @@ invitation/join capabilities individually rather than silently reducing that sco
 
 ## 2. Read first: evidence and working material
 
-1. [Firmware 22.5.0 findings](../../docs/switch/firmware-22.5.0-social-eshop-findings.md)
+1. Firmware 22.5.0 findings (internal research notes)
    are the latest static evidence, including module-relative addresses and parser gates.
-2. [Backend audit](../../docs/switch/native-social-eshop-audit-2026-09-11.md) records
+2. Backend audit (internal research notes) records
    implementation defects. Its missing-firmware and unknown-list-shape statements are
    superseded by the firmware findings. Recheck source locations against current HEAD.
-3. [Module inventory](../../docs/switch/specs/firmware-22.5.0-module-inventory.json)
+3. Module inventory (internal research notes)
    pins input hashes and build IDs.
 4. [Switch expansion PRD](../../prds/switch-expansion-prd.md), current `account` protobuf/API
    definitions and adapter documentation define architecture and existing contracts.
-   The [SP-5 draft](../../docs/switch/specs/sp5-contracts-draft.md) is historical; its
+   The SP-5 draft (internal research notes) is historical; its
    proposed gaps are not proof that those contracts are still missing.
 
 Local firmware: `~/Downloads/Firmware.22.5.0`.

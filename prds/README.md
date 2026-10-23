@@ -13,8 +13,8 @@ editing anything here.
 - [D: native OpenPak store](native-switch-store-prd.md)
 
 Parental controls (pctl/moon pairing and settings sync) is documented in the
-[docs repo](https://github.com/openpak/docs) — `switch/native-switch-parental-controls-prd.md`,
-beside the firmware study it is written against — because documentation lives
-there, not in the repo it happens to describe.
+internal research notes (the parental-controls PRD and the firmware study it is
+written against), because documentation lives there, not in the repo it happens
+to describe.
 
 Isolated worktrees for A–D sit beside this repository as `nx-baas-<workstream>`.

@@ -438,7 +438,7 @@ this release adds to it rather than replacing anything.
   shape pctl recognises, including its literal error identities, plus the pairing store and the
   app's two calls. The ten paths and their bodies are meant to be *read off* one on-console
   pairing attempt, not invented — later phases are written against that log.
-  Contract: `docs/switch/parental-controls-firmware-2026-09-26.md`, PRD
+  Contract: internal research notes, PRD
   `prds/native-switch-parental-controls-prd.md`.
 - ci: the release workflow pins its runner image and moves to `actions/checkout@v5`.
 - frs: the comment claiming an empty recommendations body failed the console's parse is corrected.
@@ -705,7 +705,7 @@ and what stays unverified: `docs/native-shop.md`, "After v0.16.0"):
 
 ## v0.16.0 — 2026-09-23
 
-The P2 leftovers from `../docs/switch/native-news-eshop-nso-gap-22.5.0-2026-09-23.md`
+The P2 leftovers from internal research notes
 (evidence and addresses in `docs/native-shop.md`, "P2 leftovers"):
 
 - **Voice-chat lobby**: `web-<env>.znc.srv.nintendo.net/lobby/*` serves a controller-first
@@ -754,7 +754,7 @@ The P2 leftovers from `../docs/switch/native-news-eshop-nso-gap-22.5.0-2026-09-2
 ## v0.14.0 — 2026-09-23
 
 eShop, Switch Online and News against firmware 22.5.0
-(`../docs/switch/native-news-eshop-nso-gap-22.5.0-2026-09-23.md`):
+(internal research notes):
 
 - The storefront answers on `hac.<env>.savanna.srv.nintendo.net`, where 22.5.0's systemWeb
   opens the shop: `/top`, `/detail/…`, `/catalog_tickets/…`, `/search/result/conditions`,
@@ -871,7 +871,7 @@ Cross-network presence with client labels:
 ## v0.12.43 — 2026-09-19
 
 Friends-contract gaps, from the 22.5.0 friends-module read
-(`docs/switch/friends-contract-22.5.0.md`):
+(internal research notes):
 
 - Presence: read the console's DAPresence state byte for PLAYING, always send appField (`"{}"` minimum or the event parser drops it), notify on an appField-only change [c1c2354]
 - Invitation event ids as JSON integers or the module drops the whole `friend_invitation_received` [a03f726]
