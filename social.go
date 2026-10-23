@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
+	"nx-baas/internal/presence"
 	"nx-baas/internal/store"
 	"strings"
 )
@@ -144,7 +145,7 @@ func (s *server) visiblePlayLog(viewer, subject *store.User, areFriends bool) (g
 	if viewer != nil && viewer.ID == subject.ID {
 		return group, pl
 	}
-	if viewer != nil && blocksEither(viewer, subject) {
+	if viewer != nil && presence.BlocksEither(viewer, subject) {
 		return "", ""
 	}
 	switch group {
@@ -238,7 +239,7 @@ func (s *server) visiblePresence(viewer *store.User, f identity.Friend, now int6
 // visiblePresenceOn is visiblePresence plus where the friend is live, as a person reads it
 // ("Harbor", "Switch", "Pier"), or "" when they are not live or the viewer may not see them.
 func (s *server) visiblePresenceOn(viewer *store.User, f identity.Friend, now int64) (map[string]any, string) {
-	lease := presenceLease()
+	lease := presence.Lease()
 	subject := s.Store.User(f.BaasUserID)
 	if subject == nil {
 		// No local record: fall back to what the lookup carried, timestamped
@@ -255,27 +256,27 @@ func (s *server) visiblePresenceOn(viewer *store.User, f identity.Friend, now in
 	}
 	// The caller renders the core's friend list, so friendship is established;
 	// presenceVisible answers the privacy half.
-	if !presenceVisible(viewer, subject, true) {
+	if !presence.Visible(viewer, subject, true) {
 		return presenceObj(store.Presence{State: "OFFLINE", UpdatedAt: now}), ""
 	}
-	agg := aggregatePresence(subject, now, lease)
+	agg := presence.Aggregate(subject, now, lease)
 	if agg.State == "OFFLINE" {
 		// Nothing of theirs is live on a Switch. The core knows where else
 		// they are, and a friend playing on another console is still somebody
 		// to say hello to.
 		if b, ok := s.Acct.(*identity.OpenpakBackend); ok {
-			if elsewhere, live := s.presenceFromCore(b.AccountFor(f.PID), b.Namespace, now); live {
+			if elsewhere, live := s.presenceSvc().FromCore(b.AccountFor(f.PID), b.Namespace, now); live {
 				elsewhere.LogoutAt = agg.LogoutAt
 				on := ""
-				if cp, ok := s.corePresenceOf(b.AccountFor(f.PID)); ok {
-					on = clientLabel(cp.Namespace, cp.Client)
+				if cp, ok := s.presenceSvc().CorePresenceOf(b.AccountFor(f.PID)); ok {
+					on = presence.ClientLabel(cp.Namespace, cp.Client)
 				}
 				return presenceObj(elsewhere), on
 			}
 		}
 		return presenceObj(agg), ""
 	}
-	return presenceObj(homeAsOnline(agg)), clientLabel("switch", agg.Client)
+	return presenceObj(presence.HomeAsOnline(agg)), presence.ClientLabel("switch", agg.Client)
 }
 
 // nameWithPlatform is a friend's name as the friend list shows it when NX_PLATFORM_IN_NAME=1:

@@ -709,13 +709,13 @@ func TestInvitationDropsOutWhenTheSenderLeftTheGame(t *testing.T) {
 	if sender == nil {
 		t.Skip("the five test server has no user store entry for the sender")
 	}
-	s.noteDevicePresence(sender, "dev-1", "PLAYING", "0100ed9024eb8000", "", "", -1)
+	s.presenceSvc().NoteDevicePresence(sender, "dev-1", "PLAYING", "0100ed9024eb8000", "", "", -1)
 	if inbox() != 1 {
 		t.Errorf("an invitation from a sender still in that game was hidden")
 	}
 
 	// They quit to the Home menu: the room is gone with them.
-	s.noteDevicePresence(s.Store.User(invSenderUID), "dev-1", "INACTIVE", "", "", "", -1)
+	s.presenceSvc().NoteDevicePresence(s.Store.User(invSenderUID), "dev-1", "INACTIVE", "", "", "", -1)
 	if got := inbox(); got != 0 {
 		t.Errorf("inbox = %v after the sender left the game, want 0", got)
 	}

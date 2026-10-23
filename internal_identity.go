@@ -138,7 +138,7 @@ func (s *server) identityPresence(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.HasSuffix(r.URL.Path, "/renew") {
-		s.renewDevicePresence(u.ID, in.Device)
+		s.presenceSvc().RenewDevicePresence(u.ID, in.Device)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -151,6 +151,6 @@ func (s *server) identityPresence(w http.ResponseWriter, r *http.Request) {
 		acd = *in.ACDIndex
 	}
 	// Only a real console speaks Penne: emulators publish over REST (the device-presence REST route).
-	s.noteClientPresence(u, in.Device, "switch", "", in.State, in.AppID, in.AppField, in.GroupID, acd)
+	s.presenceSvc().NoteClientPresence(u, in.Device, "switch", "", in.State, in.AppID, in.AppField, in.GroupID, acd)
 	w.WriteHeader(http.StatusNoContent)
 }

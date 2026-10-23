@@ -1,4 +1,4 @@
-// Presence: one accurate answer to "where is this person right now", built
+// Package presence is one accurate answer to "where is this person right now", built
 // from per-device claims with leases (PRE-01/02) and filtered by what the
 // viewer may see (PRE-03).
 //
@@ -21,18 +21,21 @@
 // when the core says the session is gone anyway, the local claim is dropped
 // rather than shown. One poller, one cursor, one presence reconciler.
 
-package main
+package presence
 
 import (
 	"context"
 	"log"
+	"nx-baas/internal/core"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
+	"nx-baas/internal/penne"
 	"nx-baas/internal/store"
 	"nx-baas/redact"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	accountv1 "nx-baas/accountpb"
@@ -48,7 +51,7 @@ import (
 // NX_PRESENCE_LEASE_SECONDS overrides it. Measuring the native cadence and
 // revisiting this bound with evidence is a declared hardware gate (PRE-02);
 // until then this value is a documented choice, not a measured fact.
-func presenceLease() time.Duration {
+func Lease() time.Duration {
 	if v := os.Getenv("NX_PRESENCE_LEASE_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 10 && n <= 3600 {
 			return time.Duration(n) * time.Second
@@ -82,7 +85,7 @@ func stateRank(state string) int {
 // the latest when the lease ran out (PRE-01: timestamps derive from state
 // changes, not from render time, so rendering the same state twice yields the
 // same bytes and a stable list etag).
-func aggregatePresence(u *store.User, now int64, lease time.Duration) store.Presence {
+func Aggregate(u *store.User, now int64, lease time.Duration) store.Presence {
 	out := store.Presence{State: "OFFLINE"}
 	best := (*store.DevicePresence)(nil)
 	consider := func(e *store.DevicePresence) {
@@ -157,15 +160,15 @@ func aggregatePresence(u *store.User, now int64, lease time.Duration) store.Pres
 // ponytail: whether the HOME friend list draws sys_description is unverified (a friend on
 // another platform already carries one and shows plain "Online"); the state is the part that
 // is known to work.
-func homeAsOnline(p store.Presence) store.Presence {
+func HomeAsOnline(p store.Presence) store.Presence {
 	if p.State != "INACTIVE" || httpx.Getenv("NX_HOME_AS_ONLINE", "") != "1" {
 		return p
 	}
 	p.State = "ONLINE"
 	if p.AppID == "" && (p.AppField == "" || p.AppField == "{}") {
-		p.AppField = descriptionAppField(clientLabel("switch", p.Client))
+		p.AppField = DescriptionAppField(ClientLabel("switch", p.Client))
 	}
-	if id := reservedID("switch", p.Client); id != "" && p.AppID == "" && platformTitle() {
+	if id := ReservedID("switch", p.Client); id != "" && p.AppID == "" && platformTitle() {
 		p.AppID, p.PresenceGroupID = id, id
 	}
 	return p
@@ -227,8 +230,8 @@ func devicePresenceWins(a, b *store.DevicePresence) bool {
 
 // noteDevicePresence records one device's claim when nothing says what the
 // device is (a Photon game session, tests).
-func (s *server) noteDevicePresence(u *store.User, deviceID, state, appID, appField, groupID string, acdIndex int) {
-	s.noteClientPresence(u, deviceID, "", "", state, appID, appField, groupID, acdIndex)
+func (s *Service) NoteDevicePresence(u *store.User, deviceID, state, appID, appField, groupID string, acdIndex int) {
+	s.NoteClientPresence(u, deviceID, "", "", state, appID, appField, groupID, acdIndex)
 }
 
 // noteClientPresence records one device's claim. state OFFLINE ends the
@@ -236,7 +239,7 @@ func (s *server) noteDevicePresence(u *store.User, deviceID, state, appID, appFi
 // one). Whether the account as a whole is anywhere is the aggregate's call.
 // client is what the device is (see Presence.Client), clientOS what it runs on
 // (see Presence.OS).
-func (s *server) noteClientPresence(u *store.User, deviceID, client, clientOS, state, appID, appField, groupID string, acdIndex int) {
+func (s *Service) NoteClientPresence(u *store.User, deviceID, client, clientOS, state, appID, appField, groupID string, acdIndex int) {
 	// An all-zero title id is "no game", not a game whose id is zero: the
 	// emulator publishes it at the menu, and it reached the core as a title
 	// with players on it (2026-09-20, the status page listing
@@ -248,9 +251,9 @@ func (s *server) noteClientPresence(u *store.User, deviceID, client, clientOS, s
 		groupID = ""
 	}
 	now := time.Now().Unix()
-	lease := int64(presenceLease().Seconds())
-	before := s.presenceSnapshot(u.ID)
-	defer func() { s.notifyPresenceIfChanged(u.ID, before) }()
+	lease := int64(Lease().Seconds())
+	before := s.Snapshot(u.ID)
+	defer func() { s.NotifyIfChanged(u.ID, before) }()
 	s.Store.Update(u, func(u *store.User) {
 		if u.DevicePresence == nil {
 			u.DevicePresence = map[string]*store.DevicePresence{}
@@ -297,13 +300,13 @@ func (s *server) noteClientPresence(u *store.User, deviceID, client, clientOS, s
 // minutes silently goes offline while sitting in front of the console
 // (2026-09-20: an invitation naming its sender as "offline for 0 minutes").
 // Only presence we are still hearing a live connection for is renewed.
-func (s *server) renewDevicePresence(userID, deviceID string) {
+func (s *Service) RenewDevicePresence(userID, deviceID string) {
 	u := s.Store.User(userID)
 	if u == nil {
 		return
 	}
 	now := time.Now().Unix()
-	lease := int64(presenceLease().Seconds())
+	lease := int64(Lease().Seconds())
 	extend := func(e *store.DevicePresence) {
 		if e == nil || e.ExpiresAt == 0 || stateRank(e.State) == 0 {
 			return // never claimed, or claimed as gone: not ours to extend
@@ -342,10 +345,10 @@ func (s *server) renewDevicePresence(userID, deviceID string) {
 // switch): the console is gone even though it never said so. When no other
 // live claim remains, the old presence field is ended with it, so an account
 // switch ends the previous user's presence now rather than at lease time.
-func (s *server) expireDevicePresence(u *store.User, deviceID string) {
+func (s *Service) ExpireDevicePresence(u *store.User, deviceID string) {
 	now := time.Now().Unix()
-	before := s.presenceSnapshot(u.ID)
-	defer func() { s.notifyPresenceIfChanged(u.ID, before) }()
+	before := s.Snapshot(u.ID)
+	defer func() { s.NotifyIfChanged(u.ID, before) }()
 	s.Store.Update(u, func(u *store.User) {
 		e := u.DevicePresence[deviceID]
 		if e == nil || e.ExpiresAt <= now {
@@ -355,7 +358,7 @@ func (s *server) expireDevicePresence(u *store.User, deviceID string) {
 		// "last online" moment with it.
 		left := departedAt(e, now)
 		u.DevicePresence[deviceID] = &store.DevicePresence{DeviceID: deviceID, State: "OFFLINE", UpdatedAt: now, LogoutAt: left}
-		if !hasLiveDeviceClaim(u, now, presenceLease()) {
+		if !hasLiveDeviceClaim(u, now, Lease()) {
 			u.Presence.State, u.Presence.LogoutAt, u.Presence.UpdatedAt = "OFFLINE", left, now
 		}
 	})
@@ -379,7 +382,7 @@ func hasLiveDeviceClaim(u *store.User, now int64, lease time.Duration) bool {
 }
 
 // deviceClaimLive answers whether one device holds a live claim right now.
-func (s *server) deviceClaimLive(u *store.User, deviceID string) bool {
+func (s *Service) DeviceClaimLive(u *store.User, deviceID string) bool {
 	s.Store.Mu.Lock()
 	defer s.Store.Mu.Unlock()
 	e := u.DevicePresence[deviceID]
@@ -391,7 +394,7 @@ func (s *server) deviceClaimLive(u *store.User, deviceID string) bool {
 // as someone new, the previous account's presence for that device is a lie
 // the moment the new login commits (PRE-02, account switch). The user being
 // signed in is skipped — their own claim was about to be written.
-func (s *server) expireDeviceEverywhere(deviceID, exceptUserID string) {
+func (s *Service) ExpireDeviceEverywhere(deviceID, exceptUserID string) {
 	if deviceID == "" {
 		return
 	}
@@ -400,7 +403,7 @@ func (s *server) expireDeviceEverywhere(deviceID, exceptUserID string) {
 			continue
 		}
 		if _, ok := u.DevicePresence[deviceID]; ok {
-			s.expireDevicePresence(s.Store.User(u.ID), deviceID)
+			s.ExpireDevicePresence(s.Store.User(u.ID), deviceID)
 		}
 	}
 }
@@ -411,11 +414,11 @@ func (s *server) expireDeviceEverywhere(deviceID, exceptUserID string) {
 // outright. areFriends is the core's answer (the caller renders from the
 // core's friend list); account status is enforced there too, because an
 // inactive account is not delivered as a friend at all.
-func presenceVisible(viewer, subject *store.User, areFriends bool) bool {
+func Visible(viewer, subject *store.User, areFriends bool) bool {
 	if viewer == nil || subject == nil {
 		return false
 	}
-	if blocksEither(viewer, subject) {
+	if BlocksEither(viewer, subject) {
 		return false
 	}
 	switch perm, _ := subject.Permissions["presence"].(string); perm {
@@ -438,11 +441,11 @@ func presenceVisible(viewer, subject *store.User, areFriends bool) bool {
 
 // blocksEither is the directional-block rule: a block by either side stops
 // presence (and everything else social) in both directions.
-func blocksEither(a, b *store.User) bool {
-	return containsID(a.Blocks, b.ID) || containsID(b.Blocks, a.ID)
+func BlocksEither(a, b *store.User) bool {
+	return ContainsID(a.Blocks, b.ID) || ContainsID(b.Blocks, a.ID)
 }
 
-func containsID(list []string, id string) bool {
+func ContainsID(list []string, id string) bool {
 	for _, v := range list {
 		if v == id {
 			return true
@@ -456,29 +459,29 @@ func containsID(list []string, id string) bool {
 // sessions for accounts that are not, and drop local claims the core already
 // considers gone. Runs beside the core-event poller; both are the adapter's
 // one integration with the core's clock.
-func (s *server) reconcilePresenceLoop() {
-	lease := presenceLease()
+func (s *Service) ReconcileLoop() {
+	lease := Lease()
 	t := time.NewTicker(reconcileEvery)
 	defer t.Stop()
 	for range t.C {
-		s.reconcilePresenceOnce(time.Now(), lease)
+		s.ReconcileOnce(time.Now(), lease)
 	}
 }
 
-func (s *server) reconcilePresenceOnce(now time.Time, lease time.Duration) {
+func (s *Service) ReconcileOnce(now time.Time, lease time.Duration) {
 	b, ok := s.Acct.(*identity.OpenpakBackend)
 	if !ok {
 		return // the earlier account backend keeps presence to itself
 	}
 	unix := now.Unix()
 	for _, u := range s.Store.LiveUsers() {
-		agg := aggregatePresence(u, unix, lease)
+		agg := Aggregate(u, unix, lease)
 		switch {
 		case agg.State != "OFFLINE":
 			// The claim is fresh, so the console renewed within the lease:
 			// keep the core session alive for it. A session id we lost (a
 			// restart) is re-derived, never invented from residue.
-			if s.liveSessions[u.ID] != "" {
+			if s.LiveSessions[u.ID] != "" {
 				// The core session carries the title and the client, so
 				// switching game (or putting one down, or moving from the
 				// emulator to the console) has to be re-registered: a
@@ -497,7 +500,7 @@ func (s *server) reconcilePresenceOnce(now time.Time, lease time.Duration) {
 			// The aggregate is offline: end the core session at once instead
 			// of waiting out its lease, and stop showing the claim locally.
 			s.expireCoreSession(b, u)
-			s.expireLocalPresence(u, unix, lease)
+			s.ExpireLocal(u, unix, lease)
 		}
 	}
 }
@@ -505,9 +508,9 @@ func (s *server) reconcilePresenceOnce(now time.Time, lease time.Duration) {
 // expireLocalPresence drops claims the lease has ended. Entries are replaced
 // (never mutated in place), so a snapshot taken under the store lock stays
 // consistent while this runs.
-func (s *server) expireLocalPresence(u *store.User, now int64, lease time.Duration) {
-	before := s.presenceSnapshot(u.ID)
-	defer func() { s.notifyPresenceIfChanged(u.ID, before) }()
+func (s *Service) ExpireLocal(u *store.User, now int64, lease time.Duration) {
+	before := s.Snapshot(u.ID)
+	defer func() { s.NotifyIfChanged(u.ID, before) }()
 	s.Store.Update(u, func(u *store.User) {
 		for id, e := range u.DevicePresence {
 			if e.ExpiresAt != 0 && e.ExpiresAt <= now {
@@ -531,7 +534,7 @@ func (s *server) expireLocalPresence(u *store.User, now int64, lease time.Durati
 // it from there -- the website, the app, another console's emulator -- so a
 // title left empty is the difference between "Leia is online" and "Leia is
 // playing Kirby on a Switch" everywhere at once (2026-09-20).
-func (s *server) registerCoreSession(b *identity.OpenpakBackend, u *store.User, titleID, client, clientOS string) {
+func (s *Service) registerCoreSession(b *identity.OpenpakBackend, u *store.User, titleID, client, clientOS string) {
 	accountID := b.AccountFor(u.PID)
 	if accountID == "" {
 		return
@@ -546,8 +549,8 @@ func (s *server) registerCoreSession(b *identity.OpenpakBackend, u *store.User, 
 		identity.LogErr("presence register", err)
 		return
 	}
-	if s.liveSessions == nil {
-		s.liveSessions = map[string]string{}
+	if s.LiveSessions == nil {
+		s.LiveSessions = map[string]string{}
 	}
 	if s.liveSessionTitle == nil {
 		s.liveSessionTitle = map[string]string{}
@@ -555,7 +558,7 @@ func (s *server) registerCoreSession(b *identity.OpenpakBackend, u *store.User, 
 	if s.liveSessionClient == nil {
 		s.liveSessionClient = map[string]string{}
 	}
-	s.liveSessions[u.ID] = resp.GetSessionId()
+	s.LiveSessions[u.ID] = resp.GetSessionId()
 	s.liveSessionTitle[u.ID] = titleID
 	if s.liveSessionOS == nil {
 		s.liveSessionOS = map[string]string{}
@@ -569,24 +572,24 @@ func (s *server) registerCoreSession(b *identity.OpenpakBackend, u *store.User, 
 // lease does not outlive a console that is merely quiet. A session the core
 // no longer knows (expired, core restarted) is re-registered — the recovery
 // path, not a second source of truth.
-func (s *server) renewCoreSession(b *identity.OpenpakBackend, u *store.User) {
-	id := s.liveSessions[u.ID]
+func (s *Service) renewCoreSession(b *identity.OpenpakBackend, u *store.User) {
+	id := s.LiveSessions[u.ID]
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if _, err := b.Sessions.Heartbeat(ctx, &accountv1.HeartbeatRequest{SessionId: id}); err == nil {
 		return
 	}
-	delete(s.liveSessions, u.ID)
+	delete(s.LiveSessions, u.ID)
 	s.registerCoreSession(b, u, s.liveSessionTitle[u.ID], s.liveSessionClient[u.ID], s.liveSessionOS[u.ID])
 }
 
 // expireCoreSession ends the core session for an account that is offline.
-func (s *server) expireCoreSession(b *identity.OpenpakBackend, u *store.User) {
-	id := s.liveSessions[u.ID]
+func (s *Service) expireCoreSession(b *identity.OpenpakBackend, u *store.User) {
+	id := s.LiveSessions[u.ID]
 	if id == "" {
 		return
 	}
-	delete(s.liveSessions, u.ID)
+	delete(s.LiveSessions, u.ID)
 	delete(s.liveSessionTitle, u.ID)
 	delete(s.liveSessionClient, u.ID)
 	delete(s.liveSessionOS, u.ID)
@@ -595,4 +598,28 @@ func (s *server) expireCoreSession(b *identity.OpenpakBackend, u *store.User) {
 	if _, err := b.Sessions.ExpireSession(ctx, &accountv1.ExpireSessionRequest{SessionId: id}); err != nil {
 		identity.LogErr("presence expire", err)
 	}
+}
+
+// Service is presence over the shared state. Notify hands a presence event to Penne.
+type Service struct {
+	*core.Core
+	Notify func(penne.Delivery) penne.Submission
+
+	// liveSessions maps BAAS user id -> the core session the adapter registered
+	// for it, so the presence reconciler can renew and expire what it created.
+	// In-memory by design: a restart re-derives truth from the core (and local
+	// leases), never from this map.
+	LiveSessions map[string]string
+	// liveSessionTitle is the title each of those sessions was registered
+	// with, so a console changing game re-registers rather than leaving the
+	// core reporting the game it started on.
+	liveSessionTitle map[string]string
+	// liveSessionClient is the client each session was registered with, for
+	// the same reason: a heartbeat cannot change it.
+	liveSessionClient map[string]string
+	// liveSessionOS is the OS each session was registered with, likewise.
+	liveSessionOS map[string]string
+	// corePresence caches what the core last said about other platforms.
+	corePresence *CorePresenceCache
+	coreSeenOnce sync.Once
 }

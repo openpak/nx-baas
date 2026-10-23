@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-package main
+package presence
 
 // Presence from the other side of the account core.
 //
@@ -24,7 +24,7 @@ import (
 )
 
 // corePresence is one account's presence as the core holds it.
-type corePresence struct {
+type CorePresence struct {
 	Namespace string
 	TitleID   string
 	Since     int64
@@ -38,14 +38,14 @@ const corePresenceTTL = 10 * time.Second
 
 // Freshness is per account: one global timestamp made every friend but the
 // first read as offline for ten seconds after any lookup.
-type corePresenceCache struct {
+type CorePresenceCache struct {
 	mu   sync.Mutex
 	at   map[string]time.Time
-	byID map[string]corePresence
+	byID map[string]CorePresence
 }
 
 // forget drops what is remembered about one account, so the next lookup asks the core.
-func (c *corePresenceCache) forget(accountID string) {
+func (c *CorePresenceCache) Forget(accountID string) {
 	c.mu.Lock()
 	delete(c.at, accountID)
 	delete(c.byID, accountID)
@@ -54,9 +54,9 @@ func (c *corePresenceCache) forget(accountID string) {
 
 // coreSeen is per server, not per process: two servers in one test binary do
 // not share what the core told one of them.
-func (s *server) coreSeen() *corePresenceCache {
+func (s *Service) CoreSeen() *CorePresenceCache {
 	s.coreSeenOnce.Do(func() {
-		s.corePresence = &corePresenceCache{at: map[string]time.Time{}, byID: map[string]corePresence{}}
+		s.corePresence = &CorePresenceCache{at: map[string]time.Time{}, byID: map[string]CorePresence{}}
 	})
 	return s.corePresence
 }
@@ -64,12 +64,12 @@ func (s *server) coreSeen() *corePresenceCache {
 // corePresenceOf reports what the core knows about an account, or false when
 // it knows nothing (which is the same fact as offline there). A core that is
 // unreachable answers "nothing", never a guess.
-func (s *server) corePresenceOf(accountID string) (corePresence, bool) {
+func (s *Service) CorePresenceOf(accountID string) (CorePresence, bool) {
 	b, ok := s.Acct.(*identity.OpenpakBackend)
 	if !ok || b == nil || b.Sessions == nil || accountID == "" {
-		return corePresence{}, false
+		return CorePresence{}, false
 	}
-	cache := s.coreSeen()
+	cache := s.CoreSeen()
 	cache.mu.Lock()
 	if at, ok := cache.at[accountID]; ok && time.Since(at) < corePresenceTTL {
 		p, known := cache.byID[accountID]
@@ -83,11 +83,11 @@ func (s *server) corePresenceOf(accountID string) (corePresence, bool) {
 	resp, err := b.Sessions.GetPresence(ctx, &accountv1.GetPresenceRequest{AccountIds: []string{accountID}})
 	if err != nil {
 		identity.LogErr("core presence", err)
-		return corePresence{}, false
+		return CorePresence{}, false
 	}
-	next := map[string]corePresence{}
+	next := map[string]CorePresence{}
 	for _, p := range resp.GetPresence() {
-		next[p.GetAccountId()] = corePresence{
+		next[p.GetAccountId()] = CorePresence{
 			Namespace: p.GetNamespace(), TitleID: p.GetTitleId(), Since: p.GetSinceUnix(),
 			Client: p.GetClient(),
 		}
@@ -120,8 +120,8 @@ func (s *server) corePresenceOf(accountID string) (corePresence, bool) {
 // system friend list actually shows a description for a friend with no
 // title is NOT verified on hardware; NX_FOREIGN_PRESENCE_DESCRIPTION=0 turns
 // the text off and leaves the plain ONLINE this served before.
-func (s *server) presenceFromCore(accountID, namespace string, now int64) (store.Presence, bool) {
-	p, ok := s.corePresenceOf(accountID)
+func (s *Service) FromCore(accountID, namespace string, now int64) (store.Presence, bool) {
+	p, ok := s.CorePresenceOf(accountID)
 	if !ok {
 		return store.Presence{}, false
 	}
@@ -136,10 +136,10 @@ func (s *server) presenceFromCore(accountID, namespace string, now int64) (store
 		return out, true
 	}
 	if httpx.Getenv("NX_FOREIGN_PRESENCE_DESCRIPTION", "1") != "0" {
-		out.AppField = descriptionAppField(presenceDescription(clientLabel(p.Namespace, p.Client),
-			p.TitleID, siteTitleNames.name(p.Namespace, p.TitleID)))
+		out.AppField = DescriptionAppField(Description(ClientLabel(p.Namespace, p.Client),
+			p.TitleID, SiteTitleNames.Name(p.Namespace, p.TitleID)))
 	}
-	if id := reservedID(p.Namespace, p.Client); id != "" && platformTitle() {
+	if id := ReservedID(p.Namespace, p.Client); id != "" && platformTitle() {
 		// Listed as playing the platform's own title: the console draws its name and picture,
 		// where a description it ignores would say nothing (reserved.go).
 		out.AppID, out.PresenceGroupID = id, id

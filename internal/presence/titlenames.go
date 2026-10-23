@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-package main
+package presence
 
 // Title names for friends who are playing on another platform.
 //
@@ -27,24 +27,29 @@ const (
 	titleNameMissTTL = 10 * time.Minute
 )
 
-type titleNameEntry struct {
+type TitleNameEntry struct {
 	name string
 	at   time.Time
 	busy bool
 }
 
-type titleNames struct {
+type TitleNames struct {
 	mu    sync.Mutex
-	byKey map[string]*titleNameEntry
+	byKey map[string]*TitleNameEntry
 	// fetch looks one name up; swapped in tests. ok=false means the website
 	// could not answer (retry after the miss TTL), not that it has no name.
 	fetch func(namespace, titleID string) (string, bool)
 }
 
-var siteTitleNames = &titleNames{byKey: map[string]*titleNameEntry{}, fetch: fetchTitleName}
+var SiteTitleNames = NewTitleNames(fetchTitleName)
+
+// NewTitleNames is an empty name cache over fetch (tests pass their own).
+func NewTitleNames(fetch func(namespace, titleID string) (string, bool)) *TitleNames {
+	return &TitleNames{byKey: map[string]*TitleNameEntry{}, fetch: fetch}
+}
 
 // name answers from the cache and never blocks on the network.
-func (t *titleNames) name(namespace, titleID string) string {
+func (t *TitleNames) Name(namespace, titleID string) string {
 	if titleID == "" {
 		return ""
 	}
@@ -52,7 +57,7 @@ func (t *titleNames) name(namespace, titleID string) string {
 	t.mu.Lock()
 	e := t.byKey[key]
 	if e == nil {
-		e = &titleNameEntry{}
+		e = &TitleNameEntry{}
 		t.byKey[key] = e
 	}
 	ttl := titleNameHitTTL

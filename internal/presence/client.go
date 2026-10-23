@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-package main
+package presence
 
 // Which client a person is on, and how every surface names it.
 //
@@ -24,19 +24,19 @@ const clientHeader = "X-OpenPak-Client"
 // version. Anything that is not a short lower-case token is treated as no
 // answer rather than stored: it ends up in the core and on other people's
 // screens.
-func requestClient(r *http.Request) string {
-	return parseClient(r.Header.Get(clientHeader))
+func RequestClient(r *http.Request) string {
+	return ParseClient(r.Header.Get(clientHeader))
 }
 
 // requestClientOS reads the OS from X-OpenPak-Client (see parseClientOS).
-func requestClientOS(r *http.Request) string {
-	return parseClientOS(r.Header.Get(clientHeader))
+func RequestClientOS(r *http.Request) string {
+	return ParseClientOS(r.Header.Get(clientHeader))
 }
 
 // parseClientOS returns the OS in the header's trailing "(<os>)", lower case,
 // when it is one the core knows; "" otherwise (a real console, an older
 // emulator, or anything unrecognised).
-func parseClientOS(v string) string {
+func ParseClientOS(v string) string {
 	_, rest, ok := strings.Cut(v, "(")
 	if !ok {
 		return ""
@@ -52,7 +52,7 @@ func parseClientOS(v string) string {
 	return ""
 }
 
-func parseClient(v string) string {
+func ParseClient(v string) string {
 	name, _, _ := strings.Cut(strings.TrimSpace(v), "/")
 	name = strings.ToLower(strings.TrimSpace(name))
 	if name == "" || len(name) > 32 {
@@ -86,7 +86,7 @@ var emulatorLabels = map[string]string{
 // platform when it is real hardware (no client, or the console's own), so "PS3" is a PS3 and
 // "Pier" is somebody on the emulator. The same table lives in nx-baas, the website, nn-friends
 // and np-account.
-func clientLabel(namespace, client string) string {
+func ClientLabel(namespace, client string) string {
 	c := strings.ToLower(strings.TrimSpace(client))
 	if e, ok := emulatorLabels[c]; ok {
 		return e
@@ -110,7 +110,7 @@ func clientLabel(namespace, client string) string {
 // presenceDescription is the line shown for a friend who is somewhere this
 // console cannot draw: "Playing Kirby on Wii U", "Playing a game on 3DS",
 // "Online on Cemu".
-func presenceDescription(label, titleID, titleName string) string {
+func Description(label, titleID, titleName string) string {
 	if label == "" {
 		label = "another console"
 	}
@@ -133,7 +133,7 @@ const maxDescriptionBytes = 160
 // sys_description [docs/switch/friends-presence-firmware-2026-09-19.md §1.2,
 // §2.2]. The friend-list parser reads it back into the key/value blob that
 // FriendPresence::GetDescription searches.
-func descriptionAppField(desc string) string {
+func DescriptionAppField(desc string) string {
 	for len(desc) > maxDescriptionBytes {
 		_, size := utf8.DecodeLastRuneInString(desc)
 		desc = desc[:len(desc)-size]

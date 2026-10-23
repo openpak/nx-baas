@@ -44,6 +44,7 @@ import (
 	"nx-baas/internal/core"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
+	"nx-baas/internal/presence"
 	"nx-baas/internal/store"
 	"nx-baas/redact"
 	"os"
@@ -115,7 +116,7 @@ func (s *server) invitationSenderGone(inv *invitationRecord, now int64) bool {
 	if u == nil {
 		return false
 	}
-	p := aggregatePresence(u, now, presenceLease())
+	p := presence.Aggregate(u, now, presence.Lease())
 	switch p.State {
 	case "PLAYING":
 		return inv.ApplicationID != "" && p.AppID != "" && !strings.EqualFold(p.AppID, inv.ApplicationID)

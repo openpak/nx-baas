@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"nx-baas/internal/presence"
 	"nx-baas/internal/store"
 	"strings"
 	"testing"
@@ -89,7 +90,7 @@ func TestIdentityPresenceIsTheFrontlinesPublish(t *testing.T) {
 	if rec.Code != 204 {
 		t.Fatalf("presence = %d %s", rec.Code, rec.Body)
 	}
-	agg := aggregatePresence(s.Store.User(u.ID), time.Now().Unix(), presenceLease())
+	agg := presence.Aggregate(s.Store.User(u.ID), time.Now().Unix(), presence.Lease())
 	if agg.State != "PLAYING" || agg.AppID != "0100000000010000" || agg.Client != "switch" {
 		t.Fatalf("presence not recorded as the console's: %+v", agg)
 	}

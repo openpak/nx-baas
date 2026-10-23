@@ -1,4 +1,4 @@
-package main
+package presence
 
 // Platform pseudo-titles: what a friend on another platform, or at HOME, is listed as playing.
 //
@@ -35,7 +35,7 @@ var reservedNamespace = map[string]string{
 
 // reservedID is the title id naming where somebody is: the emulator when the client is one, the
 // console's platform otherwise. "" for a platform with no reserved title.
-func reservedID(namespace, client string) string {
+func ReservedID(namespace, client string) string {
 	key := strings.ToLower(strings.TrimSpace(client))
 	if key == "" {
 		key = reservedNamespace[strings.ToLower(strings.TrimSpace(namespace))]
@@ -46,7 +46,7 @@ func reservedID(namespace, client string) string {
 		}
 	}
 	if p, ok := reservedNamespace[key]; ok && p != key { // a console reporting its own name as the client
-		return reservedID("", p)
+		return ReservedID("", p)
 	}
 	return ""
 }

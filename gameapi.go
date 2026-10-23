@@ -152,7 +152,7 @@ func (s *server) photonRoom(w http.ResponseWriter, r *http.Request) {
 	// friend's list shows PLAYING for exactly as long as the room lives —
 	// and not one request longer than the lease if the game never reports
 	// the departure.
-	s.noteDevicePresence(u, "photon:"+in.Identity, "PLAYING", in.AppID,
+	s.presenceSvc().NoteDevicePresence(u, "photon:"+in.Identity, "PLAYING", in.AppID,
 		base64.StdEncoding.EncodeToString(appParam), in.AppID, -1)
 	log.Printf("[nx-baas] photon-room pid=%s app=%s room=%s", redact.Tag(pid), in.AppID, redact.Tag(in.Room))
 	httpx.WriteJSON(w, 200, map[string]any{"ok": true})
@@ -180,7 +180,7 @@ func (s *server) photonRoomLeave(w http.ResponseWriter, r *http.Request) {
 		httpx.APIErr(w, http.StatusBadRequest, "unknown identity")
 		return
 	}
-	s.noteDevicePresence(u, "photon:"+in.Identity, "OFFLINE", "", "", "", -1)
+	s.presenceSvc().NoteDevicePresence(u, "photon:"+in.Identity, "OFFLINE", "", "", "", -1)
 	log.Printf("[nx-baas] photon-room-leave pid=%s", redact.Tag(pid))
 	httpx.WriteJSON(w, 200, map[string]any{"ok": true})
 }

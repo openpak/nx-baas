@@ -40,6 +40,7 @@ import (
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
 	"nx-baas/internal/penne"
+	"nx-baas/internal/presence"
 	"nx-baas/internal/store"
 	"nx-baas/internal/token"
 	"nx-baas/redact"
@@ -68,23 +69,6 @@ type server struct {
 	// console's proven account attached. nil answers the empty-cloud fallback instead.
 	saves    *httputil.ReverseProxy
 	savesKey string
-	// liveSessions maps BAAS user id -> the core session the adapter registered
-	// for it, so the presence reconciler can renew and expire what it created.
-	// In-memory by design: a restart re-derives truth from the core (and local
-	// leases), never from this map.
-	liveSessions map[string]string
-	// liveSessionTitle is the title each of those sessions was registered
-	// with, so a console changing game re-registers rather than leaving the
-	// core reporting the game it started on.
-	liveSessionTitle map[string]string
-	// liveSessionClient is the client each session was registered with, for
-	// the same reason: a heartbeat cannot change it.
-	liveSessionClient map[string]string
-	// liveSessionOS is the OS each session was registered with, likewise.
-	liveSessionOS map[string]string
-	// corePresence caches what the core last said about other platforms.
-	corePresence *corePresenceCache
-	coreSeenOnce sync.Once
 	// acbaaProfiles remembers uploaded ACNH player profiles by ACNH user id
 	// so profile_status reflects them after a PUT, and acbaaResources the
 	// per-user web_service_resources uploads. Both file-backed (acbaaPath)
@@ -125,6 +109,10 @@ type server struct {
 	// bansChecker answers whether an account may use the network (internal/bans); locks()
 	// creates it on first use so test servers built as literals work unchanged.
 	bansChecker *bans.Checker
+	// presenceService is presence: per-device claims, the aggregate friends see, the core's
+	// sessions and other platforms (internal/presence).
+	presenceService *presence.Service
+	presenceOnce    sync.Once
 	// dauthService is device and application authentication (internal/dauth).
 	dauthService *dauth.Service
 	dauthOnce    sync.Once
@@ -391,7 +379,7 @@ func presenceObj(p store.Presence) map[string]any {
 		ex["friends"] = map[string]any{"appField": p.AppField}
 	}
 	if p.AppID != "" {
-		friends := map[string]any{"appField": appFieldOrEmpty(p.AppField), "appInfo:appId": p.AppID, "appInfo:presenceGroupId": p.PresenceGroupID}
+		friends := map[string]any{"appField": presence.AppFieldOrEmpty(p.AppField), "appInfo:appId": p.AppID, "appInfo:presenceGroupId": p.PresenceGroupID}
 		if p.ACDIndex >= 0 {
 			// Read back by the friend list's numeric parser
 			// [firmware, $.items[*].friend.presence.extras.friends.appInfo:acdIndex].
@@ -400,28 +388,10 @@ func presenceObj(p store.Presence) map[string]any {
 		ex["friends"] = friends
 	}
 	out := map[string]any{"state": p.State, "extras": ex, "updatedAt": p.UpdatedAt, "logoutAt": p.LogoutAt}
-	if pf, ok := testPF(p.Client); ok {
+	if pf, ok := presence.ProbePF(p.Client); ok {
 		out["pf"] = pf
 	}
 	return out
-}
-
-// testPF is a probe, not a feature: NX_PF_TEST="switch=1,harbor=2" gives a client's presence a `pf`
-// (a one-byte enum the friends module stores per friend and the friend's page may draw as
-// "Online (<platform>)"). Its value space is unknown and only a capture settles it, so this
-// sends nothing unless asked and only small numbers. Remove with the experiment.
-func testPF(client string) (int, bool) {
-	if client == "" {
-		client = "switch"
-	}
-	for _, kv := range strings.Split(httpx.Getenv("NX_PF_TEST", ""), ",") {
-		if k, v, ok := strings.Cut(strings.TrimSpace(kv), "="); ok && strings.EqualFold(k, client) {
-			if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 3 {
-				return n, true
-			}
-		}
-	}
-	return 0, false
 }
 
 func (s *server) userObj(u *store.User, id *identity.Identity, devicePassword string) map[string]any {
@@ -689,7 +659,7 @@ func (s *server) reportOnline(ctx context.Context, u *store.User, client, client
 		return
 	}
 	if client == "" {
-		agg := aggregatePresence(u, time.Now().Unix(), presenceLease())
+		agg := presence.Aggregate(u, time.Now().Unix(), presence.Lease())
 		client, clientOS = agg.Client, agg.OS
 	}
 	if b, ok := s.Acct.(*identity.OpenpakBackend); ok {
@@ -920,7 +890,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		// certificate; this is where both halves are in hand, so the account
 		// behind the console is recorded for the notification channel.
 		s.penneClient.BindConsole(di, u.ID)
-		s.expireDeviceEverywhere(form.Get("id"), u.ID)
+		s.presenceSvc().ExpireDeviceEverywhere(form.Get("id"), u.ID)
 		// A console re-logs in every hour while it plays; the login knows no
 		// title, so it must not overwrite the one the device already published
 		// (2026-09-22: a game dropping off the friend list at each login).
@@ -934,9 +904,9 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		// friend-online pop-up for the game started next never came
 		// (2026-10-10, Harbor to a Switch). INACTIVE still holds the core
 		// session open (stateRank 1).
-		client, clientOS := requestClient(r), requestClientOS(r)
-		if !s.deviceClaimLive(u, form.Get("id")) {
-			s.noteClientPresence(u, form.Get("id"), client, clientOS, "INACTIVE", "", "", "", -1)
+		client, clientOS := presence.RequestClient(r), presence.RequestClientOS(r)
+		if !s.presenceSvc().DeviceClaimLive(u, form.Get("id")) {
+			s.presenceSvc().NoteClientPresence(u, form.Get("id"), client, clientOS, "INACTIVE", "", "", "", -1)
 		}
 		s.reportOnline(r.Context(), u, client, clientOS)
 		res := map[string]any{
@@ -1209,8 +1179,8 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		case "DELETE":
 			// The device unlinks itself (or the account switches): its claim
 			// ends now, not when a lease happens to run out.
-			s.expireDevicePresence(u, device)
-			s.expireDeviceEverywhere(device, u.ID)
+			s.presenceSvc().ExpireDevicePresence(u, device)
+			s.presenceSvc().ExpireDeviceEverywhere(device, u.ID)
 			w.WriteHeader(204)
 		case "PATCH": // presence (friends sysmodule), JSON patch
 			var ops []struct {
@@ -1247,8 +1217,8 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				httpx.BaasErr(w, r, 400, "invalid_params", "Invalid Params", "no presence state in patch")
 				return
 			}
-			client, clientOS := requestClient(r), requestClientOS(r)
-			s.noteClientPresence(u, device, client, clientOS, state, appID, appField, groupID, acdIndex)
+			client, clientOS := presence.RequestClient(r), presence.RequestClientOS(r)
+			s.presenceSvc().NoteClientPresence(u, device, client, clientOS, state, appID, appField, groupID, acdIndex)
 			// This is what keeps someone counted as online: the lease the core holds is short,
 			// and a client that has gone away stops renewing it.
 			if state == "OFFLINE" {
@@ -1363,10 +1333,10 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		if dev := bodyField(body, form, "deviceId", "deviceAccountId", "device"); dev != "" {
 			if uid := bodyField(body, form, "userId", "user"); uid != "" {
 				if u := s.Store.User(uid); u != nil {
-					s.expireDevicePresence(u, dev)
+					s.presenceSvc().ExpireDevicePresence(u, dev)
 				}
 			}
-			s.expireDeviceEverywhere(dev, "")
+			s.presenceSvc().ExpireDeviceEverywhere(dev, "")
 		} else {
 			log.Printf("[nx-baas] devices/me/delete without a device id; nothing to expire")
 		}
@@ -2708,7 +2678,7 @@ func main() {
 		go s.followCoreEvents(b)
 		// One presence reconciler beside the one core-event poller: leases,
 		// heartbeats and expiries on the adapter's clock (PRE-02).
-		go s.reconcilePresenceLoop()
+		go s.presenceSvc().ReconcileLoop()
 		go s.provisionAllAccounts(b)
 	}
 	// Integration wiring: C's committed-invitation seam delivers through B
@@ -2921,4 +2891,10 @@ func (s *server) locks() *bans.Checker {
 func (s *server) dauthSvc() *dauth.Service {
 	s.dauthOnce.Do(func() { s.dauthService = &dauth.Service{Core: s.Core} })
 	return s.dauthService
+}
+
+// presenceSvc is presence, created on first use like locks.
+func (s *server) presenceSvc() *presence.Service {
+	s.presenceOnce.Do(func() { s.presenceService = &presence.Service{Core: s.Core, Notify: s.SubmitNotification} })
+	return s.presenceService
 }

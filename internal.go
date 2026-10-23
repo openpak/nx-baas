@@ -14,6 +14,7 @@ import (
 	"nx-baas/internal/core"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
+	"nx-baas/internal/presence"
 	"nx-baas/internal/store"
 	"nx-baas/internal/token"
 	"os"
@@ -224,7 +225,7 @@ func (s *server) switchEmulator(w http.ResponseWriter, r *http.Request) {
 	// as offline). Privacy is the same check the console gets.
 	viewer := s.Store.User(pr.BaasUserID)
 	now := time.Now().Unix()
-	lease := presenceLease()
+	lease := presence.Lease()
 	friend := func(f identity.Friend) map[string]any {
 		status, appID, appField := f.PresenceStatus, f.PresenceAppID, f.PresenceAppField
 		// namespace says which platform they are on, so a client can say "on a
@@ -232,14 +233,14 @@ func (s *server) switchEmulator(w http.ResponseWriter, r *http.Request) {
 		namespace, since, client := "", int64(0), ""
 		if subject := s.Store.User(f.BaasUserID); subject != nil {
 			p := store.Presence{State: "OFFLINE"}
-			if viewer == nil || presenceVisible(viewer, subject, true) {
-				p = aggregatePresence(subject, now, lease)
+			if viewer == nil || presence.Visible(viewer, subject, true) {
+				p = presence.Aggregate(subject, now, lease)
 			}
 			if p.State == "OFFLINE" {
 				// Nothing live here: the core knows where else they are.
-				if elsewhere, live := s.presenceFromCore(b.AccountFor(f.PID), b.Namespace, now); live {
+				if elsewhere, live := s.presenceSvc().FromCore(b.AccountFor(f.PID), b.Namespace, now); live {
 					p = elsewhere
-					if cp, ok := s.corePresenceOf(b.AccountFor(f.PID)); ok {
+					if cp, ok := s.presenceSvc().CorePresenceOf(b.AccountFor(f.PID)); ok {
 						namespace, since, client = cp.Namespace, cp.Since, cp.Client
 					}
 				}
@@ -264,7 +265,7 @@ func (s *server) switchEmulator(w http.ResponseWriter, r *http.Request) {
 				"namespace": namespace, "since": since,
 				// Which console or emulator, for "Playing X on Ryujinx". platform
 				// repeats namespace under the name the website's API uses.
-				"platform": namespace, "client": client, "label": clientLabel(namespace, client),
+				"platform": namespace, "client": client, "label": presence.ClientLabel(namespace, client),
 			},
 		}
 	}

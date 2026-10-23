@@ -84,7 +84,7 @@ func TestEveryPresenceEventPassesTheConsolesFieldMask(t *testing.T) {
 		{"INACTIVE", ""}, {"ONLINE", "0100152000022000"}, {"PLAYING", "0100152000022000"},
 		{"INACTIVE", "0000000000000000"}, {"OFFLINE", ""},
 	} {
-		s.noteDevicePresence(s.Store.User(subject.ID), "dev-1", step.state, step.app, "", step.app, -1)
+		s.presenceSvc().NoteDevicePresence(s.Store.User(subject.ID), "dev-1", step.state, step.app, "", step.app, -1)
 		p := lastPresenceEvent(t, s, viewer.ID)
 		if got, _ := valueOf(p)["state"].(string); got != step.state {
 			t.Fatalf("%s: queued state %q", step.state, got)
@@ -100,9 +100,9 @@ func TestEveryPresenceEventPassesTheConsolesFieldMask(t *testing.T) {
 func TestSameSecondPresenceChangesAreBothApplied(t *testing.T) {
 	s, _, users := socialServer(t)
 	viewer, subject := users[0], users[1]
-	s.noteDevicePresence(subject, "dev-1", "PLAYING", "0100152000022000", "{}", "0100152000022000", -1)
+	s.presenceSvc().NoteDevicePresence(subject, "dev-1", "PLAYING", "0100152000022000", "{}", "0100152000022000", -1)
 	first := lastPresenceEvent(t, s, viewer.ID)
-	s.noteDevicePresence(s.Store.User(subject.ID), "dev-1", "ONLINE", "0100152000022000", "{}", "0100152000022000", -1)
+	s.presenceSvc().NoteDevicePresence(s.Store.User(subject.ID), "dev-1", "ONLINE", "0100152000022000", "{}", "0100152000022000", -1)
 	second := lastPresenceEvent(t, s, viewer.ID)
 	if valueOf(second)["state"] != "ONLINE" {
 		t.Fatalf("second event state %v", valueOf(second)["state"])
@@ -147,12 +147,12 @@ func TestSigningInAtHomeKeepsTheLastDeparture(t *testing.T) {
 
 	// The device's own INACTIVE right after changes nothing the friends see: whatever goes
 	// out (nx-penne coalesces per subject) still says INACTIVE since the last departure.
-	s.noteClientPresence(s.Store.User(subject.ID), dev.ID, "harbor", "android", "INACTIVE", "0000000000000000", "{}", "", -1)
+	s.presenceSvc().NoteClientPresence(s.Store.User(subject.ID), dev.ID, "harbor", "android", "INACTIVE", "0000000000000000", "{}", "", -1)
 	if v := valueOf(lastPresenceEvent(t, s, viewer.ID)); v["state"] != "INACTIVE" || v["logoutAt"].(int64) != away {
 		t.Fatalf("the device's INACTIVE after the sign-in moved what friends hold: %v", v)
 	}
 
-	s.noteClientPresence(s.Store.User(subject.ID), dev.ID, "harbor", "android", "ONLINE", "0100152000022000", "{}", "", -1)
+	s.presenceSvc().NoteClientPresence(s.Store.User(subject.ID), dev.ID, "harbor", "android", "ONLINE", "0100152000022000", "{}", "", -1)
 	game := lastPresenceEvent(t, s, viewer.ID)
 	if got := valueOf(game)["state"]; got != "ONLINE" {
 		t.Fatalf("game start state %v", got)

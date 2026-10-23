@@ -3,6 +3,7 @@ package main
 import (
 	"net/http/httptest"
 	"nx-baas/internal/identity"
+	"nx-baas/internal/presence"
 	"testing"
 	"time"
 )
@@ -16,7 +17,7 @@ func TestParseClient(t *testing.T) {
 		"<script>/1":         "",
 		"a very long name/1": "",
 	} {
-		if got := parseClient(in); got != want {
+		if got := presence.ParseClient(in); got != want {
 			t.Errorf("parseClient(%q) = %q, want %q", in, got, want)
 		}
 	}
@@ -32,11 +33,11 @@ func TestParseClientOS(t *testing.T) {
 		"ryujinx/1.3.2 (ios":    "",
 		"":                      "",
 	} {
-		if got := parseClientOS(in); got != want {
+		if got := presence.ParseClientOS(in); got != want {
 			t.Errorf("parseClientOS(%q) = %q, want %q", in, got, want)
 		}
 	}
-	if got := parseClient("ryujinx/1.3.2 (macOS)"); got != "ryujinx" {
+	if got := presence.ParseClient("ryujinx/1.3.2 (macOS)"); got != "ryujinx" {
 		t.Errorf("parseClient with os = %q", got)
 	}
 }
@@ -52,17 +53,17 @@ func TestClientLabels(t *testing.T) {
 		{"nds", "", "NDS"}, {"3ds", "3ds", "3DS"}, {"np", " Pier ", "Pier"}, {"", "", ""},
 		{"np", "someemu", "Someemu"},
 	} {
-		if got := clientLabel(c.ns, c.client); got != c.want {
+		if got := presence.ClientLabel(c.ns, c.client); got != c.want {
 			t.Errorf("clientLabel(%q,%q) = %q, want %q", c.ns, c.client, got, c.want)
 		}
 	}
-	if got := presenceDescription("3DS", "", ""); got != "Online on 3DS" {
+	if got := presence.Description("3DS", "", ""); got != "Online on 3DS" {
 		t.Errorf("title-less: %q", got)
 	}
-	if got := presenceDescription("Wii U", "0005000010101d00", "Mario Kart 8"); got != "Playing Mario Kart 8 on Wii U" {
+	if got := presence.Description("Wii U", "0005000010101d00", "Mario Kart 8"); got != "Playing Mario Kart 8 on Wii U" {
 		t.Errorf("named: %q", got)
 	}
-	if got := descriptionAppField("Playing Mario & Luigi on 3DS"); got != `{"sys_description":"Playing Mario & Luigi on 3DS"}` {
+	if got := presence.DescriptionAppField("Playing Mario & Luigi on 3DS"); got != `{"sys_description":"Playing Mario & Luigi on 3DS"}` {
 		t.Errorf("appField: %s", got)
 	}
 }
@@ -95,16 +96,16 @@ func TestClientHeaderReachesTheCore(t *testing.T) {
 		t.Fatalf("title-less core session client = %q", got)
 	}
 	// The reconciler re-registers from the stored claim: the OS survives it.
-	delete(s.liveSessions, u.ID)
-	s.reconcilePresenceOnce(time.Now(), presenceLease())
+	delete(s.presenceSvc().LiveSessions, u.ID)
+	s.presenceSvc().ReconcileOnce(time.Now(), presence.Lease())
 	if got := client(); got != "ryujinx/macos" {
 		t.Fatalf("reconciled core session client = %q", got)
 	}
 
 	// The same person moves to a real console (Penne): the session is
 	// re-registered with the new client, not heartbeaten with the old one.
-	s.noteClientPresence(s.Store.User(u.ID), "dev-emu", "switch", "", "PLAYING", "01004d300c5ae000", "{}", "01004d300c5ae000", -1)
-	s.reconcilePresenceOnce(time.Now().Add(time.Second), presenceLease())
+	s.presenceSvc().NoteClientPresence(s.Store.User(u.ID), "dev-emu", "switch", "", "PLAYING", "01004d300c5ae000", "{}", "01004d300c5ae000", -1)
+	s.presenceSvc().ReconcileOnce(time.Now().Add(time.Second), presence.Lease())
 	if got := client(); got != "switch/" {
 		t.Fatalf("after moving to the console, core client = %q", got)
 	}
@@ -117,17 +118,17 @@ func TestForeignFriendDescriptionNamesTheTitle(t *testing.T) {
 	sess.namespace = "3ds"
 	b := s.Acct.(*identity.OpenpakBackend)
 	account := b.AccountFor(friend.PID)
-	prev := siteTitleNames
-	siteTitleNames = &titleNames{byKey: map[string]*titleNameEntry{}, fetch: func(ns, id string) (string, bool) {
+	prev := presence.SiteTitleNames
+	presence.SiteTitleNames = presence.NewTitleNames(func(ns, id string) (string, bool) {
 		if ns == "3ds" && id == "0004000000030800" {
 			return "Mario Kart 7", true
 		}
 		return "", true
-	}}
-	t.Cleanup(func() { siteTitleNames = prev })
-	siteTitleNames.name("3ds", "0004000000030800") // first sight starts the fetch
+	})
+	t.Cleanup(func() { presence.SiteTitleNames = prev })
+	presence.SiteTitleNames.Name("3ds", "0004000000030800") // first sight starts the fetch
 	deadline := time.Now().Add(2 * time.Second)
-	for siteTitleNames.name("3ds", "0004000000030800") == "" && time.Now().Before(deadline) {
+	for presence.SiteTitleNames.Name("3ds", "0004000000030800") == "" && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	sess.mu.Lock()

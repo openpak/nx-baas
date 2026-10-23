@@ -9,6 +9,7 @@ package main
 import (
 	"nx-baas/internal/identity"
 	"nx-baas/internal/penne"
+	"nx-baas/internal/presence"
 	"nx-baas/internal/store"
 	"testing"
 	"time"
@@ -121,7 +122,7 @@ func TestPresenceChangeNotifiesFriendsOnceAndOnlyOnChange(t *testing.T) {
 	s, _, users := socialServer(t)
 	viewer, subject := users[0], users[1]
 
-	s.noteDevicePresence(subject, "dev-1", "ONLINE", "", "", "", -1)
+	s.presenceSvc().NoteDevicePresence(subject, "dev-1", "ONLINE", "", "", "", -1)
 	queue := outboxOf(s, viewer.ID)
 	if len(queue) != 1 {
 		t.Fatalf("going online produced %d deliveries, want 1", len(queue))
@@ -143,14 +144,14 @@ func TestPresenceChangeNotifiesFriendsOnceAndOnlyOnChange(t *testing.T) {
 	}
 
 	// A renewal at the same state changes nothing the friend needs told.
-	s.noteDevicePresence(s.Store.User(subject.ID), "dev-1", "ONLINE", "", "", "", -1)
+	s.presenceSvc().NoteDevicePresence(s.Store.User(subject.ID), "dev-1", "ONLINE", "", "", "", -1)
 	if got := len(outboxOf(s, viewer.ID)); got != 1 {
 		t.Fatalf("a heartbeat queued another delivery (%d total)", got)
 	}
 
 	// Starting a title is a change: one more event, carrying the new state (nx-penne
 	// coalesces per subject, so a sleeping console still converges to the latest).
-	s.noteDevicePresence(s.Store.User(subject.ID), "dev-1", "PLAYING", "0100000000010000", "", "", -1)
+	s.presenceSvc().NoteDevicePresence(s.Store.User(subject.ID), "dev-1", "PLAYING", "0100000000010000", "", "", -1)
 	queue = outboxOf(s, viewer.ID)
 	if len(queue) != 2 {
 		t.Fatalf("starting a title produced %d deliveries in all, want 2", len(queue))
@@ -173,7 +174,7 @@ func TestBlockedViewerIsNotToldAboutPresence(t *testing.T) {
 	viewer, subject := users[0], users[1]
 	s.Store.Update(viewer, func(u *store.User) { u.Blocks = append(u.Blocks, subject.ID) })
 
-	s.noteDevicePresence(s.Store.User(subject.ID), "dev-1", "ONLINE", "", "", "", -1)
+	s.presenceSvc().NoteDevicePresence(s.Store.User(subject.ID), "dev-1", "ONLINE", "", "", "", -1)
 
 	if got := len(outboxOf(s, viewer.ID)); got != 0 {
 		t.Fatalf("a blocked viewer was queued %d presence deliveries", got)
@@ -252,7 +253,7 @@ func TestInvitationNotifyWithoutWiringIsHarmless(t *testing.T) {
 func TestPresenceEventCarriesTheParsersShape(t *testing.T) {
 	p := store.Presence{State: "PLAYING", AppID: "0100000000010000", AppField: "AA==",
 		PresenceGroupID: "0100000000010000", ACDIndex: 3, UpdatedAt: 100, LogoutAt: 0}
-	extras := presenceEventExtras(p)
+	extras := presence.EventExtras(p)
 	if extras["appInfo:appId"] != "0100000000010000" || extras["appInfo:acdIndex"] != 3 {
 		t.Errorf("extras = %v", extras)
 	}
@@ -260,7 +261,7 @@ func TestPresenceEventCarriesTheParsersShape(t *testing.T) {
 	// parser fails the whole event without appInfo:appId, appInfo:presenceGroupId
 	// and appField (mask 0x3eb, friends 0x1a74a0). acdIndex is optional and stays
 	// out when nobody published one, rather than reading as "index 0".
-	empty := presenceEventExtras(store.Presence{State: "ONLINE", ACDIndex: -1})
+	empty := presence.EventExtras(store.Presence{State: "ONLINE", ACDIndex: -1})
 	if len(empty) != 3 || empty["appField"] != "{}" || empty["appInfo:appId"] != "0000000000000000" ||
 		empty["appInfo:presenceGroupId"] != "0000000000000000" {
 		t.Errorf("extras for a bare ONLINE = %v, want appField \"{}\" and all-zero ids", empty)

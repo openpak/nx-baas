@@ -66,7 +66,7 @@ func (s *server) followCoreEvents(b *identity.OpenpakBackend) {
 			case "presence_changed":
 				// account = a friend online on this network, subject = whose presence moved.
 				if e.GetNamespace() == b.Namespace { // addressed to a friend on another network: not ours
-					s.notifyCorePresence(b, e.GetAccountId(), e.GetSubjectId())
+					s.presenceSvc().NotifyCorePresence(b, e.GetAccountId(), e.GetSubjectId())
 				}
 			case "account_unbanned":
 				s.locks().Forget(e.GetAccountId())
