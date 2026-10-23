@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"nx-baas/internal/devices"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/token"
 	"nx-baas/redact"
@@ -70,7 +71,7 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 	// Harbor device enrolment (harbor_devices.go), on this host because it is where a console
 	// presents its TLS client certificate.
 	if strings.HasPrefix(host, "dauth") && strings.HasPrefix(p, "/harbor/v1/devices") {
-		s.harborDevicesHandler(w, r, body)
+		s.harbor.Handler(w, r, body)
 		return
 	}
 
@@ -93,7 +94,7 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 		device, serial, err := s.dauthIdentity(r, req)
 		if err != nil {
 			log.Printf("[dauth] refused: another console is live with this device id")
-			writeDeviceInUse(w)
+			devices.WriteDeviceInUse(w)
 			return
 		}
 		out := make([]any, 0, len(req.TokenRequests))
@@ -119,7 +120,7 @@ func (s *server) dauth(w http.ResponseWriter, r *http.Request, body []byte) {
 		_ = json.Unmarshal(body, &req)
 		device, serial, err := s.dauthIdentity(r, deviceTokenRequest{})
 		if err != nil {
-			writeDeviceInUse(w)
+			devices.WriteDeviceInUse(w)
 			return
 		}
 		exp := time.Now().Unix() + 86400
@@ -297,4 +298,20 @@ func aauthSettings(appID string) []any {
 		return []any{}
 	}
 	return []any{map[string]any{"nas:client_id": id, "nas:redirect_uri": "npf" + id + "://auth"}}
+}
+
+// dauthIdentity is the device id and serial dauth issues tokens to. Without a device CA it is
+// exactly what it always was; an enrolled console gets its own (and the one-live-console check).
+func (s *server) dauthIdentity(r *http.Request, req deviceTokenRequest) (id, serial string, err error) {
+	if s.harbor != nil && r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+		dev, err := s.harbor.ForCertificate(r.TLS.PeerCertificates[0], r.Header.Get(devices.ConsoleSessionHeader))
+		if err != nil {
+			return "", "", err
+		}
+		if dev != nil {
+			return dev.DauthID, dev.Serial, nil
+		}
+	}
+	id = deviceID(r, req)
+	return id, consoleSerial(id), nil
 }

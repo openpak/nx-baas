@@ -35,6 +35,7 @@ import (
 	"net/url"
 	"nx-baas/internal/bans"
 	"nx-baas/internal/core"
+	"nx-baas/internal/devices"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
 	"nx-baas/internal/store"
@@ -74,7 +75,7 @@ type server struct {
 	liveSessions map[string]string
 	// harbor is the Harbor device enrolment (harbor_devices.go); nil while no device CA is
 	// configured, which leaves dauth and BaaS as they were.
-	harbor *harborDevices
+	harbor *devices.Registry
 	// liveSessionTitle is the title each of those sessions was registered
 	// with, so a console changing game re-registers rather than leaving the
 	// core reporting the game it started on.
@@ -880,7 +881,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		if n, ok := tok["nintendo"].(map[string]any); ok {
 			sn = httpx.Str(n, "sn")
 		}
-		if !s.bindDeviceAccount(form.Get("id"), di) {
+		if !s.harbor.BindDeviceAccount(s.Store, form.Get("id"), di) {
 			// A device account another enrolled console signed in with first.
 			log.Printf("[nx-baas] %s refused: the device account belongs to another console", seg[1])
 			httpx.BaasErr(w, r, 400, "invalid_device_account", "Invalid Device Account", "Device Account's id or password is invalid")
@@ -2700,7 +2701,7 @@ func main() {
 		pending2FA: newPending2FAStore(),
 	}
 	s.forwardersFromEnv()
-	s.initHarborDevices()
+	s.harbor = devices.FromEnv()
 	s.acbaaPath = httpx.Getenv("NX_DATA", "/data") + "/acbaa.json"
 	s.acbaaLoad()
 	if b, ok := s.Acct.(*identity.OpenpakBackend); ok {

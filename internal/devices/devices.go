@@ -1,6 +1,4 @@
-package main
-
-// Harbor device enrolment: OpenPak's device CA signs a Harbor console's device certificates, the
+// Package devices is Harbor device enrolment: OpenPak's device CA signs a Harbor console's device certificates, the
 // way Nintendo's signs a Switch's at the factory (design: harbor-eden docs/harbor/calibration.md,
 // "Certificates", owner decisions 2026-10-08).
 //
@@ -20,7 +18,7 @@ package main
 //
 // One live console per device id: an id enrolled with other keys that was seen within
 // enrolLiveWindow, a device CA certificate that is no longer its id's, and a second console
-// session (X-OpenPak-Console-Session) while another was heard from within sessionLiveWindow all
+// session (X-OpenPak-Console-Session) while another was heard from within SessionLiveWindow all
 // answer 409 {"error":"device_id_in_use","action":"make_new_console"}, which Harbor answers by
 // offering "Make this a new console". The same id with the same keys is the same console (a
 // restore): it gets its certificates again.
@@ -41,6 +39,7 @@ package main
 // Changing either key re-keys every enrolled console's certificates: keep them for good.
 //
 // Privacy: device ids, serials and session ids are never logged.
+package devices
 
 import (
 	"bytes"
@@ -70,50 +69,51 @@ import (
 
 	"nx-baas/internal/b233"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/store"
 )
 
 const (
 	// The issuer every Harbor device certificate names: HD00000001 (the B233 key below) under the
 	// root Root-OP00000001.
-	harborIssuer = "Root-OP00000001-HD00000001"
+	HarborIssuer = "Root-OP00000001-HD00000001"
 
-	sigTypeEcdsaSha256 = 0x00010005
-	keyTypeRsa2048     = 1
-	keyTypeEccB233     = 2
+	SigTypeEcdsaSha256 = 0x00010005
+	KeyTypeRsa2048     = 1
+	KeyTypeEccB233     = 2
 
-	eccCertSize = 0x180
-	rsaCertSize = 0x240
+	EccCertSize = 0x180
+	RsaCertSize = 0x240
 
-	certSignature = 0x004
-	certSigned    = 0x080 // the signature covers the certificate from the issuer to its end
-	certKeyType   = 0x0C0
-	certName      = 0x0C4
-	certPublicKey = 0x108
+	CertSignature = 0x004
+	CertSigned    = 0x080 // the signature covers the certificate from the issuer to its end
+	CertKeyType   = 0x0C0
+	CertName      = 0x0C4
+	CertPublicKey = 0x108
 
 	enrolProofLabel   = "OpenPak Harbor device enrolment v1\x00"
 	nonceLifetime     = 5 * time.Minute
 	maxNonces         = 10000
 	enrolPerHour      = 10
-	enrolLiveWindow   = 30 * 24 * time.Hour // an enrolment with other keys waits this long
-	sessionLiveWindow = 45 * time.Second    // Harbor says it is alive every 30 s; a process that was killed (nothing released its claim) is replaced after this
+	EnrolLiveWindow   = 30 * 24 * time.Hour // an enrolment with other keys waits this long
+	SessionLiveWindow = 45 * time.Second    // Harbor says it is alive every 30 s; a process that was killed (nothing released its claim) is replaced after this
 	lastSeenSaveEvery = time.Hour
 
-	consoleSessionHeader = "X-OpenPak-Console-Session"
+	ConsoleSessionHeader = "X-OpenPak-Console-Session"
 )
 
 // harborDeviceCA is the OpenPak device CA: a B233 key for Nintendo-format certificates and an
 // X.509 CA for the TLS client certificate.
-type harborDeviceCA struct {
-	ecc     *b233.PrivateKey
-	tlsCert *x509.Certificate
-	tlsKey  crypto.Signer
-	pool    *x509.CertPool
+type CA struct {
+	ECC     *b233.PrivateKey
+	TLSCert *x509.Certificate
+	TLSKey  crypto.Signer
+	Pool    *x509.CertPool
 }
 
 // loadHarborDeviceCA reads the CA from the files the environment names. None set: nil, nil (the
 // enrolment is off). Some set, or a file that does not parse: an error, and the caller keeps the
 // enrolment off.
-func loadHarborDeviceCA() (*harborDeviceCA, error) {
+func LoadCA() (*CA, error) {
 	eccFile, certFile, keyFile := os.Getenv("NX_DEVICE_CA_ECC_KEY_FILE"), os.Getenv("NX_DEVICE_CA_TLS_CERT_FILE"), os.Getenv("NX_DEVICE_CA_TLS_KEY_FILE")
 	if eccFile == "" && certFile == "" && keyFile == "" {
 		return nil, nil
@@ -121,10 +121,10 @@ func loadHarborDeviceCA() (*harborDeviceCA, error) {
 	if eccFile == "" || certFile == "" || keyFile == "" {
 		return nil, errors.New("NX_DEVICE_CA_ECC_KEY_FILE, NX_DEVICE_CA_TLS_CERT_FILE and NX_DEVICE_CA_TLS_KEY_FILE must all be set")
 	}
-	return loadHarborDeviceCAFiles(eccFile, certFile, keyFile)
+	return LoadCAFiles(eccFile, certFile, keyFile)
 }
 
-func loadHarborDeviceCAFiles(eccFile, certFile, keyFile string) (*harborDeviceCA, error) {
+func LoadCAFiles(eccFile, certFile, keyFile string) (*CA, error) {
 	eccPEM, err := os.ReadFile(eccFile)
 	if err != nil {
 		return nil, err
@@ -156,12 +156,12 @@ func loadHarborDeviceCAFiles(eccFile, certFile, keyFile string) (*harborDeviceCA
 	if err != nil {
 		return nil, fmt.Errorf("TLS CA key: %w", err)
 	}
-	if !publicKeysEqual(signer.Public(), caCert.PublicKey) {
+	if !PublicKeysEqual(signer.Public(), caCert.PublicKey) {
 		return nil, errors.New("TLS CA key does not match the CA certificate")
 	}
 	pool := x509.NewCertPool()
 	pool.AddCert(caCert)
-	return &harborDeviceCA{ecc: ecc, tlsCert: caCert, tlsKey: signer, pool: pool}, nil
+	return &CA{ECC: ecc, TLSCert: caCert, TLSKey: signer, Pool: pool}, nil
 }
 
 func parseSignerPEM(data []byte) (crypto.Signer, error) {
@@ -189,14 +189,14 @@ func parseSignerPEM(data []byte) (crypto.Signer, error) {
 	}
 }
 
-func publicKeysEqual(a, b crypto.PublicKey) bool {
+func PublicKeysEqual(a, b crypto.PublicKey) bool {
 	type equaler interface{ Equal(crypto.PublicKey) bool }
 	e, ok := a.(equaler)
 	return ok && e.Equal(b)
 }
 
 // harborDevice is one enrolled console.
-type harborDevice struct {
+type Device struct {
 	DeviceID      string `json:"deviceId"` // 16 lowercase hex digits, top byte 7e
 	Serial        string `json:"serial"`
 	KeysSHA256    string `json:"keysSha256"` // the four public keys: same keys, same console
@@ -219,43 +219,45 @@ type liveConsole struct {
 }
 
 // harborDevices is the enrolment store (NX_DATA/harbor-devices.json) and its in-memory state.
-type harborDevices struct {
-	ca   *harborDeviceCA
-	path string
-	now  func() time.Time
+type Registry struct {
+	// CA signs enrolments; FilePath is harbor-devices.json; Now is the clock (tests set it).
+	// None is persisted.
+	CA       *CA              `json:"-"`
+	FilePath string           `json:"-"`
+	Now      func() time.Time `json:"-"`
 
 	mu       sync.Mutex
-	Devices  map[string]*harborDevice `json:"devices"` // by device id
-	byTLS    map[string]*harborDevice
-	byDauth  map[string]*harborDevice
+	Devices  map[string]*Device `json:"devices"` // by device id
+	byTLS    map[string]*Device
+	byDauth  map[string]*Device
 	nonces   map[string]time.Time
 	attempts map[string][]time.Time
 	live     map[string]liveConsole
 	savedAt  time.Time
 }
 
-func newHarborDevices(ca *harborDeviceCA, path string) *harborDevices {
-	d := &harborDevices{ca: ca, path: path, now: time.Now, Devices: map[string]*harborDevice{},
+func NewRegistry(ca *CA, path string) *Registry {
+	d := &Registry{CA: ca, FilePath: path, Now: time.Now, Devices: map[string]*Device{},
 		nonces: map[string]time.Time{}, attempts: map[string][]time.Time{}, live: map[string]liveConsole{}}
 	if path != "" {
 		if b, err := os.ReadFile(path); err == nil {
 			if err := json.Unmarshal(b, d); err != nil {
 				log.Printf("[harbor-devices] %s does not parse (%v); starting empty and keeping the file aside", path, redact.Err(err))
 				os.Rename(path, path+".invalid")
-				d.Devices = map[string]*harborDevice{}
+				d.Devices = map[string]*Device{}
 			}
 		}
 	}
 	if d.Devices == nil {
-		d.Devices = map[string]*harborDevice{}
+		d.Devices = map[string]*Device{}
 	}
 	d.index()
 	return d
 }
 
 // index rebuilds the lookups. Called with mu held (or before the store is shared).
-func (d *harborDevices) index() {
-	d.byTLS, d.byDauth = map[string]*harborDevice{}, map[string]*harborDevice{}
+func (d *Registry) index() {
+	d.byTLS, d.byDauth = map[string]*Device{}, map[string]*Device{}
 	for _, dev := range d.Devices {
 		d.byTLS[dev.TLSCertSHA256] = dev
 		if dev.DauthID != "" {
@@ -265,65 +267,65 @@ func (d *harborDevices) index() {
 }
 
 // save is called with mu held.
-func (d *harborDevices) save() {
-	d.savedAt = d.now()
-	if d.path == "" {
+func (d *Registry) save() {
+	d.savedAt = d.Now()
+	if d.FilePath == "" {
 		return
 	}
 	b, err := json.MarshalIndent(d, "", " ")
 	if err != nil {
 		return
 	}
-	if err := os.WriteFile(d.path+".tmp", b, 0o600); err != nil {
+	if err := os.WriteFile(d.FilePath+".tmp", b, 0o600); err != nil {
 		log.Printf("[harbor-devices] could not write the store: %v", redact.Err(err))
 		return
 	}
-	os.Rename(d.path+".tmp", d.path)
+	os.Rename(d.FilePath+".tmp", d.FilePath)
 }
 
 // ---- the console's identity at dauth ----
 
-// certDauthID is how dauth has always named a console: a hash of the certificate it presents.
-func certDauthID(c *x509.Certificate) string {
+// CertDauthID is how dauth has always named a console: a hash of the certificate it presents.
+func CertDauthID(c *x509.Certificate) string {
 	sum := sha256.Sum256(c.Raw)
 	return "cert-" + hex.EncodeToString(sum[:8])
 }
 
 // errDeviceInUse is the one-live-console refusal.
-var errDeviceInUse = errors.New("device_id_in_use")
+var ErrDeviceInUse = errors.New("device_id_in_use")
 
 // forCertificate finds the enrolled console a TLS client certificate belongs to and records that
 // it is alive. nil, nil: not an enrolled console (a Switch, or a Harbor that has not enrolled).
-func (d *harborDevices) forCertificate(c *x509.Certificate, session string) (*harborDevice, error) {
+func (d *Registry) ForCertificate(c *x509.Certificate, session string) (*Device, error) {
 	sum := sha256.Sum256(c.Raw)
-	_, chainErr := c.Verify(x509.VerifyOptions{Roots: d.ca.pool, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, CurrentTime: d.now()})
+	_, chainErr := c.Verify(x509.VerifyOptions{Roots: d.CA.Pool, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, CurrentTime: d.Now()})
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	dev := d.byTLS[hex.EncodeToString(sum[:])]
 	if dev == nil {
-		dev = d.byDauth[certDauthID(c)] // the certificate it enrolled with
+		dev = d.byDauth[CertDauthID(c)] // the certificate it enrolled with
 	}
 	if dev == nil {
 		if chainErr == nil {
 			// Signed by the device CA, and not the certificate its id is enrolled with now: its id
 			// went to other keys.
-			return nil, errDeviceInUse
+			return nil, ErrDeviceInUse
 		}
 		return nil, nil
 	}
 	if !d.touchLocked(dev, session) {
-		return nil, errDeviceInUse
+		return nil, ErrDeviceInUse
 	}
 	return dev, nil
 }
 
 // touchLocked records that a console session is alive; false when another session of the same
 // console was heard from within the window. An empty session claims nothing.
-func (d *harborDevices) touchLocked(dev *harborDevice, session string) bool {
-	now := d.now()
+func (d *Registry) touchLocked(dev *Device, session string) bool {
+	now := d.Now()
 	if session != "" {
 		cur, ok := d.live[dev.DeviceID]
-		if ok && cur.session != session && now.Sub(cur.seen) < sessionLiveWindow {
+		if ok && cur.session != session && now.Sub(cur.seen) < SessionLiveWindow {
 			return false
 		}
 		d.live[dev.DeviceID] = liveConsole{session: session, seen: now}
@@ -335,7 +337,7 @@ func (d *harborDevices) touchLocked(dev *harborDevice, session string) bool {
 	return true
 }
 
-func (d *harborDevices) release(dev *harborDevice, session string) {
+func (d *Registry) Release(dev *Device, session string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if cur, ok := d.live[dev.DeviceID]; ok && cur.session == session {
@@ -344,35 +346,19 @@ func (d *harborDevices) release(dev *harborDevice, session string) {
 }
 
 // enrolledDauthID says whether a dauth device id is an enrolled console's.
-func (d *harborDevices) enrolledDauthID(id string) bool {
+func (d *Registry) EnrolledDauthID(id string) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.byDauth[id] != nil
 }
 
-// dauthIdentity is the device id and serial dauth issues tokens to. Without a device CA it is
-// exactly what it always was; an enrolled console gets its own (and the one-live-console check).
-func (s *server) dauthIdentity(r *http.Request, req deviceTokenRequest) (id, serial string, err error) {
-	if s.harbor != nil && r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
-		dev, err := s.harbor.forCertificate(r.TLS.PeerCertificates[0], r.Header.Get(consoleSessionHeader))
-		if err != nil {
-			return "", "", err
-		}
-		if dev != nil {
-			return dev.DauthID, dev.Serial, nil
-		}
-	}
-	id = deviceID(r, req)
-	return id, consoleSerial(id), nil
-}
-
-func writeDeviceInUse(w http.ResponseWriter) {
+func WriteDeviceInUse(w http.ResponseWriter) {
 	httpx.WriteJSON(w, http.StatusConflict, map[string]any{"error": "device_id_in_use", "action": "make_new_console"})
 }
 
 // ---- the enrolment ----
 
-type enrolRequest struct {
+type EnrolRequest struct {
 	Nonce          string `json:"nonce"`
 	DeviceID       string `json:"device_id"`
 	Serial         string `json:"serial"`
@@ -390,7 +376,7 @@ type enrolRequest struct {
 
 // enrolProofMessage is what each of the console's keys signs: a label, the server's nonce and
 // the device id (8 bytes, big-endian).
-func enrolProofMessage(nonce []byte, deviceID uint64) []byte {
+func EnrolProofMessage(nonce []byte, deviceID uint64) []byte {
 	msg := append([]byte(enrolProofLabel), nonce...)
 	return binary.BigEndian.AppendUint64(msg, deviceID)
 }
@@ -417,7 +403,7 @@ func harborSerialValid(serial string) bool {
 	return int(serial[13]-'0') == (10-sum%10)%10
 }
 
-func certificateName(deviceID uint64) string {
+func CertificateName(deviceID uint64) string {
 	return fmt.Sprintf("NX%016X-0", deviceID)
 }
 
@@ -434,24 +420,24 @@ func checkNintendoCertificate(cert []byte, size int, keyType uint32, name string
 	if len(cert) != size {
 		return fmt.Errorf("size %d", len(cert))
 	}
-	if binary.BigEndian.Uint32(cert) != sigTypeEcdsaSha256 {
+	if binary.BigEndian.Uint32(cert) != SigTypeEcdsaSha256 {
 		return errors.New("signature type")
 	}
-	if cString(cert[certSigned:certSigned+0x40]) != harborIssuer {
+	if cString(cert[CertSigned:CertSigned+0x40]) != HarborIssuer {
 		return errors.New("issuer")
 	}
-	if binary.BigEndian.Uint32(cert[certKeyType:]) != keyType {
+	if binary.BigEndian.Uint32(cert[CertKeyType:]) != keyType {
 		return errors.New("key type")
 	}
-	if cString(cert[certName:certName+0x40]) != name {
+	if cString(cert[CertName:CertName+0x40]) != name {
 		return errors.New("name")
 	}
 	return nil
 }
 
 func nintendoRSAKey(cert []byte) (*rsa.PublicKey, error) {
-	n := new(big.Int).SetBytes(cert[certPublicKey : certPublicKey+0x100])
-	e := binary.BigEndian.Uint32(cert[certPublicKey+0x100:])
+	n := new(big.Int).SetBytes(cert[CertPublicKey : CertPublicKey+0x100])
+	e := binary.BigEndian.Uint32(cert[CertPublicKey+0x100:])
 	if n.BitLen() != 2048 || e < 3 || e%2 == 0 {
 		return nil, errors.New("not an RSA-2048 key")
 	}
@@ -476,27 +462,27 @@ func verifyTLSProof(pub crypto.PublicKey, msg, sig []byte) bool {
 }
 
 // signNintendo fills a certificate's signature with HD00000001's.
-func (ca *harborDeviceCA) signNintendo(cert []byte) ([]byte, error) {
+func (ca *CA) signNintendo(cert []byte) ([]byte, error) {
 	out := bytes.Clone(cert)
-	sig, err := b233.Sign(rand.Reader, ca.ecc, out[certSigned:])
+	sig, err := b233.Sign(rand.Reader, ca.ECC, out[CertSigned:])
 	if err != nil {
 		return nil, err
 	}
-	clear(out[certSignature:certSigned])
-	copy(out[certSignature:], sig)
+	clear(out[CertSignature:CertSigned])
+	copy(out[CertSignature:], sig)
 	return out, nil
 }
 
 // issueTLS makes the console's TLS client certificate: its key, its name, the device CA's
 // signature.
-func (ca *harborDeviceCA) issueTLS(pub crypto.PublicKey, deviceID uint64, now time.Time) ([]byte, error) {
+func (ca *CA) issueTLS(pub crypto.PublicKey, deviceID uint64, now time.Time) ([]byte, error) {
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 127))
 	if err != nil {
 		return nil, err
 	}
 	notAfter := now.AddDate(25, 0, 0)
-	if notAfter.After(ca.tlsCert.NotAfter) {
-		notAfter = ca.tlsCert.NotAfter
+	if notAfter.After(ca.TLSCert.NotAfter) {
+		notAfter = ca.TLSCert.NotAfter
 	}
 	keyUsage := x509.KeyUsageDigitalSignature
 	if _, ok := pub.(*rsa.PublicKey); ok {
@@ -504,12 +490,12 @@ func (ca *harborDeviceCA) issueTLS(pub crypto.PublicKey, deviceID uint64, now ti
 	}
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: certificateName(deviceID), Organization: []string{"OpenPak Harbor"}},
+		Subject:      pkix.Name{CommonName: CertificateName(deviceID), Organization: []string{"OpenPak Harbor"}},
 		NotBefore:    now.Add(-24 * time.Hour), NotAfter: notAfter,
 		KeyUsage:    keyUsage,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
-	return x509.CreateCertificate(rand.Reader, tmpl, ca.tlsCert, pub, ca.tlsKey)
+	return x509.CreateCertificate(rand.Reader, tmpl, ca.TLSCert, pub, ca.TLSKey)
 }
 
 func keysFingerprint(eccPub []byte, eticket, device *rsa.PublicKey, tlsPub crypto.PublicKey) string {
@@ -535,12 +521,12 @@ func badDevice(reason string) error {
 }
 
 // issueNonce hands out a challenge.
-func (d *harborDevices) issueNonce() (string, error) {
+func (d *Registry) issueNonce() (string, error) {
 	nonce := make([]byte, 32)
 	rand.Read(nonce)
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	now := d.now()
+	now := d.Now()
 	for n, exp := range d.nonces {
 		if now.After(exp) {
 			delete(d.nonces, n)
@@ -556,13 +542,13 @@ func (d *harborDevices) issueNonce() (string, error) {
 
 // enrol checks a request and answers the console's signed certificates. presented is the TLS
 // client certificate of the request (the dauth id the console has had so far), or nil.
-func (d *harborDevices) enrol(req *enrolRequest, presented *x509.Certificate) (*harborDevice, bool, error) {
+func (d *Registry) enrol(req *EnrolRequest, presented *x509.Certificate) (*Device, bool, error) {
 	// The challenge is single-use whatever happens next.
 	d.mu.Lock()
 	exp, ok := d.nonces[req.Nonce]
 	delete(d.nonces, req.Nonce)
 	d.mu.Unlock()
-	if !ok || d.now().After(exp) {
+	if !ok || d.Now().After(exp) {
 		return nil, false, &enrolError{http.StatusBadRequest, "invalid_nonce", "unknown or expired challenge"}
 	}
 	nonce, err := base64.StdEncoding.DecodeString(req.Nonce)
@@ -588,22 +574,22 @@ func (d *harborDevices) enrol(req *enrolRequest, presented *x509.Certificate) (*
 	}
 
 	// The certificates, unsigned, and their keys.
-	name := certificateName(id)
-	if err := checkNintendoCertificate(req.ECCCert, eccCertSize, keyTypeEccB233, name); err != nil {
+	name := CertificateName(id)
+	if err := checkNintendoCertificate(req.ECCCert, EccCertSize, KeyTypeEccB233, name); err != nil {
 		return nil, false, badDevice("ECC certificate: " + err.Error())
 	}
-	eccPub, err := b233.ParsePublicKey(req.ECCCert[certPublicKey : certPublicKey+2*b233.Size])
+	eccPub, err := b233.ParsePublicKey(req.ECCCert[CertPublicKey : CertPublicKey+2*b233.Size])
 	if err != nil {
 		return nil, false, badDevice("ECC certificate: " + err.Error())
 	}
-	if err := checkNintendoCertificate(req.ETicketCert, rsaCertSize, keyTypeRsa2048, name); err != nil {
+	if err := checkNintendoCertificate(req.ETicketCert, RsaCertSize, KeyTypeRsa2048, name); err != nil {
 		return nil, false, badDevice("eTicket certificate: " + err.Error())
 	}
 	eticketPub, err := nintendoRSAKey(req.ETicketCert)
 	if err != nil {
 		return nil, false, badDevice("eTicket certificate: " + err.Error())
 	}
-	if err := checkNintendoCertificate(req.DeviceCert, rsaCertSize, keyTypeRsa2048, name); err != nil {
+	if err := checkNintendoCertificate(req.DeviceCert, RsaCertSize, KeyTypeRsa2048, name); err != nil {
 		return nil, false, badDevice("device certificate: " + err.Error())
 	}
 	devicePub, err := nintendoRSAKey(req.DeviceCert)
@@ -616,7 +602,7 @@ func (d *harborDevices) enrol(req *enrolRequest, presented *x509.Certificate) (*
 	}
 
 	// Proof of possession: every key signed this nonce for this id.
-	msg := enrolProofMessage(nonce, id)
+	msg := EnrolProofMessage(nonce, id)
 	if !b233.VerifyASN1(eccPub, msg, req.Proofs.ECC) ||
 		!verifyRSAProof(eticketPub, msg, req.Proofs.ETicket) ||
 		!verifyRSAProof(devicePub, msg, req.Proofs.Device) ||
@@ -627,7 +613,7 @@ func (d *harborDevices) enrol(req *enrolRequest, presented *x509.Certificate) (*
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	now := d.now()
+	now := d.Now()
 	if dev := d.Devices[deviceID]; dev != nil {
 		if dev.KeysSHA256 == keys {
 			// The same console (a restore with its device key): its certificates again.
@@ -638,22 +624,22 @@ func (d *harborDevices) enrol(req *enrolRequest, presented *x509.Certificate) (*
 			d.save()
 			return dev, false, nil
 		}
-		if now.Sub(time.Unix(dev.LastSeen, 0)) < enrolLiveWindow {
-			return nil, false, errDeviceInUse
+		if now.Sub(time.Unix(dev.LastSeen, 0)) < EnrolLiveWindow {
+			return nil, false, ErrDeviceInUse
 		}
 		// Other keys, and the console that had them is gone: the id is free again.
 	}
 	for _, other := range d.Devices {
 		if other.Serial == req.Serial && other.DeviceID != deviceID {
-			return nil, false, errDeviceInUse
+			return nil, false, ErrDeviceInUse
 		}
 	}
 
-	dev := &harborDevice{DeviceID: deviceID, Serial: req.Serial, KeysSHA256: keys, EnrolledAt: now.Unix(), LastSeen: now.Unix()}
-	if dev.ECCCert, err = d.ca.signNintendo(req.ECCCert); err == nil {
-		if dev.ETicketCert, err = d.ca.signNintendo(req.ETicketCert); err == nil {
-			if dev.DeviceCert, err = d.ca.signNintendo(req.DeviceCert); err == nil {
-				dev.TLSCert, err = d.ca.issueTLS(tlsCert.PublicKey, id, now)
+	dev := &Device{DeviceID: deviceID, Serial: req.Serial, KeysSHA256: keys, EnrolledAt: now.Unix(), LastSeen: now.Unix()}
+	if dev.ECCCert, err = d.CA.signNintendo(req.ECCCert); err == nil {
+		if dev.ETicketCert, err = d.CA.signNintendo(req.ETicketCert); err == nil {
+			if dev.DeviceCert, err = d.CA.signNintendo(req.DeviceCert); err == nil {
+				dev.TLSCert, err = d.CA.issueTLS(tlsCert.PublicKey, id, now)
 			}
 		}
 	}
@@ -663,7 +649,7 @@ func (d *harborDevices) enrol(req *enrolRequest, presented *x509.Certificate) (*
 	sum := sha256.Sum256(dev.TLSCert)
 	dev.TLSCertSHA256 = hex.EncodeToString(sum[:])
 	if presented != nil {
-		dev.DauthID = certDauthID(presented)
+		dev.DauthID = CertDauthID(presented)
 	} else {
 		dev.DauthID = deviceID
 	}
@@ -678,10 +664,10 @@ func (d *harborDevices) enrol(req *enrolRequest, presented *x509.Certificate) (*
 	return dev, true, nil
 }
 
-func (d *harborDevices) allowAttempt(deviceID string) bool {
+func (d *Registry) allowAttempt(deviceID string) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	now := d.now()
+	now := d.Now()
 	kept := d.attempts[deviceID][:0]
 	for _, t := range d.attempts[deviceID] {
 		if now.Sub(t) < time.Hour {
@@ -696,9 +682,10 @@ func (d *harborDevices) allowAttempt(deviceID string) bool {
 	return true
 }
 
-// harborDevicesHandler answers /harbor/v1/devices* on the dauth host.
-func (s *server) harborDevicesHandler(w http.ResponseWriter, r *http.Request, body []byte) {
-	if s.harbor == nil {
+// Handler answers /harbor/v1/devices* on the dauth host. A nil Registry (no device CA) says
+// the enrolment is unavailable.
+func (d *Registry) Handler(w http.ResponseWriter, r *http.Request, body []byte) {
+	if d == nil {
 		httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "enrolment_unavailable"})
 		return
 	}
@@ -710,11 +697,11 @@ func (s *server) harborDevicesHandler(w http.ResponseWriter, r *http.Request, bo
 	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
 		presented = r.TLS.PeerCertificates[0]
 	}
-	session := r.Header.Get(consoleSessionHeader)
+	session := r.Header.Get(ConsoleSessionHeader)
 
 	switch r.URL.Path {
 	case "/harbor/v1/devices/challenge":
-		nonce, err := s.harbor.issueNonce()
+		nonce, err := d.issueNonce()
 		if err != nil {
 			writeEnrolError(w, err)
 			return
@@ -722,12 +709,12 @@ func (s *server) harborDevicesHandler(w http.ResponseWriter, r *http.Request, bo
 		httpx.WriteJSON(w, 200, map[string]any{"nonce": nonce, "expires_in": int(nonceLifetime.Seconds())})
 
 	case "/harbor/v1/devices":
-		var req enrolRequest
+		var req EnrolRequest
 		if err := json.Unmarshal(body, &req); err != nil {
 			writeEnrolError(w, badDevice("not JSON"))
 			return
 		}
-		dev, fresh, err := s.harbor.enrol(&req, presented)
+		dev, fresh, err := d.enrol(&req, presented)
 		if err != nil {
 			log.Printf("[harbor-devices] enrolment refused: %v", redact.Err(err))
 			writeEnrolError(w, err)
@@ -743,7 +730,7 @@ func (s *server) harborDevicesHandler(w http.ResponseWriter, r *http.Request, bo
 			"eticket_certificate": dev.ETicketCert,
 			"device_certificate":  dev.DeviceCert,
 			"tls_certificate":     dev.TLSCert,
-			"tls_ca_certificate":  s.harbor.ca.tlsCert.Raw,
+			"tls_ca_certificate":  d.CA.TLSCert.Raw,
 		})
 
 	case "/harbor/v1/devices/live", "/harbor/v1/devices/release":
@@ -752,13 +739,13 @@ func (s *server) harborDevicesHandler(w http.ResponseWriter, r *http.Request, bo
 			return
 		}
 		if r.URL.Path == "/harbor/v1/devices/release" {
-			if dev := s.harbor.lookup(presented); dev != nil && session != "" {
-				s.harbor.release(dev, session)
+			if dev := d.Lookup(presented); dev != nil && session != "" {
+				d.Release(dev, session)
 			}
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		dev, err := s.harbor.forCertificate(presented, session)
+		dev, err := d.ForCertificate(presented, session)
 		if err != nil {
 			writeEnrolError(w, err)
 			return
@@ -775,19 +762,19 @@ func (s *server) harborDevicesHandler(w http.ResponseWriter, r *http.Request, bo
 }
 
 // lookup finds the enrolled console of a certificate without touching its liveness.
-func (d *harborDevices) lookup(c *x509.Certificate) *harborDevice {
+func (d *Registry) Lookup(c *x509.Certificate) *Device {
 	sum := sha256.Sum256(c.Raw)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if dev := d.byTLS[hex.EncodeToString(sum[:])]; dev != nil {
 		return dev
 	}
-	return d.byDauth[certDauthID(c)]
+	return d.byDauth[CertDauthID(c)]
 }
 
 func writeEnrolError(w http.ResponseWriter, err error) {
-	if errors.Is(err, errDeviceInUse) {
-		writeDeviceInUse(w)
+	if errors.Is(err, ErrDeviceInUse) {
+		WriteDeviceInUse(w)
 		return
 	}
 	var e *enrolError
@@ -800,28 +787,29 @@ func writeEnrolError(w http.ResponseWriter, err error) {
 
 // ---- BaaS: a device account belongs to the enrolled console that first used it ----
 
-// bindDeviceAccount ties a device account to the enrolled console logging in with it (dauth id
+// BindDeviceAccount ties a device account to the enrolled console logging in with it (dauth id
 // di), the first time one does; after that only that console may use it. False refuses the login.
 // Device accounts used by anything that is not an enrolled console are never bound.
-func (s *server) bindDeviceAccount(accountID, di string) bool {
-	if s.harbor == nil || accountID == "" {
+func (d *Registry) BindDeviceAccount(st *store.Store, accountID, di string) bool {
+	if d == nil || accountID == "" {
 		return true
 	}
-	enrolled := di != "" && s.harbor.enrolledDauthID(di)
-	return s.Store.BindDevice(accountID, di, enrolled)
+	enrolled := di != "" && d.EnrolledDauthID(di)
+	return st.BindDevice(accountID, di, enrolled)
 }
 
-// initHarborDevices turns the enrolment on when the CA files are configured.
-func (s *server) initHarborDevices() {
-	ca, err := loadHarborDeviceCA()
+// FromEnv turns the enrolment on when the CA files are configured; nil leaves it off.
+func FromEnv() *Registry {
+	ca, err := LoadCA()
 	if err != nil {
 		log.Printf("[harbor-devices] enrolment OFF: %v", redact.Err(err))
-		return
+		return nil
 	}
 	if ca == nil {
 		log.Printf("[harbor-devices] enrolment off (no NX_DEVICE_CA_* key files): enrolment answers 503, dauth unchanged")
-		return
+		return nil
 	}
-	s.harbor = newHarborDevices(ca, httpx.Getenv("NX_DATA", "/data")+"/harbor-devices.json")
-	log.Printf("[harbor-devices] enrolment on (%d console(s) enrolled)", len(s.harbor.Devices))
+	d := NewRegistry(ca, httpx.Getenv("NX_DATA", "/data")+"/harbor-devices.json")
+	log.Printf("[harbor-devices] enrolment on (%d console(s) enrolled)", len(d.Devices))
+	return d
 }
