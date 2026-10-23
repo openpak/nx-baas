@@ -13,7 +13,7 @@ import (
 // Nintendo token check (/nso) and /64b. The family is redirected so a console
 // never reaches Mossmouth, and Traefik's catch-all sends the connection here
 // with an on-demand OpenPak-CA certificate. OpenPak runs a service for the
-// API when NX_SPELUNKY2_URL is set (servers/spelunky2); without it the
+// API when NX_SPELUNKY2_URL is set (platforms/switch/games/spelunky2); without it the
 // connection falls through to the catch-all below, which logs the exchange
 // and 404s — today's capture behavior.
 //

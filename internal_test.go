@@ -45,7 +45,7 @@ func TestSwitchIdentityProvesAPlainConsoleIDToken(t *testing.T) {
 		t.Fatalf("a junk token was accepted: %d %s", w.Code, w.Body)
 	}
 
-	// A genuine token for an account we do not know is NOT 401. servers/nex maps 401 to
+	// A genuine token for an account we do not know is NOT 401. platforms/switch/games/switch-nex maps 401 to
 	// TokenExpired, so the console would throw a perfectly good token away and fetch another,
 	// forever. It has to be the 404 that maps to ValidationFailed.
 	stranger, _ := s.store.NewUser()

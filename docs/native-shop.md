@@ -38,7 +38,7 @@ OpenPak-defined protocol (no Nintendo counterpart). Nothing here is runtime-conf
 | `/d` manifest field names; `edge_token/issuable_titles` response shape; beach `/v1/my/devices` response shape; every bridge call's arguments and callback shape | **hypothesis** | Neither the wiki nor the strings document them. Each is implemented minimally, marked at its code site, and listed under "open protocol questions" below. A hardware capture settles them. |
 | Rights-id ↔ title-id mapping (last nibble = title type 3) | hypothesis (convention) | Public captures show it; nothing in our flow requires it — we only need determinism |
 
-**Never used as inputs:** third-party implementation source (evidence of observable behavior only), any
+**Never used as inputs:** third-party implementation source, any
 Nintendo binary, key or decompiled output. The pages, API and state model are original.
 
 ## Requirements ledger

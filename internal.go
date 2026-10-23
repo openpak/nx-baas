@@ -55,12 +55,12 @@ func (s *server) switchIdentity(w http.ResponseWriter, r *http.Request) {
 		application, _ := claims["nintendo"].(map[string]any)
 		applicationID = str(application, "ai")
 		// pid can be 0 here, and that is deliberately not a 401: the token is genuine and we
-		// simply do not know the account. servers/nex maps 401 to TokenExpired and the console
+		// simply do not know the account. platforms/switch/games/switch-nex maps 401 to TokenExpired and the console
 		// fetches a fresh token and retries, so answering 401 for an unknown account is a
 		// refresh loop. Falling through gives the 404 that maps to ValidationFailed instead.
 	}
 	// A banned account's title-server login ends here: 403 account_banned, never 401
-	// (servers/nex maps 401 to TokenExpired and the console would refresh forever).
+	// (platforms/switch/games/switch-nex maps 401 to TokenExpired and the console would refresh forever).
 	if lock := s.pidLock(pid); lock != "" {
 		internalLocked(w, lock)
 		return

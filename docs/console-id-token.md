@@ -12,12 +12,11 @@ So a title server that can only prove a claim can only serve an emulator: with a
 finds no claim and refuses a login that is perfectly genuine. Treating a missing claim as an error
 *is* the bug.
 
-Source: `servers/nex/docs/provenance.md`, "Identity", recorded as facts under
-`docs/clean-room-policy.md` — the token's location, its shape, and which builds add a
-claim. No code, structure or wording was carried across. `servers/nex/docs/design.md` names this
+Source: `platforms/switch/games/switch-nex/docs/provenance.md`, "Identity", recorded as facts under `docs/clean-room-policy.md` — the token's location, its shape, and which builds add a
+claim. No code, structure or wording was carried across. `platforms/switch/games/switch-nex/docs/design.md` names this
 as the one cross-repo dependency and puts it in this repository, not that one.
 
-`servers/nex`'s `Host.PlayerByToken` already sends the whole token as `id_token` alongside the
+`platforms/switch/games/switch-nex`'s `Host.PlayerByToken` already sends the whole token as `id_token` alongside the
 claim, so the wire was ready and nothing on the other side has to change.
 
 ## Why nx-baas can prove it, and nothing else can
@@ -47,9 +46,9 @@ BAAS user has a valid token and no account behind it.
 
 ## The status code is part of the contract
 
-`servers/nex` maps this endpoint's status, so the codes are behaviour, not logging:
+`platforms/switch/games/switch-nex` maps this endpoint's status, so the codes are behaviour, not logging:
 
-| Status | What `servers/nex` does | Right for |
+| Status | What `platforms/switch/games/switch-nex` does | Right for |
 | --- | --- | --- |
 | 401 | `Authentication::TokenExpired` — the console fetches a fresh token and **retries** | a token that fails its signature, is the wrong kind, or has expired |
 | any other non-200 | `Authentication::ValidationFailed` — **no retry** | a genuine token whose account we do not know |

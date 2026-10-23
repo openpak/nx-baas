@@ -190,7 +190,7 @@ func naAuthorizeLocked(w http.ResponseWriter, r *http.Request, redirectURI, stat
 	http.Redirect(w, r, redirectURI+"#"+frag.Encode(), http.StatusFound)
 }
 
-// internalLocked is the game-API answer: 403, never 401 (servers/nex maps 401 to
+// internalLocked is the game-API answer: 403, never 401 (platforms/switch/games/switch-nex maps 401 to
 // TokenExpired and the console would refresh and retry forever).
 func internalLocked(w http.ResponseWriter, lock string) {
 	msg := "account_banned"
