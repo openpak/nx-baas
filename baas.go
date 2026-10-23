@@ -74,21 +74,6 @@ func (s *server) idToken(u *store.User, id *identity.Identity, username string, 
 	return token.SignJWT(map[string]any{"alg": "RS256", "jku": core.BaasJku + "/1.0.0/certificates", "kid": s.IDKid, "typ": "JWT"}, claims, s.Key)
 }
 
-// bindNotificationChannel records which BAAS account is signed in on the console a
-// device authentication token names — the same bind the /1.0.0/login handler performs
-// (BindConsole at the login case). It belongs on the NA token paths as well because an
-// awake console's steady state is the refresh, not a login: sleep/wake and days-long
-// play sessions reuse the Nintendo-Account session, so /1.0.0/login may not recur for
-// a very long time, and an unbound console is one no notification can be addressed to.
-func (s *server) bindNotificationChannel(deviceAuthenticationToken, baasUserID string) {
-	if baasUserID == "" {
-		return
-	}
-	if dt, err := token.ParseJWT(deviceAuthenticationToken, &s.Key.PublicKey); err == nil {
-		s.penneClient.BindConsole(httpx.Str(dt, "sub"), baasUserID)
-	}
-}
-
 func (s *server) identity(u *store.User) *identity.Identity {
 	if u == nil || u.PID == 0 {
 		return nil
@@ -101,17 +86,6 @@ func (s *server) identity(u *store.User) *identity.Identity {
 		s.Store.Update(u, func(u *store.User) { u.BsDid = id.BsDid })
 	}
 	return id
-}
-
-const cdnHost = "https://cdn-image-e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com"
-
-// avatarURL: the console wants an https URL, never inline data. The earlier account server hands us the
-// raw base64 JPEG; we serve it at /avatar/<pid>.jpg on the cdn-image host (in our cert + route).
-func avatarURL(pid uint64, b64 string, updatedAt int64) string {
-	if b64 == "" {
-		return ""
-	}
-	return fmt.Sprintf("%s/avatar/%d.jpg?v=%d", cdnHost, pid, updatedAt)
 }
 
 // friendCodeID: BAAS friend codes are "1234-5678-9012"; OpenPak displays them as "SW-...".
@@ -192,7 +166,7 @@ func (s *server) userObj(u *store.User, id *identity.Identity, devicePassword st
 	}
 	friendsEx := map[string]any{"isChatActivated": true, "isChatInvitable": true, "playLog": ""}
 	everyone := map[string]any{"playLog": ""}
-	thumb1, thumb2, thumbAt := cdnHost+"/1/default", cdnHost+"/2/default", int64(0) // VPS parity for unlinked users
+	thumb1, thumb2, thumbAt := core.CdnHost+"/1/default", core.CdnHost+"/2/default", int64(0) // VPS parity for unlinked users
 	etag := token.RandHex(8)
 	if id != nil {
 		etag = id.BsDid // VPS parity: user.etag == the token bs:did for a linked user
@@ -218,14 +192,14 @@ func (s *server) userObj(u *store.User, id *identity.Identity, devicePassword st
 				// two: the console's own upload, or the account's picture on
 				// the website.
 				thumbAt = at
-				thumb1, thumb2 = cdnHost+"/1/"+u.ID, cdnHost+"/2/"+u.ID
+				thumb1, thumb2 = core.CdnHost+"/1/"+u.ID, core.CdnHost+"/2/"+u.ID
 			} else if u.Avatar != "" {
 				// The console's own upload. Without this the reply to an
 				// upload still points at /1/default with an uploaded-at of
 				// zero, which is the service telling the console that the
 				// picture it just sent does not exist.
 				thumbAt = u.UpdatedAt
-				thumb1, thumb2 = cdnHost+"/1/"+u.ID, cdnHost+"/2/"+u.ID
+				thumb1, thumb2 = core.CdnHost+"/1/"+u.ID, core.CdnHost+"/2/"+u.ID
 			}
 		}
 	}
@@ -338,7 +312,7 @@ func (s *server) friendObj(f identity.Friend, now int64) map[string]any {
 	if f.PictureAt > 0 && !picKnown {
 		picAt, picKnown = f.PictureAt, true // versioned, so a console drops the default it cached
 	}
-	thumbURL, thumb2URL := cdnHost+"/1/"+f.BaasUserID, cdnHost+"/2/"+f.BaasUserID
+	thumbURL, thumb2URL := core.CdnHost+"/1/"+f.BaasUserID, core.CdnHost+"/2/"+f.BaasUserID
 	if picKnown {
 		thumbURL += fmt.Sprintf("?v=%d", picAt)
 		thumb2URL += fmt.Sprintf("?v=%d", picAt)
@@ -651,7 +625,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		// Penne sees only the console's device token, whose subject is the
 		// certificate; this is where both halves are in hand, so the account
 		// behind the console is recorded for the notification channel.
-		s.penneClient.BindConsole(di, u.ID)
+		s.Penne.BindConsole(di, u.ID)
 		s.presenceSvc().ExpireDeviceEverywhere(form.Get("id"), u.ID)
 		// A console re-logs in every hour while it plays; the login knows no
 		// title, so it must not overwrite the one the device already published
@@ -1082,7 +1056,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		now := time.Now().Unix()
 		// B workstream (NTF-01): keep the association this echo used to drop.
-		s.penneClient.RecordPushChannel(userID, devID, httpx.Str(in, "service"), httpx.Str(in, "deviceToken"))
+		s.Penne.RecordPushChannel(userID, devID, httpx.Str(in, "service"), httpx.Str(in, "deviceToken"))
 		httpx.WriteJSON(w, 200, map[string]any{
 			"createdAt": now, "deviceAccountId": devID, "deviceAttributes": map[string]any{}, "deviceToken": httpx.Str(in, "deviceToken"),
 			"service": httpx.Str(in, "service"), "updatedAt": now, "userAttributes": map[string]any{}, "userId": userID,

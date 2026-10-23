@@ -13,5 +13,5 @@ func (s *server) closeAccountSessions(b *identity.OpenpakBackend, accountID stri
 	if pr == nil {
 		return
 	}
-	s.penneClient.CloseUser(pr.BaasUserID)
+	s.Penne.CloseUser(pr.BaasUserID)
 }

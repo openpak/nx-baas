@@ -133,7 +133,7 @@ func TestNewsPushNeedsTheKeyAndGoesToPenne(t *testing.T) {
 	t.Setenv("NX_INTERNAL_KEY", "test-internal-key")
 	srv, got := fakeNxPenne(t)
 	s := testServer(t)
-	s.penneClient = penne.NewRemote(srv.URL)
+	s.Penne = penne.NewRemote(srv.URL)
 
 	body := `{"topic_id":"OpenPak_News","revision":7,"wait_range":600}`
 	if w := do(t, s, "POST", "/internal/news/push", "", body); w.Code != http.StatusUnauthorized {

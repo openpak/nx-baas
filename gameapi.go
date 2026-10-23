@@ -436,7 +436,7 @@ func (s *server) gameAPI() http.Handler {
 	mux.HandleFunc("/internal/title-version", s.dauthSvc().TitleVersion)
 	mux.HandleFunc("/api/invitations", s.invitations)
 	mux.HandleFunc("/internal/notifications/test", s.penneTestNotification)
-	mux.HandleFunc("/internal/news/push", s.penneClient.NewsPush)
+	mux.HandleFunc("/internal/news/push", s.Penne.NewsPush)
 	if s.pctlFwd != nil {
 		// The website's parent routes are nx-pctl's now; forwarded until it points there.
 		mux.Handle("/internal/pctl/", s.pctlFwd)

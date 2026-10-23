@@ -75,10 +75,9 @@ type server struct {
 	acbaaPath       string
 	// shopFwd forwards the eShop to nx-shop (split.go).
 	shopFwd *httputil.ReverseProxy
-	// penneFwd and penneRemote reach nx-penne (split.go, penne_link.go).
-	penneFwd    *httputil.ReverseProxy
-	penneClient *penne.Remote
-	// notifier is where checked notifications go (penne_deliver.go): penneRemote.
+	// penneFwd forwards the Penne hosts and /internal/penne to nx-penne (split.go).
+	penneFwd *httputil.ReverseProxy
+	// notifier is where checked notifications go (internal/penne): Core.Penne.
 	notifier penne.Notifier
 	// pctlFwd forwards parental controls to nx-pctl (split.go).
 	pctlFwd *httputil.ReverseProxy

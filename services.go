@@ -130,7 +130,7 @@ func (s *server) bindTokenProfile(r *http.Request, tok string) {
 	if s.Store.User(uid) == nil {
 		return
 	}
-	s.penneClient.BindToken(tok, uid)
+	s.Penne.BindToken(tok, uid)
 }
 
 func (s *server) savesProxy(w http.ResponseWriter, r *http.Request) {

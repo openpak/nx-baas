@@ -89,7 +89,7 @@ func TestMovedPenneReceivesTheCoresCalls(t *testing.T) {
 		t.Fatalf("push channel reached nx-penne as %v", c.body)
 	}
 
-	s.penneClient.BindConsole("cert-1", u.ID)
+	s.Penne.BindConsole("cert-1", u.ID)
 	if c := expectCall(t, got, "/internal/penne/consoles"); httpx.Str(c.body, "device_id") != "cert-1" || httpx.Str(c.body, "user_id") != u.ID {
 		t.Fatalf("console binding = %v", c.body)
 	}
@@ -117,7 +117,7 @@ func TestMovedPenneReceivesTheCoresCalls(t *testing.T) {
 		t.Fatalf("topic message = %v", c.body)
 	}
 
-	s.penneClient.CloseUser(u.ID)
+	s.Penne.CloseUser(u.ID)
 	expectCall(t, got, "/internal/penne/users/"+u.ID+"/close")
 
 	// Penne's hosts are forwarded, the frontline is refused, the gateway stays here.
@@ -167,9 +167,9 @@ func TestQueuedPushesSurviveAnNxPenneRestart(t *testing.T) {
 	}))
 	defer srv.Close()
 	p := penne.NewRemote(srv.URL)
-	s := &server{Core: &core.Core{}, penneClient: p}
-	s.penneClient.BindConsole("first", "u")
-	s.penneClient.BindConsole("second", "u")
+	s := &server{Core: &core.Core{Penne: p}}
+	s.Penne.BindConsole("first", "u")
+	s.Penne.BindConsole("second", "u")
 	time.Sleep(300 * time.Millisecond)
 	up.Store(true)
 	for _, want := range []string{"first", "second"} {

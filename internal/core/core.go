@@ -4,11 +4,13 @@ package core
 
 import (
 	"crypto/rsa"
+	"fmt"
 	"log"
 	"net/http"
 	"nx-baas/internal/devices"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
+	"nx-baas/internal/penne"
 	"nx-baas/internal/store"
 	"nx-baas/internal/token"
 	"nx-baas/redact"
@@ -29,6 +31,8 @@ type Core struct {
 	// Harbor is the Harbor device enrolment; nil while no device CA is configured, which
 	// leaves dauth and BaaS as they were.
 	Harbor *devices.Registry
+	// Penne is nx-penne, where every push the core decides on goes (internal/penne).
+	Penne *penne.Remote
 }
 
 const (
@@ -138,4 +142,30 @@ func (s *Core) BearerHeader(r *http.Request, header string) map[string]any {
 		return nil
 	}
 	return c
+}
+
+// bindNotificationChannel records which BAAS account is signed in on the console a
+// device authentication token names — the same bind the /1.0.0/login handler performs
+// (BindConsole at the login case). It belongs on the NA token paths as well because an
+// awake console's steady state is the refresh, not a login: sleep/wake and days-long
+// play sessions reuse the Nintendo-Account session, so /1.0.0/login may not recur for
+// a very long time, and an unbound console is one no notification can be addressed to.
+func (s *Core) BindNotificationChannel(deviceAuthenticationToken, baasUserID string) {
+	if baasUserID == "" {
+		return
+	}
+	if dt, err := token.ParseJWT(deviceAuthenticationToken, &s.Key.PublicKey); err == nil {
+		s.Penne.BindConsole(httpx.Str(dt, "sub"), baasUserID)
+	}
+}
+
+const CdnHost = "https://cdn-image-e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com"
+
+// avatarURL: the console wants an https URL, never inline data. The earlier account server hands us the
+// raw base64 JPEG; we serve it at /avatar/<pid>.jpg on the cdn-image host (in our cert + route).
+func AvatarURL(pid uint64, b64 string, updatedAt int64) string {
+	if b64 == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/avatar/%d.jpg?v=%d", CdnHost, pid, updatedAt)
 }

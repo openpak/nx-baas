@@ -1045,11 +1045,11 @@ func TestThumbnailUrlChangesWhenThePictureDoes(t *testing.T) {
 	}
 
 	s.Store.Update(b, func(u *store.User) { u.Avatar, u.AvatarAt = "/9j/", 1789000000 })
-	if got := get(b, b.ID)["thumbnailUrl"]; got != cdnHost+"/1/"+b.ID+"?v=1789000000" {
+	if got := get(b, b.ID)["thumbnailUrl"]; got != core.CdnHost+"/1/"+b.ID+"?v=1789000000" {
 		t.Errorf("own thumbnailUrl = %v", got)
 	}
 	first := entryOf()
-	if got := first["thumbnailUrl"]; got != cdnHost+"/1/"+b.ID+"?v=1789000000" {
+	if got := first["thumbnailUrl"]; got != core.CdnHost+"/1/"+b.ID+"?v=1789000000" {
 		t.Errorf("friend thumbnailUrl = %v", got)
 	}
 	if first["thumbnailUploadedAt"] != float64(1789000000) {

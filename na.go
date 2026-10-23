@@ -376,7 +376,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 				if pid := s.Store.PIDForNA(httpx.Str(cl, "sub")); pid != 0 {
 					if id, err := s.Acct.Identity(pid); err == nil {
 						c, ok = naCode{PID: pid, Username: id.Nickname, ClientID: form.Get("client_id"), NaID: id.NaID}, true
-						s.bindNotificationChannel(form.Get("device_authentication_token"), id.BaasUserID)
+						s.BindNotificationChannel(form.Get("device_authentication_token"), id.BaasUserID)
 					}
 				}
 			}
@@ -397,7 +397,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			return
 		}
 		if id, err := s.Acct.Identity(c.PID); err == nil {
-			s.bindNotificationChannel(form.Get("device_authentication_token"), id.BaasUserID)
+			s.BindNotificationChannel(form.Get("device_authentication_token"), id.BaasUserID)
 		}
 		at := s.naAccessToken(c)
 		httpx.WriteJSON(w, 200, map[string]any{
@@ -464,7 +464,7 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 			"country": country, "createdAt": int64(1524557701),
 			"eachEmailOptedIn": map[string]any{"deals": map[string]any{"optedIn": false, "updatedAt": int64(1524557701)}, "survey": map[string]any{"optedIn": false, "updatedAt": int64(1524557701)}},
 			"email":            email, "emailOptedIn": false, "emailOptedInUpdatedAt": int64(1524557701), "emailVerified": true,
-			"gender": "unknown", "iconUri": avatarURL(id.PID, id.Avatar, id.ImageUpdatedAt), "id": strings.ToLower(id.NaID), "isChild": false, "language": "en-GB",
+			"gender": "unknown", "iconUri": core.AvatarURL(id.PID, id.Avatar, id.ImageUpdatedAt), "id": strings.ToLower(id.NaID), "isChild": false, "language": "en-GB",
 			"links": naLinks(id), "loginId": nil, "nickname": nick, "phoneNumberEnabled": false, "region": nil,
 			"screenName": screenName, "termsAgreementRequired": false,
 			"timezone":  map[string]any{"id": "Europe/London", "name": "Europe/London", "utcOffset": "+01:00", "utcOffsetSeconds": 3600},

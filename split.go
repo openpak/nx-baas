@@ -61,8 +61,8 @@ func (s *server) forwardersFromEnv() {
 	}
 	if u := os.Getenv("NX_PENNE_URL"); u != "" {
 		s.penneFwd = httpx.NewForwarder("nx-penne", u)
-		s.penneClient = penne.NewRemote(u)
-		s.notifier = s.penneClient
+		s.Penne = penne.NewRemote(u)
+		s.notifier = s.Penne
 		log.Printf("[nx-baas] Penne moved: registrations, tickets, /internal/penne and every push go to %s", u)
 	}
 	if u := os.Getenv("NX_PCTL_URL"); u != "" {
