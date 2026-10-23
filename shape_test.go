@@ -99,7 +99,7 @@ func TestLoginReplyMatchesTheShapeAConsoleAccepts(t *testing.T) {
 	r.Host = core.BaasHost
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
-	s.baas(w, r, []byte(form))
+	s.baasSvc().Handle(w, r, []byte(form))
 	if w.Code != http.StatusOK {
 		t.Fatalf("login = %d: %s", w.Code, w.Body.String())
 	}
@@ -167,7 +167,7 @@ func TestProfileUploadCompletesTheWayTheSysmoduleChecksIt(t *testing.T) {
 	s.Store.Update(u, func(u *store.User) { u.PID = 1; u.Nickname = "tester" })
 	s.Acct = fakeBackend{id: &identity.Identity{PID: 1, NaID: "aabbccdd11223344", Nickname: "website name",
 		FriendCode: "SW-0000-0000-0000", Country: "IE", BsDid: "did"}}
-	bearer := "Bearer " + s.accessToken(u.ID, 2, "did", "device", "serial")
+	bearer := "Bearer " + s.baasSvc().AccessToken(u.ID, 2, "did", "device", "serial")
 	call := func(method, path, body string) map[string]any {
 		t.Helper()
 		r := httptest.NewRequest(method, "https://"+core.BaasHost+path, nil)
@@ -175,7 +175,7 @@ func TestProfileUploadCompletesTheWayTheSysmoduleChecksIt(t *testing.T) {
 		r.Header.Set("Content-Type", "application/json")
 		r.Header.Set("Authorization", bearer)
 		w := httptest.NewRecorder()
-		s.baas(w, r, []byte(body))
+		s.baasSvc().Handle(w, r, []byte(body))
 		if w.Code != http.StatusOK {
 			t.Fatalf("%s %s = %d: %s", method, path, w.Code, w.Body.String())
 		}
@@ -238,7 +238,7 @@ func TestExtrasSelfIsNeverBareForALinkedUser(t *testing.T) {
 	r.Host = core.BaasHost
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
-	s.baas(w, r, []byte("id="+d.ID+"&password="+d.Password+"&appAuthNToken=x"))
+	s.baasSvc().Handle(w, r, []byte("id="+d.ID+"&password="+d.Password+"&appAuthNToken=x"))
 
 	var got map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
@@ -263,7 +263,7 @@ func TestDefaultThumbnailIsServedWithNoDataDirectory(t *testing.T) {
 		r := httptest.NewRequest("GET", "https://cdn-image-"+core.BaasHost+p, nil)
 		r.Host = "cdn-image-" + core.BaasHost
 		w := httptest.NewRecorder()
-		s.baas(w, r, nil)
+		s.baasSvc().Handle(w, r, nil)
 		if w.Code != http.StatusOK {
 			t.Fatalf("%s = %d, want 200 (this is 2124-7404 on a console)", p, w.Code)
 		}

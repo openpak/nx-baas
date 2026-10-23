@@ -18,6 +18,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httputil"
+	"nx-baas/internal/baas"
 	"nx-baas/internal/bans"
 	"nx-baas/internal/core"
 	"nx-baas/internal/dauth"
@@ -40,8 +41,7 @@ import (
 
 type server struct {
 	*core.Core
-	mu     sync.Mutex
-	device map[string]string // device id -> serial, from the dauth assertion
+	mu sync.Mutex
 	// saves forwards the scsi hosts (save-data cloud) to the saves service, with the
 	// console's proven account attached. nil answers the empty-cloud fallback instead.
 	saves    *httputil.ReverseProxy
@@ -98,6 +98,10 @@ type server struct {
 	// friendsService is the friends surface and the BAAS objects it renders (internal/friends).
 	friendsService *friends.Service
 	friendsOnce    sync.Once
+	// baasService is the BAAS surface: application token, login, users, federation and the
+	// avatar host (internal/baas).
+	baasService *baas.Service
+	baasOnce    sync.Once
 	// dauthService is device and application authentication (internal/dauth).
 	dauthService *dauth.Service
 	dauthOnce    sync.Once
@@ -139,7 +143,6 @@ func main() {
 			NAKid:  httpx.Getenv("BAAS_NA_KID", "00000000-0000-0000-0000-000000000001"),
 			Acct:   newBackend(),
 		},
-		device: map[string]string{},
 	}
 	s.forwardersFromEnv()
 	s.Harbor = devices.FromEnv()
@@ -357,4 +360,10 @@ func (s *server) naSvc() *nxaccount.Service {
 func (s *server) friendsSvc() *friends.Service {
 	s.friendsOnce.Do(func() { s.friendsService = &friends.Service{Core: s.Core, Presence: s.presenceSvc()} })
 	return s.friendsService
+}
+
+// baasSvc is the BAAS surface, created on first use like locks.
+func (s *server) baasSvc() *baas.Service {
+	s.baasOnce.Do(func() { s.baasService = baas.New(s.Core, s.locks(), s.presenceSvc(), s.friendsSvc()) })
+	return s.baasService
 }

@@ -65,7 +65,7 @@ func socialServer(t *testing.T) (*server, *fakeCore, []*store.User) {
 func authed(method, path, body string, u *store.User, s *server) *http.Request {
 	r := httptest.NewRequest(method, "https://"+core.BaasHost+path, strings.NewReader(body))
 	r.Host = core.BaasHost
-	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
+	r.Header.Set("Authorization", "Bearer "+s.baasSvc().AccessToken(u.ID, 2, "did", "device", "serial"))
 	return r
 }
 
@@ -1121,7 +1121,7 @@ func TestExpiredAndForeignTokensAreRefused(t *testing.T) {
 	a := users[0]
 	path := "/2.0.0/users/" + a.ID + "/friends"
 
-	expired := s.accessToken(a.ID, 2, "did", "device", "serial")
+	expired := s.baasSvc().AccessToken(a.ID, 2, "did", "device", "serial")
 	// Forge an expired one with the server's own key: same signature path,
 	// dead exp.
 	claims := map[string]any{
@@ -1151,7 +1151,7 @@ func TestExpiredAndForeignTokensAreRefused(t *testing.T) {
 	}
 	// An id_token is a different token type, signed with the same key: it
 	// must not spend as an access token.
-	idTok := s.idToken(a, nil, "x", nil)
+	idTok := s.baasSvc().IDToken(a, nil, "x", nil)
 	if code := call(idTok); code != http.StatusUnauthorized {
 		t.Errorf("id_token as access token returned %d, want 401", code)
 	}

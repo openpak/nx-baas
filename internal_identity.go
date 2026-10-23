@@ -55,7 +55,7 @@ func (s *server) identityUsers(w http.ResponseWriter, r *http.Request) {
 		// the one the console's profile shows.
 		r2 := r.Clone(r.Context())
 		r2.URL.Path = "/1/" + u.ID
-		s.baas(w, r2, nil)
+		s.baasSvc().Handle(w, r2, nil)
 	case len(parts) == 4 && parts[1] == "friends" && parts[3] == "preference":
 		httpx.WriteJSON(w, 200, map[string]any{"online_notification": friends.OnlineNotificationOf(s.friendsSvc().PrefOf(u, parts[2]))})
 	default:

@@ -89,7 +89,7 @@ func fiveServer(t *testing.T) *server {
 }
 
 func fiveToken(s *server, uid string) string {
-	return s.accessToken(uid, 2, "did", "device", "serial")
+	return s.baasSvc().AccessToken(uid, 2, "did", "device", "serial")
 }
 
 func fiveDo(t *testing.T, s *server, method, path, token, body string) *httptest.ResponseRecorder {

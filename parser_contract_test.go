@@ -212,7 +212,7 @@ func TestRelationshipPreferencesPersistAndProject(t *testing.T) {
 		r := httptest.NewRequest("PATCH", "https://"+core.BaasHost+"/2.0.0/users/"+u.ID+"/friends/"+fid, strings.NewReader(body))
 		r.Host = core.BaasHost
 		r.Header.Set("Content-Type", "application/json-patch+json")
-		r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
+		r.Header.Set("Authorization", "Bearer "+s.baasSvc().AccessToken(u.ID, 2, "did", "device", "serial"))
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, r)
 		return w
@@ -220,7 +220,7 @@ func TestRelationshipPreferencesPersistAndProject(t *testing.T) {
 	getList := func() map[string]any {
 		r := httptest.NewRequest("GET", "https://"+core.BaasHost+"/2.0.0/users/"+u.ID+"/friends", nil)
 		r.Host = core.BaasHost
-		r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
+		r.Header.Set("Authorization", "Bearer "+s.baasSvc().AccessToken(u.ID, 2, "did", "device", "serial"))
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, r)
 		var env map[string]any
@@ -291,7 +291,7 @@ func TestRelationshipPreferencesPersistAndProject(t *testing.T) {
 	_ = users2[1]
 	r := httptest.NewRequest("GET", "https://"+core.BaasHost+"/2.0.0/users/"+u2.ID+"/friends", nil)
 	r.Host = core.BaasHost
-	r.Header.Set("Authorization", "Bearer "+s2.accessToken(u2.ID, 2, "did", "device", "serial"))
+	r.Header.Set("Authorization", "Bearer "+s2.baasSvc().AccessToken(u2.ID, 2, "did", "device", "serial"))
 	w2 := httptest.NewRecorder()
 	s2.ServeHTTP(w2, r)
 	var env2 map[string]any
@@ -317,7 +317,7 @@ func TestListEtagStableWhenNothingChanged(t *testing.T) {
 	get := func() string {
 		r := httptest.NewRequest("GET", "https://"+core.BaasHost+"/2.0.0/users/"+u.ID+"/friends", nil)
 		r.Host = core.BaasHost
-		r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
+		r.Header.Set("Authorization", "Bearer "+s.baasSvc().AccessToken(u.ID, 2, "did", "device", "serial"))
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, r)
 		var env struct {
@@ -335,7 +335,7 @@ func TestListEtagStableWhenNothingChanged(t *testing.T) {
 		strings.NewReader(`[{"op":"replace","path":"/isFavorite","value":true}]`))
 	r.Host = core.BaasHost
 	r.Header.Set("Content-Type", "application/json-patch+json")
-	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
+	r.Header.Set("Authorization", "Bearer "+s.baasSvc().AccessToken(u.ID, 2, "did", "device", "serial"))
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
 	if after := get(); after == first {

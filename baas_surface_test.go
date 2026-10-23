@@ -51,7 +51,7 @@ func TestEveryDocumentedBaasMethodIsAnswered(t *testing.T) {
 		t.Run(c.method+" "+strings.SplitN(c.path, "?", 2)[0], func(t *testing.T) {
 			r := httptest.NewRequest(c.method, "https://"+core.BaasHost+c.path, strings.NewReader(c.body))
 			r.Host = core.BaasHost
-			r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
+			r.Header.Set("Authorization", "Bearer "+s.baasSvc().AccessToken(u.ID, 2, "did", "device", "serial"))
 			if c.ctype != "" {
 				r.Header.Set("Content-Type", c.ctype)
 			}
@@ -90,7 +90,7 @@ func TestFriendCodeRegeneratesOncePerDay(t *testing.T) {
 			strings.NewReader("type=NX"))
 		r.Host = core.BaasHost
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
+		r.Header.Set("Authorization", "Bearer "+s.baasSvc().AccessToken(u.ID, 2, "did", "device", "serial"))
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, r)
 		return w
@@ -123,7 +123,7 @@ func TestFriendCodeAdvertisesTheEnforcedCooldown(t *testing.T) {
 		strings.NewReader("type=NX"))
 	r.Host = core.BaasHost
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
+	r.Header.Set("Authorization", "Bearer "+s.baasSvc().AccessToken(u.ID, 2, "did", "device", "serial"))
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
 	if w.Code != http.StatusOK {
@@ -202,7 +202,7 @@ func TestSendingAFriendRequestReachesTheHandler(t *testing.T) {
 	r := httptest.NewRequest("POST", "https://"+core.BaasHost+"/2.0.0/friend_requests", strings.NewReader(body))
 	r.Host = core.BaasHost
 	r.Header.Set("Content-Type", "application/json")
-	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
+	r.Header.Set("Authorization", "Bearer "+s.baasSvc().AccessToken(u.ID, 2, "did", "device", "serial"))
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
 
@@ -229,7 +229,7 @@ func TestSendingAFriendRequestReachesTheHandler(t *testing.T) {
 	// And that id resolves when the console cancels.
 	cancel := httptest.NewRequest("DELETE", "https://"+core.BaasHost+"/2.0.0/friend_requests/"+got["id"].(string), nil)
 	cancel.Host = core.BaasHost
-	cancel.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
+	cancel.Header.Set("Authorization", "Bearer "+s.baasSvc().AccessToken(u.ID, 2, "did", "device", "serial"))
 	cw := httptest.NewRecorder()
 	s.ServeHTTP(cw, cancel)
 	if cw.Code != http.StatusOK {
@@ -264,7 +264,7 @@ func TestListsUseTheEnvelopeAConsoleReads(t *testing.T) {
 	} {
 		r := httptest.NewRequest("GET", "https://"+core.BaasHost+path, nil)
 		r.Host = core.BaasHost
-		r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
+		r.Header.Set("Authorization", "Bearer "+s.baasSvc().AccessToken(u.ID, 2, "did", "device", "serial"))
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, r)
 
@@ -299,7 +299,7 @@ func TestListsUseTheEnvelopeAConsoleReads(t *testing.T) {
 	// An incoming request has to say who sent it.
 	r := httptest.NewRequest("GET", "https://"+core.BaasHost+"/2.0.0/users/"+u.ID+"/friend_requests/inbox", nil)
 	r.Host = core.BaasHost
-	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
+	r.Header.Set("Authorization", "Bearer "+s.baasSvc().AccessToken(u.ID, 2, "did", "device", "serial"))
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
 	var inbox struct {
@@ -325,7 +325,7 @@ func TestRelationshipShape(t *testing.T) {
 
 	r := httptest.NewRequest("GET", "https://"+core.BaasHost+"/2.0.0/users/"+u.ID+"/relationships/aaaaaaaaaaaa0002", nil)
 	r.Host = core.BaasHost
-	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
+	r.Header.Set("Authorization", "Bearer "+s.baasSvc().AccessToken(u.ID, 2, "did", "device", "serial"))
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
 
@@ -364,7 +364,7 @@ func TestAcceptingAFriendRequestAnswersInTheConsolesWords(t *testing.T) {
 		strings.NewReader(`[{"op":"replace","path":"/state","value":"AUTHORIZED"}]`))
 	r.Host = core.BaasHost
 	r.Header.Set("Content-Type", "application/json-patch+json")
-	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
+	r.Header.Set("Authorization", "Bearer "+s.baasSvc().AccessToken(u.ID, 2, "did", "device", "serial"))
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
 
@@ -393,7 +393,7 @@ func TestAcceptingAFriendRequestAnswersInTheConsolesWords(t *testing.T) {
 		strings.NewReader(`[{"op":"replace","path":"/state","value":"REJECTED"}]`))
 	r.Host = core.BaasHost
 	r.Header.Set("Content-Type", "application/json-patch+json")
-	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
+	r.Header.Set("Authorization", "Bearer "+s.baasSvc().AccessToken(u.ID, 2, "did", "device", "serial"))
 	w = httptest.NewRecorder()
 	s.ServeHTTP(w, r)
 	_ = json.Unmarshal(w.Body.Bytes(), &got)
@@ -428,7 +428,7 @@ func TestBecomingFriendsMovesFriendsUpdatedAt(t *testing.T) {
 		strings.NewReader(`[{"op":"replace","path":"/state","value":"AUTHORIZED"}]`))
 	r.Host = core.BaasHost
 	r.Header.Set("Content-Type", "application/json-patch+json")
-	r.Header.Set("Authorization", "Bearer "+s.accessToken(me.ID, 2, "did", "device", "serial"))
+	r.Header.Set("Authorization", "Bearer "+s.baasSvc().AccessToken(me.ID, 2, "did", "device", "serial"))
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
 	if w.Code != http.StatusOK {

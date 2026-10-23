@@ -217,7 +217,7 @@ func TestFriendCodeLookupUsesTheQueryTheConsoleSends(t *testing.T) {
 	} {
 		r := httptest.NewRequest("GET", "https://"+core.BaasHost+target, nil)
 		r.Host = core.BaasHost
-		r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
+		r.Header.Set("Authorization", "Bearer "+s.baasSvc().AccessToken(u.ID, 2, "did", "device", "serial"))
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, r)
 
@@ -247,7 +247,7 @@ func TestFriendCodeLookupUsesTheQueryTheConsoleSends(t *testing.T) {
 	// A code nobody holds is still an empty answer, not an error.
 	r := httptest.NewRequest("GET", "https://"+core.BaasHost+"/1.0.0/users?filter.links.friendCode.id.$in=0000-0000-0000", nil)
 	r.Host = core.BaasHost
-	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
+	r.Header.Set("Authorization", "Bearer "+s.baasSvc().AccessToken(u.ID, 2, "did", "device", "serial"))
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"items":[]`) {
@@ -337,7 +337,7 @@ func TestSearchReplyMatchesTheAcceptedShape(t *testing.T) {
 
 	r := httptest.NewRequest("GET", "https://"+core.BaasHost+"/1.0.0/users?filter.links.friendCode.id.$in=1000-0000-0002", nil)
 	r.Host = core.BaasHost
-	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
+	r.Header.Set("Authorization", "Bearer "+s.baasSvc().AccessToken(u.ID, 2, "did", "device", "serial"))
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
 
@@ -408,7 +408,7 @@ func TestFriendListEntriesCarryACountry(t *testing.T) {
 
 	r := httptest.NewRequest("GET", "https://"+core.BaasHost+"/2.0.0/users/"+u.ID+"/friends?count=300", nil)
 	r.Host = core.BaasHost
-	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "device", "serial"))
+	r.Header.Set("Authorization", "Bearer "+s.baasSvc().AccessToken(u.ID, 2, "did", "device", "serial"))
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
 

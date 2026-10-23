@@ -23,7 +23,6 @@ func twoFAServer(t *testing.T) (*server, *fakeCore) {
 	f.add2FAAccount("2fa@example.com", "TwoFA", "correct horse battery", "123456")
 	b := identity.NewOpenpakBackendWithClients(t.TempDir(), fakeIdentity{f: f}, fakeLinks{f: f}, fakeSocial{f: f}, []byte(strings.Repeat("k", 32)))
 	s.Acct = b
-	s.device = map[string]string{}
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)

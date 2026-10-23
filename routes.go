@@ -219,7 +219,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		httpx.Dump(r, body, "!! UNHANDLED host (catch-all)")
 		httpx.WriteJSON(w, 404, map[string]any{})
 	default:
-		s.baas(w, r, body)
+		s.baasSvc().Handle(w, r, body)
 	}
 }
 

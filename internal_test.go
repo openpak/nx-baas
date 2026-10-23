@@ -27,7 +27,7 @@ func TestSwitchIdentityProvesAPlainConsoleIDToken(t *testing.T) {
 	u := s.Store.User("aaaa")
 
 	// id == nil is the retail shape: signed, but with no "openpak" claim in it.
-	tok := s.idToken(u, nil, "OutboundHost", nil)
+	tok := s.baasSvc().IDToken(u, nil, "OutboundHost", nil)
 	if strings.Contains(tok, "openpak") {
 		t.Fatal("test token is not the claimless shape a console sends")
 	}
@@ -40,7 +40,7 @@ func TestSwitchIdentityProvesAPlainConsoleIDToken(t *testing.T) {
 	}
 
 	// Same key, same subject, different kind of token: it must not buy a login.
-	access := s.accessToken(u.ID, 2, u.BsDid, "", "")
+	access := s.baasSvc().AccessToken(u.ID, 2, u.BsDid, "", "")
 	if w := do(t, s, "POST", "/internal/switch/identity", "", `{"id_token":"`+access+`"}`); w.Code != 401 {
 		t.Fatalf("an access token was accepted as a login: %d %s", w.Code, w.Body)
 	}
@@ -52,7 +52,7 @@ func TestSwitchIdentityProvesAPlainConsoleIDToken(t *testing.T) {
 	// TokenExpired, so the console would throw a perfectly good token away and fetch another,
 	// forever. It has to be the 404 that maps to ValidationFailed.
 	stranger, _ := s.Store.NewUser()
-	unknown := s.idToken(stranger, nil, "", nil)
+	unknown := s.baasSvc().IDToken(stranger, nil, "", nil)
 	if w := do(t, s, "POST", "/internal/switch/identity", "", `{"id_token":"`+unknown+`"}`); w.Code != 404 {
 		t.Fatalf("unlinked account answered %d, want 404 -- 401 puts the console in a refresh loop: %s", w.Code, w.Body)
 	}
@@ -67,7 +67,7 @@ func TestSwitchIdentityExposesOnlyVerifiedApplication(t *testing.T) {
 	s.Key = key
 	u := s.Store.User("aaaa")
 	application := map[string]any{"nintendo": map[string]any{"ai": "010070201D1BA000"}}
-	tok := s.idToken(u, nil, "Keeper", application)
+	tok := s.baasSvc().IDToken(u, nil, "Keeper", application)
 	w := do(t, s, "POST", "/internal/switch/identity", "", `{"id_token":"`+tok+`"}`)
 	// banServer's host account is locked. Even a genuine title token cannot
 	// escape that existing check.
@@ -79,7 +79,7 @@ func TestSwitchIdentityExposesOnlyVerifiedApplication(t *testing.T) {
 	if u == nil {
 		t.Fatal("missing allowed user")
 	}
-	tok = s.idToken(u, nil, "Keeper", application)
+	tok = s.baasSvc().IDToken(u, nil, "Keeper", application)
 	w = do(t, s, "POST", "/internal/switch/identity", "", `{"id_token":"`+tok+`"}`)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"application_id":"010070201D1BA000"`) || !strings.Contains(w.Body.String(), `"account_id":"acc-4"`) {
 		t.Fatalf("missing verified application/account: %d %s", w.Code, w.Body)

@@ -65,7 +65,6 @@ func banServer(t *testing.T) (*server, *fakeBans) {
 		t.Fatal(err)
 	}
 	s.Key, s.IDKid, s.AccKid, s.NAKid = key, "id", "acc", "na"
-	s.device = map[string]string{}
 	f := &fakeBans{status: map[string]accountv1.AccountStatus{}}
 	f.set(hostPID, accountv1.AccountStatus_ACCOUNT_STATUS_BANNED)
 	s.locks().Source = f
@@ -132,14 +131,14 @@ func TestBannedAccountCannotSignInOnTheConsole(t *testing.T) {
 // A token minted before the ban stops working for every user-scoped call.
 func TestBannedAccountsLiveTokenStopsWorking(t *testing.T) {
 	s, _ := banServer(t)
-	tok := s.accessToken("aaaa", 2, "hostbsdid", "", "")
+	tok := s.baasSvc().AccessToken("aaaa", 2, "hostbsdid", "", "")
 	for _, p := range []string{"/1.0.0/users/aaaa", "/2.0.0/users/aaaa/friends"} {
 		if w := baasReq(s, "GET", p, tok, ""); w.Code != 403 || errorCodeOf(t, w) != "banned_user" {
 			t.Errorf("GET %s = %d %s", p, w.Code, w.Body)
 		}
 	}
 	// Somebody else is unaffected.
-	other := s.accessToken("bbbb", 2, "joinerbsdid", "", "")
+	other := s.baasSvc().AccessToken("bbbb", 2, "joinerbsdid", "", "")
 	if w := baasReq(s, "GET", "/1.0.0/users/bbbb", other, ""); w.Code != 200 {
 		t.Errorf("unbanned user = %d %s", w.Code, w.Body)
 	}

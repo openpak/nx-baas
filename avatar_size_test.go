@@ -41,7 +41,7 @@ func TestThumbnailIsServedAtTheRequestedSize(t *testing.T) {
 		r := httptest.NewRequest("GET", "https://cdn-image-"+core.BaasHost+path, nil)
 		r.Host = "cdn-image-" + core.BaasHost
 		w := httptest.NewRecorder()
-		s.baas(w, r, nil)
+		s.baasSvc().Handle(w, r, nil)
 		if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "image/jpeg" {
 			t.Fatalf("%s = %d %q", path, w.Code, w.Header().Get("Content-Type"))
 		}

@@ -1,4 +1,4 @@
-package main
+package baas
 
 import (
 	"bytes"
@@ -21,7 +21,7 @@ import (
 // website that is down or unconfigured must not turn a working link into a
 // failed one. The picture is kept locally either way, so nothing is lost if
 // this call does not land.
-func (s *server) shareAvatar(subject, base64JPEG string) {
+func (s *Service) shareAvatar(subject, base64JPEG string) {
 	url, key := httpx.Getenv("WEBSITE_INTERNAL_URL", ""), httpx.Getenv("WEBSITE_INTERNAL_KEY", "")
 	if url == "" || key == "" {
 		return // not configured: the console still gets its picture back from here

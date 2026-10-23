@@ -1,4 +1,7 @@
-package main
+// Package baas is the BAAS surface (baas.nintendo.com): the application token, device-account
+// login, users, federation with a Nintendo Account, the key sets and the avatar host. The
+// friends routes on the same host are internal/friends'.
+package baas
 
 import (
 	"context"
@@ -23,6 +26,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -32,7 +36,7 @@ var defaultAvatar []byte
 // accessToken/idToken: claim for claim what a real console accepted from the VPS
 // (capture 2026-09-06, /1.0.0/login). Anonymous (grant 1) tokens carry the device block;
 // user tokens (grant 2) do not.
-func (s *server) accessToken(sub string, grant int, bsDid, di, sn string) string {
+func (s *Service) AccessToken(sub string, grant int, bsDid, di, sn string) string {
 	now := time.Now().Unix()
 	claims := map[string]any{
 		"aud": core.BaasAudience, "bs:did": bsDid, "bs:grt": grant, "exp": now + 10800, "iat": now,
@@ -48,7 +52,7 @@ func (s *server) accessToken(sub string, grant int, bsDid, di, sn string) string
 	return token.SignJWT(map[string]any{"alg": "RS256", "jku": core.BaasJku + "/1.0.0/internal_certificates", "kid": s.AccKid, "typ": "JWT"}, claims, s.Key)
 }
 
-func (s *server) idToken(u *store.User, id *identity.Identity, username string, app map[string]any) string {
+func (s *Service) IDToken(u *store.User, id *identity.Identity, username string, app map[string]any) string {
 	now := time.Now().Unix()
 	// VPS parity: the id_token carries an APPLICATION block (ai/at/av/edi/tbh/tbn), taken from
 	// the appAuthNToken when the console sends one, else the VPS defaults.
@@ -85,7 +89,7 @@ func (s *server) idToken(u *store.User, id *identity.Identity, username string, 
 // said nothing, the client of the account's live claim is used, so a real
 // console's title-less session says "switch" once Penne has told us so.
 // clientOS travels with client and is taken from the same claim when client is.
-func (s *server) reportOnline(ctx context.Context, u *store.User, client, clientOS string) {
+func (s *Service) reportOnline(ctx context.Context, u *store.User, client, clientOS string) {
 	if u == nil || u.PID == 0 {
 		return
 	}
@@ -100,7 +104,7 @@ func (s *server) reportOnline(ctx context.Context, u *store.User, client, client
 
 // reportOffline ends the session immediately when someone says they are going,
 // rather than leaving them online until the lease runs out.
-func (s *server) reportOffline(ctx context.Context, u *store.User) {
+func (s *Service) reportOffline(ctx context.Context, u *store.User) {
 	if u == nil || u.PID == 0 {
 		return
 	}
@@ -109,7 +113,7 @@ func (s *server) reportOffline(ctx context.Context, u *store.User) {
 	}
 }
 
-func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
+func (s *Service) Handle(w http.ResponseWriter, r *http.Request, body []byte) {
 	p := r.URL.Path
 	form, _ := url.ParseQuery(string(body))
 	seg := strings.Split(strings.Trim(p, "/"), "/")
@@ -119,7 +123,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 	// 2124-5110 (bans.go). Pictures and key sets stay public.
 	if strings.HasPrefix(p, "/1.0.0/users/") || strings.HasPrefix(p, "/2.0.0/") {
 		if c := s.ValidBearer(r); c != nil {
-			if lock := s.locks().UserLock(s.Store.User(httpx.Str(c, "sub"))); lock != "" {
+			if lock := s.Locks.UserLock(s.Store.User(httpx.Str(c, "sub"))); lock != "" {
 				bans.BaasLocked(w, r, lock)
 				return
 			}
@@ -147,7 +151,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			pid, _ = strconv.ParseUint(strings.TrimSuffix(strings.TrimPrefix(p, "/avatar/"), ".jpg"), 10, 64)
 		} else if u := s.Store.User(p[3:]); u != nil {
 			pid = u.PID
-		} else if f := s.friendsSvc().ResolveFriend(p[3:]); f != nil {
+		} else if f := s.Friends.ResolveFriend(p[3:]); f != nil {
 			pid = f.PID // an account that has never been on a console
 		}
 		id, err := s.Acct.Identity(pid)
@@ -220,7 +224,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		s.mu.Lock()
 		s.device[di] = sn
 		s.mu.Unlock()
-		httpx.WriteJSON(w, 200, map[string]any{"accessToken": s.accessToken(di, 1, token.RandHex(8), di, sn), "tokenType": "Bearer", "expiresIn": 10800})
+		httpx.WriteJSON(w, 200, map[string]any{"accessToken": s.AccessToken(di, 1, token.RandHex(8), di, sn), "tokenType": "Bearer", "expiresIn": 10800})
 		return
 
 	case p == "/1.0.0/image_upload" && r.Method == "POST":
@@ -256,7 +260,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		// serves from now on.
 		if uid := httpx.Str(s.Bearer(r), "sub"); uid != "" {
 			if u := s.Store.User(uid); u != nil {
-				url := s.friendsSvc().UserObj(u, s.friendsSvc().Identity(u), "")["thumbnailUrl"]
+				url := s.Friends.UserObj(u, s.Friends.Identity(u), "")["thumbnailUrl"]
 				httpx.WriteJSON(w, 200, map[string]any{"content": map[string]any{"url": url, "format": "jpg"}})
 				return
 			}
@@ -268,7 +272,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		u, d := s.Store.NewUser()
 		log.Printf("[nx-baas] new device account %s for user %s", redact.Tag(d.ID), redact.Tag(u.ID))
 		w.Header().Set("Location", "/1.0.0/users/"+u.ID)
-		httpx.WriteJSON(w, 201, s.friendsSvc().UserObj(u, nil, d.Password))
+		httpx.WriteJSON(w, 201, s.Friends.UserObj(u, nil, d.Password))
 		return
 
 	case (p == "/1.0.0/login" || p == "/1.0.0/federation") && r.Method == "POST":
@@ -292,7 +296,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 			var err error
 			if u, err = s.link(u, form.Get("idToken")); err != nil {
 				if errors.Is(err, identity.ErrAccountLocked) {
-					bans.BaasLocked(w, r, s.locks().NALockOfToken(form.Get("idToken")))
+					bans.BaasLocked(w, r, s.Locks.NALockOfToken(form.Get("idToken")))
 					return
 				}
 				log.Printf("[nx-baas] federation failed: %v", redact.Err(err))
@@ -302,13 +306,13 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		// A console whose device account is linked to a banned account signs in to nothing:
 		// no token, no presence, no notification binding.
-		if lock := s.locks().UserLock(u); lock != "" {
+		if lock := s.Locks.UserLock(u); lock != "" {
 			log.Printf("[nx-baas] %s refused: user=%s pid=%s is %s", seg[1], redact.Tag(u.ID), redact.Tag(u.PID), lock)
 			bans.BaasLocked(w, r, lock)
 			return
 		}
 		app, _ := token.ParseJWT(form.Get("appAuthNToken"), nil)
-		id := s.friendsSvc().Identity(u)
+		id := s.Friends.Identity(u)
 		username := u.Nickname
 		if id != nil {
 			username = id.Nickname
@@ -321,7 +325,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		// certificate; this is where both halves are in hand, so the account
 		// behind the console is recorded for the notification channel.
 		s.Penne.BindConsole(di, u.ID)
-		s.presenceSvc().ExpireDeviceEverywhere(form.Get("id"), u.ID)
+		s.Presence.ExpireDeviceEverywhere(form.Get("id"), u.ID)
 		// A console re-logs in every hour while it plays; the login knows no
 		// title, so it must not overwrite the one the device already published
 		// (2026-09-22: a game dropping off the friend list at each login).
@@ -336,13 +340,13 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		// (2026-10-10, Harbor to a Switch). INACTIVE still holds the core
 		// session open (stateRank 1).
 		client, clientOS := presence.RequestClient(r), presence.RequestClientOS(r)
-		if !s.presenceSvc().DeviceClaimLive(u, form.Get("id")) {
-			s.presenceSvc().NoteClientPresence(u, form.Get("id"), client, clientOS, "INACTIVE", "", "", "", -1)
+		if !s.Presence.DeviceClaimLive(u, form.Get("id")) {
+			s.Presence.NoteClientPresence(u, form.Get("id"), client, clientOS, "INACTIVE", "", "", "", -1)
 		}
 		s.reportOnline(r.Context(), u, client, clientOS)
 		res := map[string]any{
-			"expiresIn": 10800, "user": s.friendsSvc().UserObj(u, id, ""), "idToken": s.idToken(u, id, username, app),
-			"accessToken": s.accessToken(u.ID, 2, func() string {
+			"expiresIn": 10800, "user": s.Friends.UserObj(u, id, ""), "idToken": s.IDToken(u, id, username, app),
+			"accessToken": s.AccessToken(u.ID, 2, func() string {
 				if id != nil {
 					return id.BsDid
 				}
@@ -371,7 +375,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		switch r.Method {
 		case "GET":
-			httpx.WriteJSON(w, 200, s.friendsSvc().UserObj(u, s.friendsSvc().Identity(u), ""))
+			httpx.WriteJSON(w, 200, s.Friends.UserObj(u, s.Friends.Identity(u), ""))
 		case "PATCH":
 			var ops []struct {
 				Op, Path string
@@ -451,7 +455,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 					}
 				}
 			}
-			httpx.WriteJSON(w, 200, s.friendsSvc().UserObj(u, s.friendsSvc().Identity(u), ""))
+			httpx.WriteJSON(w, 200, s.Friends.UserObj(u, s.Friends.Identity(u), ""))
 		default:
 			httpx.BaasErr(w, r, 405, "method_not_allowed", "Method Not Allowed", "Method Not Allowed")
 		}
@@ -471,10 +475,10 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				httpx.BaasErr(w, r, 400, "invalid_idp_account", "Invalid IdP Account", "IdP account is invalid")
 				return
 			}
-			httpx.WriteJSON(w, 200, s.friendsSvc().UserObj(nu, s.friendsSvc().Identity(nu), ""))
+			httpx.WriteJSON(w, 200, s.Friends.UserObj(nu, s.Friends.Identity(nu), ""))
 		case "unlink":
 			s.Store.Update(u, func(u *store.User) { u.PID, u.NaID = 0, "" })
-			httpx.WriteJSON(w, 200, s.friendsSvc().UserObj(u, nil, ""))
+			httpx.WriteJSON(w, 200, s.Friends.UserObj(u, nil, ""))
 		case "generate_code":
 			if s.RequireCaller(w, r, seg[2]) == nil {
 				return
@@ -492,7 +496,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				return
 			}
 			s.Store.Update(u, func(u *store.User) { u.CodeGeneratedAt = time.Now().Unix() })
-			httpx.WriteJSON(w, 200, s.friendsSvc().UserObj(u, s.friendsSvc().Identity(u), ""))
+			httpx.WriteJSON(w, 200, s.Friends.UserObj(u, s.Friends.Identity(u), ""))
 		case "device_histories":
 			if s.RequireCaller(w, r, seg[2]) == nil {
 				return
@@ -514,7 +518,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				if s.RequireCaller(w, r, seg[2]) == nil {
 					return
 				}
-				other := s.friendsSvc().ResolveFriend(target)
+				other := s.Friends.ResolveFriend(target)
 				if other == nil {
 					httpx.BaasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 					return
@@ -522,7 +526,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				// Blocks commit in the core, which owns enforcement for every
 				// adapter (SOC-03); the local mirror only feeds this server's
 				// own reads.
-				if err := s.friendsSvc().SetBlock(u, other, true); err != nil {
+				if err := s.Friends.SetBlock(u, other, true); err != nil {
 					log.Printf("[nx-baas] block failed user=%s target=%s: %v", redact.Tag(u.ID), redact.Tag(target), redact.Err(err))
 					status, code, title, detail := friends.BaasFailure(err)
 					httpx.BaasErr(w, r, status, code, title, detail)
@@ -542,7 +546,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 					u.BlockDetails[other.BaasUserID] = &store.BlockDetail{CreatedAt: now, Self: in.Extras.Self}
 				})
 				// The console ignores this body; it re-syncs the list.
-				httpx.WriteJSON(w, 200, s.friendsSvc().BlockObj(u, other.BaasUserID, now))
+				httpx.WriteJSON(w, 200, s.Friends.BlockObj(u, other.BaasUserID, now))
 			default:
 				if s.RequireCaller(w, r, seg[2]) == nil {
 					return
@@ -558,12 +562,12 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 					if len(list) == friends.MaxBlockEntries {
 						break
 					}
-					list = append(list, s.friendsSvc().BlockObj(u, b, now))
+					list = append(list, s.Friends.BlockObj(u, b, now))
 				}
 				httpx.WriteJSON(w, 200, friends.ListEnvelope(list))
 			}
 		case "friends", "friend_requests", "relationships":
-			s.friendsSvc().HandleV1(w, r, u, seg[3:], body)
+			s.Friends.HandleV1(w, r, u, seg[3:], body)
 		default:
 			httpx.Dump(r, body, "!! UNHANDLED user sub-resource")
 			httpx.BaasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
@@ -579,12 +583,12 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		if s.RequireCaller(w, r, seg[2]) == nil {
 			return
 		}
-		other := s.friendsSvc().ResolveFriend(seg[4])
+		other := s.Friends.ResolveFriend(seg[4])
 		if other == nil {
 			httpx.BaasErr(w, r, 404, "resource_is_not_found", "Specified resource is not found", "Resource is not found")
 			return
 		}
-		if err := s.friendsSvc().SetBlock(u, other, false); err != nil {
+		if err := s.Friends.SetBlock(u, other, false); err != nil {
 			log.Printf("[nx-baas] unblock failed user=%s target=%s: %v", redact.Tag(u.ID), redact.Tag(seg[4]), redact.Err(err))
 			status, code, title, detail := friends.BaasFailure(err)
 			httpx.BaasErr(w, r, status, code, title, detail)
@@ -610,8 +614,8 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		case "DELETE":
 			// The device unlinks itself (or the account switches): its claim
 			// ends now, not when a lease happens to run out.
-			s.presenceSvc().ExpireDevicePresence(u, device)
-			s.presenceSvc().ExpireDeviceEverywhere(device, u.ID)
+			s.Presence.ExpireDevicePresence(u, device)
+			s.Presence.ExpireDeviceEverywhere(device, u.ID)
 			w.WriteHeader(204)
 		case "PATCH": // presence (friends sysmodule), JSON patch
 			var ops []struct {
@@ -649,7 +653,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				return
 			}
 			client, clientOS := presence.RequestClient(r), presence.RequestClientOS(r)
-			s.presenceSvc().NoteClientPresence(u, device, client, clientOS, state, appID, appField, groupID, acdIndex)
+			s.Presence.NoteClientPresence(u, device, client, clientOS, state, appID, appField, groupID, acdIndex)
 			// This is what keeps someone counted as online: the lease the core holds is short,
 			// and a client that has gone away stops renewing it.
 			if state == "OFFLINE" {
@@ -658,7 +662,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 				s.reportOnline(r.Context(), u, client, clientOS)
 			}
 			log.Printf("[nx-baas] presence user=%s pid=%s device=%s client=%q os=%q %s app=%s field(%d)", redact.Tag(u.ID), redact.Tag(u.PID), redact.Tag(device), client, clientOS, state, appID, len(appField))
-			httpx.WriteJSON(w, 200, s.friendsSvc().UserObj(u, s.friendsSvc().Identity(u), ""))
+			httpx.WriteJSON(w, 200, s.Friends.UserObj(u, s.Friends.Identity(u), ""))
 		default:
 			httpx.Dump(r, body, "!! UNHANDLED device_accounts")
 			httpx.BaasErr(w, r, 405, "method_not_allowed", "Method Not Allowed", "Method Not Allowed")
@@ -669,7 +673,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 	// friend request fell straight through to the catch-all 404 and the console
 	// said "please try again later" (2121-2031).
 	case len(seg) >= 2 && seg[0] == "2.0.0":
-		s.friendsSvc().HandleV2(w, r, seg[1:], body)
+		s.Friends.HandleV2(w, r, seg[1:], body)
 		return
 
 	case p == "/1.0.0/users" && r.Method == "GET":
@@ -694,14 +698,14 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		// groups.
 		viewer := s.BearerUser(r)
 		friendOf := map[string]bool{}
-		if id := s.friendsSvc().Identity(viewer); viewer != nil && id != nil {
+		if id := s.Friends.Identity(viewer); viewer != nil && id != nil {
 			for _, f := range id.Friends {
 				friendOf[f.BaasUserID] = true
 			}
 		}
 		found := func(f identity.Friend) any {
-			obj := s.friendsSvc().SearchUserObj(f, now)
-			group, pl := s.friendsSvc().VisiblePlayLog(viewer, s.Store.User(f.BaasUserID), friendOf[f.BaasUserID])
+			obj := s.Friends.SearchUserObj(f, now)
+			group, pl := s.Friends.VisiblePlayLog(viewer, s.Store.User(f.BaasUserID), friendOf[f.BaasUserID])
 			friends.SetPlayLog(obj, group, pl)
 			return obj
 		}
@@ -764,10 +768,10 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 		if dev := friends.BodyField(body, form, "deviceId", "deviceAccountId", "device"); dev != "" {
 			if uid := friends.BodyField(body, form, "userId", "user"); uid != "" {
 				if u := s.Store.User(uid); u != nil {
-					s.presenceSvc().ExpireDevicePresence(u, dev)
+					s.Presence.ExpireDevicePresence(u, dev)
 				}
 			}
-			s.presenceSvc().ExpireDeviceEverywhere(dev, "")
+			s.Presence.ExpireDeviceEverywhere(dev, "")
 		} else {
 			log.Printf("[nx-baas] devices/me/delete without a device id; nothing to expire")
 		}
@@ -780,7 +784,7 @@ func (s *server) baas(w http.ResponseWriter, r *http.Request, body []byte) {
 }
 
 // link binds a BAAS user to the OpenPak account behind a Nintendo-Account id_token we issued.
-func (s *server) link(u *store.User, idTok string) (*store.User, error) {
+func (s *Service) link(u *store.User, idTok string) (*store.User, error) {
 	claims, err := token.ParseJWT(idTok, &s.Key.PublicKey)
 	if err != nil {
 		return nil, err
@@ -790,7 +794,7 @@ func (s *server) link(u *store.User, idTok string) (*store.User, error) {
 	if pid == 0 {
 		return nil, fmt.Errorf("unknown Nintendo-Account sub %q", naID)
 	}
-	if lock := s.locks().PIDLock(pid); lock != "" {
+	if lock := s.Locks.PIDLock(pid); lock != "" {
 		return nil, fmt.Errorf("link pid %d: %w (%s)", pid, identity.ErrAccountLocked, lock)
 	}
 	id, err := s.Acct.Identity(pid)
@@ -803,3 +807,20 @@ func (s *server) link(u *store.User, idTok string) (*store.User, error) {
 }
 
 // bisecting 2124-0292: only the NA link on top of the POST /users shape
+
+// Service is the BAAS surface (application token, login, users, federation, certificates and
+// the avatar host) over the shared state.
+type Service struct {
+	*core.Core
+	Locks    *bans.Checker
+	Presence *presence.Service
+	Friends  *friends.Service
+
+	mu     sync.Mutex
+	device map[string]string // device id -> serial, from the dauth assertion
+}
+
+// New is the BAAS surface with an empty device map.
+func New(c *core.Core, locks *bans.Checker, p *presence.Service, f *friends.Service) *Service {
+	return &Service{Core: c, Locks: locks, Presence: p, Friends: f, device: map[string]string{}}
+}

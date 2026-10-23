@@ -16,7 +16,7 @@ func TestTabijiAcceptsPlayHistoriesAndHasNoStatistics(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Key, s.IDKid, s.AccKid = key, "test-id-kid", "test-acc-kid"
-	tok := s.idToken(s.Store.User("aaaa"), nil, "Leia", nil)
+	tok := s.baasSvc().IDToken(s.Store.User("aaaa"), nil, "Leia", nil)
 	const host = "api.hac.lp1.tabiji.srv.nintendo.net"
 
 	w := hostReq(s, host, "POST", "/console/v1/play_histories", tok, `{"play_histories":[]}`)
@@ -34,7 +34,7 @@ func TestTabijiAcceptsPlayHistoriesAndHasNoStatistics(t *testing.T) {
 	if w := hostReq(s, host, "POST", "/console/v1/play_histories", "", `{}`); w.Code != 401 {
 		t.Fatalf("upload without an id token answered %d, want 401", w.Code)
 	}
-	if w := hostReq(s, host, "POST", "/console/v1/play_histories", s.accessToken("aaaa", 2, "", "", ""), `{}`); w.Code != 401 {
+	if w := hostReq(s, host, "POST", "/console/v1/play_histories", s.baasSvc().AccessToken("aaaa", 2, "", "", ""), `{}`); w.Code != 401 {
 		t.Fatalf("an access token was taken as an id token: %d", w.Code)
 	}
 }

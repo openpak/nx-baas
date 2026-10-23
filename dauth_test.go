@@ -209,9 +209,9 @@ func TestProfileImageUploadIsAccepted(t *testing.T) {
 	body := []byte(`{"rawContent":"` + jpeg + `"}`)
 	r := httptest.NewRequest("POST", "https://"+core.BaasHost+"/1.0.0/image_upload", nil)
 	r.Host = core.BaasHost
-	r.Header.Set("Authorization", "Bearer "+s.accessToken(u.ID, 2, "did", "", ""))
+	r.Header.Set("Authorization", "Bearer "+s.baasSvc().AccessToken(u.ID, 2, "did", "", ""))
 	w := httptest.NewRecorder()
-	s.baas(w, r, body)
+	s.baasSvc().Handle(w, r, body)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("image_upload = %d, want 200", w.Code)
