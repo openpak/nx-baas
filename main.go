@@ -371,6 +371,35 @@ func (s *server) naHeader() map[string]any {
 	return map[string]any{"alg": "RS256", "jku": naIssuer + "/1.0.0/certificates", "kid": s.naKid, "typ": "JWT"}
 }
 
+// spendNACode resolves a Nintendo Account authorization code the way a third-party server does:
+// the code must have been issued to clientID (compared without case) and is spent by the answer.
+func (s *server) spendNACode(code, clientID string) (naCode, bool) {
+	if code == "" || clientID == "" {
+		return naCode{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.codes[code]
+	if !ok || !strings.EqualFold(c.ClientID, clientID) {
+		return naCode{}, false
+	}
+	delete(s.codes, code)
+	return c, true
+}
+
+// pidForNAIDToken proves a Nintendo Account id_token this server signed (issuer, expiry, a
+// subject it knows); 0 when the token is not ours or the account is unknown.
+func (s *server) pidForNAIDToken(tok string) uint64 {
+	c, err := parseJWT(tok, &s.key.PublicKey)
+	if err != nil || str(c, "iss") != naIssuer || str(c, "typ") != "" {
+		return 0
+	}
+	if exp, _ := c["exp"].(float64); int64(exp) <= time.Now().Unix() {
+		return 0
+	}
+	return s.store.PIDForNA(str(c, "sub"))
+}
+
 func (s *server) naRefreshToken(c naCode) string {
 	now := time.Now().Unix()
 	return signJWT(s.naHeader(), map[string]any{"aud": c.ClientID, "exp": now + 365*86400, "iat": now, "iss": naIssuer, "jti": uuid4(), "sub": c.NaID, "typ": "refresh"}, s.key)
@@ -2102,6 +2131,10 @@ func (s *server) na(w http.ResponseWriter, r *http.Request, body []byte) {
 		pid := uint64(0)
 		if err == nil {
 			pid = s.store.PIDForNA(str(cl, "sub"))
+		}
+		if pid == 0 {
+			// An emulator keeps no NA access token, only the BAAS id_token of its sign-in.
+			pid, _ = s.pidForIDToken(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 		}
 		if pid == 0 {
 			writeJSON(w, 401, map[string]any{"error": "login_required"})
