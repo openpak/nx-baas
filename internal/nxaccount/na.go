@@ -55,6 +55,36 @@ func (s *Service) IssueCode(c Code) string {
 // takeCode spends an authorization code: unknown, expired or already-spent
 // codes are refused, and expired rows are purged so the map cannot grow
 // without end.
+// SpendCode resolves a Nintendo Account authorization code the way a third-party server does:
+// the code must be fresh, unspent and issued to clientID, and is spent by the answer. The
+// client id is how the console's silent authorize filled it (the title id), compared without case.
+func (s *Service) SpendCode(code, clientID string) (Code, bool) {
+	if code == "" || clientID == "" {
+		return Code{}, false
+	}
+	s.mu.Lock()
+	c, ok := s.codes[code]
+	s.mu.Unlock()
+	if !ok || !strings.EqualFold(c.ClientID, clientID) {
+		return Code{}, false
+	}
+	return s.takeCode(code, true)
+}
+
+// PIDForNAIDToken proves a Nintendo Account id_token this server signed (issuer, expiry, and a
+// subject it knows) and answers with the account behind it; 0 when the token is not ours or the
+// account is unknown.
+func (s *Service) PIDForNAIDToken(tok string) uint64 {
+	c, err := token.ParseJWT(tok, &s.Key.PublicKey)
+	if err != nil || httpx.Str(c, "iss") != core.NaIssuer || httpx.Str(c, "typ") != "" {
+		return 0
+	}
+	if exp, _ := c["exp"].(float64); int64(exp) <= time.Now().Unix() {
+		return 0
+	}
+	return s.Store.PIDForNA(httpx.Str(c, "sub"))
+}
+
 func (s *Service) takeCode(code string, spend bool) (Code, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -223,6 +253,10 @@ func (s *Service) Handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		pid := uint64(0)
 		if err == nil {
 			pid = s.Store.PIDForNA(httpx.Str(cl, "sub"))
+		}
+		if pid == 0 {
+			// An emulator keeps no NA access token, only the BAAS id_token of its sign-in.
+			pid, _ = s.PIDForIDToken(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 		}
 		if pid == 0 {
 			httpx.WriteJSON(w, 401, map[string]any{"error": "login_required"})

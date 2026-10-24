@@ -36,6 +36,11 @@ func (s *Service) switchIdentity(w http.ResponseWriter, r *http.Request) {
 		OpenPak string `json:"openpak"`
 		IDToken string `json:"id_token"`
 		PID     uint64 `json:"pid"`
+		// A third-party network (EA's Nucleus) gets a Nintendo Account authorization code
+		// (plus the client it was issued to) or the NA id_token from the title.
+		NACode    string `json:"na_code"`
+		ClientID  string `json:"client_id"`
+		NAIDToken string `json:"na_id_token"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&in); err != nil {
 		httpx.APIErr(w, http.StatusBadRequest, "invalid JSON")
@@ -48,6 +53,18 @@ func (s *Service) switchIdentity(w http.ResponseWriter, r *http.Request) {
 		var ok bool
 		if pid, _, ok = VerifyNexToken(s.Acct.NexSigningKey(), in.OpenPak); !ok {
 			httpx.APIErr(w, http.StatusUnauthorized, "openpak not proven")
+			return
+		}
+	case in.NACode != "":
+		c, ok := s.NA.SpendCode(in.NACode, in.ClientID)
+		if !ok {
+			httpx.APIErr(w, http.StatusUnauthorized, "na_code not proven")
+			return
+		}
+		pid = c.PID
+	case in.NAIDToken != "":
+		if pid = s.NA.PIDForNAIDToken(in.NAIDToken); pid == 0 {
+			httpx.APIErr(w, http.StatusUnauthorized, "na_id_token not proven")
 			return
 		}
 	case in.IDToken != "":
