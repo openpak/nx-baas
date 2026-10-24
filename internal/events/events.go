@@ -64,39 +64,7 @@ func (s *Follower) Follow(b *identity.OpenpakBackend) {
 		// head marker -- it echoes the request when the page is empty -- so it
 		// must never reach the cursor.
 		for _, e := range page.GetEvents() {
-			switch e.GetType() {
-			case "friend_requested", "friend_accepted", "friend_removed":
-				s.projectionFriendsChanged(b, e.GetAccountId(), e.GetSubjectId())
-				// Integration wiring: the state above is committed, so the
-				// native notification may now be submitted (notify_wiring.go).
-				s.NotifyCoreFriendEvent(b, e.GetType(), e.GetAccountId(), e.GetSubjectId(), e.GetVersion())
-			case "presence_changed":
-				// account = a friend online on this network, subject = whose presence moved.
-				if e.GetNamespace() == b.Namespace { // addressed to a friend on another network: not ours
-					s.Presence.NotifyCorePresence(b, e.GetAccountId(), e.GetSubjectId())
-				}
-			case "account_unbanned":
-				s.Locks.Forget(e.GetAccountId())
-			case "account_banned", "account_deleted", "account_delete_started", "credential_revoked", "link_unlinked":
-				if e.GetType() != "credential_revoked" && e.GetType() != "link_unlinked" {
-					// Bans take effect now, not when the cache entry ages out, and the
-					// console's open notification channel goes with them.
-					s.Locks.Forget(e.GetAccountId())
-					s.closeAccountSessions(b, e.GetAccountId())
-				}
-				if e.GetType() == "account_deleted" {
-					// Final destruction only: bans, pending deletion, revoked
-					// credentials and unlinked devices all keep the projection
-					// (those accounts may come back; a deleted one cannot).
-					b.DropProjection(e.GetAccountId())
-				}
-				// An account that can no longer sign in has no live presence:
-				// end its claims here, and let its friends' consoles re-fetch
-				// (PRE-03: account status reaches every read). unbanned needs
-				// nothing: the account is simply allowed back.
-				s.revokeAccountPresence(b, e.GetAccountId())
-				s.projectionFriendsChanged(b, e.GetAccountId(), e.GetSubjectId())
-			}
+			s.apply(b, e)
 			version = e.GetVersion()
 		}
 		if len(page.GetEvents()) > 0 {
@@ -104,6 +72,52 @@ func (s *Follower) Follow(b *identity.OpenpakBackend) {
 			continue
 		}
 		time.Sleep(2 * time.Second)
+	}
+}
+
+// apply carries one core event to the surfaces it changes. Account deletion
+// has two stages: account_delete_started suspends (locks re-read, sessions and
+// presence end, the projection stays), account_restored lifts that, and only
+// account_deleted, the final erasure, drops the projection.
+func (s *Follower) apply(b *identity.OpenpakBackend, e *accountv1.InvalidationEvent) {
+	switch e.GetType() {
+	case "friend_requested", "friend_accepted", "friend_removed":
+		s.projectionFriendsChanged(b, e.GetAccountId(), e.GetSubjectId())
+		// Integration wiring: the state above is committed, so the
+		// native notification may now be submitted (notify_wiring.go).
+		s.NotifyCoreFriendEvent(b, e.GetType(), e.GetAccountId(), e.GetSubjectId(), e.GetVersion())
+	case "presence_changed":
+		// account = a friend online on this network, subject = whose presence moved.
+		if e.GetNamespace() == b.Namespace { // addressed to a friend on another network: not ours
+			s.Presence.NotifyCorePresence(b, e.GetAccountId(), e.GetSubjectId())
+		}
+	case "account_unbanned", "account_restored":
+		// Allowed back now, not when the cached lock ages out. A restored
+		// account kept its projection through the grace period, so its friends
+		// re-fetch and see it again.
+		s.Locks.Forget(e.GetAccountId())
+		if e.GetType() == "account_restored" {
+			s.projectionFriendsChanged(b, e.GetAccountId(), e.GetSubjectId())
+		}
+	case "account_banned", "account_deleted", "account_delete_started", "credential_revoked", "link_unlinked":
+		if e.GetType() != "credential_revoked" && e.GetType() != "link_unlinked" {
+			// Bans take effect now, not when the cache entry ages out, and the
+			// console's open notification channel goes with them.
+			s.Locks.Forget(e.GetAccountId())
+			s.closeAccountSessions(b, e.GetAccountId())
+		}
+		if e.GetType() == "account_deleted" {
+			// Final destruction only: bans, pending deletion, revoked
+			// credentials and unlinked devices all keep the projection
+			// (those accounts may come back; a deleted one cannot).
+			b.DropProjection(e.GetAccountId())
+		}
+		// An account that can no longer sign in has no live presence:
+		// end its claims here, and let its friends' consoles re-fetch
+		// (PRE-03: account status reaches every read). unbanned needs
+		// nothing: the account is simply allowed back.
+		s.revokeAccountPresence(b, e.GetAccountId())
+		s.projectionFriendsChanged(b, e.GetAccountId(), e.GetSubjectId())
 	}
 }
 
