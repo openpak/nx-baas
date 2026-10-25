@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	accountv1 "nx-baas/accountpb"
+	accountv1 "github.com/openpak/account-api/openpak/account/v1"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
 	"nx-baas/internal/store"

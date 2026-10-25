@@ -2,7 +2,7 @@ package identity
 
 import (
 	"context"
-	accountv1 "nx-baas/accountpb"
+	accountv1 "github.com/openpak/account-api/openpak/account/v1"
 )
 
 // AccountStatus is the core's status for an account (the ban check's source).

@@ -3,7 +3,7 @@ package identity
 import (
 	"context"
 	"log"
-	accountv1 "nx-baas/accountpb"
+	accountv1 "github.com/openpak/account-api/openpak/account/v1"
 	"nx-baas/redact"
 	"sync/atomic"
 	"time"

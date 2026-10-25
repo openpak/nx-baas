@@ -31,7 +31,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 
-	accountv1 "nx-baas/accountpb"
+	accountv1 "github.com/openpak/account-api/openpak/account/v1"
 	"nx-baas/internal/core"
 )
 

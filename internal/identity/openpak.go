@@ -33,7 +33,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	accountv1 "nx-baas/accountpb"
+	accountv1 "github.com/openpak/account-api/openpak/account/v1"
 )
 
 type OpenpakBackend struct {

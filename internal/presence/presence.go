@@ -38,7 +38,7 @@ import (
 	"sync"
 	"time"
 
-	accountv1 "nx-baas/accountpb"
+	accountv1 "github.com/openpak/account-api/openpak/account/v1"
 )
 
 // presenceLease is how long a presence claim lives without renewal. The

@@ -25,7 +25,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	accountv1 "nx-baas/accountpb"
+	accountv1 "github.com/openpak/account-api/openpak/account/v1"
 	"nx-baas/internal/core"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/store"

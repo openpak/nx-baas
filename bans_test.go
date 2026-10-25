@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	accountv1 "nx-baas/accountpb"
+	accountv1 "github.com/openpak/account-api/openpak/account/v1"
 	"nx-baas/internal/bans"
 	"nx-baas/internal/core"
 	"nx-baas/internal/nxaccount"

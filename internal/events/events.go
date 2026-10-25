@@ -18,7 +18,7 @@ import (
 	"strconv"
 	"time"
 
-	accountv1 "nx-baas/accountpb"
+	accountv1 "github.com/openpak/account-api/openpak/account/v1"
 )
 
 // followCoreEvents keeps Switch friend lists current when the change happened
