@@ -41,6 +41,6 @@ duplicate/oversized arrays, absent caller, and unauthorized ownership are refuse
 
 The first empty-body response was an incorrect hypothesis and was rolled back.
 No further guessed response is deployed. Raw binaries/decompilations remain in
-scratch/home/ACNH-ExecFS and scratch/harbor-acnh-flight-20261013, not source.
+private notes and private notes, not source.
 The historical recorded Switch/Ryujinx visits and nx-baas v0.12.57 do not show
 this endpoint; why the current flow needs it is not yet established.

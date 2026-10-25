@@ -731,7 +731,7 @@ conditional GET:
 | `If-Range: <etag>` + `Range: bytes=<n>-` | resuming an interrupted file |
 | `X-Nintendo-DenebEdgeToken: <token>` | only when one is held |
 | `X-Nintendo-Serial-Number: <serial>` | always |
-| User-Agent | `libcurl (nnBcat; 789f928b-138e-4b2f-afeb-1acae821d897; SDK 22.2.0.0)` |
+| User-Agent | `libcurl (nnBcat; ACCOUNT_ID; SDK 22.2.0.0)` |
 
 There is **no `Authorization` header**. `news-sys:/passphrase.bin` and
 `<mount>:/passphrase.bin` are not HTTP credentials — the curl Digest/Basic

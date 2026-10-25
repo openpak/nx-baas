@@ -522,7 +522,7 @@ this release adds to it rather than replacing anything.
   only ever had to satisfy the C# model.
 - Read without a working IL2CPP dump: both Il2CppDumper and Il2CppInspectorRedux fail on this
   build because the compiler folded `g_CodeRegistration->codeGenModules` into a constant.
-  `scratch/il2cpp_methods.py` maps 117,803 method names to addresses from the code-gen module and
+  `private notes` maps 117,803 method names to addresses from the code-gen module and
   metadata tokens instead; the class fields come from the metadata field table, where a class's
   fields are contiguous.
 
@@ -541,7 +541,7 @@ this release adds to it rather than replacing anything.
   twice — a validation pass that names the ten it can complain about, then a fill pass ending at
   `version` (0x6901a4), which has no error string of its own. That is why a ten-field reply was
   accepted over HTTP and then dropped without a word and without the socket ever opening.
-  Tooling for the recovery lives in `scratch/arm64xref.py`.
+  Tooling for the recovery lives in `private notes`.
 
 ## v0.28.3 — 2026-09-25
 

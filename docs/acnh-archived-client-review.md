@@ -3,7 +3,7 @@
 Owner authorized read-only inspection of the retired OpenPak Ryujinx fork.
 No checkout was reactivated, built, installed, or launched. Selected source
 files, two pages of commit metadata, and the NPNS change were retrieved through
-GitHub into scratch/harbor-acnh-flight-20261013/archived-ryujinx and adjacent
+GitHub into private notes and adjacent
 private research files.
 
 Relevant changes found:

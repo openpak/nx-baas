@@ -19,10 +19,10 @@ Moving Out 2's entire network footprint before it gave up, on a console redirect
 OpenPak for every Nintendo name:
 
 ```
-resolve directory.t17service.com          -> 34.249.54.71, 34.241.133.245
-TLS  connect 34.249.54.71:443
-resolve pd5d8994ze.execute-api.eu-west-1.amazonaws.com -> 18.66.171.128, …
-TLS  connect 18.66.171.128:443
+resolve directory.t17service.com          -> HOST_IP, HOST_IP
+TLS  connect HOST_IP:443
+resolve pd5d8994ze.execute-api.eu-west-1.amazonaws.com -> HOST_IP, …
+TLS  connect HOST_IP:443
 (nothing else, ever)
 ```
 
@@ -118,7 +118,7 @@ is what a blocked or refused gate shows.
 
 `hactool` and `nstool` both fail on this title: the **base** Program NCA uses `SparseStorage`
 (nstool says so outright; hactool just says "Failed to read section"), so the RomFS cannot be
-read without LibHac. `scratch/nspx` is a ~60-line LibHac console app that does it —
+read without LibHac. `private notes` is a ~60-line LibHac console app that does it —
 `nspx <base.nsp> <update.nsp|-> <romfs-path|--tree> <out>`; the update's Program NCA carries
 the whole ExeFS and patches the base RomFS.
 
@@ -127,7 +127,7 @@ the whole ExeFS and patches the base RomFS.
 hactool -k prod.keys -t nca --titlekey=<tik bytes 0x180..0x18F> --exefsdir=uexefs <update program nca>
 hactool -k prod.keys -t nso0 --uncompressed=main.bin uexefs/main   # 62 MB -> 151 MB
 # romfs
-dotnet scratch/nspx/bin/Release/net9.0/nspx.dll base.nsp update.nsp \
+dotnet private notes base.nsp update.nsp \
       /Data/Managed/Metadata/global-metadata.dat global-metadata.dat
 ```
 
@@ -140,7 +140,7 @@ the compressed copy is what makes every path look truncated (`/websocket/start-r
 Il2CppDumper's auto mode does not find `CodeRegistration` in this build, so the C# side is
 only readable as raw metadata strings so far.
 
-Working files (not in any repo): `~/REPOS/Openpak/scratch/mo2/`.
+Working files (not in any repo): `private notes`.
 
 ## The live protocol, as captured 2026-09-25
 
@@ -233,7 +233,7 @@ Reading it needs an IL2CPP dump, and Il2CppDumper's auto mode cannot find
 `CodeRegistration`/`MetadataRegistration` in this build even at v6.7.46. The fingerprint is known —
 `typeDefinitionsSize 0x177d38 / 120 = 12828` type definitions, a count `MetadataRegistration`
 carries twice — but a scan of the raw file cannot confirm a candidate because **`.data` pointers in
-an NSO are unrelocated on disk**. `scratch/nso_reloc.py` now does the relocation step: `MOD0` → `.dynamic` → `DT_RELA`, applying
+an NSO are unrelocated on disk**. `private notes` now does the relocation step: `MOD0` → `.dynamic` → `DT_RELA`, applying
 **615,417** `R_AARCH64_RELATIVE` entries, after which `.data` pointers are real and pointer scans can
 be validated. That was necessary but not sufficient — the registration structs still do not turn
 up:
@@ -265,7 +265,7 @@ without `CodeRegistration`:
    method belongs to an assembly when its `declaringType` falls inside that image's
    `typeStart..typeStart+typeCount`. No type struct parsing is needed.
 
-`scratch/il2cpp_methods.py` does this. It resolves **117,803 method addresses across 155
+`private notes` does this. It resolves **117,803 method addresses across 155
 assemblies** — everything a dump would have given us for this purpose.
 
 Two metadata facts worth keeping, both of which cost time by being assumed instead of measured:
@@ -334,12 +334,12 @@ the reply to the native contract is what cost the most time here.
 
 ## Tooling
 
-`scratch/arm64xref.py` — reconstructs every ADRP+ADD pair in `.text` (740,061 of them here) to
+`private notes` — reconstructs every ADRP+ADD pair in `.text` (740,061 of them here) to
 answer "who references this string" and "which strings does this function reference". Anchor the
 needle to its NUL boundary first: these error messages are suffixes of longer literals, and
 xrefing the middle of a string finds nothing.
 
-`scratch/unityfs.py` — UnityFS bundle unpacker, needed for the localisation tables. Moving Out 2
+`private notes` — UnityFS bundle unpacker, needed for the localisation tables. Moving Out 2
 ships version 8 bundles with `BlockInfoNeedPaddingAtStart` (flags 0x243), where the block data is
 16-byte aligned after the block info; Moving Out 1's are version 6 with neither.
 

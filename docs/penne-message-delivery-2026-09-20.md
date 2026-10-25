@@ -499,10 +499,10 @@ profile's slot tables.
 
 ## 6. Why presence is published for the profile that is NOT playing
 
-Live: one console, two profiles. **<user-b>** (`aaaaaaaaaaaa0002`, Uid
+Live: one console, two profiles. **<user-b>** (`ACCOUNT_ID`, Uid
 `1000000000b200020000000000000001`) is in the foreground playing Kirby's Dream
 Buffet. Every `DAPresence` we receive is for **<user-a>**
-(`aaaaaaaaaaaa0001`), `INACTIVE`, no app, empty appField, every ~10–60 s. Over
+(`ACCOUNT_ID`), `INACTIVE`, no app, empty appField, every ~10–60 s. Over
 72 h, essentially nothing for <user-b>.
 
 That is not a bug in what the console *sends*. It is the per-profile publish
@@ -593,7 +593,7 @@ gate, and it is **local console state**, not anything we serve.
   This also fits the timeline already on record: the account module's link
   sequence (`POST /v1/accounts/<uid>/links` → `PUT /1.0.0/push_channels/<nsa>/
   <deviceAccount>` → `PATCH …/links`) was last seen **Sep 08**, and the BAAS
-  user ids from that day are stale — `aaaaaaaaaaaa0002` is not one of them.
+  user ids from that day are stale — `ACCOUNT_ID` is not one of them.
   **[likely]**
 
 ### 6.3 Answer to "can the server flip it?"
@@ -656,7 +656,7 @@ In order, cheapest first. Each one is a clean yes/no.
 
 1. **Isolate it to the profile (5 min, no settings changed).** Switch the
    foreground profile: launch any online game **as <user-a>** and leave <user-b>
-   out. Watch nx-baas for `DAPresence user=aaaaaaaaaaaa0001`.
+   out. Watch nx-baas for `DAPresence user=ACCOUNT_ID`.
    - state changes to `ONLINE` (2) or `PLAYING` (3) ⇒ the whole pipeline works
      and the fault is <user-b>'s profile state alone. This is the expected result.
    - still `INACTIVE` ⇒ the fault is the `mgr+0xfc0` npns-connected bit or the
@@ -670,14 +670,14 @@ In order, cheapest first. Each one is a clean yes/no.
    (System Settings → Users → <user-b> → Nintendo Account), or sign her out of and
    back into the online service. While doing it, watch nx-baas for, in order:
    - `POST /v1/accounts/1000000000b200020000000000000001/links`
-   - `PUT /1.0.0/push_channels/aaaaaaaaaaaa0002/<deviceAccountId>`
+   - `PUT /1.0.0/push_channels/ACCOUNT_ID/<deviceAccountId>`
    - `PATCH …/links` about 40 s later
 
    All three must return success. If the `links` call is missing, the console
    never got that far; if it 4xx/5xxs or returns an empty body, we broke the
    write.
 4. **Re-test.** Launch Kirby as <user-b> and watch for `DAPresence
-   user=aaaaaaaaaaaa0002` with a non-`INACTIVE` state and a non-empty appField.
+   user=ACCOUNT_ID` with a non-`INACTIVE` state and a non-empty appField.
    If it appears, the record was the gate and the fix is to keep that link flow
    healthy for every profile.
 5. **If step 3's requests never appear at all**, the console thinks <user-b> is
@@ -758,11 +758,11 @@ costs the user a crash dump.
 `p[0]` into **payload slot 0** and `p[1]` into **payload slot 1**.
 
 `penne_presence.go` already names those: slot 0 = `device` (device-account id),
-slot 1 = `userID` (NSA id). Live: `device=cccccccccccc0001`,
-`user=aaaaaaaaaaaa0001`.
+slot 1 = `userID` (NSA id). Live: `device=ACCOUNT_ID`,
+`user=ACCOUNT_ID`.
 
 So the Ack string is **`<slot 1>/<slot 0>`** =
-`aaaaaaaaaaaa0001/cccccccccccc0001` — **NSA id first, device-account id
+`ACCOUNT_ID/ACCOUNT_ID` — **NSA id first, device-account id
 second**. My §5.4 said `<deviceAccountId>/<nsaId>`. That is backwards, it
 fails the `strcmp`, and DAPresence arrives every 10–60 s. **This is almost
 certainly one of the two crash reports.**
