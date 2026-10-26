@@ -2,3 +2,4 @@ bin/
 *.json
 /nx-baas
 *.tmp
+next-session.md
