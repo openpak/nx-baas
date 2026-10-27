@@ -104,6 +104,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s.PlayfabFwd.ServeHTTP(w, r)
 			return
 		}
+		if s.PlayfabAstroFwd != nil && strings.EqualFold(host, "5EA1.playfabapi.com") {
+			s.PlayfabAstroFwd.ServeHTTP(w, r)
+			return
+		}
 		services.PlayfabUnavailable(w, r)
 		return
 	}

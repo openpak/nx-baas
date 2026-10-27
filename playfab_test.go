@@ -15,7 +15,7 @@ import (
 
 func TestPlayFabAnswersServiceUnavailable(t *testing.T) {
 	s := &server{Core: &core.Core{}}
-	for _, host := range []string{"3f284.playfabapi.com", "playfabapi.com", "3F284.PlayFabAPI.com:443"} {
+	for _, host := range []string{"3f284.playfabapi.com", "playfabapi.com", "3F284.PlayFabAPI.com:443", "5ea1.playfabapi.com"} {
 		r := httptest.NewRequest("POST", "https://"+host+"/Client/LoginWithNintendoSwitchDeviceId?sdk=UnitySDK-2.0",
 			strings.NewReader(`{"TitleId":"3F284","IdentityToken":"secret"}`))
 		r.Host = host
@@ -77,6 +77,38 @@ func TestPlayFabCoreKeeperForwardBeforeDebugBodyLogger(t *testing.T) {
 	s.ServeHTTP(w, r)
 	if w.Code != 503 || !strings.Contains(w.Body.String(), `"errorCode":1123`) {
 		t.Fatal("unreachable service did not return the SDK error envelope")
+	}
+}
+
+func TestPlayFabAstroneerForward(t *testing.T) {
+	body := `{"TitleId":"5EA1","IdentityToken":"private-nintendo-token","CreateAccount":true}`
+	calls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		got, _ := io.ReadAll(r.Body)
+		if string(got) != body || r.Host != "5EA1.playfabapi.com:443" || r.URL.Path != "/Client/LoginWithNintendoServiceAccount" {
+			t.Errorf("proxy changed the host, path or body")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":200,"status":"OK","data":{"SessionTicket":"ok"}}`))
+	}))
+	defer upstream.Close()
+	t.Setenv("NX_PLAYFAB_ASTRONEER_URL", upstream.URL)
+	s := &server{Core: &core.Core{}}
+	s.forwardersFromEnv()
+	r := httptest.NewRequest("POST", "https://5EA1.playfabapi.com:443/Client/LoginWithNintendoServiceAccount", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+	if w.Code != 200 || calls != 1 {
+		t.Fatalf("Astroneer did not reach its service: %d", w.Code)
+	}
+	for _, host := range []string{"3f284.playfabapi.com", "5EA1.playfabapi.com.evil.playfabapi.com"} {
+		r := httptest.NewRequest("POST", "https://"+host+"/Client/LoginWithNintendoServiceAccount", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, r)
+		if w.Code != 503 || calls != 1 {
+			t.Fatal("unsupported title reached the service")
+		}
 	}
 }
 

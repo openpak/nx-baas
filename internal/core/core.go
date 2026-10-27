@@ -46,6 +46,8 @@ type Core struct {
 	BcatFwd *httputil.ReverseProxy
 	// PlayfabFwd serves only explicitly supported PlayFab titles (the PlayFab host).
 	PlayfabFwd *httputil.ReverseProxy
+	// PlayfabAstroFwd serves Astroneer's PlayFab title (5EA1) from astroneerd.
+	PlayfabAstroFwd *httputil.ReverseProxy
 }
 
 const (

@@ -56,6 +56,14 @@ func (s *server) forwardersFromEnv() {
 		}
 		log.Printf("[nx-baas] Core Keeper PlayFab forwarding enabled")
 	}
+	if u := os.Getenv("NX_PLAYFAB_ASTRONEER_URL"); u != "" {
+		s.PlayfabAstroFwd = httpx.NewForwarder("playfab-astroneer", u)
+		// Preserve the SDK error envelope even when the upstream is unavailable.
+		s.PlayfabAstroFwd.ErrorHandler = func(w http.ResponseWriter, r *http.Request, _ error) {
+			services.PlayfabUnavailable(w, r)
+		}
+		log.Printf("[nx-baas] Astroneer PlayFab forwarding enabled")
+	}
 	if u := os.Getenv("NX_SHOP_URL"); u != "" {
 		s.ShopFwd = httpx.NewForwarder("nx-shop", u)
 		log.Printf("[nx-baas] eShop moved: forwarding its hosts and /internal/store to %s", u)

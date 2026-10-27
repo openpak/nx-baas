@@ -8,10 +8,11 @@ import (
 	"strings"
 )
 
-// Microsoft's PlayFab (`<titleid>.playfabapi.com`): We Were Here and Minecraft Dungeons log in
-// there. The family is redirected so a console never reaches Microsoft, and Traefik's
-// catch-all sends the connection here with an on-demand OpenPak-CA certificate. OpenPak runs
-// a service for Core Keeper when NX_PLAYFAB_URL is set. Other titles get an error with
+// Microsoft's PlayFab (`<titleid>.playfabapi.com`): We Were Here logs in there. The family is
+// redirected so a console never reaches Microsoft, and Traefik's catch-all sends the
+// connection here with an on-demand OpenPak-CA certificate. OpenPak runs a service for
+// Core Keeper when NX_PLAYFAB_URL is set and for Astroneer (title 5EA1) when
+// NX_PLAYFAB_ASTRONEER_URL is set. Other titles get an error with
 // ServiceUnavailable (errorCode 1123 in the SDKs' PlayFabErrorCode): the game's SDK reads it
 // as an ordinary outage instead of failing to parse the generic catch-all's `{}`.
 //
