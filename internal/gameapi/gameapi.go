@@ -435,6 +435,7 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("/internal/switch/identity", s.switchIdentity)
 	mux.HandleFunc("/internal/switch/friend-code", s.switchFriendCode)
 	mux.HandleFunc("/internal/switch/account-by-friend-code", s.SwitchAccountByFriendCode)
+	mux.HandleFunc("/internal/switch/player", s.SwitchPlayer)
 	mux.HandleFunc("/internal/switch/emulator", s.switchEmulator)
 	mux.HandleFunc("/internal/switch/emulator/friend", s.switchEmulatorFriend)
 	mux.HandleFunc("/internal/switch/emulator/link-token", s.switchEmulatorLinkToken)

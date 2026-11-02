@@ -18,6 +18,7 @@ import (
 	"nx-baas/internal/store"
 	"nx-baas/internal/token"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -141,6 +142,38 @@ func (s *Service) SwitchAccountByFriendCode(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"account_id": accountID})
+}
+
+// SwitchPlayer answers GET /internal/switch/player?pid=N or ?account_id=X with both ids of a
+// player: {"account_id","pid"}. A ranking lists players by NEX PID, and the core's "switch"
+// link is keyed by BAAS user id, so the website asks here to turn one into the other.
+func (s *Service) SwitchPlayer(w http.ResponseWriter, r *http.Request) {
+	if !httpx.InternalOK(r) {
+		httpx.APIErr(w, http.StatusUnauthorized, "internal")
+		return
+	}
+	b, ok := s.Acct.(*identity.OpenpakBackend)
+	if !ok {
+		httpx.APIErr(w, http.StatusNotFound, "player lookup needs the openpak backend")
+		return
+	}
+	var pr *identity.Projection
+	b.Proj.Mu.Lock()
+	if pid, err := strconv.ParseUint(r.URL.Query().Get("pid"), 10, 64); err == nil {
+		pr = b.Proj.ByAccount[b.Proj.ByPID[pid]]
+	} else if id := r.URL.Query().Get("account_id"); id != "" {
+		pr = b.Proj.ByAccount[id]
+	}
+	var out map[string]any
+	if pr != nil {
+		out = map[string]any{"account_id": pr.AccountID, "pid": pr.PID}
+	}
+	b.Proj.Mu.Unlock()
+	if out == nil {
+		httpx.APIErr(w, http.StatusNotFound, "no such player")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 // ---- the emulator surface ----

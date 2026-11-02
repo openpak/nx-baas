@@ -11,6 +11,12 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.57.0 — 2026-11-02
+
+- **`GET /internal/switch/player`** (`?pid=` or `?account_id=`, internal key) answers `{account_id, pid}`
+  from the projection. The website's rankings hub lists Switch players by NEX PID and uses it to
+  show the account's name and picture; the core's `switch` link is keyed by BAAS user id.
+
 ## v0.56.0 — 2026-11-02
 
 - Release from main; replaces the hand-built production image.

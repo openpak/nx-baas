@@ -172,3 +172,27 @@ func TestSwitchAccountByFriendCodeRoute(t *testing.T) {
 		t.Fatalf("unknown code answered %d, want 404", w.Code)
 	}
 }
+
+// The player route the website's rankings use: a NEX PID and an account id name each other.
+func TestSwitchPlayerRoute(t *testing.T) {
+	pr := &identity.Projection{AccountID: "acct-1", PID: 1800000007}
+	s := &server{Core: &core.Core{Acct: &identity.OpenpakBackend{Proj: &identity.ProjectionStore{
+		ByAccount: map[string]*identity.Projection{"acct-1": pr},
+		ByPID:     map[uint64]string{1800000007: "acct-1"},
+		ByBaas:    map[string]string{},
+		ByCode:    map[string]string{},
+	}}}}
+	for _, q := range []string{"pid=1800000007", "account_id=acct-1"} {
+		w := httptest.NewRecorder()
+		s.gameAPISvc().SwitchPlayer(w, httptest.NewRequest("GET", "/internal/switch/player?"+q, nil))
+		var got map[string]any
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &got) != nil || got["account_id"] != "acct-1" || got["pid"] != float64(1800000007) {
+			t.Fatalf("%s: %d %s", q, w.Code, w.Body.String())
+		}
+	}
+	w := httptest.NewRecorder()
+	s.gameAPISvc().SwitchPlayer(w, httptest.NewRequest("GET", "/internal/switch/player?pid=5", nil))
+	if w.Code != 404 {
+		t.Fatalf("unknown pid answered %d", w.Code)
+	}
+}
