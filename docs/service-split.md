@@ -31,7 +31,7 @@ the split buys nothing. Its internal routes implement the same JSON, and
 `internal_identity_test.go` (package main) pins the field names. Moving nx-baas onto nx-common is a
 follow-up once the cut-overs are done.
 
-**Status (2026-10-23): all four families have moved, and nx-baas's copies are gone.** The
+All four families have moved, and nx-baas's copies are gone. The
 shop, Penne and parental controls run in nx-shop, nx-penne and nx-pctl, and the bcat hosts in
 nx-bcat. nx-baas keeps only the forwards (§3, §8): `NX_SHOP_URL`, `NX_PENNE_URL` and
 `NX_PCTL_URL` are required, and it exits at startup naming whichever is missing. `NX_BCAT_URL`

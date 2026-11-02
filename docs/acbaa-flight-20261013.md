@@ -1,14 +1,5 @@
 # Animal Crossing departure contract
 
-Status: resumed at owner request after the rollback baseline also failed. The
-binding fix and shared Animal Crossing integration are deployed and healthy.
-Private diagnostics proved the saved player ID resolves to the authenticated
-caller, but the optional island cache has no binding. The added binding gate is
-removed; full race suite and vet passed, including the migrated-player/no-binding
-regression. A live replay of the rejected player/island values returned 200 and
-the exact decoded credential structure. Owner confirmed the flight worked after this fix. The temporary
-diagnostic capture and capture code were removed after verification.
-
 Recovered from the owner's ACNH main build
 `FF1D1C05670DB6021C85B624A710B963`, matching the phone's Harbor log.
 SDK build `A226048605D3597F90CB1067D141CD36647B90CD` also matches.

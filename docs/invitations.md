@@ -4,10 +4,6 @@ Workstream C of [../prds/native-switch-parallel-plan.md](../prds/native-switch-p
 (INV-01..04). This file is the invitation lifecycle contract for workstreams A
 and B, the evidence ledger with provenance, and the operator notes.
 
-Status: implemented for review. REST/core integration complete; native push
-delivery (workstream B) and every console-hardware gate remain explicitly
-pending. Nothing here claims a console parsed a byte we served.
-
 ## What was built
 
 - `invitations.go` — the `.five.nintendo.net` REST surface and the durable

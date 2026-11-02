@@ -1,6 +1,6 @@
 # Penne frontline protocol specification (minimum supported), v1
 
-Status: implemented-against. Supersedes: nothing. Date: 2026-09-11.
+Supersedes: nothing.
 Scope: the persistent notification connection ("frontline") of Penne/NPNS on
 Horizon 22.5.0, plus the REST registration surfaces that feed it. This document
 is the protocol gate required by `../prds/native-switch-penne-notifications-prd.md`
