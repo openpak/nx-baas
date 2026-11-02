@@ -1,6 +1,6 @@
 // Package invitations is native online-play invitations: the app.lp1.five.nintendo.net REST surface
 // the friends sysmodule drives on Horizon 22.5.0 (PRD INV-01..04, workstream C
-// of prds/native-switch-parallel-plan.md).
+// of openpak/prds native-switch-parallel-plan.md).
 //
 // Route family — firmware-confirmed (friends NSO 8bd39f5b…, string table) and
 // source-confirmed (kinnay/NintendoClients wiki, Online-Play-Invitation-Server,

@@ -49,3 +49,14 @@ Projection store: `$NX_DATA/accounts.json` (account_id → pid/baas id/friend
 code). Identifiers are minted once per account and never migrate (PRD
 SW-01/SW-04). The earlier account backend stays available (`ACCOUNT_BACKEND` unset)
 until cutover is accepted.
+
+## Operations
+
+- Everything the adapter does not recognise is logged in full (`!! UNHANDLED`); that is how
+  undocumented console traffic (friend invitations, for one) gets discovered.
+- Known scaling ceilings, fine for one console: `ensure` holds the global projection mutex across
+  up to three core RPCs and every identity lookup takes it, so console traffic serializes on core
+  latency (fix: per-account locks, mint outside the lock); `Identity` is four core RPCs per BAAS
+  request with no cache (fix: a short TTL cache).
+- `go.mod` uses `replace openpak/account => ../account`, so container builds need the whole
+  tree as build context until the core publishes versioned modules.

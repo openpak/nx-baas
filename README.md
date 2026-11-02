@@ -32,9 +32,7 @@ Every other variable is in [deploy.md](docs/deploy.md).
 ## Docs
 
 - [Protocol](docs/protocol.md)
-- [Evidence](docs/evidence.md)
 - [Deploy](docs/deploy.md)
-- [Notes](docs/notes.md)
 - [Animal Crossing departure contract](docs/acbaa-flight-20261013.md)
 - [Archived Ryujinx visit-flow review (2026-10-13)](docs/acnh-archived-client-review.md)
 - [The account config carries the online licence](docs/accounts-config-online-license.md)
@@ -53,6 +51,8 @@ Every other variable is in [deploy.md](docs/deploy.md).
 - [Store admin internal API (contract v1)](docs/store-admin-api.md)
 - [T17BE: Team17's backend, and what Moving Out 2 actually asks for](docs/t17-backend.md)
 - [The vermillion device id](docs/vermillion-device-id.md)
+
+PRDs: openpak/prds (private)
 
 ## Licence
 
