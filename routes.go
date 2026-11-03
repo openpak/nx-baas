@@ -66,7 +66,6 @@ var pctlPinInBody = regexp.MustCompile(`("(?:synchronizedUnlockCode|unlockCode|u
 
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	host := httpx.HostOf(r)
-	log.Printf("[nx-baas] %s %s%s ua=%q", r.Method, host, redact.URL(r.URL), redact.IDs(r.UserAgent()))
 	// A family that moved to its own service is forwarded before anything here reads the
 	// body (split.go); with no forward URL configured this is a no-op.
 	if s.forwardMoved(w, r) {

@@ -17,6 +17,7 @@ import (
 	_ "embed"
 	"log"
 	"net/http"
+	"nx-baas/httplog"
 	"nx-baas/internal/acbaa"
 	"nx-baas/internal/baas"
 	"nx-baas/internal/bans"
@@ -196,6 +197,8 @@ func main() {
 		log.Printf("[nx-baas] CAPTURE MODE: forwarding everything to %s; bodies and headers are logged only with NXBAAS_TRACE_BODIES=1", up)
 		handler = newCaptureProxy(up)
 	}
+	// One access line per request: method, host, path (ids tagged), status, duration; never the query.
+	handler = httplog.Wrap("[nx-baas]", httplog.Options{Path: redact.Path, UserAgent: redact.IDs}, handler)
 	// ponytail: Traefik sends every unrouted *nintendo.* SNI here; sign a cert per name on
 	// demand so the console gets past TLS and its request lands in the log as !! UNHANDLED.
 	var onDemand sync.Map
@@ -279,7 +282,7 @@ func main() {
 			}
 		}
 		log.Printf("[nx-baas] game API listening %s (photon-room, invitations, mint-token)", addr)
-		log.Fatal((&http.Server{Addr: addr, Handler: s.gameAPI(), ErrorLog: redact.ErrorLog()}).ListenAndServe())
+		log.Fatal((&http.Server{Addr: addr, Handler: httplog.Wrap("[nx-baas] api", httplog.Options{Path: redact.Path}, s.gameAPI()), ErrorLog: redact.ErrorLog()}).ListenAndServe())
 	}()
 	log.Printf("[nx-baas] listening %s (BAAS + Nintendo Account); account backend %s; users=%d devices=%d", srv.Addr, httpx.Getenv("ACCOUNT_BACKEND", "unset"), len(s.Store.Users), len(s.Store.Devices))
 	// The console's web applet enforces certificate checking unless Atmosphère patches it, so
