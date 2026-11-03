@@ -43,10 +43,10 @@ import (
 	"nx-baas/internal/core"
 	"nx-baas/internal/httpx"
 	"nx-baas/internal/identity"
+	"nx-baas/internal/pgdoc"
 	"nx-baas/internal/presence"
 	"nx-baas/internal/store"
 	"nx-baas/redact"
-	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -213,7 +213,7 @@ func LoadStore(path string) *Store {
 		Groups:      map[string]*Group{},
 		Invitations: map[string]*Record{},
 	}
-	if b, err := os.ReadFile(path); err == nil {
+	if b, ok := pgdoc.Read(path); ok {
 		_ = json.Unmarshal(b, st)
 	}
 	// The id sequence must never go backwards, or a restored backup would mint
@@ -247,12 +247,7 @@ func (st *Store) saveLocked() {
 		log.Printf("[nx-baas] invitations: marshal: %v", redact.Err(err))
 		return
 	}
-	tmp := st.FilePath + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		log.Printf("[nx-baas] invitations: save: %v", redact.Err(err))
-		return
-	}
-	if err := os.Rename(tmp, st.FilePath); err != nil {
+	if err := pgdoc.Write(st.FilePath, b); err != nil {
 		log.Printf("[nx-baas] invitations: save: %v", redact.Err(err))
 	}
 }

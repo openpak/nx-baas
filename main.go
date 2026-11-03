@@ -31,6 +31,7 @@ import (
 	"nx-baas/internal/invitations"
 	"nx-baas/internal/nxaccount"
 	"nx-baas/internal/penne"
+	"nx-baas/internal/pgdoc"
 	"nx-baas/internal/presence"
 	"nx-baas/internal/services"
 	"nx-baas/internal/store"
@@ -101,6 +102,16 @@ func main() {
 	if env, service := missingForward(); env != "" {
 		log.Fatalf("[nx-baas] %s is required: %s serves that family now and nx-baas only forwards to it (docs/service-split.md)", env, service)
 	}
+	dbURL := os.Getenv("NX_BAAS_DATABASE_URL")
+	if dbURL == "" {
+		log.Fatalf("[nx-baas] NX_BAAS_DATABASE_URL is required: player state lives in Postgres (database nxbaas)")
+	}
+	pg, err := pgdoc.Open(context.Background(), dbURL)
+	if err != nil {
+		log.Fatalf("[nx-baas] postgres: %v", redact.Err(err))
+	}
+	pgdoc.Default = pg
+	log.Printf("[nx-baas] player state store: postgres (table nxbaas_docs)")
 	key := token.LoadRSAKey(httpx.Getenv("BAAS_SIGNING_KEY", "/keys/baas_signing_key.pem"))
 	s := &server{
 		Core: &core.Core{

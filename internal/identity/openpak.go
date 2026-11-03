@@ -19,6 +19,7 @@ import (
 	"math/big"
 	"net/url"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/pgdoc"
 	"nx-baas/internal/token"
 	"nx-baas/redact"
 	"os"
@@ -135,7 +136,7 @@ func LoadProjections(path string) *ProjectionStore {
 		ByBaas:    map[string]string{},
 		ByCode:    map[string]string{},
 	}
-	if b, err := os.ReadFile(path); err == nil {
+	if b, ok := pgdoc.Read(path); ok {
 		_ = json.Unmarshal(b, p)
 	}
 	dirty := false
@@ -159,12 +160,9 @@ func LoadProjections(path string) *ProjectionStore {
 
 func (p *ProjectionStore) SaveLocked() {
 	b, _ := json.MarshalIndent(p, "", " ")
-	tmp := p.FilePath + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+	if err := pgdoc.Write(p.FilePath, b); err != nil {
 		log.Printf("[nx-baas] openpak: projection save: %v", redact.Err(err))
-		return
 	}
-	_ = os.Rename(tmp, p.FilePath)
 }
 
 // dropProjection forgets a core account's Switch identifiers from every

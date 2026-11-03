@@ -46,8 +46,8 @@ import (
 	"net/http"
 	"nx-baas/internal/core"
 	"nx-baas/internal/msgpack"
+	"nx-baas/internal/pgdoc"
 	"nx-baas/redact"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -718,8 +718,8 @@ func (s *Service) acbaaLoad() {
 	if s.acbaaPath == "" {
 		return
 	}
-	b, err := os.ReadFile(s.acbaaPath)
-	if err != nil {
+	b, ok := pgdoc.Read(s.acbaaPath)
+	if !ok {
 		return
 	}
 	var disk acbaaDisk
@@ -766,12 +766,8 @@ func (s *Service) acbaaSaveLocked() {
 		log.Printf("[acbaa] store marshal: %v", redact.Err(err))
 		return
 	}
-	if err := os.WriteFile(s.acbaaPath+".tmp", b, 0o600); err != nil {
+	if err := pgdoc.Write(s.acbaaPath, b); err != nil {
 		log.Printf("[acbaa] store write: %v", redact.Err(err))
-		return
-	}
-	if err := os.Rename(s.acbaaPath+".tmp", s.acbaaPath); err != nil {
-		log.Printf("[acbaa] store rename: %v", redact.Err(err))
 	}
 }
 

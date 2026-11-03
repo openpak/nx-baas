@@ -4,8 +4,9 @@ package store
 
 import (
 	"encoding/json"
+	"log"
+	"nx-baas/internal/pgdoc"
 	"nx-baas/internal/token"
-	"os"
 	"sync"
 	"time"
 )
@@ -191,7 +192,7 @@ type Store struct {
 
 func Load(path string) *Store {
 	s := &Store{FilePath: path, Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
-	if b, err := os.ReadFile(path); err == nil {
+	if b, ok := pgdoc.Read(path); ok {
 		json.Unmarshal(b, s)
 	}
 	// Migration: fold the old favourites list into FriendPrefs once (SOC-02).
@@ -231,8 +232,9 @@ func (u *User) Pref(friendBaasID string) *FriendPreference {
 // save is called with mu held.
 func (s *Store) save() {
 	b, _ := json.MarshalIndent(s, "", " ")
-	os.WriteFile(s.FilePath+".tmp", b, 0o600)
-	os.Rename(s.FilePath+".tmp", s.FilePath)
+	if err := pgdoc.Write(s.FilePath, b); err != nil {
+		log.Printf("[nx-baas] store save: %v", err)
+	}
 }
 
 func (s *Store) NewUser() (*User, *DeviceAccount) {

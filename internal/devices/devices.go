@@ -60,6 +60,7 @@ import (
 	"log"
 	"math/big"
 	"net/http"
+	"nx-baas/internal/pgdoc"
 	"nx-baas/redact"
 	"os"
 	"strconv"
@@ -240,8 +241,11 @@ func NewRegistry(ca *CA, path string) *Registry {
 	d := &Registry{CA: ca, FilePath: path, Now: time.Now, Devices: map[string]*Device{},
 		nonces: map[string]time.Time{}, attempts: map[string][]time.Time{}, live: map[string]liveConsole{}}
 	if path != "" {
-		if b, err := os.ReadFile(path); err == nil {
+		if b, ok := pgdoc.Read(path); ok {
 			if err := json.Unmarshal(b, d); err != nil {
+				if pgdoc.Default != nil {
+					log.Fatalf("[harbor-devices] postgres document does not parse: %v", redact.Err(err))
+				}
 				log.Printf("[harbor-devices] %s does not parse (%v); starting empty and keeping the file aside", path, redact.Err(err))
 				os.Rename(path, path+".invalid")
 				d.Devices = map[string]*Device{}
@@ -276,11 +280,9 @@ func (d *Registry) save() {
 	if err != nil {
 		return
 	}
-	if err := os.WriteFile(d.FilePath+".tmp", b, 0o600); err != nil {
+	if err := pgdoc.Write(d.FilePath, b); err != nil {
 		log.Printf("[harbor-devices] could not write the store: %v", redact.Err(err))
-		return
 	}
-	os.Rename(d.FilePath+".tmp", d.FilePath)
 }
 
 // ---- the console's identity at dauth ----

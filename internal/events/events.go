@@ -10,10 +10,10 @@ import (
 	"nx-baas/internal/friends"
 	"nx-baas/internal/identity"
 	"nx-baas/internal/penne"
+	"nx-baas/internal/pgdoc"
 	"nx-baas/internal/presence"
 	"nx-baas/internal/store"
 	"nx-baas/redact"
-	"os"
 	"path/filepath"
 	"strconv"
 	"time"
@@ -156,8 +156,8 @@ func (s *Follower) projectionFriendsChanged(b *identity.OpenpakBackend, accountI
 }
 
 func ReadCursor(path string) (uint64, bool) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
+	raw, ok := pgdoc.Read(path)
+	if !ok {
 		return 0, false
 	}
 	v, err := strconv.ParseUint(string(raw), 10, 64)
@@ -165,9 +165,8 @@ func ReadCursor(path string) (uint64, bool) {
 }
 
 func WriteCursor(path string, v uint64) {
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(strconv.FormatUint(v, 10)), 0o600); err == nil {
-		os.Rename(tmp, path)
+	if err := pgdoc.Write(path, []byte(strconv.FormatUint(v, 10))); err != nil {
+		log.Printf("[nx-baas] core events: cursor save: %v", err)
 	}
 }
 

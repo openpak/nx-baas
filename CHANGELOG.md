@@ -11,6 +11,15 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.58.0 — 2026-11-03
+
+- **Player state moves to Postgres.** `NX_BAAS_DATABASE_URL` is now required (the service refuses to
+  start without it). `baas.json`, `accounts.json`, `harbor-devices.json`, `invitations.json`,
+  `acbaa.json` and `core-events.cursor` are stored as jsonb rows in table `nxbaas_docs`, saved in one
+  upsert exactly where the file was written. On first start a missing row is imported from the old file
+  in `NX_DATA` (idempotent; the files are kept, never changed). Error reports and the title-version
+  cache stay files (diagnostics/cache).
+
 ## v0.57.0 — 2026-11-02
 
 - **`GET /internal/switch/player`** (`?pid=` or `?account_id=`, internal key) answers `{account_id, pid}`
