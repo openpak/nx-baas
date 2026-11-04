@@ -57,3 +57,8 @@ PRDs: openpak/prds (private)
 ## Licence
 
 AGPL-3.0-only. See [LICENSE](LICENSE).
+
+## Not supported
+
+- Console user transfer (`migration.*`, `transfer.*`): answers 501; no protocol capture exists (openpak/prds#114).
+- Mii data is not stored; the Mii picture and the nickname are shared with the account.

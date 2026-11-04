@@ -445,7 +445,8 @@ func (s *Service) Handle(w http.ResponseWriter, r *http.Request, body []byte) {
 			// A name is an account fact like the picture: it goes to the core so the website and
 			// every friend's console show it. Before the reply is built, so the reply carries it.
 			// A refusal (a name the core's 1-32 rule rejects) leaves the console's own copy alone.
-			// ponytail: Mii changes are not pushed back (/internal/profile-sync) yet.
+			// The Mii picture goes to the account through shareAvatar (image_upload); the Mii
+			// data itself never leaves the console, so the name is the only other profile fact.
 			if renamed != "" && u.PID != 0 {
 				if n, ok := s.Acct.(interface{ SetNickname(uint64, string) error }); ok {
 					if err := n.SetNickname(u.PID, renamed); err != nil {

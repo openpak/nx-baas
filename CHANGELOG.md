@@ -11,6 +11,10 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.59.1 - 2026-11-04
+
+- Docs: unsupported methods listed so the titles page promises nothing it does not do (openpak/prds#113).
+
 ## v0.59.0 — 2026-11-03
 
 - Every HTTP request (console listeners and the game API) now writes one access line to stderr: `http <method> <host> <path> -> <status> <ms>ms ua=...`; ids in the path are tagged. The query string, headers and bodies are never logged. `/healthz` is skipped. Helper in `httplog/` (a copy of `nx-common/httplog`; nx-baas does not consume nx-common).
