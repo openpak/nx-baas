@@ -11,6 +11,10 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.60.0 - 2026-11-04
+
+- `POST /internal/switch/identity` also resolves a Nintendo Account authorization code (`na_code` plus the `client_id` it was issued to, spent by the answer) or an NA `id_token` (`na_id_token`, signed by this service, not a BAAS token) for third-party servers such as EA's Nucleus (plants-vs-zombies). The NA userinfo endpoint falls back to the BAAS `id_token` an emulator sends when it keeps no NA access token.
+
 ## v0.59.1 - 2026-11-04
 
 - Docs: unsupported methods listed so the titles page promises nothing it does not do (openpak/prds#113).
