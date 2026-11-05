@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"nx-baas/internal/store"
 )
@@ -110,5 +111,19 @@ func TestDeleteRefusesAMismatchedBackup(t *testing.T) {
 	}
 	if s.Users["orphan"] == nil {
 		t.Fatal("rows went despite the refusal")
+	}
+}
+
+func TestRecentlyTouchedUsersAreKept(t *testing.T) {
+	s := fixture(t)
+	s.Users["orphan"].UpdatedAt = time.Now().Unix() - 60
+	r := Classify(s, linked, []byte(`{"x":"viaInv"}`))
+	if r.KeptRecent != 1 || s.Users["orphan"] == nil {
+		t.Fatalf("recent user not kept: %+v", r)
+	}
+	for _, id := range r.userIDs {
+		if id == "orphan" {
+			t.Fatal("recent user classified as an orphan")
+		}
 	}
 }

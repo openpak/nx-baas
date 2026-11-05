@@ -11,6 +11,10 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.62.1 - 2026-11-05
+
+- Orphan cleanup keeps a user whose record was written within the last 7 days (`keptRecent` in the report): a console may still sign in with that device account.
+
 ## v0.62.0 - 2026-11-05
 
 Data duplication audit, phase 3 (openpak/prds#131): baas.json stops being a second copy of who a linked player is.

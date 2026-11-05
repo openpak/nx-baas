@@ -23,6 +23,10 @@ import (
 	"nx-baas/internal/store"
 )
 
+// RecentWindow protects a device account that was written lately: its console may still
+// log in with it, and deleting it would break that console's next sign-in.
+var RecentWindow = 7 * 24 * time.Hour
+
 // Linked answers whether a BAAS user belongs to a core account. unresolved means the
 // user carries a PID or Nintendo-Account id the core could not place: kept, reported.
 type Linked func(u *store.User) (linked, unresolved bool)
@@ -40,6 +44,7 @@ type Report struct {
 	KeptNaToPID       int    `json:"keptNaToPid"`       // referenced by naToPid
 	KeptRequests      int    `json:"keptRequests"`      // referenced by a linked user's request
 	KeptInvitations   int    `json:"keptInvitations"`   // named in invitations.json
+	KeptRecent        int    `json:"keptRecent"`        // touched within RecentWindow (a console may still be using the device account)
 	KeptAcbaa         int    `json:"keptAcbaa"`         // named in acbaa.json
 	Orphans           int    `json:"orphans"`           // users to back up and delete
 	OrphanDevices     int    `json:"orphanDevices"`     // devices owned only by orphans
@@ -127,6 +132,10 @@ func Classify(st *store.Store, linked Linked, docs ...[]byte) *Report {
 		}
 		if refers(acbaaTokens, u) {
 			r.KeptAcbaa++
+			keep = true
+		}
+		if u.UpdatedAt > time.Now().Add(-RecentWindow).Unix() {
+			r.KeptRecent++
 			keep = true
 		}
 		if keep {
