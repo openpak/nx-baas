@@ -150,7 +150,7 @@ func TestUserObjectInventsNothing(t *testing.T) {
 	t.Setenv("NX_DEFAULT_NXACCOUNT", "a-foreign-console-profile")
 	t.Setenv("NX_DEFAULT_COUNTRY", "GB")
 	t.Setenv("NX_DEFAULT_BIRTHDAY", "1990-01-01")
-	u := &store.User{ID: "user-1", Birthday: "0000-00-00"}
+	u := &store.User{ID: "user-1"} // nothing stored: the placeholder is presented at response time only
 	obj := s.friendsSvc().UserObj(u, &identity.Identity{PID: 1, Nickname: "someone", FriendCode: "SW-0000-0000-0000"}, "")
 
 	self := obj["extras"].(map[string]any)["self"].(map[string]any)

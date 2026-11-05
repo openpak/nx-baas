@@ -125,7 +125,7 @@ type User struct {
 	BsDid        string `json:"bsDid"` // the account server's bs:did for this user: what a console's id_token carries and the game servers report back
 	Nickname     string `json:"nickname"`
 	Country      string `json:"country"`
-	Birthday     string `json:"birthday"`
+	Birthday     string `json:"birthday,omitempty"`
 	ThumbnailURL string `json:"thumbnailUrl"`
 	NxAccount    string `json:"nxAccount"`
 	// Avatar is the console's own profile picture, base64 JPEG exactly as it
@@ -193,6 +193,10 @@ type Store struct {
 	PctlDevices json.RawMessage `json:"pctlDevices,omitempty"`
 }
 
+// BirthdayPlaceholder is what the console is shown when neither the user nor the account
+// core has a birthday. It exists on the wire only.
+const BirthdayPlaceholder = "0000-00-00"
+
 func Load(path string) *Store {
 	s := &Store{FilePath: path, Devices: map[string]*DeviceAccount{}, Users: map[string]*User{}, NaToPID: map[string]uint64{}}
 	if b, ok := pgdoc.Read(path); ok {
@@ -203,6 +207,12 @@ func Load(path string) *Store {
 	// working; it just will not see preferences recorded after the upgrade.
 	migrated := false
 	for _, u := range s.Users {
+		// The all-zero birthday was once stored on every new record. It is a wire placeholder,
+		// not a fact: presented at response time only (friends.userObj), never kept.
+		if u.Birthday == BirthdayPlaceholder {
+			u.Birthday = ""
+			migrated = true
+		}
 		for _, f := range u.Favourites {
 			p := u.Pref(f)
 			if !p.Favorite {
@@ -250,7 +260,7 @@ func (s *Store) NewUser() (*User, *DeviceAccount) {
 	s.Mu.Lock()
 	defer s.Mu.Unlock()
 	now := time.Now().Unix()
-	u := &User{ID: token.RandHex(8), Birthday: "0000-00-00", CreatedAt: now, UpdatedAt: now, Presence: Presence{State: "OFFLINE", UpdatedAt: now}}
+	u := &User{ID: token.RandHex(8), CreatedAt: now, UpdatedAt: now, Presence: Presence{State: "OFFLINE", UpdatedAt: now}}
 	d := &DeviceAccount{ID: token.RandHex(8), Password: token.RandPassword(), UserID: u.ID}
 	u.DeviceAccounts = []string{d.ID}
 	s.Users[u.ID] = u
@@ -268,7 +278,7 @@ func (s *Store) Login(id, password string) *User {
 		// another OpenPak deployment (the VPS) presents credentials we never issued; on a
 		// private LAN we adopt them instead of forcing a console reset.
 		now := time.Now().Unix()
-		u := &User{ID: token.RandHex(8), Birthday: "0000-00-00", CreatedAt: now, UpdatedAt: now, Presence: Presence{State: "OFFLINE", UpdatedAt: now}, DeviceAccounts: []string{id}}
+		u := &User{ID: token.RandHex(8), CreatedAt: now, UpdatedAt: now, Presence: Presence{State: "OFFLINE", UpdatedAt: now}, DeviceAccounts: []string{id}}
 		d = &DeviceAccount{ID: id, Password: password, UserID: u.ID}
 		s.Users[u.ID] = u
 		s.Devices[id] = d

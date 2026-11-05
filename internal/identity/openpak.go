@@ -193,6 +193,21 @@ func (b *OpenpakBackend) LookupProjection(accountID string) (Projection, bool) {
 	return *pr, true
 }
 
+// LevelProjectionNickname makes the projection's nickname copy equal the core's display
+// name. A projection that holds one never goes ahead of the core; it is not set when empty
+// (a read fills it from the core).
+func (b *OpenpakBackend) LevelProjectionNickname(accountID, name string) {
+	if name == "" {
+		return
+	}
+	b.Proj.Mu.Lock()
+	defer b.Proj.Mu.Unlock()
+	if cur := b.Proj.ByAccount[accountID]; cur != nil && cur.Nickname != "" && cur.Nickname != name {
+		cur.Nickname = name
+		b.Proj.SaveLocked()
+	}
+}
+
 // DropProjectionErr is DropProjection reporting whether a projection existed and
 // whether the durable write succeeded (erasure must know).
 func (b *OpenpakBackend) DropProjectionErr(accountID string) (bool, error) {

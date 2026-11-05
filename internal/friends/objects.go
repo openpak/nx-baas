@@ -169,8 +169,11 @@ func (s *Service) UserObj(u *store.User, id *identity.Identity, devicePassword s
 		country = httpx.Getenv("NA_FALLBACK_COUNTRY", "GB")
 	}
 	birthday := u.Birthday
-	if (birthday == "" || birthday == "0000-00-00") && id != nil && id.Birthday != "" {
+	if (birthday == "" || birthday == store.BirthdayPlaceholder) && id != nil && id.Birthday != "" {
 		birthday = id.Birthday
+	}
+	if birthday == "" {
+		birthday = store.BirthdayPlaceholder // wire placeholder, presented here and never stored
 	}
 	favoriteFriends := map[string]any{"playLog": ""}
 	if u.PlayLog != nil {

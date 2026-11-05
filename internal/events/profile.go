@@ -25,7 +25,10 @@ func ApplyProfile(u *store.User, cp identity.CoreProfile) bool {
 	if u.Country != "" && cp.Country != "" && u.Country != cp.Country {
 		u.Country, changed = cp.Country, true
 	}
-	if u.Birthday != "" && u.Birthday != "0000-00-00" && cp.Birthday != "" && u.Birthday != cp.Birthday {
+	if u.Birthday == store.BirthdayPlaceholder { // never keep the wire placeholder
+		u.Birthday, changed = "", true
+	}
+	if u.Birthday != "" && cp.Birthday != "" && u.Birthday != cp.Birthday {
 		u.Birthday, changed = cp.Birthday, true
 	}
 	if cp.Version != 0 && u.ProfileVersion != cp.Version {
@@ -40,13 +43,17 @@ func (s *Follower) RefreshProfile(b *identity.OpenpakBackend, accountID string) 
 	if !ok {
 		return
 	}
-	u := s.Store.User(pr.BaasUserID)
-	if u == nil {
-		return
-	}
 	cp, err := b.CoreProfile(accountID)
 	if err != nil {
 		log.Printf("[nx-baas] profile refresh: %v", redact.Err(err))
+		return
+	}
+	// The projection (accounts.json by_account) holds a nickname copy too. It was only ever
+	// written at console login, so a rename made elsewhere left it stale: level it on every
+	// refresh, before the user-record shortcut below, whatever the version says.
+	b.LevelProjectionNickname(accountID, cp.DisplayName)
+	u := s.Store.User(pr.BaasUserID)
+	if u == nil {
 		return
 	}
 	s.Store.Mu.Lock()

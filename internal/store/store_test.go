@@ -37,3 +37,19 @@ func TestLinkRepointsDeviceOfRenamedThrowaway(t *testing.T) {
 		t.Fatal("login after link returned nil: the console would see invalid_device_account")
 	}
 }
+
+func TestNewUserKeepsNoBirthdayAndLoadDropsPlaceholder(t *testing.T) {
+	path := t.TempDir() + "/baas.json"
+	s := Load(path)
+	u, _ := s.NewUser()
+	if u.Birthday != "" {
+		t.Fatalf("new user stored a birthday: %q", u.Birthday)
+	}
+	s.Users["old"] = &User{ID: "old", Birthday: BirthdayPlaceholder}
+	s.Users["real"] = &User{ID: "real", Birthday: "2001-02-03"}
+	s.save()
+	s2 := Load(path)
+	if s2.Users["old"].Birthday != "" || s2.Users["real"].Birthday != "2001-02-03" {
+		t.Fatalf("load did not drop only the placeholder: %q %q", s2.Users["old"].Birthday, s2.Users["real"].Birthday)
+	}
+}

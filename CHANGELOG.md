@@ -11,6 +11,13 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.62.2 - 2026-11-05
+
+Data duplication audit, phase 10b (openpak/prds#131), findings of the nightly dedup-check.
+
+- The all-zero birthday is no longer stored. It was written on every new BAAS user and is a wire placeholder, not a fact. The console still gets `0000-00-00` when neither the user nor the account core has a birthday, presented in the user object at response time. Existing records lose the placeholder at load; `ApplyProfile` also clears it. A real birthday (from the core, or one the console set that the core cannot take) is kept and levelled as before.
+- Root cause of the stale `accounts.json` `by_account` nicknames: the projection's nickname copy was only written at console login, so a rename made on the website or app never reached it. `profile_updated` and the 5-minute sweep now level it with the core display name on every refresh (before the profile-version shortcut), through `LevelProjectionNickname`.
+
 ## v0.62.1 - 2026-11-05
 
 - Orphan cleanup keeps a user whose record was written within the last 7 days (`keptRecent` in the report): a console may still sign in with that device account.

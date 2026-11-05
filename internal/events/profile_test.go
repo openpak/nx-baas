@@ -16,7 +16,7 @@ func TestApplyProfileLevelsOnlyWhatIsCached(t *testing.T) {
 	if u.Nickname != "New" || u.ProfileVersion != 4 {
 		t.Fatalf("nickname not levelled: %+v", u)
 	}
-	if u.Country != "" || u.Birthday != "0000-00-00" {
+	if u.Country != "" || u.Birthday != "" {
 		t.Fatalf("a field that was never cached was written first: %+v", u)
 	}
 	if ApplyProfile(u, cp) {
