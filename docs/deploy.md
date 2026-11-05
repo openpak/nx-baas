@@ -4,7 +4,21 @@
 
 Env: `NX_ADDR`, `NX_DATA`, `ACCOUNT_API`, `OPENPAK_SECRET`, `OPENPAK_ADMIN_KEY`,
 `BAAS_SIGNING_KEY`, `BAAS_KID`, `NX_CA_DIR` (optional `ca.pem`/`ca.key` to sign the server cert),
-`NX_INTERNAL_KEY` (the game API's `/internal` routes refuse everything without it).
+`NX_INTERNAL_KEY` (the game API's `/internal` routes refuse everything without it),
+`ACCOUNT_ERASE_KEY` (account erasure, below; unset: the route answers 503).
+
+## Account erasure
+
+`DELETE /internal/accounts/{account_id}/data` on the game-API listener (`NX_API_ADDR`, :20070,
+container-network only, never routed by Traefik), `Authorization: Bearer $ACCOUNT_ERASE_KEY`.
+It uses the one erase key the website finaliser sends to every service, not `X-Internal-Key`.
+It deletes from baas.json (users, device accounts, NA map, friend-request ids, other users'
+block/favourite/preference entries naming the erased user), invitations.json (sent and
+received rows, groups), acbaa.json (profile, resources, names, island, uid moves, best friends
+and requests, entries in other players' lists) and accounts.json (the projection, last), all in
+Postgres (`nxbaas_docs`). The `account_deleted` core event does the same. Answers
+`{"service":"nx-baas","rows":N}`; idempotent. Not touched: `harbor-devices.json` (consoles, no
+account link), `pctlDevices` (console keyed, owned by nx-pctl) and error-report files.
 
 ## Required services
 

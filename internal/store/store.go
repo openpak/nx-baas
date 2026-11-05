@@ -231,10 +231,16 @@ func (u *User) Pref(friendBaasID string) *FriendPreference {
 
 // save is called with mu held.
 func (s *Store) save() {
-	b, _ := json.MarshalIndent(s, "", " ")
-	if err := pgdoc.Write(s.FilePath, b); err != nil {
+	if err := s.saveErr(); err != nil {
 		log.Printf("[nx-baas] store save: %v", err)
 	}
+}
+
+// saveErr is save with the failure returned, for erasure, which must not report
+// success while the row is still in Postgres. Called with mu held.
+func (s *Store) saveErr() error {
+	b, _ := json.MarshalIndent(s, "", " ")
+	return pgdoc.Write(s.FilePath, b)
 }
 
 func (s *Store) NewUser() (*User, *DeviceAccount) {

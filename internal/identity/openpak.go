@@ -159,10 +159,15 @@ func LoadProjections(path string) *ProjectionStore {
 }
 
 func (p *ProjectionStore) SaveLocked() {
-	b, _ := json.MarshalIndent(p, "", " ")
-	if err := pgdoc.Write(p.FilePath, b); err != nil {
+	if err := p.SaveErrLocked(); err != nil {
 		log.Printf("[nx-baas] openpak: projection save: %v", redact.Err(err))
 	}
+}
+
+// SaveErrLocked is SaveLocked with the failure returned (erasure).
+func (p *ProjectionStore) SaveErrLocked() error {
+	b, _ := json.MarshalIndent(p, "", " ")
+	return pgdoc.Write(p.FilePath, b)
 }
 
 // dropProjection forgets a core account's Switch identifiers from every
@@ -172,19 +177,39 @@ func (p *ProjectionStore) SaveLocked() {
 // projections reference PIDs, never this row, so dropping it orphans
 // nothing: their consoles re-fetch and learn the account is gone.
 func (b *OpenpakBackend) DropProjection(accountID string) {
+	if _, err := b.DropProjectionErr(accountID); err != nil {
+		log.Printf("[nx-baas] openpak: projection save: %v", redact.Err(err))
+	}
+}
+
+// LookupProjection returns a copy of the account's projection.
+func (b *OpenpakBackend) LookupProjection(accountID string) (Projection, bool) {
+	b.Proj.Mu.Lock()
+	defer b.Proj.Mu.Unlock()
+	pr, ok := b.Proj.ByAccount[accountID]
+	if !ok {
+		return Projection{}, false
+	}
+	return *pr, true
+}
+
+// DropProjectionErr is DropProjection reporting whether a projection existed and
+// whether the durable write succeeded (erasure must know).
+func (b *OpenpakBackend) DropProjectionErr(accountID string) (bool, error) {
 	p := b.Proj
 	p.Mu.Lock()
 	defer p.Mu.Unlock()
 	pr, ok := p.ByAccount[accountID]
 	if !ok {
-		return
+		return false, nil
 	}
 	delete(p.ByAccount, accountID)
 	delete(p.ByPID, pr.PID)
 	delete(p.ByBaas, pr.BaasUserID)
 	delete(p.ByCode, pr.FriendCode)
-	p.SaveLocked()
+	err := p.SaveErrLocked()
 	log.Printf("[nx-baas] openpak: projection dropped for a deleted account")
+	return true, err
 }
 
 // ensure returns the projection for a core account, minting one (and

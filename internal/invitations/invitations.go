@@ -242,14 +242,18 @@ func (st *Store) highestIDLocked() uint64 {
 }
 
 func (st *Store) saveLocked() {
-	b, err := json.MarshalIndent(st, "", " ")
-	if err != nil {
-		log.Printf("[nx-baas] invitations: marshal: %v", redact.Err(err))
-		return
-	}
-	if err := pgdoc.Write(st.FilePath, b); err != nil {
+	if err := st.saveErrLocked(); err != nil {
 		log.Printf("[nx-baas] invitations: save: %v", redact.Err(err))
 	}
+}
+
+// saveErrLocked is saveLocked with the failure returned (erasure).
+func (st *Store) saveErrLocked() error {
+	b, err := json.MarshalIndent(st, "", " ")
+	if err != nil {
+		return err
+	}
+	return pgdoc.Write(st.FilePath, b)
 }
 
 // nextIDLocked mints the next stable decimal id. Microsecond time plus a

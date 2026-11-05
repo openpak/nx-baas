@@ -353,7 +353,7 @@ func (s *server) baasSvc() *baas.Service {
 // it is built afresh: a test that installs a forwarder after the first call still sees it.
 func (s *server) gameAPISvc() *gameapi.Service {
 	return &gameapi.Service{Core: s.Core, Locks: s.locks(), Dauth: s.dauthSvc(), Invitations: s.invitationsSvc(),
-		Presence: s.presenceSvc(), NA: s.naSvc(), BAAS: s.baasSvc(), Friends: s.friendsSvc(),
+		Presence: s.presenceSvc(), NA: s.naSvc(), BAAS: s.baasSvc(), Friends: s.friendsSvc(), Acbaa: s.acbaaSvc(),
 		Submit: s.submitNotification}
 }
 
@@ -368,7 +368,7 @@ func (s *server) acbaaSvc() *acbaa.Service {
 
 // eventsSvc follows the account core's events over the current services.
 func (s *server) eventsSvc() *events.Follower {
-	return &events.Follower{Core: s.Core, Locks: s.locks(), Friends: s.friendsSvc(), Presence: s.presenceSvc(), Notify: s.SubmitNotification}
+	return &events.Follower{Core: s.Core, Locks: s.locks(), Friends: s.friendsSvc(), Presence: s.presenceSvc(), Acbaa: s.acbaaSvc(), Notify: s.SubmitNotification}
 }
 
 // SubmitNotification is the entry point the social, presence and invitation code calls.

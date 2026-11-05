@@ -5,10 +5,13 @@ package events
 import (
 	"context"
 	"log"
+	"nx-baas/internal/acbaa"
 	"nx-baas/internal/bans"
 	"nx-baas/internal/core"
+	"nx-baas/internal/erase"
 	"nx-baas/internal/friends"
 	"nx-baas/internal/identity"
+	"nx-baas/internal/invitations"
 	"nx-baas/internal/penne"
 	"nx-baas/internal/pgdoc"
 	"nx-baas/internal/presence"
@@ -106,11 +109,16 @@ func (s *Follower) apply(b *identity.OpenpakBackend, e *accountv1.InvalidationEv
 			s.Locks.Forget(e.GetAccountId())
 			s.closeAccountSessions(b, e.GetAccountId())
 		}
-		if e.GetType() == "account_deleted" {
+		var gone identity.Projection
+		deleted := e.GetType() == "account_deleted"
+		if deleted {
 			// Final destruction only: bans, pending deletion, revoked
 			// credentials and unlinked devices all keep the projection
 			// (those accounts may come back; a deleted one cannot).
-			b.DropProjection(e.GetAccountId())
+			// The Switch ids are read from our own projection now: the core
+			// drops its link rows in the transaction that emitted this event.
+			// The erasure itself runs after the calls below, which read it.
+			gone, _ = b.LookupProjection(e.GetAccountId())
 		}
 		// An account that can no longer sign in has no live presence:
 		// end its claims here, and let its friends' consoles re-fetch
@@ -118,6 +126,18 @@ func (s *Follower) apply(b *identity.OpenpakBackend, e *accountv1.InvalidationEv
 		// nothing: the account is simply allowed back.
 		s.revokeAccountPresence(b, e.GetAccountId())
 		s.projectionFriendsChanged(b, e.GetAccountId(), e.GetSubjectId())
+		if deleted {
+			// Every durable row of the account goes, then the projection (card
+			// openpak/prds#120). A failed write is retried by the website's
+			// DELETE /internal/accounts/{id}/data, which finds the projection.
+			n, err := erase.Ids(b, erase.Targets{Store: s.Store, Invitations: invitations.StoreFor(), Acbaa: s.Acbaa},
+				e.GetAccountId(), gone)
+			if err != nil {
+				log.Printf("[nx-baas] account erase from event failed: %v", redact.Err(err))
+			} else {
+				log.Printf("account erased account=%s rows=%d service=nx-baas", e.GetAccountId(), n)
+			}
+		}
 	}
 }
 
@@ -177,5 +197,6 @@ type Follower struct {
 	Locks    *bans.Checker
 	Friends  *friends.Service
 	Presence *presence.Service
+	Acbaa    *acbaa.Service
 	Notify   func(penne.Delivery) penne.Submission
 }

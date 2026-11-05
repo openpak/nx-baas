@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"nx-baas/internal/acbaa"
 	"nx-baas/internal/baas"
 	"nx-baas/internal/bans"
 	"nx-baas/internal/core"
@@ -428,6 +429,7 @@ func (s *Service) penneTestNotification(w http.ResponseWriter, r *http.Request) 
 // Handler is the game API mux.
 func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/internal/accounts/", s.eraseAccount)
 	mux.HandleFunc("/internal/photon-room", s.photonRoom)
 	mux.HandleFunc("/internal/photon-room-leave", s.photonRoomLeave)
 	mux.HandleFunc("/internal/photon-identity", s.photonIdentity)
@@ -482,6 +484,8 @@ type Service struct {
 	NA          *nxaccount.Service
 	BAAS        *baas.Service
 	Friends     *friends.Service
+	// Acbaa is Animal Crossing's web API, whose store account erasure reaches.
+	Acbaa *acbaa.Service
 	// Submit hands a checked notification to Penne; wait asks for nx-penne's outcome.
 	Submit func(d penne.Delivery, wait bool) penne.Submission
 }

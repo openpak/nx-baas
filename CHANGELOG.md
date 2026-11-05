@@ -11,6 +11,11 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.61.0 - 2026-11-05
+
+- Account erasure (openpak/prds#120): `DELETE /internal/accounts/{id}/data` (Bearer `ACCOUNT_ERASE_KEY`, 503 when unset) on the game-API listener, and the `account_deleted` event, now delete every durable row of the account: BAAS users and device accounts, NA map entries, friend-request ids, invitations, ACNH profile/resources/names/island/best friends, and other users' block/favourite/preference entries that named it; the projection goes last. Previously only the in-memory projection maps were cleared.
+- On account_deleted the projection is now dropped after the presence and friend-list refresh calls instead of before them, so those calls find the account.
+
 ## v0.60.0 - 2026-11-04
 
 - `POST /internal/switch/identity` also resolves a Nintendo Account authorization code (`na_code` plus the `client_id` it was issued to, spent by the answer) or an NA `id_token` (`na_id_token`, signed by this service, not a BAAS token) for third-party servers such as EA's Nucleus (plants-vs-zombies). The NA userinfo endpoint falls back to the BAAS `id_token` an emulator sends when it keeps no NA access token.

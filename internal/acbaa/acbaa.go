@@ -758,17 +758,21 @@ func (s *Service) acbaaLoad() {
 // store). The caller holds s.mu. Skipped when no path is configured, which
 // is how direct handler tests run.
 func (s *Service) acbaaSaveLocked() {
+	if err := s.acbaaSaveErrLocked(); err != nil {
+		log.Printf("[acbaa] store write: %v", redact.Err(err))
+	}
+}
+
+// acbaaSaveErrLocked is acbaaSaveLocked with the failure returned (erasure).
+func (s *Service) acbaaSaveErrLocked() error {
 	if s.acbaaPath == "" {
-		return
+		return nil
 	}
 	b, err := json.Marshal(acbaaDisk{Profiles: s.acbaaProfiles, Resources: s.acbaaResources, Names: s.acbaaNames, LandProfiles: s.acbaaLandProfiles, UserLand: s.acbaaUserLand, UIDMap: s.acbaaUIDMap, FriendReqs: s.acbaaFriendReqs, Friends: s.acbaaFriendList})
 	if err != nil {
-		log.Printf("[acbaa] store marshal: %v", redact.Err(err))
-		return
+		return err
 	}
-	if err := pgdoc.Write(s.acbaaPath, b); err != nil {
-		log.Printf("[acbaa] store write: %v", redact.Err(err))
-	}
+	return pgdoc.Write(s.acbaaPath, b)
 }
 
 // acbaaProfile is a remembered player-profile upload, kept for the day
