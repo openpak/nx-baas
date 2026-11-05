@@ -129,6 +129,7 @@ func main() {
 	s.acbaaSvc().Open(httpx.Getenv("NX_DATA", "/data") + "/acbaa.json")
 	if b, ok := s.Acct.(*identity.OpenpakBackend); ok {
 		go s.eventsSvc().Follow(b)
+		go s.eventsSvc().ProfileSweepLoop(b)
 		// One presence reconciler beside the one core-event poller: leases,
 		// heartbeats and expiries on the adapter's clock (PRE-02).
 		go s.presenceSvc().ReconcileLoop()

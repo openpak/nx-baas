@@ -89,6 +89,10 @@ func (s *Follower) apply(b *identity.OpenpakBackend, e *accountv1.InvalidationEv
 		// Integration wiring: the state above is committed, so the
 		// native notification may now be submitted (notify_wiring.go).
 		s.NotifyCoreFriendEvent(b, e.GetType(), e.GetAccountId(), e.GetSubjectId(), e.GetVersion())
+	case "profile_updated":
+		// The account's name, country or picture moved somewhere else: re-read it and
+		// bring the BAAS copy level (a push; the 5-minute sweep is the backup).
+		s.RefreshProfile(b, e.GetAccountId())
 	case "presence_changed":
 		// account = a friend online on this network, subject = whose presence moved.
 		if e.GetNamespace() == b.Namespace { // addressed to a friend on another network: not ours

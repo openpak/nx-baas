@@ -79,3 +79,37 @@ func dropString(list []string, v string, rows int) ([]string, int) {
 	}
 	return out, rows
 }
+
+// DeleteUsers removes the named BAAS users and device accounts (the orphan cleanup,
+// card openpak/prds#131) and every other user's reference to the removed ids. The write
+// is durable before it returns; a second call finds nothing to do.
+func (s *Store) DeleteUsers(userIDs, deviceIDs []string) (users, devices int, err error) {
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+	gone := map[string]bool{}
+	for _, id := range userIDs {
+		if _, ok := s.Users[id]; ok {
+			delete(s.Users, id)
+			users++
+		}
+		gone[id] = true
+	}
+	for _, id := range deviceIDs {
+		if _, ok := s.Devices[id]; ok {
+			delete(s.Devices, id)
+			devices++
+		}
+	}
+	for _, u := range s.Users {
+		for id := range gone {
+			delete(u.FriendPrefs, id)
+			delete(u.BlockDetails, id)
+			u.Blocks, _ = dropString(u.Blocks, id, 0)
+			u.Favourites, _ = dropString(u.Favourites, id, 0)
+		}
+	}
+	if users == 0 && devices == 0 {
+		return 0, 0, nil
+	}
+	return users, devices, s.saveErr()
+}

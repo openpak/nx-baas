@@ -11,6 +11,17 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.62.0 - 2026-11-05
+
+Data duplication audit, phase 3 (openpak/prds#131): baas.json stops being a second copy of who a linked player is.
+
+- A console's nickname and country edit (`PATCH /1.0.0/users/<id>`) for a linked user goes to the account core first (`SetDisplayName`, `UpdatePublicProfile`); the BAAS record keeps no copy of what the core took. Only a refusal (for example a name outside the core's 1-32 rule) leaves the console's value locally, so the reply still repeats what was sent. Wire output is unchanged.
+- The console's picture upload is passed to the account as before; once the account has it, a linked user's local copy (`avatar`, `avatarAt`) is dropped and the picture is read back from the account. `isMediaUploaded` stays true for a linked user whose account has a picture.
+- Cached nickname, country and birthday on a linked user are levelled with the core on `profile_updated` (push, re-read compared by `profileVersion`) and by a 5-minute sweep (backup). A field a user never had locally stays unset: reads fill it from the core. New user field `profileVersion` (cache metadata).
+- One-shot orphan cleanup: `POST /internal/admin/orphans?step=plan|backup|delete` on the game-API listener (Bearer `ACCOUNT_ERASE_KEY`). An orphan is a BAAS user with no core account (projection, core Switch link) that no `naToPid` entry, linked user's friend request, invitation or acbaa record names. `backup` writes the full user and device rows to a mode-600 file; `delete` refuses unless that backup matches the set, then removes the users, their device accounts and other users' references to them. Idempotent; replies and logs carry counts only. Devices of linked users, of kept users and `harbor-devices.json` are never touched.
+- Erasure (`EraseAccount`, `account_deleted`, `DELETE /internal/accounts/{id}/data`) is unchanged and covered for the slimmer records.
+- Remains local: ids and links (pid, naId, bsDid, nxAccount), device accounts, `devicePresence`/`presence` (connection leases), `friendPrefs`, `blocks`, `playLog` (the core has no write API for the console's play-log blob; `play_sessions` is written by Harbor/NEX emits), birthday and thumbnailUrl edits the core cannot take.
+
 ## v0.61.0 - 2026-11-05
 
 - Account erasure (openpak/prds#120): `DELETE /internal/accounts/{id}/data` (Bearer `ACCOUNT_ERASE_KEY`, 503 when unset) on the game-API listener, and the `account_deleted` event, now delete every durable row of the account: BAAS users and device accounts, NA map entries, friend-request ids, invitations, ACNH profile/resources/names/island/best friends, and other users' block/favourite/preference entries that named it; the projection goes last. Previously only the in-memory projection maps were cleared.

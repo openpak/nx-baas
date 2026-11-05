@@ -172,8 +172,11 @@ type User struct {
 	// day, and asking sooner is 422 friend_code_unregenerable_state.
 	CodeGeneratedAt int64    `json:"codeGeneratedAt,omitempty"`
 	Presence        Presence `json:"presence"`
-	CreatedAt       int64    `json:"createdAt"`
-	UpdatedAt       int64    `json:"updatedAt"`
+	// ProfileVersion is the account core's profile_version the cached copies above
+	// (nickname, country, birthday) were last compared with; 0 = never refreshed.
+	ProfileVersion uint64 `json:"profileVersion,omitempty"`
+	CreatedAt      int64  `json:"createdAt"`
+	UpdatedAt      int64  `json:"updatedAt"`
 }
 
 type Store struct {

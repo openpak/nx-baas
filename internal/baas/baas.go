@@ -245,7 +245,17 @@ func (s *Service) Handle(w http.ResponseWriter, r *http.Request, body []byte) {
 				log.Printf("[nx-baas] image_upload: stored %d bytes for %s", len(raw), redact.Tag(uid))
 				// And on to the account, so the picture a person set on their
 				// console is the one the website and the app show.
-				s.shareAvatar(u.ID, img.RawContent)
+				s.shareAvatar(u.ID, img.RawContent, func() {
+					// The account holds the picture now; a linked user's BAAS record keeps
+					// no copy of it (the image is read back from the account).
+					if u.PID != 0 {
+						s.Store.Update(u, func(u *store.User) {
+							if u.Avatar == img.RawContent {
+								u.Avatar, u.AvatarAt = "", 0
+							}
+						})
+					}
+				})
 			}
 		}
 		// The reply is an image, not a user. The account sysmodule reads
@@ -382,16 +392,29 @@ func (s *Service) Handle(w http.ResponseWriter, r *http.Request, body []byte) {
 				Value    any
 			}
 			json.Unmarshal(body, &ops)
+			// A linked user's name and country are the account's facts: they go to the core
+			// first and the BAAS record keeps no copy of what the core took. Only a refusal
+			// (a name the core's 1-32 rule rejects) leaves the console's own value here, so
+			// the reply still repeats what was sent.
+			sharedNick, sharedCountry := s.shareProfile(u, ops2profile(ops))
 			renamed := ""
 			s.Store.Update(u, func(u *store.User) {
 				for _, o := range ops {
 					v, _ := o.Value.(string)
 					switch o.Path {
 					case "/nickname":
-						u.Nickname = v
-						renamed = v
+						if !sharedNick {
+							u.Nickname = v
+							renamed = v
+						} else if u.Nickname != "" {
+							u.Nickname = v // an older copy stays equal to the core, never ahead of it
+						}
 					case "/country":
-						u.Country = v
+						if !sharedCountry {
+							u.Country = v
+						} else if u.Country != "" {
+							u.Country = v
+						}
 					case "/birthday":
 						u.Birthday = v
 					case "/thumbnailUrl":
@@ -442,11 +465,8 @@ func (s *Service) Handle(w http.ResponseWriter, r *http.Request, body []byte) {
 					}
 				}
 			})
-			// A name is an account fact like the picture: it goes to the core so the website and
-			// every friend's console show it. Before the reply is built, so the reply carries it.
-			// A refusal (a name the core's 1-32 rule rejects) leaves the console's own copy alone.
-			// The Mii picture goes to the account through shareAvatar (image_upload); the Mii
-			// data itself never leaves the console, so the name is the only other profile fact.
+			// An unlinked user, or a backend without a core, still has only the local copy; the
+			// older account server takes the name through SetNickname.
 			if renamed != "" && u.PID != 0 {
 				if n, ok := s.Acct.(interface{ SetNickname(uint64, string) error }); ok {
 					if err := n.SetNickname(u.PID, renamed); err != nil {

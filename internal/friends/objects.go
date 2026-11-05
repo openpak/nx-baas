@@ -101,7 +101,9 @@ func (s *Service) UserObj(u *store.User, id *identity.Identity, devicePassword s
 	if nx != "" {
 		self["isMediaUploaded"] = true
 		self["nxAccount"] = nx
-	} else if u.Avatar != "" {
+	} else if u.Avatar != "" || (id != nil && id.ImageUpdatedAt > 0 && u.PID != 0) {
+		// The picture is either the console's own local copy or, for a linked user, the
+		// one the account holds (the console's upload is passed on and the copy dropped).
 		self["isMediaUploaded"] = true
 	}
 	friendsEx := map[string]any{"isChatActivated": true, "isChatInvitable": true, "playLog": ""}

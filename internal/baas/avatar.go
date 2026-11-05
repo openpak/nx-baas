@@ -8,6 +8,8 @@ import (
 	"log"
 	"net/http"
 	"nx-baas/internal/httpx"
+	"nx-baas/internal/identity"
+	"nx-baas/internal/store"
 	"nx-baas/redact"
 	"time"
 )
@@ -19,9 +21,10 @@ import (
 //
 // Best effort on purpose: the console is mid-setup when this happens, and a
 // website that is down or unconfigured must not turn a working link into a
-// failed one. The picture is kept locally either way, so nothing is lost if
-// this call does not land.
-func (s *Service) shareAvatar(subject, base64JPEG string) {
+// failed one. The picture is kept locally until the account has it (onShared
+// then drops the local copy of a linked user), so nothing is lost if this call
+// does not land.
+func (s *Service) shareAvatar(subject, base64JPEG string, onShared func()) {
 	url, key := httpx.Getenv("WEBSITE_INTERNAL_URL", ""), httpx.Getenv("WEBSITE_INTERNAL_KEY", "")
 	if url == "" || key == "" {
 		return // not configured: the console still gets its picture back from here
@@ -52,6 +55,9 @@ func (s *Service) shareAvatar(subject, base64JPEG string) {
 			return
 		}
 		log.Printf("[nx-baas] avatar shared with the account for subject %s", redact.Tag(subject))
+		if onShared != nil {
+			onShared()
+		}
 	}()
 }
 
@@ -75,4 +81,48 @@ func fetchAvatar(url string) ([]byte, error) {
 		return nil, fmt.Errorf("avatar: %s did not return a JPEG", url)
 	}
 	return img, nil
+}
+
+// profileOps are the console's nickname and country edits out of one PATCH, empty when absent.
+type profileOps struct{ nickname, country *string }
+
+func ops2profile(ops []struct {
+	Op, Path string
+	Value    any
+}) profileOps {
+	var p profileOps
+	for _, o := range ops {
+		v, ok := o.Value.(string)
+		if !ok || v == "" {
+			continue
+		}
+		switch o.Path {
+		case "/nickname":
+			p.nickname = &v
+		case "/country":
+			p.country = &v
+		}
+	}
+	return p
+}
+
+// shareProfile writes a linked user's nickname and country to the account core and
+// reports which of them it took. A user with no core account, or a backend without
+// one, shares nothing and the caller keeps the console's value locally.
+func (s *Service) shareProfile(u *store.User, p profileOps) (nickOK, countryOK bool) {
+	if u.PID == 0 || (p.nickname == nil && p.country == nil) {
+		return false, false
+	}
+	w, ok := s.Acct.(identity.ProfileWriter)
+	if !ok {
+		return false, false
+	}
+	nickOK, countryOK, err := w.UpdateProfile(u.PID, p.nickname, p.country)
+	if err != nil {
+		log.Printf("[nx-baas] profile: the account refused part of a console edit (kept locally): %v", redact.Err(err))
+	}
+	if nickOK || countryOK {
+		log.Printf("[nx-baas] profile edit shared with the account for %s", redact.Tag(u.ID))
+	}
+	return nickOK, countryOK
 }

@@ -50,3 +50,30 @@ func TestEraseAccountRemovesOnlyThatAccount(t *testing.T) {
 		t.Fatal("empty ids erased something")
 	}
 }
+
+// A slim record (protocol ids only, no profile copy) erases like a full one.
+func TestEraseAccountWithASlimRecord(t *testing.T) {
+	s := Load(t.TempDir() + "/baas.json")
+	s.Users["u"] = &User{ID: "u", PID: 5, NaID: "na", DeviceAccounts: []string{"d"}}
+	s.Devices["d"] = &DeviceAccount{ID: "d", UserID: "u"}
+	if n, err := s.EraseAccount("u", 5, "na"); err != nil || n != 2 {
+		t.Fatalf("erase = %d, %v", n, err)
+	}
+	if len(s.Users) != 0 || len(s.Devices) != 0 {
+		t.Fatal("rows remain")
+	}
+}
+
+func TestDeleteUsersIsIdempotentAndCleansReferences(t *testing.T) {
+	s := eraseFixture(t)
+	u, d, err := s.DeleteUsers([]string{"gone"}, []string{"dev-gone"})
+	if err != nil || u != 1 || d != 1 {
+		t.Fatalf("delete = %d %d %v", u, d, err)
+	}
+	if s.Users["keep"].FriendPrefs["gone"] != nil || len(s.Users["keep"].Blocks) != 1 {
+		t.Fatal("references remain")
+	}
+	if u, d, _ := s.DeleteUsers([]string{"gone"}, []string{"dev-gone"}); u+d != 0 {
+		t.Fatal("second call deleted")
+	}
+}

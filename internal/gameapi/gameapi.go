@@ -430,6 +430,7 @@ func (s *Service) penneTestNotification(w http.ResponseWriter, r *http.Request) 
 func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/internal/accounts/", s.eraseAccount)
+	mux.HandleFunc("/internal/admin/orphans", s.orphanAdmin)
 	mux.HandleFunc("/internal/photon-room", s.photonRoom)
 	mux.HandleFunc("/internal/photon-room-leave", s.photonRoomLeave)
 	mux.HandleFunc("/internal/photon-identity", s.photonIdentity)
